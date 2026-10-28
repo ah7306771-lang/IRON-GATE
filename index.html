@@ -1044,12 +1044,81 @@ async function loadMaster(admin){
     if(!pr.error && pr.data) state.users = pr.data.map(mapProfile);
     if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
   }
+  await loadDocs();
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
+  if(docsReady && docsChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
+}
+// ---------- البوالص (المحفوظة والمرحّلة) وأوامر البيع في جدول app_docs ----------
+const DOC_KINDS = ["shipments","policies","saleOrders"];
+let docSnaps = {}, docMeta = new Set(), counterSnap = "", docsReady = false;
+function docDiff(k){
+  const snap = docSnaps[k] || new Map(), cur = new Map(), up = [];
+  (state[k]||[]).forEach(r=>{ if(!r||r.id==null) return; const id=String(r.id), j=JSON.stringify(r); cur.set(id,j); if(snap.get(id)!==j) up.push({ kind:k, id, data:r }); });
+  const del = [...snap.keys()].filter(id=>!cur.has(id));
+  return { up, del, cur };
+}
+function counterNow(){ return String(state.soNextNum||1); }
+function docsChanged(){
+  if(!docsReady) return false;
+  return DOC_KINDS.some(k=>{ const d=docDiff(k); return d.up.length||d.del.length||!docMeta.has(k); }) || counterNow()!==counterSnap;
+}
+async function loadDocs(){
+  docsReady = false;
+  try{
+    const rows = []; let from = 0;
+    for(;;){
+      const r = await sb.from("app_docs").select("kind,id,data").order("kind").order("id").range(from, from+999);
+      if(r.error) throw r.error;
+      rows.push(...(r.data||[])); if((r.data||[]).length<1000) break; from += 1000;
+    }
+    const by = {}; rows.forEach(r=>{ (by[r.kind]=by[r.kind]||[]).push(r); });
+    docMeta = new Set((by.meta||[]).map(r=>r.id)); docSnaps = {};
+    DOC_KINDS.forEach(k=>{
+      const list = by[k]||[];
+      if(list.length || docMeta.has(k)){
+        state[k] = list.map(r=>r.data);
+        docSnaps[k] = new Map(list.map(r=>[String(r.id), JSON.stringify(r.data)]));
+      }else{ docSnaps[k] = new Map(); }   // أول مرة: بيانات الجهاز ده هتترفع للسيرفر
+    });
+    const c = (by.counter||[]).find(r=>r.id==="soNextNum");
+    const serverN = (c&&c.data&&Number(c.data.v))||1;
+    const maxNo = Math.max(0, ...(state.saleOrders||[]).map(o=>parseInt(o.orderNo,10)||0));
+    state.soNextNum = Math.max(serverN, maxNo+1, c?1:(state.soNextNum||1));
+    counterSnap = c ? String(serverN) : "";
+    docsReady = true;
+  }catch(e){
+    toast("تعذر تحميل البوالص وأوامر البيع من السيرفر — شغّال محليًا مؤقتًا ("+(e.message||e)+")","err");
+  }
+}
+async function syncDocs(){
+  if(!docsReady) return;
+  for(const k of DOC_KINDS){
+    const d = docDiff(k);
+    if(!d.up.length && !d.del.length && docMeta.has(k)) continue;
+    for(let i=0;i<d.up.length;i+=200){
+      const r = await sb.from("app_docs").upsert(d.up.slice(i,i+200).map(x=>({ kind:x.kind, id:x.id, data:x.data, updated_at:new Date().toISOString() })),{ onConflict:"kind,id" });
+      if(r.error) throw r.error;
+    }
+    for(let i=0;i<d.del.length;i+=100){
+      const r = await sb.from("app_docs").delete().eq("kind",k).in("id",d.del.slice(i,i+100));
+      if(r.error) throw r.error;
+    }
+    if(!docMeta.has(k)){
+      const r = await sb.from("app_docs").upsert({ kind:"meta", id:k, data:{ ok:true } },{ onConflict:"kind,id" });
+      if(r.error) throw r.error; docMeta.add(k);
+    }
+    docSnaps[k] = d.cur;
+  }
+  const cn = counterNow();
+  if(cn!==counterSnap){
+    const r = await sb.from("app_docs").upsert({ kind:"counter", id:"soNextNum", data:{ v:Number(cn) } },{ onConflict:"kind,id" });
+    if(r.error) throw r.error; counterSnap = cn;
+  }
 }
 function scheduleSync(){
-  if(!currentUser || !masterLoaded || !changedKinds().length) return;
+  if(!currentUser || !masterLoaded || (!changedKinds().length && !docsChanged())) return;
   clearTimeout(syncTimer); syncTimer = setTimeout(syncMaster, 600);
 }
 async function syncMaster(){
@@ -1073,6 +1142,7 @@ async function syncMaster(){
       }
       lastSnaps[k] = snap;
     }
+    await syncDocs();
   }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
