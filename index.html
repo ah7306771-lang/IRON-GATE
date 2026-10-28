@@ -4488,11 +4488,17 @@ function saveUserForm(){
     const u=state.users.find(x=>x.no===userFormEditing); if(!u) return false;
     if(u.role==="admin"&&role!=="admin"&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return false; }
     const before=JSON.parse(JSON.stringify(u.perms)), oldRole=u.role, oldName=u.name;
-    u.name=name; u.role=role; u.perms=perms; saveState();
-    const d=permDiff(before,perms);
-    audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
+    (async()=>{
+      const r=await sb.functions.invoke("admin-users",{ body:{ action:"update", no:u.no, name, role, perms } });
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      u.name=name; u.role=role; u.perms=perms; saveState();
+      const d=permDiff(before,perms);
+      audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
+      toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser();
+    })();
+    return true;
   }
-  toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser(); return true;
+  return true;
 }
 function toggleUser(no){
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
@@ -4500,7 +4506,11 @@ function toggleUser(no){
   if(u.active!==false&&u.role==="admin"&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return; }
   const to=u.active===false;
   if(!confirm(`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}؟`)) return;
-  u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
+  (async()=>{
+    const r=await sb.functions.invoke("admin-users",{ body:{ action:"update", no:u.no, active:to } });
+    if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+    u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
+  })();
 }
 function delUser(no){
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
