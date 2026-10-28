@@ -743,6 +743,11 @@ body.rs-drag,body.rs-drag *{cursor:col-resize!important;user-select:none!importa
 .col-menu .cm-f{display:flex;gap:8px;padding:9px 12px;border-top:1px solid var(--line);background:var(--bg-3)}
 .col-menu .cm-f button{flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--line-2);background:var(--card);color:var(--text);border-radius:6px;cursor:pointer}
 .col-menu .cm-f button:hover{border-color:var(--gold);color:var(--gold)}
+
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--gold)}
+th.sortable.sort-asc::after{content:" ▲";font-size:9px;color:var(--gold)}
+th.sortable.sort-desc::after{content:" ▼";font-size:9px;color:var(--gold)}
 </style>
 </head>
 <body>
@@ -2945,7 +2950,8 @@ function pickRecord(src,id){ closeModal(); dirty=false; loadRecord(src,id,false)
 // ---------- بيانات التوريد ----------
 function supplyLines(){
   const q=supFilter.q.trim().toLowerCase(), out=[];
-  const list=[...state.shipments].sort((a,b)=>(b.date||"").localeCompare(a.date||"")||String(b.policyNo).localeCompare(String(a.policyNo),undefined,{numeric:true}));
+  const nz=(x,y)=>String(y||"").localeCompare(String(x||""),undefined,{numeric:true});
+  const list=[...state.shipments].sort((a,b)=>(b.date||"").localeCompare(a.date||"")||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
   list.forEach(s=>{
     if(supFilter.supplier&&s.supplier!==supFilter.supplier) return;
     if(supFilter.customer&&s.customer!==supFilter.customer) return;
@@ -2956,7 +2962,36 @@ function supplyLines(){
     if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,s.saleOrderNo,...s.items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
     items.forEach((it,i)=>out.push({s,it,first:i===0}));
   });
+  if(supSort.key&&SUP_SORT[supSort.key]){
+    const g=SUP_SORT[supSort.key], num=SUP_SORT_NUM.has(supSort.key), d=supSort.dir;
+    out.forEach(o=>o.first=true);
+    const idx=new Map(out.map((o,i)=>[o,i]));
+    out.sort((a,b)=>{
+      const x=g(a), y=g(b); let c;
+      if(num) c=(+x||0)-(+y||0); else c=String(x==null?"":x).localeCompare(String(y==null?"":y),"ar",{numeric:true});
+      return (c*d)||(idx.get(a)-idx.get(b));
+    });
+  }
   return out;
+}
+let supSort={key:"",dir:1};
+const SUP_SORT_NUM=new Set(["qty","weight","buy","sell","sub","tax","disc","total","cash"]);
+const SUP_SORT={
+  policy:({s})=>s.policyNo, date:({s})=>s.date, supplier:({s})=>s.supplier, customer:({s})=>s.customer,
+  company:({s})=>s.company, site:({s})=>s.site, factory:({s,it})=>itemFactory(s,it), diameter:({it})=>it.diameter, type:({it})=>it.type,
+  qty:({it})=>it.supplyQty, weight:({it})=>it.actualWeight, buy:({it})=>it.buyPrice, sell:({it})=>it.sellPrice,
+  sub:({it})=>r2((+it.actualWeight||0)*(+it.sellPrice||0)), tax:({it})=>it.tax, disc:({it})=>it.discount, total:({it})=>it.total,
+  cash:({s})=>s.terms&&s.terms.cashPct, aging:({it})=>it.agingStatus
+};
+function supSortBy(k){
+  if(supSort.key!==k) supSort={key:k,dir:1};
+  else if(supSort.dir===1) supSort={key:k,dir:-1};
+  else supSort={key:"",dir:1};
+  renderSupply();
+}
+function supTh(k,label){
+  const c=supSort.key===k?(supSort.dir===1?" sort-asc":" sort-desc"):"";
+  return `<th class="sortable${c}" title="ترتيب تصاعدي / تنازلي / إلغاء" onclick="supSortBy('${k}')">${label}</th>`;
 }
 function viewSupply(){
   migrateState(state);
@@ -2979,7 +3014,7 @@ function viewSupply(){
     <input class="inp sf-q" placeholder="🔍 بحث" title="بحث: رقم البوليصة / مورد / عميل / شركة / موقع / مصنع / أمر بيع / ملاحظات" value="${escapeAttr(supFilter.q)}" oninput="supFilter.q=this.value;renderSupply()">
     <label>من <input class="inp" type="date" value="${escapeAttr(supFilter.from)}" onchange="supFilter.from=this.value;renderSupply()"></label>
     <label>إلى <input class="inp" type="date" value="${escapeAttr(supFilter.to)}" onchange="supFilter.to=this.value;renderSupply()"></label>
-    ${sel("supplier",state.suppliers,"كل الموردين")}${sel("customer",state.customers,"كل العملاء")}
+    ${sel("supplier",partyNames(state.suppliers),"كل الموردين")}${sel("customer",partyNames(state.customers),"كل العملاء")}
     ${sel("factory",state.factories,"كل المصانع")}${sel("status",state.statuses,"كل الحالات")}
     <button class="btn ghost" onclick="supFilter={q:'',supplier:'',customer:'',factory:'',status:'',from:'',to:'',grouped:${supFilter.grouped}};go('supply')">مسح</button>
   </div>
@@ -3178,7 +3213,7 @@ function renderSupplyFlat(L, T){
   const pr=(SB?1:0)+(SS?1:0);
   const foot = `<tr><td colspan="9">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td>${pr?`<td colspan="${pr}"></td>`:""}${SS?`<td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
   return `<div class="tbl-wrap"><table>
-    <thead><tr><th>البوليصة</th><th>التاريخ</th><th>المورد</th><th>العميل</th><th>الشركة</th><th>الموقع</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>كمية التوريد</th><th>الوزن الفعلي</th>${SB?"<th>سعر الشراء</th>":""}${SS?"<th>سعر البيع</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th>":""}<th>الدفع</th><th>التعتيق</th><th></th></tr></thead>
+    <thead><tr>${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("supplier","المورد")}${supTh("customer","العميل")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","القطر")}${supTh("type","النوع")}${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع")+supTh("sub","قبل الضريبة")+supTh("tax","الضريبة")+supTh("disc","الخصم")+supTh("total","الإجمالي"):""}${supTh("cash","الدفع")}${supTh("aging","التعتيق")}<th></th></tr></thead>
     <tbody>${body}</tbody><tfoot>${foot}</tfoot>
   </table></div>`;
 }
@@ -3287,11 +3322,11 @@ function renderSupplyGrouped(L){
         <div class="tbl-wrap" style="border:none;border-radius:0">
           <table>
             <thead><tr>
-              <th>البوليصة</th><th>التاريخ</th><th>الشركة</th><th>الموقع</th><th>المصنع</th><th>القطر</th><th>النوع</th>
-              <th>كمية التوريد</th><th>الوزن الفعلي</th>
-              ${SB?"<th>سعر الشراء</th>":""}${SS?"<th>سعر البيع</th>":""}
-              ${SS?"<th>قبل الضريبة</th><th>قيمة مضافة</th><th>أرباح ت.ص</th><th>الإجمالي</th>":""}
-              <th>التعتيق</th><th></th>
+              ${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","القطر")}${supTh("type","النوع")}
+              ${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}
+              ${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع"):""}
+              ${SS?supTh("sub","قبل الضريبة")+supTh("tax","قيمة مضافة")+supTh("disc","أرباح ت.ص")+supTh("total","الإجمالي"):""}
+              ${supTh("aging","التعتيق")}<th></th>
             </tr></thead>
             <tbody>${rows}</tbody>
             ${invoiceFoot}
@@ -5177,6 +5212,23 @@ function openMyPassword(first){
 if('serviceWorker' in navigator){
   window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});
 }
+</script>
+<script>
+// ===== الجدول ينتهي عند أسفل الشاشة بالظبط: شريط السكرول الأفقي دايمًا ظاهر =====
+(function(){
+  let pend=false;
+  const fit=()=>{ pend=false;
+    const ws=[...document.querySelectorAll(".content .tbl-wrap")];
+    const hs=ws.map(w=>{ const r=w.getBoundingClientRect(); return r.width?Math.max(220,Math.floor(innerHeight-r.top-14)):null; });
+    ws.forEach((w,i)=>{ if(hs[i]!=null) w.style.maxHeight=hs[i]+"px"; });
+  };
+  const q=()=>{ if(pend) return; pend=true; requestAnimationFrame(fit); };
+  addEventListener("resize",q);
+  document.addEventListener("scroll",q,true);
+  document.addEventListener("click",()=>setTimeout(q,60),true);
+  new MutationObserver(q).observe(document.body,{childList:true,subtree:true});
+  q();
+})();
 </script>
 </body>
 </html>
