@@ -722,6 +722,7 @@ table.qs-table tr.qs-net td{font-weight:700;background:#f4f4f4}
           <button type="button" class="eye" title="إظهار/إخفاء" onclick="var i=document.getElementById('loginPass');i.type=i.type==='password'?'text':'password'">👁</button>
         </div>
       </div>
+      <label for="loginRemember" style="display:flex;gap:8px;align-items:center;font-size:13px;margin:2px 2px 14px;cursor:pointer;user-select:none"><input type="checkbox" id="loginRemember" checked style="width:16px;height:16px;margin:0;cursor:pointer"><span>تذكّر كلمة المرور على هذا الجهاز</span></label>
       <button class="btn-login" onclick="doLogin()">دخول</button>
       <div class="err" id="loginErr"></div>
       <div class="foot">IRON GATE SUPPLIES © 2026</div>
@@ -1280,6 +1281,25 @@ async function startSession(user, restored){
   if(!restored){ audit("login","تسجيل دخول",u); sb.rpc("touch_login").then(()=>{},()=>{}); }
   return true;
 }
+const SAVED_KEY="irongate_saved_login", REMEMBER_KEY="irongate_remember";
+function rememberOn(){ try{ return localStorage.getItem(REMEMBER_KEY)!=="0"; }catch(e){ return true; } }
+function encPw(p){ try{ return btoa(unescape(encodeURIComponent(p))); }catch(e){ return ""; } }
+function decPw(p){ try{ return decodeURIComponent(escape(atob(p))); }catch(e){ return ""; } }
+function saveLogin(no,pass){
+  const rem=!!document.getElementById("loginRemember")?.checked;
+  try{ localStorage.setItem(REMEMBER_KEY, rem?"1":"0"); localStorage.setItem(SAVED_KEY, JSON.stringify(rem?{no, p:encPw(pass)}:{no})); }catch(e){}
+}
+function forgetBadSavedPass(no,pass){
+  try{ const sv=JSON.parse(localStorage.getItem(SAVED_KEY)||"null"); if(sv&&sv.no===no&&sv.p&&decPw(sv.p)===pass) localStorage.setItem(SAVED_KEY, JSON.stringify({no})); }catch(e){}
+}
+function restoreSavedLogin(){
+  const noInp=document.getElementById("loginUserNo"), passInp=document.getElementById("loginPass"), cb=document.getElementById("loginRemember");
+  if(cb) cb.checked=rememberOn();
+  try{
+    const sv=JSON.parse(localStorage.getItem(SAVED_KEY)||"null");
+    if(sv){ if(noInp&&sv.no) noInp.value=sv.no; if(passInp&&cb&&cb.checked&&sv.p) passInp.value=decPw(sv.p); }
+  }catch(e){}
+}
 async function doLogin(){
   if(loginBusy) return;
   loginErr("");
@@ -1295,12 +1315,12 @@ async function doLogin(){
     const r = await sb.auth.signInWithPassword({ email:`u${no}@irongate.app`, password:pass });
     if(!r.error){
       const ok = await startSession(r.data.user,false);
-      if(ok){ delete locks[no]; lockSet(locks); try{ localStorage.setItem("irongate_saved_login", JSON.stringify({no})); }catch(e){} document.getElementById("loginPass").value=""; }
+      if(ok){ delete locks[no]; lockSet(locks); saveLogin(no,pass); document.getElementById("loginPass").value=""; }
       return;
     }
     lk.n=(lk.n||0)+1;
     if(lk.n>=MAX_TRIES){ lk.until=Date.now()+LOCK_SEC*1000; lk.n=0; }
-    locks[no]=lk; lockSet(locks);
+    locks[no]=lk; lockSet(locks); forgetBadSavedPass(no,pass);
     loginErr(lk.until>Date.now()?`تم إيقاف المحاولات ${LOCK_SEC} ثانية بعد محاولات فاشلة متكررة`:`رقم المستخدم أو كلمة المرور غير صحيحة (متبقي ${MAX_TRIES-lk.n} محاولات)`);
     document.getElementById("loginPass")?.select();
   }catch(e){ loginErr("تعذر الاتصال بالسيرفر: "+(e.message||e)); }
@@ -1324,6 +1344,7 @@ function doLogout(reason){
   document.getElementById("app").style.display="none";
   document.getElementById("login").style.display="flex";
   document.getElementById("loginPass").value="";
+  restoreSavedLogin();
   loginErr(reason||"");
   setTimeout(()=>document.getElementById("loginPass")?.focus(),50);
 }
@@ -1349,11 +1370,8 @@ document.addEventListener("DOMContentLoaded",()=>{
   if(passInp){ passInp.addEventListener("keyup",handler); }
   // استرجاع الجلسة في نفس التبويب (بتتمسح لما التبويب يتقفل)
   sb.auth.getSession().then(r=>{ if(r.data && r.data.session) startSession(r.data.session.user,true); });
-  // رقم المستخدم المحفوظ فقط — كلمة المرور بتتكتب كل مرة
-  try{
-    const sv=JSON.parse(localStorage.getItem("irongate_saved_login")||"null");
-    if(sv){ if(sv.pass!==undefined){ localStorage.setItem("irongate_saved_login",JSON.stringify({no:sv.no})); } if(noInp&&sv.no) noInp.value=sv.no; }
-  }catch(e){}
+  // رقم المستخدم وكلمة المرور (لو "تذكّر" مفعّل) من آخر دخول ناجح
+  restoreSavedLogin();
   (noInp&&noInp.value?passInp:noInp)?.focus();
 });
 
