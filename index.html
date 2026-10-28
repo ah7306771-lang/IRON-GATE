@@ -675,6 +675,26 @@ table.qs-table tr.qs-net td{font-weight:700;background:#f4f4f4}
 .qs-btn.pri{background:#e2621f;color:#fff}
 .qs-btn.sec{background:#fff;color:#e2621f}
 .qs-btn:hover{filter:brightness(.96)}
+/* ---------- الصلاحيات والمستخدمين ---------- */
+.perm-hide{display:none!important}
+.topbar .user{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tb-warn{background:#fff3da;color:var(--warn);border:1px solid #f0d5a0;animation:pwpulse 2s infinite}
+@keyframes pwpulse{0%,100%{box-shadow:0 0 0 0 rgba(184,135,26,.35)}50%{box-shadow:0 0 0 6px rgba(184,135,26,0)}}
+.pm-tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.perm-table{width:100%;border-collapse:collapse;font-size:13px}
+.perm-table th,.perm-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+.perm-table th{background:var(--bg-3);color:var(--gold-2);font-size:12px;position:sticky;top:0}
+.perm-table td.pm-name{text-align:right;font-weight:700;color:var(--text)}
+.perm-table td.na{color:#c9c2ae}
+.perm-table td.pm-price{background:#fff8e8}
+.perm-table td.pm-price label{display:inline-flex;gap:5px;align-items:center;cursor:pointer;color:var(--warn);font-size:12px;font-weight:700}
+.perm-table input[type=checkbox]{width:17px;height:17px;accent-color:var(--gold);cursor:pointer}
+.perm-table input[type=checkbox]:disabled{opacity:.35;cursor:not-allowed}
+.pm-sys{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;cursor:pointer}
+.pm-sys small{color:var(--text-dim)}
+.pm-locked #pmWrap,.pm-locked .pm-sys{opacity:.35;pointer-events:none}
+.pm-note{margin-top:10px;padding:10px 14px;background:var(--gold-soft);border:1px solid var(--gold);border-radius:8px;color:var(--gold-2);font-size:13px;font-weight:700}
+.pm-hint{margin-top:12px;color:var(--text-dim);font-size:12px;line-height:1.9}
 </style>
 </head>
 <body>
@@ -935,7 +955,8 @@ const defaults = {
   users: [
     { no: 1, name: "أدمن", password: "1234", role: "admin", active: true }
   ],
-  treasuryEntries: []  // التحصيلات والمدفوعات معًا — direction:"in"|"out"
+  treasuryEntries: [],  // التحصيلات والمدفوعات معًا — direction:"in"|"out"
+  auditLog: []          // سجل النشاط (دخول/صلاحيات/حذف...)
 };
 
 let state = loadState();
@@ -957,76 +978,270 @@ function loadState(){
   }
 }
 function saveState(){
+  try{ securityMigrate(state); }catch(e){}
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch(e){ toast("فشل الحفظ: "+e.message,"err"); }
 }
 
-// ---------- login ----------
-// ---------- Login (شاشة واحدة) ----------
-let currentUser = null;
+// ================= الأمان والصلاحيات: تسجيل الدخول + RBAC + سجل النشاط =================
+// الشاشات اللي ليها صلاحيات. prices:true = فيها أسعار شراء/بيع ممكن تتخفى على مستوى المستخدم.
+const SCREENS = [
+  { id:"dashboard", label:"لوحة التحكم",       icon:"⬢",  acts:[] },
+  { id:"master",    label:"البيانات الأساسية", icon:"◉",  acts:["add","edit","delete"] },
+  { id:"settings",  label:"الإعدادات العامة",  icon:"⚙",  acts:["edit"] },
+  { id:"quote",     label:"عرض السعر",         icon:"💲", acts:["add","edit","delete","print"] },
+  { id:"quoteList", label:"سجل عروض السعر",    icon:"📑", acts:["edit","delete"] },
+  { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
+  { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post"], prices:true },
+  { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete"], prices:true },
+  { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete"] },
+  { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] }
+];
+const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", close:"إقفال/فتح", print:"طباعة/PDF" };
+const ACT_COLS = ["view","add","edit","delete","post","close","print"];
 
-function loginErr(msg){
-  const e = document.getElementById("loginErr");
-  if(e){ e.textContent = msg || ""; }
+function permsBlank(on){
+  const p = { screens:{}, hide:{}, sys:{ backup:!!on } };
+  SCREENS.forEach(s=>{
+    p.screens[s.id] = { view:!!on };
+    s.acts.forEach(a=>{ p.screens[s.id][a] = !!on; });
+    if(s.prices) p.hide[s.id] = { buy:false, sell:false };
+  });
+  return p;
+}
+function permsGrant(p, scr, acts){
+  const s = SCREENS.find(x=>x.id===scr); p.screens[scr].view = true;
+  (acts||[]).forEach(a=>{ if(a==="*") s.acts.forEach(x=>{ p.screens[scr][x]=true; }); else p.screens[scr][a]=true; });
+  return p;
+}
+const ROLE_PRESETS = {
+  admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
+  manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
+  accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص بكل الأسعار", build(){
+    const p=permsBlank(false);
+    ["dashboard","master","shipments","supply"].forEach(s=>permsGrant(p,s));
+    permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
+  sales:{ label:"مبيعات", desc:"أمر البيع كامل + إدخال البوالص — سعر الشراء مخفي", build(){
+    const p=permsBlank(false);
+    ["dashboard","master","supply"].forEach(s=>permsGrant(p,s));
+    permsGrant(p,"saleOrder",["add","edit","print","close"]); permsGrant(p,"shipments",["add","edit"]);
+    permsGrant(p,"quote",["add","edit","print"]); permsGrant(p,"quoteList",["edit"]);
+    p.hide.shipments.buy=true; p.hide.supply.buy=true; return p; } },
+  warehouse:{ label:"توريد / مخزن", desc:"إدخال وترحيل البوالص بدون أي أسعار (شراء أو بيع)", build(){
+    const p=permsBlank(false);
+    ["dashboard","saleOrder","supply"].forEach(s=>permsGrant(p,s)); permsGrant(p,"shipments",["add","edit","post"]);
+    ["shipments","supply"].forEach(s=>{ p.hide[s].buy=true; p.hide[s].sell=true; }); return p; } },
+  viewer:{ label:"مشاهدة فقط", desc:"عرض الشاشات بدون أي تعديل — سعر الشراء مخفي", build(){
+    const p=permsBlank(false);
+    SCREENS.filter(s=>s.id!=="settings").forEach(s=>permsGrant(p,s.id));
+    p.hide.shipments.buy=true; p.hide.supply.buy=true; return p; } },
+  custom:{ label:"مخصّص", desc:"اضبط كل صلاحية بنفسك", build:()=>permsBlank(false) }
+};
+function normalizePerms(p){
+  p.screens = p.screens||{}; p.hide = p.hide||{}; p.sys = p.sys||{};
+  SCREENS.forEach(s=>{
+    const o = p.screens[s.id] = p.screens[s.id]||{};
+    o.view = o.view===true;
+    s.acts.forEach(a=>{ o[a] = o.view && o[a]===true; });
+    if(s.prices){ const h = p.hide[s.id] = p.hide[s.id]||{}; h.buy = h.buy===true; h.sell = h.sell===true; }
+  });
+  p.sys.backup = p.sys.backup===true;
+  return p;
+}
+
+// ---------- كلمات المرور: تجزئة SHA-256 + salt + تكرار ----------
+function sha256(ascii){
+  function rightRotate(v,a){ return (v>>>a)|(v<<(32-a)); }
+  const mathPow=Math.pow, maxWord=mathPow(2,32);
+  let result=''; const words=[], asciiBitLength=ascii.length*8;
+  let hash=sha256.h=sha256.h||[], k=sha256.k=sha256.k||[], primeCounter=k.length;
+  const isComposite={};
+  for(let candidate=2;primeCounter<64;candidate++){
+    if(!isComposite[candidate]){
+      for(let i=0;i<313;i+=candidate) isComposite[i]=candidate;
+      hash[primeCounter]=(mathPow(candidate,.5)*maxWord)|0;
+      k[primeCounter++]=(mathPow(candidate,1/3)*maxWord)|0;
+    }
+  }
+  ascii+='\x80';
+  while(ascii.length%64-56) ascii+='\x00';
+  for(let i=0;i<ascii.length;i++){ const j=ascii.charCodeAt(i); if(j>>8) return ''; words[i>>2]|=j<<((3-i)%4)*8; }
+  words[words.length]=((asciiBitLength/maxWord)|0);
+  words[words.length]=(asciiBitLength);
+  for(let j=0;j<words.length;){
+    const w=words.slice(j,j+=16), oldHash=hash;
+    hash=hash.slice(0,8);
+    for(let i=0;i<64;i++){
+      const w15=w[i-15], w2=w[i-2], a=hash[0], e=hash[4];
+      const temp1=hash[7]+(rightRotate(e,6)^rightRotate(e,11)^rightRotate(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]
+        +(w[i]=(i<16)?w[i]:(w[i-16]+(rightRotate(w15,7)^rightRotate(w15,18)^(w15>>>3))+w[i-7]+(rightRotate(w2,17)^rightRotate(w2,19)^(w2>>>10)))|0);
+      const temp2=(rightRotate(a,2)^rightRotate(a,13)^rightRotate(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(temp1+temp2)|0].concat(hash); hash[4]=(hash[4]+temp1)|0;
+    }
+    for(let i=0;i<8;i++) hash[i]=(hash[i]+oldHash[i])|0;
+  }
+  for(let i=0;i<8;i++) for(let j=3;j+1;j--){ const b=(hash[i]>>(j*8))&255; result+=((b<16)?0:'')+b.toString(16); }
+  return result;
+}
+const PW_ROUNDS = 2000, PW_MIN = 6;
+function randSalt(){
+  try{ const a=new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a,b=>b.toString(16).padStart(2,"0")).join(""); }
+  catch(e){ return Math.random().toString(36).slice(2)+Date.now().toString(36); }
+}
+function hashPw(pw, salt){
+  let h = sha256(unescape(encodeURIComponent(salt+":"+pw)));
+  for(let i=0;i<PW_ROUNDS;i++) h = sha256(h+salt);
+  return h;
+}
+function setUserPassword(u, pw){ u.salt=randSalt(); u.passHash=hashPw(pw,u.salt); u.pwChangedAt=Date.now(); delete u.password; }
+function verifyPassword(u, pw){ return !!(u && u.passHash && u.salt) && hashPw(pw,u.salt)===u.passHash; }
+
+// ترحيل بيانات المستخدمين (آمن للتكرار): تجزئة كلمات المرور القديمة + صلاحيات افتراضية
+function securityMigrate(s){
+  if(!Array.isArray(s.users) || !s.users.length) s.users=[{ no:1, name:"أدمن", password:"1234", role:"admin", active:true }];
+  if(!Array.isArray(s.auditLog)) s.auditLog=[];
+  s.users.forEach(u=>{
+    if(u.active===undefined) u.active=true;
+    if(u.role!=="admin" && !ROLE_PRESETS[u.role]) u.role = (u.role==="user") ? "manager" : "custom";
+    if(u.password!==undefined && !u.passHash){
+      if(String(u.password)==="1234") u.mustChange=true;
+      setUserPassword(u,String(u.password));
+    }
+    delete u.password;
+    if(!u.perms) u.perms = ROLE_PRESETS[u.role].build();
+    normalizePerms(u.perms);
+  });
+}
+securityMigrate(state);
+
+// ---------- أدوات الصلاحيات ----------
+let currentUser = null;
+function curU(){ return currentUser ? ((state.users||[]).find(u=>u.no===currentUser.no)||null) : null; }
+function isAdmin(u){ u=u||curU(); return !!u && u.active!==false && u.role==="admin"; }
+function can(scr, act){
+  const u=curU(); if(!u || u.active===false) return false;
+  if(u.role==="admin") return true;
+  const s=u.perms&&u.perms.screens&&u.perms.screens[scr]; if(!s||!s.view) return false;
+  return (!act||act==="view") ? true : s[act]===true;
+}
+function canView(page){
+  if(page==="users") return isAdmin();
+  if(!SCREENS.some(s=>s.id===page)) return isAdmin();   // شاشات "قريبًا" للأدمن بس
+  return can(page,"view");
+}
+function canSys(k){ const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !!(u.perms&&u.perms.sys&&u.perms.sys[k]); }
+function showBuy(scr){  const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].buy); }
+function showSell(scr){ const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].sell); }
+function firstAllowedPage(){ if(can("dashboard","view")) return "dashboard"; const s=SCREENS.find(x=>can(x.id,"view")); return s?s.id:null; }
+function activeAdmins(){ return (state.users||[]).filter(u=>u.role==="admin"&&u.active!==false); }
+
+// ---------- سجل النشاط ----------
+function audit(type, detail, who){
+  try{
+    const u=who||curU();
+    (state.auditLog=state.auditLog||[]).push({ t:Date.now(), u:u?u.no:null, n:u?u.name:"", type, d:detail||"" });
+    if(state.auditLog.length>1000) state.auditLog.splice(0,state.auditLog.length-1000);
+    saveState();
+  }catch(e){}
+}
+
+// ---------- قفل المحاولات الفاشلة ----------
+const LOCK_KEY="irongate_lockouts", MAX_TRIES=5, LOCK_SEC=60;
+function lockGet(){ try{ return JSON.parse(localStorage.getItem(LOCK_KEY)||"{}"); }catch(e){ return {}; } }
+function lockSet(o){ try{ localStorage.setItem(LOCK_KEY,JSON.stringify(o)); }catch(e){} }
+
+// ---------- Login ----------
+function loginErr(msg){ const e=document.getElementById("loginErr"); if(e) e.textContent=msg||""; }
+function enterApp(u, restored){
+  currentUser = { no:u.no, name:u.name };
+  lastActivity = Date.now();
+  document.getElementById("login").style.display="none";
+  document.getElementById("app").style.display="block";
+  try{ sessionStorage.setItem("irongate_user_no", String(u.no)); }catch(e){}
+  renderNav(); updateTopbarUser();
+  const p=firstAllowedPage();
+  if(p) go(p);
+  else { document.getElementById("content").innerHTML=noAccessHtml(); document.getElementById("pageTitle").textContent="—"; document.getElementById("pageCrumb").textContent=""; }
+  if(!restored && u.mustChange) setTimeout(()=>openMyPassword(true),250);
 }
 function doLogin(){
-  loginErr("");
-  const noStr = (document.getElementById("loginUserNo")?.value || "").trim();
-  const pass = document.getElementById("loginPass")?.value || "";
-  const no = parseInt(noStr, 10);
-  if(!noStr || isNaN(no) || no<=0){
-    loginErr("أدخل رقم مستخدم صحيح");
-    document.getElementById("loginUserNo")?.focus();
+  loginErr(""); securityMigrate(state);
+  const noStr=(document.getElementById("loginUserNo")?.value||"").trim();
+  const pass=document.getElementById("loginPass")?.value||"";
+  const no=parseInt(noStr,10);
+  if(!noStr||isNaN(no)||no<=0){ loginErr("أدخل رقم مستخدم صحيح"); document.getElementById("loginUserNo")?.focus(); return; }
+  const locks=lockGet(), lk=locks[no]||{n:0,until:0};
+  if(lk.until>Date.now()){ loginErr(`تم إيقاف المحاولات مؤقتًا — حاول بعد ${Math.ceil((lk.until-Date.now())/1000)} ثانية`); return; }
+  const u=state.users.find(x=>x.no===no);
+  if(u && verifyPassword(u,pass)){
+    if(u.active===false){ loginErr("هذا الحساب موقوف — راجع المدير"); audit("login_fail","محاولة دخول لحساب موقوف",u); return; }
+    delete locks[no]; lockSet(locks);
+    u.lastLogin=Date.now();
+    try{ localStorage.setItem("irongate_saved_login", JSON.stringify({no:u.no})); }catch(e){}   // رقم المستخدم فقط — بدون كلمة المرور
+    enterApp(u,false);
+    audit("login","تسجيل دخول",u);
     return;
   }
-  const u = (state.users||[]).find(x=>x.no===no && x.active!==false);
-  if(!u){
-    loginErr("رقم المستخدم غير موجود");
-    document.getElementById("loginUserNo")?.focus();
-    return;
-  }
-  if(pass !== String(u.password)){
-    loginErr("كلمة المرور غير صحيحة");
-    document.getElementById("loginPass")?.focus();
-    return;
-  }
-  currentUser = u;
-  document.getElementById("login").style.display = "none";
-  document.getElementById("app").style.display = "block";
-  try{ sessionStorage.setItem("irongate_user_no", String(u.no)); }catch(e){}
-  try{ localStorage.setItem("irongate_saved_login", JSON.stringify({no:u.no,pass:pass})); }catch(e){}
-  renderNav(); go("dashboard"); updateTopbarUser();
+  lk.n=(lk.n||0)+1;
+  if(lk.n>=MAX_TRIES){ lk.until=Date.now()+LOCK_SEC*1000; lk.n=0; audit("lockout",`إيقاف مؤقت للمستخدم #${no} بعد ${MAX_TRIES} محاولات فاشلة`,u||{no:no,name:""}); }
+  else audit("login_fail",`محاولة دخول فاشلة على المستخدم #${no}`,u||{no:no,name:""});
+  locks[no]=lk; lockSet(locks);
+  loginErr(lk.until>Date.now()?`تم إيقاف المحاولات ${LOCK_SEC} ثانية بعد محاولات فاشلة متكررة`:`رقم المستخدم أو كلمة المرور غير صحيحة (متبقي ${MAX_TRIES-lk.n} محاولات)`);
+  document.getElementById("loginPass")?.select();
 }
-function logout(){
-  if(!confirm("تسجيل الخروج؟")) return;
-  currentUser = null;
+function resetSessionMemory(){
+  try{ draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; }catch(e){}
+  try{ soDraft=null; soLoadedId=null; }catch(e){}
+  try{ qtDraft=null; qtLoadedId=null; }catch(e){}
+  try{ document.getElementById("qtOv")?.remove(); document.body.style.overflow=""; }catch(e){}
+  try{ document.getElementById("qsOverlay").style.display="none"; }catch(e){}
+  const c=document.getElementById("content"); if(c) c.innerHTML="";
+  closeModal();
+}
+function doLogout(reason){
+  if(currentUser) audit(reason?"session_timeout":"logout", reason||"تسجيل خروج");
+  currentUser=null;
   try{ sessionStorage.removeItem("irongate_user_no"); }catch(e){}
-  try{ localStorage.removeItem("irongate_saved_login"); }catch(e){}
-  document.getElementById("app").style.display = "none";
-  document.getElementById("login").style.display = "flex";
-  document.getElementById("loginUserNo").value = "";
-  document.getElementById("loginPass").value = "";
-  loginErr("");
-  setTimeout(()=>document.getElementById("loginUserNo")?.focus(), 50);
+  resetSessionMemory();
+  document.getElementById("app").style.display="none";
+  document.getElementById("login").style.display="flex";
+  document.getElementById("loginPass").value="";
+  loginErr(reason||"");
+  setTimeout(()=>document.getElementById("loginPass")?.focus(),50);
 }
+function logout(){ if(!confirm("تسجيل الخروج؟")) return; doLogout(); }
+
+// خروج تلقائي بعد 30 دقيقة بدون نشاط
+const IDLE_MS = 30*60*1000;
+let lastActivity = Date.now();
+["click","keydown","mousemove","touchstart","scroll"].forEach(ev=>document.addEventListener(ev,()=>{ lastActivity=Date.now(); },{passive:true}));
+setInterval(()=>{ if(currentUser && Date.now()-lastActivity>IDLE_MS) doLogout("انتهت الجلسة بعد 30 دقيقة من عدم النشاط"); },30000);
+
+function roleLabel(u){ return u.role==="admin" ? "أدمن" : ((ROLE_PRESETS[u.role]||{}).label||"مخصّص"); }
 function updateTopbarUser(){
-  const el = document.querySelector(".topbar .user");
-  if(el && currentUser){
-    el.innerHTML = `المستخدم: <strong>#${currentUser.no} ${escapeHtml(currentUser.name)}</strong>${currentUser.role==='admin'?' <span class="chip gold" style="font-size:9px;margin-right:4px">أدمن</span>':''}`;
-  }
+  const el=document.querySelector(".topbar .user"), u=curU(); if(!el||!u) return;
+  el.innerHTML = `<span>المستخدم: <strong>#${u.no} ${escapeHtml(u.name)}</strong> <span class="chip ${u.role==='admin'?'gold':''}" style="font-size:10px;margin-right:4px">${escapeHtml(roleLabel(u))}</span></span>`
+    + (u.mustChange ? `<button class="btn sm tb-warn" onclick="openMyPassword()">⚠ غيّر كلمة المرور الافتراضية</button>` : "")
+    + `<button class="btn ghost sm" onclick="openMyPassword()" title="تغيير كلمة المرور">🔑</button>`;
 }
 document.addEventListener("DOMContentLoaded",()=>{
-  const noInp = document.getElementById("loginUserNo");
-  const passInp = document.getElementById("loginPass");
-  const handler = e => { if(e.key==="Enter") doLogin(); };
-  if(noInp){ noInp.addEventListener("keyup", handler); noInp.focus(); }
-  if(passInp){ passInp.addEventListener("keyup", handler); }
-  // تعبئة اليوزر والباسورد المحفوظين — تدوس "دخول" بنفسك (بتتمسح عند تسجيل الخروج)
+  const noInp=document.getElementById("loginUserNo"), passInp=document.getElementById("loginPass");
+  const handler=e=>{ if(e.key==="Enter") doLogin(); };
+  if(noInp){ noInp.addEventListener("keyup",handler); }
+  if(passInp){ passInp.addEventListener("keyup",handler); }
+  // استرجاع الجلسة في نفس التبويب (بتتمسح لما التبويب يتقفل)
   try{
-    const sv = JSON.parse(localStorage.getItem("irongate_saved_login")||"null");
-    if(sv && noInp && passInp){ noInp.value = sv.no; passInp.value = sv.pass; document.querySelector("#login button")?.focus(); }
+    const sn=parseInt(sessionStorage.getItem("irongate_user_no")||"",10);
+    if(sn){ securityMigrate(state); const u=state.users.find(x=>x.no===sn&&x.active!==false); if(u){ enterApp(u,true); return; } }
   }catch(e){}
+  // رقم المستخدم المحفوظ فقط — كلمة المرور بتتكتب كل مرة
+  try{
+    const sv=JSON.parse(localStorage.getItem("irongate_saved_login")||"null");
+    if(sv){ if(sv.pass!==undefined){ localStorage.setItem("irongate_saved_login",JSON.stringify({no:sv.no})); } if(noInp&&sv.no) noInp.value=sv.no; }
+  }catch(e){}
+  (noInp&&noInp.value?passInp:noInp)?.focus();
 });
+
 
 // ---------- أيقونات الإشعارات في شاشة الدخول (قايمة 3 شرط) ----------
 function lgfToggle(force){
@@ -1044,7 +1259,8 @@ const navGroups = [
   ]},
   { id:"master", icon:"✦", label:"البيانات الأساسية", items:[
     { id:"master", icon:"◉", label:"إدارة البيانات" },
-    { id:"settings", icon:"⚙", label:"الإعدادات العامة" }
+    { id:"settings", icon:"⚙", label:"الإعدادات العامة" },
+    { id:"users", icon:"🔐", label:"المستخدمون والصلاحيات" }
   ]},
   { id:"sales", icon:"🛒", label:"نظام المبيعات", items:[
     { id:"quote", icon:"💲", label:"عرض السعر" },
@@ -1089,10 +1305,14 @@ function ensureCurrentGroupExpanded(){
   }
 }
 
+// القائمة بتعرض بس الشاشات المسموحة للمستخدم الحالي
+function visibleNavGroups(){
+  return navGroups.map(g=>({ ...g, items:g.items.filter(it=>canView(it.id)) })).filter(g=>g.items.length);
+}
 function renderNav(){
   ensureCurrentGroupExpanded();
   const n = document.getElementById("nav");
-  n.innerHTML = navGroups.map(g => {
+  n.innerHTML = visibleNavGroups().map(g => {
     const isCurrentIn = g.items.some(it=>it.id===currentPage);
     const expanded = g.single ? false : (navExpanded[g.id] || isCurrentIn);
     const activeCls = isCurrentIn ? "active" : "";
@@ -1131,7 +1351,8 @@ function go(page){
     supply:["بيانات التوريد","كل البوالص والأصناف"],
     receipts:["التحصيلات","شيكات وتحويلات ونقدية من العملاء"],
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
-    settings:["الإعدادات العامة","الضريبة والخصومات والعملة"]
+    settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
+    users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"]
   };
   const t = titles[page] || ["",""];
   document.getElementById("pageTitle").textContent = t[0];
@@ -1140,6 +1361,7 @@ function go(page){
   if(page==="dashboard") c.innerHTML = viewDashboard();
   else if(page==="master") { c.innerHTML = viewMaster(); bindMaster(); }
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
+  else if(page==="users") { c.innerHTML = viewUsers(); }
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
   else if(page==="quote"){ c.innerHTML = viewQuote(); bindQuote(); }
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
@@ -1802,14 +2024,8 @@ function migrateState(s){
     if(!e.allocations) e.allocations = [];
     if(e.notes===undefined) e.notes = "";
   });
-  // المستخدمين
-  if(!Array.isArray(s.users) || !s.users.length){
-    s.users = [{ no:1, name:"أدمن", password:"1234", role:"admin", active:true }];
-  }
-  s.users.forEach(u=>{
-    if(u.active===undefined) u.active=true;
-    if(!u.role) u.role="user";
-  });
+  // المستخدمين + الصلاحيات + كلمات المرور المشفّرة
+  securityMigrate(s);
   // تحويل العملاء والموردين من نصوص لكائنات ببيانات إضافية
   const toParty = v => (typeof v === "string") ? { name: v, address:"", phone:"", taxCard:"", commercialReg:"", email:"", contactPerson:"", notes:"" } : {
     name: v.name||"", address: v.address||"", phone: v.phone||"",
@@ -1918,7 +2134,7 @@ function viewShipments(){
   <div class="card" style="margin-top:16px"><div class="head"><h3>الأصناف</h3>
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
     <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items">
-      <thead><tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>حالة التعتيق</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th>الفرق</th><th>سعر الشراء</th><th>سعر البيع</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th><th>ملاحظة</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>حالة التعتيق</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th>الفرق</th>${showBuy("shipments")?"<th>سعر الشراء</th>":""}${showSell("shipments")?"<th>سعر البيع</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr></thead>
       <tbody id="itemsBody">${d.items.map(itemRow).join("")}</tbody>
     </table></div>
     <p style="padding:8px 16px 12px;color:var(--text-dim);font-size:12px">الحساب بيتم على <strong style="color:var(--gold)">الوزن الفعلي</strong>، وكمية التوريد للمقارنة والتسجيل فقط. اضغط أيقونة الملاحظة <span style="color:var(--gold)">📝</span> على السطر لإضافة ملاحظة.</p>
@@ -1962,10 +2178,10 @@ function itemRow(it,i){
     <td><input class="inp num" type="number" min="0" step="0.001" ${ro} value="${v(it.supplyQty)}" oninput="setI(${i},'supplyQty',this.value)"></td>
     <td><input class="inp num" type="number" min="0" step="0.001" ${ro} value="${v(it.actualWeight)}" data-k="actualWeight" oninput="setI(${i},'actualWeight',this.value)"></td>
     <td class="num" id="rdf${i}"></td>
-    <td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.buyPrice)}" data-k="buyPrice" oninput="setI(${i},'buyPrice',this.value)"></td>
-    <td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.sellPrice)}" data-k="sellPrice" oninput="setI(${i},'sellPrice',this.value)"></td>
-    <td class="num" id="rsub${i}"></td><td class="num" id="rtax${i}"></td><td class="num" id="rdis${i}"></td>
-    <td class="num" id="rtot${i}"><strong></strong></td>
+    ${showBuy("shipments")?`<td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.buyPrice)}" data-k="buyPrice" oninput="setI(${i},'buyPrice',this.value)"></td>`:""}
+    ${showSell("shipments")?`<td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.sellPrice)}" data-k="sellPrice" oninput="setI(${i},'sellPrice',this.value)"></td>`:""}
+    ${showSell("shipments")?`<td class="num" id="rsub${i}"></td><td class="num" id="rtax${i}"></td><td class="num" id="rdis${i}"></td>
+    <td class="num" id="rtot${i}"><strong></strong></td>`:""}
     <td style="text-align:center"><button class="note-icon-btn ${(it.notes||"").trim()?'has-note':''}" ${ro} onclick="openItemNote(${i})" title="${(it.notes||"").trim()?'يوجد ملاحظة — اضغط للتعديل':'إضافة ملاحظة'}">📝</button></td>
     <td>${viewOnly?"":`<div class="td-actions"><button class="del" onclick="delRow(${i})">حذف</button></div>`}</td>
   </tr>`;
@@ -2161,6 +2377,7 @@ function draftTotals(){
 function refreshTotals(){
   const set=(id,h)=>{const e=document.getElementById(id); if(e) e.innerHTML=h;};
   const opts = draftCalcOpts();
+  const SS=showSell("shipments"), SB=showBuy("shipments");
   draft.items.forEach((it,i)=>{
     const c=calcItem(it,opts);
     const diff=(+it.actualWeight||0)-(+it.supplyQty||0);
@@ -2172,15 +2389,15 @@ function refreshTotals(){
     <div><span>إجمالي كمية التوريد (طن)</span><strong>${fmt(t.supply,3)}</strong></div>
     <div><span>إجمالي الوزن الفعلي (طن)</span><strong>${fmt(t.weight,3)}</strong></div>
     <div><span>الفرق (طن)</span><strong>${fmt(t.weight-t.supply,3)}</strong></div>
-    <div><span>قبل الضريبة</span><strong>${fmt(t.subtotal)}</strong></div>
-    <div><span>قيمة مضافة ${draft.applyVat!==false?('('+(draft.vatPct||0)+'%)'):'(موقوفة)'}</span><strong>${fmt(t.tax)}</strong></div>
-    <div><span>أرباح ت.ص ${draft.applyProfitTax?('('+(draft.profitTaxPct||0)+'%)'):'(موقوفة)'}</span><strong>${fmt(t.discount)}</strong></div>
-    <div><span>إجمالي الشراء</span><strong>${fmt(t.buyTotal)}</strong></div>
-    <div><span>هامش قبل الضريبة</span><strong>${fmt(t.subtotal-t.buyTotal)}</strong></div>
-    <div class="grand"><span>إجمالي الأمر (${cur})</span><strong>${fmt(t.grandTotal)}</strong></div>`);
+    ${SS?`<div><span>قبل الضريبة</span><strong>${fmt(t.subtotal)}</strong></div>`:""}
+    ${SS?`<div><span>قيمة مضافة ${draft.applyVat!==false?('('+(draft.vatPct||0)+'%)'):'(موقوفة)'}</span><strong>${fmt(t.tax)}</strong></div>`:""}
+    ${SS?`<div><span>أرباح ت.ص ${draft.applyProfitTax?('('+(draft.profitTaxPct||0)+'%)'):'(موقوفة)'}</span><strong>${fmt(t.discount)}</strong></div>`:""}
+    ${SB?`<div><span>إجمالي الشراء</span><strong>${fmt(t.buyTotal)}</strong></div>`:""}
+    ${(SS&&SB)?`<div><span>هامش قبل الضريبة</span><strong>${fmt(t.subtotal-t.buyTotal)}</strong></div>`:""}
+    ${SS?`<div class="grand"><span>إجمالي الأمر (${cur})</span><strong>${fmt(t.grandTotal)}</strong></div>`:""}`);
   const cp=+draft.terms.cashPct||0, n=parseInt(draft.terms.installments)||0, days=+draft.terms.periodDays||0;
   const cash=r2(t.grandTotal*cp/100), rest=r2(t.grandTotal-cash);
-  set("termsBox", termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط الدفع لسه متحددتش — لازم تتحدد قبل الترحيل (الحفظ عادي بدونها).</span>':n>0&&cp<100
+  set("termsBox", !SS?(termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط الدفع لسه متحددتش — لازم تتحدد قبل الترحيل.</span>':`نسبة النقدي ${cp}% — ${n>0&&cp<100?`${n} قسط كل ${days} يوم`:"بدون أقساط"}`):termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط الدفع لسه متحددتش — لازم تتحدد قبل الترحيل (الحفظ عادي بدونها).</span>':n>0&&cp<100
     ? `نقدي: <strong style="color:var(--gold)">${fmt(cash)}</strong> — المتبقي ${fmt(rest)} على ${n} قسط، القسط ≈ <strong style="color:var(--gold)">${fmt(rest/n)}</strong> كل ${days} يوم (معاينة فقط — الجدولة الفعلية في الخطوة 5)`
     : `نقدي: <strong style="color:var(--gold)">${fmt(cash)}</strong> — المتبقي ${fmt(rest)}`);
 }
@@ -2366,11 +2583,11 @@ function renderSearch(){
     .slice(0,60);
   const el=document.getElementById("srchRes"); if(!el) return;
   el.innerHTML=rows.length?`<div class="tbl-wrap"><table class="clickrow">
-    <thead><tr><th>البوليصة</th><th>التاريخ</th><th>العميل</th><th>المورد</th><th>الأصناف</th><th>الإجمالي</th><th>الحالة</th></tr></thead>
+    <thead><tr><th>البوليصة</th><th>التاريخ</th><th>العميل</th><th>المورد</th><th>الأصناف</th>${showSell("shipments")?"<th>الإجمالي</th>":""}<th>الحالة</th></tr></thead>
     <tbody>${rows.map(({r,src})=>`<tr data-id="${r.id}" onclick="pickRecord('${src}','${r.id}')">
       <td><strong style="color:var(--gold)">${escapeHtml(r.policyNo)}</strong></td><td>${r.date||""}</td>
       <td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td class="num">${r.items.length}</td>
-      <td class="num">${fmt(r.totals?.grandTotal)}</td>
+      ${showSell("shipments")?`<td class="num">${fmt(r.totals?.grandTotal)}</td>`:""}
       <td>${src==="shipments"?'<span class="chip ok">مرحّلة</span>':'<span class="chip warn">لم تُرحَّل</span>'}</td></tr>`).join("")}</tbody></table></div>`
     :`<div class="empty" style="padding:24px"><p>${allRecords().length?"مفيش نتائج للبحث ده":"لسه مفيش بوالص محفوظة"}</p></div>`;
 }
@@ -2410,6 +2627,7 @@ function viewSupply(){
   <div id="supView"></div>`;
 }
 function renderSupply(){
+  const SB=showBuy("supply"), SS=showSell("supply");
   const L=supplyLines(), T={sq:0,w:0,sub:0,tax:0,dis:0,tot:0,buy:0}, orders=new Set();
   L.forEach(({s,it})=>{
     T.sq+=it.supplyQty; T.w+=it.actualWeight; T.sub+=r2(it.actualWeight*it.sellPrice);
@@ -2419,7 +2637,7 @@ function renderSupply(){
   const k=(l,v,s)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${v}</div><div class="sub">${s}</div></div>`;
   document.getElementById("supKpis").innerHTML=
     k("عدد البوالص",orders.size,`${L.length} صنف`)+k("إجمالي كمية التوريد (طن)",fmt(T.sq,3),"")+k("إجمالي الوزن الفعلي (طن)",fmt(T.w,3),`الفرق ${fmt(T.w-T.sq,3)}`)+
-    k("إجمالي المبيعات",fmt(T.tot),state.settings.currency)+k("إجمالي المشتريات",fmt(T.buy),"بدون ضريبة")+k("هامش قبل الضريبة",fmt(T.sub-T.buy),"")+
+    (SS?k("إجمالي المبيعات",fmt(T.tot),state.settings.currency):"")+(SB?k("إجمالي المشتريات",fmt(T.buy),"بدون ضريبة"):"")+((SS&&SB)?k("هامش قبل الضريبة",fmt(T.sub-T.buy),""):"")+
     k("بوالص محفوظة لم تُرحَّل",state.policies.length,"من شاشة البوليصة ← بحث");
 
   const container = document.getElementById("supView");
@@ -2436,6 +2654,7 @@ function renderSupply(){
 
 // ========== عرض عادي (كل البوالص بصفوف) ==========
 function renderSupplyFlat(L, T){
+  const SB=showBuy("supply"), SS=showSell("supply");
   const body = L.map(({s,it,first})=>{
     const sub=r2(it.actualWeight*it.sellPrice);
     const terms=`${fmt(s.terms.cashPct,0)}% نقدي`+(s.terms.installments?` + ${s.terms.installments}×${s.terms.periodDays}ي`:"");
@@ -2446,21 +2665,23 @@ function renderSupplyFlat(L, T){
       <td>${escapeHtml(itemFactory(s,it))}</td>
       <td>${escapeHtml(it.diameter)}</td><td>${escapeHtml(it.type)}</td>
       <td class="num">${fmt(it.supplyQty,3)}</td><td class="num"><strong>${fmt(it.actualWeight,3)}</strong></td>
-      <td class="num">${fmt(it.buyPrice)}</td><td class="num">${fmt(it.sellPrice)}</td>
-      <td class="num">${fmt(sub)}</td><td class="num">${fmt(it.tax)}</td><td class="num">${fmt(it.discount)}</td><td class="num"><strong>${fmt(it.total)}</strong></td>
+      ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
+      ${SS?`<td class="num">${fmt(sub)}</td><td class="num">${fmt(it.tax)}</td><td class="num">${fmt(it.discount)}</td><td class="num"><strong>${fmt(it.total)}</strong></td>`:""}
       <td>${first?terms:""}</td><td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
       <td>${first?`<div class="td-actions"><button onclick="editShipment('${s.id}')">تعديل</button><button class="del" onclick="delShipment('${s.id}')">حذف</button></div>`:""}</td>
     </tr>`;
   }).join("");
-  const foot = `<tr><td colspan="9">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td><td></td><td></td><td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td><td colspan="3"></td></tr>`;
+  const pr=(SB?1:0)+(SS?1:0);
+  const foot = `<tr><td colspan="9">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td>${pr?`<td colspan="${pr}"></td>`:""}${SS?`<td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
   return `<div class="tbl-wrap"><table>
-    <thead><tr><th>البوليصة</th><th>التاريخ</th><th>المورد</th><th>العميل</th><th>الشركة</th><th>الموقع</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th>سعر الشراء</th><th>سعر البيع</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th><th>الدفع</th><th>التعتيق</th><th></th></tr></thead>
+    <thead><tr><th>البوليصة</th><th>التاريخ</th><th>المورد</th><th>العميل</th><th>الشركة</th><th>الموقع</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>كمية التوريد</th><th>الوزن الفعلي</th>${SB?"<th>سعر الشراء</th>":""}${SS?"<th>سعر البيع</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th>":""}<th>الدفع</th><th>التعتيق</th><th></th></tr></thead>
     <tbody>${body}</tbody><tfoot>${foot}</tfoot>
   </table></div>`;
 }
 
 // ========== تجميع حسب أمر البيع (فاتورة واحدة لكل أمر) ==========
 function renderSupplyGrouped(L){
+  const SB=showBuy("supply"), SS=showSell("supply");
   // L is array of {s, it, first}. We'll group by s.saleOrderId (or 'none')
   const groups = new Map();
   const groupInfo = new Map();
@@ -2520,26 +2741,27 @@ function renderSupplyGrouped(L){
         <td>${escapeHtml(it.diameter)}</td><td>${escapeHtml(it.type)}</td>
         <td class="num">${fmt(it.supplyQty,3)}</td>
         <td class="num"><strong>${fmt(it.actualWeight,3)}</strong></td>
-        <td class="num">${fmt(it.buyPrice)}</td><td class="num">${fmt(it.sellPrice)}</td>
-        <td class="num">${fmt(sub)}</td>
+        ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
+        ${SS?`<td class="num">${fmt(sub)}</td>
         <td class="num">${fmt(it.tax)}</td>
         <td class="num">${fmt(it.discount)}</td>
-        <td class="num"><strong>${fmt(it.total)}</strong></td>
+        <td class="num"><strong>${fmt(it.total)}</strong></td>`:""}
         <td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
         <td><div class="td-actions"><button onclick="editShipment('${s.id}')">تعديل</button><button class="del" onclick="delShipment('${s.id}')">حذف</button></div></td>
       </tr>`;
     }).join("");
 
+    const pr=(SB?1:0)+(SS?1:0);
     const invoiceFoot = `<tfoot>
       <tr style="background:rgba(230,179,37,.08)">
-        <td colspan="7" style="text-align:left;color:var(--gold);font-weight:800">🧾 فاتورة إجمالية — أمر #${escapeHtml(so?.orderNo||"بدون")}</td>
+        <td colspan="7" style="text-align:left;color:var(--gold);font-weight:800">🧾 ${SS?"فاتورة إجمالية":"إجمالي"} — أمر #${escapeHtml(so?.orderNo||"بدون")}</td>
         <td class="num">${fmt(GT.sq,3)}</td>
         <td class="num">${fmt(GT.w,3)}</td>
-        <td colspan="2"></td>
-        <td class="num">${fmt(GT.sub)}</td>
+        ${pr?`<td colspan="${pr}"></td>`:""}
+        ${SS?`<td class="num">${fmt(GT.sub)}</td>
         <td class="num">${fmt(GT.tax)}</td>
         <td class="num">${fmt(GT.dis)}</td>
-        <td class="num" style="color:var(--gold);font-size:14px"><strong>${fmt(GT.tot)}</strong></td>
+        <td class="num" style="color:var(--gold);font-size:14px"><strong>${fmt(GT.tot)}</strong></td>`:""}
         <td colspan="2"></td>
       </tr>
     </tfoot>`;
@@ -2552,10 +2774,10 @@ function renderSupplyGrouped(L){
           <div>${headTitle}</div>
           ${soMeta}
         </div>
-        <div style="text-align:left;direction:ltr">
+        ${SS?`<div style="text-align:left;direction:ltr">
           <div style="color:var(--gold);font-weight:800;font-size:16px">${fmt(GT.tot)}</div>
           <div style="font-size:10px;color:var(--text-dim)">إجمالي الفاتورة</div>
-        </div>
+        </div>`:""}
       </div>
       ${expanded ? `<div class="body" style="padding:0">
         <div class="tbl-wrap" style="border:none;border-radius:0">
@@ -2563,8 +2785,8 @@ function renderSupplyGrouped(L){
             <thead><tr>
               <th>البوليصة</th><th>التاريخ</th><th>الشركة</th><th>الموقع</th><th>المصنع</th><th>القطر</th><th>النوع</th>
               <th>كمية التوريد</th><th>الوزن الفعلي</th>
-              <th>سعر الشراء</th><th>سعر البيع</th>
-              <th>قبل الضريبة</th><th>قيمة مضافة</th><th>أرباح ت.ص</th><th>الإجمالي</th>
+              ${SB?"<th>سعر الشراء</th>":""}${SS?"<th>سعر البيع</th>":""}
+              ${SS?"<th>قبل الضريبة</th><th>قيمة مضافة</th><th>أرباح ت.ص</th><th>الإجمالي</th>":""}
               <th>التعتيق</th><th></th>
             </tr></thead>
             <tbody>${rows}</tbody>
@@ -3852,6 +4074,361 @@ function txToggleFields(){
 // ---------- utils ----------
 function escapeHtml(s){ return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
 function escapeAttr(s){ return escapeHtml(s); }
+
+// ================= تطبيق الصلاحيات على الدوال والشاشات + شاشة المستخدمين =================
+function noAccessHtml(){
+  return `<div class="empty" style="padding:70px 20px;text-align:center"><div style="font-size:44px">🔒</div>
+    <h3 style="margin:10px 0;color:var(--gold-2)">لا تملك صلاحية الوصول لهذه الشاشة</h3>
+    <p style="color:var(--text-dim)">راجع المدير لمنحك الصلاحية المناسبة.</p></div>`;
+}
+(function enforcePermissions(){
+  const scrLabel=id=>(SCREENS.find(s=>s.id===id)||{label:id}).label;
+  function needText(n){ return n.admin?"صلاحية الأدمن":n.sys?"النسخ الاحتياطي":`${ACT_LABEL[n.act]||n.act} في ${scrLabel(n.scr)}`; }
+  function allowed(n){ return n.admin?isAdmin():n.sys?canSys(n.sys):can(n.scr,n.act); }
+
+  // 1) حماية الدوال نفسها (حتى لو اتنادت من أي مكان)
+  function guard(name, rule, opt){
+    const orig=window[name]; if(typeof orig!=="function") return;
+    opt=opt||{};
+    window[name]=function(...a){
+      let needs=rule?rule.apply(this,a):null; if(needs&&!Array.isArray(needs)) needs=[needs];
+      for(const n of (needs||[])){
+        if(!allowed(n)){
+          toast("غير مصرّح: "+needText(n),"err");
+          audit("denied",`رفض: ${needText(n)} [${name}]`);
+          if(name==="importData"&&a[0]&&a[0].target) a[0].target.value="";
+          return;
+        }
+      }
+      if(opt.pre){ const msg=opt.pre.apply(this,a); if(msg){ toast(msg,"err"); return; } }
+      const before=opt.counter?opt.counter():null, info=opt.info?opt.info.apply(this,a):"";
+      const r=orig.apply(this,a);
+      const done=()=>{ if(opt.type&&(opt.always||(opt.counter&&opt.counter()!==before))) audit(opt.type,info); };
+      if(r&&typeof r.then==="function") r.then(done); else done();
+      return r;
+    };
+  }
+  const S=(scr,act)=>()=>({scr,act});
+  guard("addItem",S("master","add")); guard("editItem",S("master","edit")); guard("delItem",S("master","delete"));
+  guard("saveSettings",S("settings","edit"));
+  guard("resetAll",()=>({admin:true}),{type:"reset",counter:()=>state,info:()=>"إعادة تعيين كامل للبيانات"});
+  guard("exportData",()=>({sys:"backup"}),{type:"backup_export",always:true,info:()=>"تصدير نسخة احتياطية"});
+  guard("importData",()=>({sys:"backup"}),{type:"backup_import",always:true,info:e=>"استيراد نسخة احتياطية"+((e&&e.target&&e.target.files&&e.target.files[0])?` (${e.target.files[0].name})`:"")});
+  guard("soNew",S("saleOrder","add"));
+  guard("soSave",()=>({scr:"saleOrder",act:soLoadedId?"edit":"add"}));
+  guard("soDelete",S("saleOrder","delete"),{type:"so_del",counter:()=>state.saleOrders.length,info:()=>"حذف أمر بيع "+((soDraft&&soDraft.orderNo)||"")});
+  guard("soClose",S("saleOrder","close")); guard("soReopen",S("saleOrder","close"));
+  ["soPrint","soDownloadPdf","soSharePdf"].forEach(n=>guard(n,S("saleOrder","print")));
+  // عروض السعر
+  guard("qtNew",S("quote","add"));
+  guard("qtSave",()=>({scr:"quote",act:qtLoadedId?"edit":"add"}));
+  guard("qtDelete",S("quote","delete"),{type:"quote_del",counter:()=>state.quotes.length,info:()=>"حذف عرض سعر "+((qtDraft&&qtDraft.quoteNo)||"")});
+  guard("qlDelete",S("quoteList","delete"),{type:"quote_del",counter:()=>state.quotes.length,info:id=>"حذف عرض سعر "+((state.quotes.find(x=>x.id===id)||{}).quoteNo||"")});
+  guard("qtSetStatus",S("quote","edit")); guard("qlSetStatus",S("quoteList","edit"));
+  ["qtDownloadPdf","qtSharePdf","qtPrint","qtPreview"].forEach(n=>guard(n,S("quote","print")));
+  guard("qtToSaleOrder",()=>[{scr:"saleOrder",act:"add"},{scr:"quote",act:"edit"}]);
+  guard("newPolicy",S("shipments","add")); guard("startEdit",S("shipments","edit"));
+  guard("saveShipment",()=>({scr:"shipments",act:editingSrc==="new"?"add":"edit"}));
+  guard("postShipment",S("shipments","post"),{
+    type:"post",counter:()=>state.shipments.length,info:()=>"ترحيل بوليصة "+((draft&&draft.policyNo)||""),
+    pre:()=>{ if(!draft) return "";
+      const miss=missingList(draft).filter(e=>(e.key==="buyPrice"&&!showBuy("shipments"))||(e.key==="sellPrice"&&!showSell("shipments")));
+      return miss.length?"البوليصة ناقصها "+miss.map(e=>e.label).join(" و ")+" — لازم مستخدم بصلاحية الأسعار يكمّلها قبل الترحيل":""; } });
+  guard("deletePolicy",S("shipments","delete"),{type:"policy_del",counter:()=>state.policies.length,info:()=>"حذف بوليصة غير مرحّلة "+((draft&&draft.policyNo)||"")});
+  guard("editShipment",()=>[{scr:"supply",act:"edit"},{scr:"shipments",act:"edit"}]);
+  guard("delShipment",S("supply","delete"),{type:"supply_del",counter:()=>state.shipments.length,
+    info:id=>"حذف بوليصة "+((state.shipments.find(x=>x.id===id)||{}).policyNo||"")+" من بيانات التوريد"});
+  const trs=d=>d==="in"?"receipts":"payments";
+  guard("txNew",d=>({scr:trs(d),act:"add"}));
+  guard("txEdit",(id,d)=>({scr:trs(d),act:"edit"}));
+  guard("txDel",(id,d)=>({scr:trs(d),act:"delete"}),{type:"tx_del",counter:()=>state.treasuryEntries.length,
+    info:(id,d)=>"حذف سجل "+(d==="in"?"تحصيل":"دفعة")+" رقم "+((state.treasuryEntries.find(x=>x.id===id)||{}).no||"")});
+
+  // شاشة البوليصة الجديدة تتفتح للعرض فقط لو المستخدم مالوش صلاحية "إضافة"
+  const _vs=window.viewShipments;
+  window.viewShipments=function(){ if(editingSrc==="new"&&!can("shipments","add")) viewOnly=true; return _vs.apply(this,arguments); };
+
+  // 2) حماية الشاشات (التنقل)
+  const _go=window.go;
+  window.go=function(page){
+    if(!currentUser) return;
+    if(!canView(page)){
+      audit("denied","محاولة فتح شاشة غير مصرّح بها: "+page);
+      const alt=firstAllowedPage();
+      if(alt&&alt!==page){ toast("لا تملك صلاحية فتح هذه الشاشة","err"); return _go(alt); }
+      document.getElementById("content").innerHTML=noAccessHtml(); renderNav(); return;
+    }
+    return _go(page);
+  };
+
+  // 3) إخفاء الأزرار اللي المستخدم مالوش صلاحية عليها (بيتطبق تلقائي على أي رسم جديد للشاشة)
+  const RULES=[
+    [/\baddItem\(/,()=>can("master","add")], [/\beditItem\(/,()=>can("master","edit")], [/\bdelItem\(/,()=>can("master","delete")],
+    [/\bsaveSettings\(/,()=>can("settings","edit")], [/\bresetAll\(/,()=>isAdmin()],
+    [/\bexportData\(|importFile|\bimportData\(/,()=>canSys("backup")],
+    [/\bsoNew\(/,()=>can("saleOrder","add")], [/\bsoSave\(/,()=>can("saleOrder",soLoadedId?"edit":"add")],
+    [/\bsoDelete\(/,()=>can("saleOrder","delete")], [/\bsoClose\(|\bsoReopen\(/,()=>can("saleOrder","close")],
+    [/\bsoPrint\(|\bsoDownloadPdf\(|\bsoSharePdf\(/,()=>can("saleOrder","print")],
+    [/\bqtNew\(/,()=>can("quote","add")], [/\bqtSave\(/,()=>can("quote",qtLoadedId?"edit":"add")], [/\bqtDelete\(/,()=>can("quote","delete")],
+    [/\bqlDelete\(/,()=>can("quoteList","delete")], [/\bqtSetStatus\(/,()=>can("quote","edit")], [/\bqlSetStatus\(/,()=>can("quoteList","edit")],
+    [/\bqtDownloadPdf\(|\bqtSharePdf\(|\bqtPrint\(|\bqtPreview\(/,()=>can("quote","print")],
+    [/\bqtToSaleOrder\(/,()=>can("saleOrder","add")&&can("quote","edit")],
+    [/\bnewPolicy\(/,()=>can("shipments","add")], [/\bstartEdit\(/,()=>can("shipments","edit")],
+    [/\bsaveShipment\(/,()=>can("shipments",editingSrc==="new"?"add":"edit")], [/\bpostShipment\(/,()=>can("shipments","post")],
+    [/\bdeletePolicy\(/,()=>can("shipments","delete")],
+    [/\beditShipment\(/,()=>can("supply","edit")&&can("shipments","edit")], [/\bdelShipment\(/,()=>can("supply","delete")],
+    [/\bgo\('(\w+)'\)/,m=>canView(m[1])],
+    [/\btxNew\('(\w+)'\)/,m=>can(trs(m[1]),"add")], [/\btxEdit\([^)]*'(\w+)'\)/,m=>can(trs(m[1]),"edit")], [/\btxDel\([^)]*'(\w+)'\)/,m=>can(trs(m[1]),"delete")]
+  ];
+  function applyPermUI(){
+    if(!currentUser) return;
+    [document.getElementById("content"),document.querySelector("aside"),document.getElementById("modalBackdrop"),document.getElementById("qtOv")].filter(Boolean).forEach(root=>{
+      root.querySelectorAll("[onclick]").forEach(el=>{
+        const s=el.getAttribute("onclick")||""; let hide=false;
+        for(const [re,fn] of RULES){ const m=s.match(re); if(m&&!fn(m)){ hide=true; break; } }
+        if(el.tagName==="SELECT"||el.tagName==="INPUT") el.disabled=hide;   // القوائم بتتقفل بدل ما تختفي (عشان الحالة تفضل ظاهرة)
+        else el.classList.toggle("perm-hide",hide);
+      });
+    });
+  }
+  let pend=false;
+  new MutationObserver(()=>{ if(pend) return; pend=true; requestAnimationFrame(()=>{ pend=false; applyPermUI(); }); })
+    .observe(document.body,{childList:true,subtree:true});
+})();
+
+// ================= شاشة المستخدمين والصلاحيات (للأدمن فقط) =================
+let usersTab="users", auditQ="", auditT="";
+const AUDIT_LABEL={ login:"دخول", logout:"خروج", login_fail:"دخول فاشل", lockout:"إيقاف مؤقت", session_timeout:"انتهاء جلسة", denied:"رفض صلاحية",
+  user_add:"إضافة مستخدم", user_edit:"تعديل مستخدم", user_pass:"كلمة مرور", user_toggle:"تفعيل/إيقاف", user_del:"حذف مستخدم",
+  post:"ترحيل", policy_del:"حذف بوليصة", supply_del:"حذف من التوريد", so_del:"حذف أمر بيع", quote_del:"حذف عرض سعر", tx_del:"حذف خزينة",
+  backup_export:"تصدير نسخة", backup_import:"استيراد نسخة", reset:"إعادة تعيين", audit_clear:"مسح السجل" };
+const AUDIT_WARN=new Set(["login_fail","lockout","denied","session_timeout"]);
+const AUDIT_DANGER=new Set(["user_del","policy_del","supply_del","so_del","quote_del","tx_del","reset","backup_import","audit_clear"]);
+function fmtDT(t){ if(!t) return "—"; const d=new Date(t), p=n=>String(n).padStart(2,"0"); return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function permSummary(u){
+  if(u.role==="admin") return '<span class="chip gold">كل الصلاحيات</span>';
+  const p=u.perms, scr=SCREENS.filter(s=>p.screens[s.id]&&p.screens[s.id].view).length; let hid=0;
+  SCREENS.forEach(s=>{ if(s.prices&&p.screens[s.id].view){ if(p.hide[s.id].buy) hid++; if(p.hide[s.id].sell) hid++; } });
+  return `<span class="chip">${scr}/${SCREENS.length} شاشات</span>${hid?` <span class="chip warn">🙈 ${hid} حقل سعر مخفي</span>`:""}${p.sys.backup?' <span class="chip">نسخ احتياطي</span>':""}`;
+}
+function viewUsers(){
+  if(!isAdmin()) return noAccessHtml();
+  securityMigrate(state);
+  const tabs=`<div class="tabs" style="margin:0 0 16px">
+    <button class="${usersTab==='users'?'active':''}" onclick="usersTab='users';go('users')">👥 المستخدمون</button>
+    <button class="${usersTab==='audit'?'active':''}" onclick="usersTab='audit';go('users')">📜 سجل النشاط</button></div>`;
+  if(usersTab==="audit") return `<div class="page-head"><h2>المستخدمون والصلاحيات</h2></div>${tabs}${viewAudit()}`;
+  const rows=state.users.slice().sort((a,b)=>a.no-b.no).map(u=>`<tr style="${u.active===false?'opacity:.55':''}">
+    <td class="num"><b>${u.no}</b></td>
+    <td>${escapeHtml(u.name)}${currentUser&&u.no===currentUser.no?' <span class="chip ok" style="font-size:10px">أنت</span>':''}${u.mustChange?' <span class="chip warn" style="font-size:10px">باسورد مؤقت</span>':''}</td>
+    <td><span class="chip ${u.role==='admin'?'gold':''}">${escapeHtml(roleLabel(u))}</span></td>
+    <td>${permSummary(u)}</td>
+    <td>${u.active===false?'<span class="chip warn">موقوف</span>':'<span class="chip ok">نشط</span>'}</td>
+    <td style="font-size:12px;color:var(--text-dim)">${fmtDT(u.lastLogin)}</td>
+    <td><div class="td-actions">
+      <button onclick="openUserForm(${u.no})">🔐 الصلاحيات</button>
+      <button onclick="openUserPass(${u.no})">🔑 باسورد</button>
+      <button onclick="toggleUser(${u.no})">${u.active===false?'تفعيل':'إيقاف'}</button>
+      <button class="del" onclick="delUser(${u.no})">حذف</button></div></td></tr>`).join("");
+  return `<div class="page-head"><h2>المستخدمون والصلاحيات</h2><div class="spacer"></div>
+      <button class="btn" onclick="openUserForm(null)">+ مستخدم جديد</button></div>${tabs}
+    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>الاسم</th><th>الدور</th><th>الصلاحيات</th><th>الحالة</th><th>آخر دخول</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p style="margin-top:12px;color:var(--text-dim);font-size:12px;line-height:1.9">
+      • كل مستخدم بيدخل برقمه وكلمة مروره، وبيشوف بس الشاشات والأزرار المسموحة له.<br>
+      • 🙈 إخفاء الأسعار بيتحدد لكل شاشة على حدة (إدخال البوليصة / بيانات التوريد) — وبيخفي معاه الإجماليات والضرائب والهامش المشتقة من السعر.<br>
+      • أي محاولة دخول فاشلة أو تخطّي للصلاحيات بتتسجل في <b>سجل النشاط</b>.</p>`;
+}
+function viewAudit(){
+  const q=auditQ.trim().toLowerCase();
+  let L=(state.auditLog||[]).slice().reverse();
+  if(auditT) L=L.filter(e=>e.type===auditT);
+  if(q) L=L.filter(e=>[e.n,e.u,e.d,AUDIT_LABEL[e.type]].some(v=>String(v==null?"":v).toLowerCase().includes(q)));
+  const total=L.length; L=L.slice(0,300);
+  const typeOpts=`<option value="">كل الأحداث</option>`+Object.keys(AUDIT_LABEL).map(k=>`<option value="${k}" ${auditT===k?'selected':''}>${AUDIT_LABEL[k]}</option>`).join("");
+  return `<div class="filters" style="grid-template-columns:2fr 1fr auto">
+      <input class="inp" id="auditQ" placeholder="بحث في السجل: مستخدم / تفاصيل" value="${escapeAttr(auditQ)}" oninput="auditQ=this.value;refreshAudit()">
+      <select class="inp" onchange="auditT=this.value;refreshAudit()">${typeOpts}</select>
+      <button class="btn danger sm" onclick="clearAudit()">مسح السجل</button></div>
+    <div id="auditBody"><div class="tbl-wrap"><table><thead><tr><th>الوقت</th><th>المستخدم</th><th>الحدث</th><th>التفاصيل</th></tr></thead><tbody>
+    ${L.map(e=>`<tr><td style="white-space:nowrap;font-size:12px;direction:ltr;text-align:right">${fmtDT(e.t)}</td>
+      <td>${e.u!=null?`#${e.u} ${escapeHtml(e.n||"")}`:"—"}</td>
+      <td><span class="chip ${AUDIT_DANGER.has(e.type)?'warn':AUDIT_WARN.has(e.type)?'warn':'ok'}" style="${AUDIT_DANGER.has(e.type)?'background:#fde8e5;color:var(--danger);border-color:#f3c3bd':''}">${AUDIT_LABEL[e.type]||escapeHtml(e.type)}</span></td>
+      <td style="font-size:12.5px">${escapeHtml(e.d)}</td></tr>`).join("")||`<tr><td colspan="4"><div class="empty" style="padding:24px"><p>مفيش أحداث</p></div></td></tr>`}
+    </tbody></table></div><p style="margin-top:8px;color:var(--text-dim);font-size:12px">آخر ${L.length} من ${total} حدث (السجل بيحتفظ بآخر 1000).</p></div>`;
+}
+function refreshAudit(){ const c=document.getElementById("content"); const pos=document.getElementById("auditQ")?.selectionStart; c.innerHTML=viewUsers(); const i=document.getElementById("auditQ"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } }
+function clearAudit(){ if(!isAdmin()) return; if(!confirm("مسح سجل النشاط بالكامل؟")) return; state.auditLog=[]; audit("audit_clear","مسح سجل النشاط"); go("users"); }
+
+// ---------- نموذج المستخدم + مصفوفة الصلاحيات ----------
+let userFormEditing=null;
+function permMatrixHtml(p){
+  const head=ACT_COLS.map(a=>`<th>${ACT_LABEL[a]}</th>`).join("");
+  const rows=SCREENS.map(s=>{
+    const sv=p.screens[s.id];
+    const cells=ACT_COLS.map(a=>{
+      if(a!=="view"&&!s.acts.includes(a)) return '<td class="na">—</td>';
+      return `<td><input type="checkbox" id="pm_${s.id}_${a}" ${sv[a]?"checked":""} ${(a!=="view"&&!sv.view)?"disabled":""} onchange="pmChange('${s.id}','${a}')"></td>`;
+    }).join("");
+    const pr=s.prices
+      ? ["buy","sell"].map(k=>`<td class="pm-price"><label><input type="checkbox" id="ph_${s.id}_${k}" ${p.hide[s.id][k]?"checked":""} ${!sv.view?"disabled":""}> إخفاء</label></td>`).join("")
+      : '<td class="na">—</td><td class="na">—</td>';
+    return `<tr><td class="pm-name">${s.icon} ${s.label}</td>${cells}${pr}</tr>`;
+  }).join("");
+  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function pmChange(scr,act){
+  if(act!=="view") return;
+  const on=document.getElementById(`pm_${scr}_view`).checked;
+  SCREENS.find(s=>s.id===scr).acts.forEach(a=>{ const c=document.getElementById(`pm_${scr}_${a}`); if(c){ c.disabled=!on; if(!on) c.checked=false; } });
+  ["buy","sell"].forEach(k=>{ const c=document.getElementById(`ph_${scr}_${k}`); if(c){ c.disabled=!on; if(!on) c.checked=false; } });
+}
+function readPermForm(){
+  const p=permsBlank(false);
+  SCREENS.forEach(s=>{
+    const vw=!!document.getElementById(`pm_${s.id}_view`)?.checked; p.screens[s.id].view=vw;
+    s.acts.forEach(a=>{ p.screens[s.id][a]=vw&&!!document.getElementById(`pm_${s.id}_${a}`)?.checked; });
+    if(s.prices){ ["buy","sell"].forEach(k=>{ p.hide[s.id][k]=vw&&!!document.getElementById(`ph_${s.id}_${k}`)?.checked; }); }
+  });
+  p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
+  return p;
+}
+function pmRender(p){
+  document.getElementById("pmWrap").innerHTML=permMatrixHtml(p);
+  const b=document.getElementById("uf_sys_backup"); if(b) b.checked=!!p.sys.backup;
+}
+function pmRolePick(role){
+  const d=ROLE_PRESETS[role]; document.getElementById("uf_roleDesc").textContent=d?d.desc:"";
+  const isAd=role==="admin";
+  document.getElementById("pmBox").classList.toggle("pm-locked",isAd);
+  document.getElementById("pmAdminNote").style.display=isAd?"block":"none";
+  if(role!=="custom") pmRender(d.build());
+}
+function pmBulk(kind){
+  const p=readPermForm();
+  SCREENS.forEach(s=>{
+    if(kind==="all"||kind==="none"){ const on=kind==="all"; p.screens[s.id].view=on; s.acts.forEach(a=>p.screens[s.id][a]=on); }
+    if(kind==="hide"||kind==="show"){ if(s.prices){ p.hide[s.id].buy=kind==="hide"; p.hide[s.id].sell=kind==="hide"; } }
+    if(kind==="view"){ p.screens[s.id].view=true; s.acts.forEach(a=>p.screens[s.id][a]=false); }
+  });
+  if(kind==="all") p.sys.backup=true; if(kind==="none") p.sys.backup=false;
+  pmRender(p); document.getElementById("uf_role").value="custom"; document.getElementById("uf_roleDesc").textContent=ROLE_PRESETS.custom.desc;
+}
+function openUserForm(no){
+  if(!isAdmin()) return;
+  userFormEditing=no;
+  const u=no==null?null:state.users.find(x=>x.no===no);
+  if(no!=null&&!u) return;
+  const nextNo=Math.max(0,...state.users.map(x=>x.no))+1;
+  const role=u?u.role:"custom", perms=u?u.perms:ROLE_PRESETS.custom.build();
+  const roleOpts=Object.keys(ROLE_PRESETS).map(k=>`<option value="${k}" ${k===role?"selected":""}>${ROLE_PRESETS[k].label}</option>`).join("");
+  const body=`
+    <div class="fgrid" style="margin-bottom:14px">
+      <div class="fld"><label>رقم المستخدم (للدخول)</label><input class="inp num" id="uf_no" type="number" min="1" value="${u?u.no:nextNo}" ${u?"disabled":""}></div>
+      <div class="fld"><label>الاسم</label><input class="inp" id="uf_name" value="${escapeAttr(u?u.name:"")}" placeholder="اسم المستخدم"></div>
+      ${u?"":`<div class="fld"><label>كلمة المرور (${PW_MIN} حروف على الأقل)</label><input class="inp" id="uf_pass" type="password" autocomplete="new-password"></div>
+      <div class="fld"><label>تأكيد كلمة المرور</label><input class="inp" id="uf_pass2" type="password" autocomplete="new-password"></div>`}
+      <div class="fld"><label>الدور (قالب جاهز)</label><select class="inp" id="uf_role" onchange="pmRolePick(this.value)">${roleOpts}</select></div>
+    </div>
+    <p id="uf_roleDesc" style="color:var(--text-dim);font-size:12px;margin:-6px 0 12px">${escapeHtml((ROLE_PRESETS[role]||{}).desc||"")}</p>
+    <div class="pm-tools">
+      <button type="button" class="btn ghost sm" onclick="pmBulk('all')">✔ تحديد الكل</button>
+      <button type="button" class="btn ghost sm" onclick="pmBulk('view')">👁 عرض فقط</button>
+      <button type="button" class="btn ghost sm" onclick="pmBulk('none')">✖ مسح الكل</button>
+      <button type="button" class="btn ghost sm" onclick="pmBulk('hide')">🙈 إخفاء كل الأسعار</button>
+      <button type="button" class="btn ghost sm" onclick="pmBulk('show')">إظهار كل الأسعار</button>
+    </div>
+    <div id="pmBox" class="${role==='admin'?'pm-locked':''}"><div id="pmWrap">${permMatrixHtml(perms)}</div>
+      <label class="pm-sys"><input type="checkbox" id="uf_sys_backup" ${perms.sys.backup?"checked":""}> السماح بتصدير/استيراد النسخة الاحتياطية <small>(بيكشف كل البيانات بما فيها الأسعار — امنحه بحذر)</small></label></div>
+    <div id="pmAdminNote" class="pm-note" style="display:${role==='admin'?'block':'none'}">الأدمن بيملك كل الصلاحيات وإدارة المستخدمين، ومفيش إخفاء للأسعار.</div>
+    <p class="pm-hint">💡 "تعديل" من بيانات التوريد بيحتاج كمان صلاحية "تعديل" في إدخال البوليصة. إخفاء سعر الشراء/البيع بيخفي معاه الإجماليات والضرائب والهامش المشتقة منه، والمستخدم اللي مخفي عنه الأسعار مش هيقدر يرحّل بوليصة ناقصها أسعار.</p>`;
+  openModal(u?`🔐 صلاحيات: #${u.no} ${escapeHtml(u.name)}`:"➕ مستخدم جديد", body, saveUserForm);
+  const m=document.querySelector("#modalBackdrop .modal"); if(m){ m.style.maxWidth="1040px"; m.style.width="96%"; }
+  setTimeout(()=>document.getElementById(u?"uf_name":"uf_name")?.focus(),50);
+}
+function permDiff(a,b){
+  const out=[];
+  SCREENS.forEach(s=>{
+    const ch=[]; ACT_COLS.forEach(k=>{ if(k!=="view"&&!s.acts.includes(k)) return; const x=!!a.screens[s.id][k], y=!!b.screens[s.id][k]; if(x!==y) ch.push((y?"+":"−")+ACT_LABEL[k]); });
+    if(s.prices) ["buy","sell"].forEach(k=>{ const x=!!a.hide[s.id][k], y=!!b.hide[s.id][k]; if(x!==y) ch.push(y?`إخفاء سعر ${k==="buy"?"الشراء":"البيع"}`:`إظهار سعر ${k==="buy"?"الشراء":"البيع"}`); });
+    if(ch.length) out.push(`${s.label}: ${ch.join("، ")}`);
+  });
+  if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
+  return out;
+}
+function saveUserForm(){
+  if(!isAdmin()) return false;
+  const name=(document.getElementById("uf_name").value||"").trim(), role=document.getElementById("uf_role").value;
+  if(!name){ toast("اكتب اسم المستخدم","err"); return false; }
+  const perms=role==="admin"?permsBlank(true):normalizePerms(readPermForm());
+  if(userFormEditing==null){
+    const no=parseInt(document.getElementById("uf_no").value,10);
+    const p1=document.getElementById("uf_pass").value, p2=document.getElementById("uf_pass2").value;
+    if(!no||no<=0){ toast("رقم المستخدم غير صحيح","err"); return false; }
+    if(state.users.some(x=>x.no===no)){ toast("رقم المستخدم مستخدم قبل كده","err"); return false; }
+    if(p1.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
+    if(p1!==p2){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
+    const u={ no, name, role, active:true, perms, createdAt:Date.now() }; setUserPassword(u,p1);
+    state.users.push(u); saveState();
+    audit("user_add",`إضافة مستخدم #${no} ${name} — الدور: ${roleLabel(u)}`);
+  } else {
+    const u=state.users.find(x=>x.no===userFormEditing); if(!u) return false;
+    if(u.role==="admin"&&role!=="admin"&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return false; }
+    const before=JSON.parse(JSON.stringify(u.perms)), oldRole=u.role, oldName=u.name;
+    u.name=name; u.role=role; u.perms=perms; saveState();
+    const d=permDiff(before,perms);
+    audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
+  }
+  toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser(); return true;
+}
+function toggleUser(no){
+  if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
+  if(currentUser&&u.no===currentUser.no){ toast("مينفعش توقف حسابك الحالي","err"); return; }
+  if(u.active!==false&&u.role==="admin"&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return; }
+  const to=u.active===false;
+  if(!confirm(`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}؟`)) return;
+  u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
+}
+function delUser(no){
+  if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
+  if(currentUser&&u.no===currentUser.no){ toast("مينفعش تحذف حسابك الحالي","err"); return; }
+  if(u.role==="admin"&&u.active!==false&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return; }
+  if(!confirm(`حذف المستخدم #${u.no} ${u.name} نهائيًا؟`)) return;
+  state.users=state.users.filter(x=>x.no!==no); saveState(); audit("user_del",`حذف المستخدم #${u.no} ${u.name}`); go("users");
+}
+function openUserPass(no){
+  if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
+  openModal(`🔑 كلمة مرور: #${u.no} ${escapeHtml(u.name)}`,`
+    <div class="fld" style="margin-bottom:12px"><label>كلمة المرور الجديدة (${PW_MIN} حروف على الأقل)</label><input class="inp" id="pw_new" type="password" autocomplete="new-password"></div>
+    <div class="fld" style="margin-bottom:12px"><label>تأكيد كلمة المرور</label><input class="inp" id="pw_new2" type="password" autocomplete="new-password"></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="pw_force" checked> إجبار المستخدم يغيّرها عند أول دخول</label>`,
+  ()=>{
+    const a=document.getElementById("pw_new").value, b=document.getElementById("pw_new2").value;
+    if(a.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
+    if(a!==b){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
+    setUserPassword(u,a); u.mustChange=!!document.getElementById("pw_force").checked; saveState();
+    audit("user_pass",`إعادة تعيين كلمة مرور #${u.no} ${u.name}`); toast("تم تغيير كلمة المرور","ok"); go("users"); return true;
+  });
+  setTimeout(()=>document.getElementById("pw_new")?.focus(),50);
+}
+function openMyPassword(first){
+  const u=curU(); if(!u) return;
+  openModal("🔑 تغيير كلمة المرور",`
+    ${first?`<p style="color:var(--warn);font-size:13px;margin-bottom:12px;line-height:1.8">⚠ بتستخدم كلمة مرور مؤقتة/افتراضية. غيّرها دلوقتي عشان حسابك يبقى آمن.</p>`:""}
+    <div class="fld" style="margin-bottom:12px"><label>كلمة المرور الحالية</label><input class="inp" id="mp_old" type="password" autocomplete="current-password"></div>
+    <div class="fld" style="margin-bottom:12px"><label>كلمة المرور الجديدة (${PW_MIN} حروف على الأقل)</label><input class="inp" id="mp_new" type="password" autocomplete="new-password"></div>
+    <div class="fld"><label>تأكيد كلمة المرور الجديدة</label><input class="inp" id="mp_new2" type="password" autocomplete="new-password"></div>`,
+  ()=>{
+    const o=document.getElementById("mp_old").value, a=document.getElementById("mp_new").value, b=document.getElementById("mp_new2").value;
+    if(!verifyPassword(u,o)){ toast("كلمة المرور الحالية غير صحيحة","err"); return false; }
+    if(a.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
+    if(a===o){ toast("اختار كلمة مرور مختلفة عن الحالية","err"); return false; }
+    if(a!==b){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
+    setUserPassword(u,a); u.mustChange=false; saveState(); audit("user_pass","تغيير كلمة المرور الشخصية");
+    toast("تم تغيير كلمة المرور","ok"); updateTopbarUser(); return true;
+  });
+  setTimeout(()=>document.getElementById("mp_old")?.focus(),50);
+}
+
 </script>
 
 
