@@ -4339,15 +4339,17 @@ function viewUsers(){
     <td><span class="chip ${u.role==='admin'?'gold':''}">${escapeHtml(roleLabel(u))}</span></td>
     <td>${permSummary(u)}</td>
     <td>${u.active===false?'<span class="chip warn">موقوف</span>':'<span class="chip ok">نشط</span>'}</td>
+    <td style="white-space:nowrap"><span id="upw_${u.no}" style="font-family:monospace;direction:ltr;display:inline-block;min-width:78px">••••••••</span>
+      <button class="btn ghost sm" id="upwb_${u.no}" onclick="toggleUserPw(${u.no})">👁 إظهار</button>
+      <button class="btn ghost sm" onclick="openUserPass(${u.no})">🔑 تغيير</button></td>
     <td style="font-size:12px;color:var(--text-dim)">${fmtDT(u.lastLogin)}</td>
     <td><div class="td-actions">
       <button onclick="openUserForm(${u.no})">🔐 الصلاحيات</button>
-      <button onclick="openUserPass(${u.no})">🔑 باسورد</button>
       <button onclick="toggleUser(${u.no})">${u.active===false?'تفعيل':'إيقاف'}</button>
       <button class="del" onclick="delUser(${u.no})">حذف</button></div></td></tr>`).join("");
   return `<div class="page-head"><h2>المستخدمون والصلاحيات</h2><div class="spacer"></div>
       <button class="btn" onclick="openUserForm(null)">+ مستخدم جديد</button></div>${tabs}
-    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>الاسم</th><th>الدور</th><th>الصلاحيات</th><th>الحالة</th><th>آخر دخول</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>الاسم</th><th>الدور</th><th>الصلاحيات</th><th>الحالة</th><th>كلمة المرور</th><th>آخر دخول</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     <p style="margin-top:12px;color:var(--text-dim);font-size:12px;line-height:1.9">
       • كل مستخدم بيدخل برقمه وكلمة مروره، وبيشوف بس الشاشات والأزرار المسموحة له.<br>
       • 🙈 إخفاء الأسعار بيتحدد لكل شاشة على حدة (إدخال البوليصة / بيانات التوريد) — وبيخفي معاه الإجماليات والضرائب والهامش المشتقة من السعر.<br>
@@ -4530,6 +4532,18 @@ function delUser(no){
     state.users=state.users.filter(x=>x.no!==no); saveState(); audit("user_del",`حذف المستخدم #${u.no} ${u.name}`); go("users");
   })();
 }
+async function toggleUserPw(no){
+  if(!isAdmin()) return;
+  const span=document.getElementById("upw_"+no), btn=document.getElementById("upwb_"+no); if(!span||!btn) return;
+  if(span.dataset.shown==="1"){ span.textContent="••••••••"; span.dataset.shown="0"; btn.textContent="👁 إظهار"; return; }
+  btn.disabled=true;
+  const r=await sb.functions.invoke("smart-task",{ body:{ action:"get_password", no } });
+  btn.disabled=false;
+  if(r.error||(r.data&&r.data.error)){ toast("تعذر العرض: "+(await fnErrMsg(r)),"err"); return; }
+  const pw=r.data&&r.data.password;
+  if(!pw){ toast("كلمة المرور دي مش محفوظة للعرض — اضغط \"تغيير\" وعيّن واحدة جديدة","err"); return; }
+  span.textContent=pw; span.dataset.shown="1"; btn.textContent="🙈 إخفاء";
+}
 function openUserPass(no){
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
   openModal(`🔑 كلمة مرور: #${u.no} ${escapeHtml(u.name)}`,`
@@ -4571,6 +4585,7 @@ function openMyPassword(first){
       const up = await sb.auth.updateUser({ password:a });
       if(up.error){ toast("تعذر تغيير كلمة المرور: "+up.error.message,"err"); return; }
       sb.rpc("password_changed").then(()=>{},()=>{});
+      sb.functions.invoke("smart-task",{ body:{ action:"self_changed" } }).then(()=>{},()=>{});
       u.mustChange=false; audit("user_pass","تغيير كلمة المرور الشخصية");
       toast("تم تغيير كلمة المرور","ok"); updateTopbarUser();
     })();
