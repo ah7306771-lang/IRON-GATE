@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Aref+Ruqaa:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -953,7 +954,7 @@ const defaults = {
   quoteDescs: ["حديد","اسمنت"],
   cementTypes: ["بني سويف","حلوان"],
   users: [
-    { no: 1, name: "أدمن", password: "1234", role: "admin", active: true }
+
   ],
   treasuryEntries: [],  // التحصيلات والمدفوعات معًا — direction:"in"|"out"
   auditLog: []          // سجل النشاط (دخول/صلاحيات/حذف...)
@@ -977,11 +978,83 @@ function loadState(){
     return JSON.parse(JSON.stringify(defaults));
   }
 }
+const LOCAL_ONLY_KEYS = ["shipments","policies","installments","receipts","payments","saleOrders","soNextNum","quotes","qtNextNum","treasuryEntries"];
 function saveState(){
   try{ securityMigrate(state); }catch(e){}
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch(e){ toast("فشل الحفظ: "+e.message,"err"); }
+  // البيانات الأساسية والإعدادات والمستخدمين والسجل في Supabase، والباقي مؤقتًا في المتصفح لحد المرحلة 2
+  try{
+    const part = {}; LOCAL_ONLY_KEYS.forEach(k=>{ part[k] = state[k]; });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(part));
+  }catch(e){ toast("فشل الحفظ: "+e.message,"err"); }
+  scheduleSync();
 }
+
+// ---------- Supabase ----------
+const SB_URL = "https://wadovjghevemdmqkhhml.supabase.co";
+const SB_KEY = "sb_publishable_mZH6txuODQ5vAAxqK4Gl7A_1Uk5H-wr";
+const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:true, autoRefreshToken:true, storage:window.sessionStorage } });
+const MASTER_KINDS = ["suppliers","customers","diameters","types","factories","statuses","quoteDescs","cementTypes","banks","safes","treasuries"];
+const MASTER_KEYF  = { suppliers:"name", customers:"name", treasuries:"name", banks:"code", safes:"code" };
+let masterLoaded = false, syncTimer = null, syncBusy = false, syncAgain = false, lastSnap = "";
+function masterSnap(){ return JSON.stringify([MASTER_KINDS.map(k=>state[k]), state.settings]); }
+function mapProfile(r){ return { id:r.id, no:r.user_no, name:r.name, role:r.role, active:r.active, mustChange:r.must_change, perms:r.perms||{} }; }
+
+async function loadMaster(admin){
+  const [m, st] = await Promise.all([
+    sb.from("master_items").select("kind,key,data,sort").order("sort"),
+    sb.from("settings").select("data").eq("id",1).maybeSingle()
+  ]);
+  if(m.error) throw m.error;
+  if(st.error) throw st.error;
+  const by = {}; MASTER_KINDS.forEach(k=>by[k]=[]);
+  (m.data||[]).forEach(r=>{
+    if(!by[r.kind]) return;
+    const f = MASTER_KEYF[r.kind];
+    by[r.kind].push(f ? Object.assign({[f]:r.key}, r.data||{}) : r.key);
+  });
+  MASTER_KINDS.forEach(k=>{ state[k] = by[k]; });
+  if(st.data && st.data.data) state.settings = Object.assign({}, state.settings, st.data.data);
+  state.auditLog = [];
+  if(admin){
+    const [pr, al] = await Promise.all([
+      sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").order("user_no"),
+      sb.from("audit_log").select("ts,user_no,user_name,type,detail").order("ts",{ascending:false}).limit(500)
+    ]);
+    if(!pr.error && pr.data) state.users = pr.data.map(mapProfile);
+    if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
+  }
+  securityMigrate(state);
+  lastSnap = masterSnap();
+  masterLoaded = true;
+}
+function scheduleSync(){
+  if(!currentUser || !masterLoaded || masterSnap()===lastSnap) return;
+  clearTimeout(syncTimer); syncTimer = setTimeout(syncMaster, 600);
+}
+async function syncMaster(){
+  if(syncBusy){ syncAgain = true; return; }
+  syncBusy = true;
+  const snap = masterSnap();
+  try{
+    const rows = [];
+    MASTER_KINDS.forEach(k=>(state[k]||[]).forEach((it,i)=>{
+      const f = MASTER_KEYF[k];
+      if(f){ const key = it[f]; const data = Object.assign({}, it); delete data[f]; rows.push({kind:k, key:String(key), data, sort:i}); }
+      else rows.push({kind:k, key:String(it), data:{}, sort:i});
+    }));
+    const cur = await sb.from("master_items").select("kind,key");
+    if(cur.error) throw cur.error;
+    const keep = new Set(rows.map(r=>r.kind+"\u0001"+r.key));
+    const gone = (cur.data||[]).filter(r=>!keep.has(r.kind+"\u0001"+r.key));
+    if(rows.length){ const u = await sb.from("master_items").upsert(rows,{onConflict:"kind,key"}); if(u.error) throw u.error; }
+    for(const g of gone){ const d = await sb.from("master_items").delete().eq("kind",g.kind).eq("key",g.key); if(d.error) throw d.error; }
+    const s2 = await sb.from("settings").update({data:state.settings}).eq("id",1);
+    if(s2.error) throw s2.error;
+    lastSnap = snap;
+  }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
+  finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
+}
+function srvUsersBlocked(){ toast("إدارة المستخدمين لسه ما اتربطتش بالسيرفر (المرحلة 3) — التعديل ده مش هيتحفظ","err"); return true; }
 
 // ================= الأمان والصلاحيات: تسجيل الدخول + RBAC + سجل النشاط =================
 // الشاشات اللي ليها صلاحيات. prices:true = فيها أسعار شراء/بيع ممكن تتخفى على مستوى المستخدم.
@@ -1098,7 +1171,7 @@ function verifyPassword(u, pw){ return !!(u && u.passHash && u.salt) && hashPw(p
 
 // ترحيل بيانات المستخدمين (آمن للتكرار): تجزئة كلمات المرور القديمة + صلاحيات افتراضية
 function securityMigrate(s){
-  if(!Array.isArray(s.users) || !s.users.length) s.users=[{ no:1, name:"أدمن", password:"1234", role:"admin", active:true }];
+  if(!Array.isArray(s.users)) s.users=[];
   if(!Array.isArray(s.auditLog)) s.auditLog=[];
   s.users.forEach(u=>{
     if(u.active===undefined) u.active=true;
@@ -1141,6 +1214,7 @@ function audit(type, detail, who){
     const u=who||curU();
     (state.auditLog=state.auditLog||[]).push({ t:Date.now(), u:u?u.no:null, n:u?u.name:"", type, d:detail||"" });
     if(state.auditLog.length>1000) state.auditLog.splice(0,state.auditLog.length-1000);
+    if(masterLoaded) sb.from("audit_log").insert({ type, detail:String(detail||"") }).then(()=>{},()=>{});
     saveState();
   }catch(e){}
 }
@@ -1164,30 +1238,46 @@ function enterApp(u, restored){
   else { document.getElementById("content").innerHTML=noAccessHtml(); document.getElementById("pageTitle").textContent="—"; document.getElementById("pageCrumb").textContent=""; }
   if(!restored && u.mustChange) setTimeout(()=>openMyPassword(true),250);
 }
-function doLogin(){
-  loginErr(""); securityMigrate(state);
+let loginBusy = false;
+async function startSession(user, restored){
+  const p = await sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle();
+  if(p.error || !p.data){ await sb.auth.signOut(); loginErr("الحساب غير موجود"); return false; }
+  if(!p.data.active){ await sb.auth.signOut(); loginErr("هذا الحساب موقوف — راجع المدير"); return false; }
+  const me = mapProfile(p.data);
+  state.users = [me]; securityMigrate(state);
+  currentUser = { no:me.no, name:me.name };
+  try{ await loadMaster(me.role==="admin"); }
+  catch(e){ await sb.auth.signOut(); currentUser = null; masterLoaded = false; loginErr("فشل تحميل البيانات: "+(e.message||e)); return false; }
+  const u = state.users.find(x=>x.no===me.no) || me;
+  enterApp(u, restored);
+  if(!restored){ audit("login","تسجيل دخول",u); sb.rpc("touch_login").then(()=>{},()=>{}); }
+  return true;
+}
+async function doLogin(){
+  if(loginBusy) return;
+  loginErr("");
   const noStr=(document.getElementById("loginUserNo")?.value||"").trim();
   const pass=document.getElementById("loginPass")?.value||"";
   const no=parseInt(noStr,10);
   if(!noStr||isNaN(no)||no<=0){ loginErr("أدخل رقم مستخدم صحيح"); document.getElementById("loginUserNo")?.focus(); return; }
+  if(!pass){ loginErr("أدخل كلمة المرور"); document.getElementById("loginPass")?.focus(); return; }
   const locks=lockGet(), lk=locks[no]||{n:0,until:0};
   if(lk.until>Date.now()){ loginErr(`تم إيقاف المحاولات مؤقتًا — حاول بعد ${Math.ceil((lk.until-Date.now())/1000)} ثانية`); return; }
-  const u=state.users.find(x=>x.no===no);
-  if(u && verifyPassword(u,pass)){
-    if(u.active===false){ loginErr("هذا الحساب موقوف — راجع المدير"); audit("login_fail","محاولة دخول لحساب موقوف",u); return; }
-    delete locks[no]; lockSet(locks);
-    u.lastLogin=Date.now();
-    try{ localStorage.setItem("irongate_saved_login", JSON.stringify({no:u.no})); }catch(e){}   // رقم المستخدم فقط — بدون كلمة المرور
-    enterApp(u,false);
-    audit("login","تسجيل دخول",u);
-    return;
-  }
-  lk.n=(lk.n||0)+1;
-  if(lk.n>=MAX_TRIES){ lk.until=Date.now()+LOCK_SEC*1000; lk.n=0; audit("lockout",`إيقاف مؤقت للمستخدم #${no} بعد ${MAX_TRIES} محاولات فاشلة`,u||{no:no,name:""}); }
-  else audit("login_fail",`محاولة دخول فاشلة على المستخدم #${no}`,u||{no:no,name:""});
-  locks[no]=lk; lockSet(locks);
-  loginErr(lk.until>Date.now()?`تم إيقاف المحاولات ${LOCK_SEC} ثانية بعد محاولات فاشلة متكررة`:`رقم المستخدم أو كلمة المرور غير صحيحة (متبقي ${MAX_TRIES-lk.n} محاولات)`);
-  document.getElementById("loginPass")?.select();
+  loginBusy = true; loginErr("جاري الدخول...");
+  try{
+    const r = await sb.auth.signInWithPassword({ email:`u${no}@irongate.app`, password:pass });
+    if(!r.error){
+      const ok = await startSession(r.data.user,false);
+      if(ok){ delete locks[no]; lockSet(locks); try{ localStorage.setItem("irongate_saved_login", JSON.stringify({no})); }catch(e){} document.getElementById("loginPass").value=""; }
+      return;
+    }
+    lk.n=(lk.n||0)+1;
+    if(lk.n>=MAX_TRIES){ lk.until=Date.now()+LOCK_SEC*1000; lk.n=0; }
+    locks[no]=lk; lockSet(locks);
+    loginErr(lk.until>Date.now()?`تم إيقاف المحاولات ${LOCK_SEC} ثانية بعد محاولات فاشلة متكررة`:`رقم المستخدم أو كلمة المرور غير صحيحة (متبقي ${MAX_TRIES-lk.n} محاولات)`);
+    document.getElementById("loginPass")?.select();
+  }catch(e){ loginErr("تعذر الاتصال بالسيرفر: "+(e.message||e)); }
+  finally{ loginBusy = false; }
 }
 function resetSessionMemory(){
   try{ draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; }catch(e){}
@@ -1200,7 +1290,8 @@ function resetSessionMemory(){
 }
 function doLogout(reason){
   if(currentUser) audit(reason?"session_timeout":"logout", reason||"تسجيل خروج");
-  currentUser=null;
+  currentUser=null; masterLoaded=false;
+  setTimeout(()=>{ try{ sb.auth.signOut(); }catch(e){} },600);
   try{ sessionStorage.removeItem("irongate_user_no"); }catch(e){}
   resetSessionMemory();
   document.getElementById("app").style.display="none";
@@ -1230,10 +1321,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   if(noInp){ noInp.addEventListener("keyup",handler); }
   if(passInp){ passInp.addEventListener("keyup",handler); }
   // استرجاع الجلسة في نفس التبويب (بتتمسح لما التبويب يتقفل)
-  try{
-    const sn=parseInt(sessionStorage.getItem("irongate_user_no")||"",10);
-    if(sn){ securityMigrate(state); const u=state.users.find(x=>x.no===sn&&x.active!==false); if(u){ enterApp(u,true); return; } }
-  }catch(e){}
+  sb.auth.getSession().then(r=>{ if(r.data && r.data.session) startSession(r.data.session.user,true); });
   // رقم المستخدم المحفوظ فقط — كلمة المرور بتتكتب كل مرة
   try{
     const sv=JSON.parse(localStorage.getItem("irongate_saved_login")||"null");
@@ -4257,7 +4345,7 @@ function viewAudit(){
     </tbody></table></div><p style="margin-top:8px;color:var(--text-dim);font-size:12px">آخر ${L.length} من ${total} حدث (السجل بيحتفظ بآخر 1000).</p></div>`;
 }
 function refreshAudit(){ const c=document.getElementById("content"); const pos=document.getElementById("auditQ")?.selectionStart; c.innerHTML=viewUsers(); const i=document.getElementById("auditQ"); if(i){ i.focus(); try{ i.setSelectionRange(pos,pos); }catch(e){} } }
-function clearAudit(){ if(!isAdmin()) return; if(!confirm("مسح سجل النشاط بالكامل؟")) return; state.auditLog=[]; audit("audit_clear","مسح سجل النشاط"); go("users"); }
+function clearAudit(){ if(!isAdmin()) return; if(!confirm("مسح سجل النشاط بالكامل؟")) return; sb.from("audit_log").delete().gte("id",0).then(r=>{ if(r.error) toast("تعذر مسح السجل على السيرفر","err"); }); state.auditLog=[]; audit("audit_clear","مسح سجل النشاط"); go("users"); }
 
 // ---------- نموذج المستخدم + مصفوفة الصلاحيات ----------
 let userFormEditing=null;
@@ -4355,7 +4443,7 @@ function permDiff(a,b){
   if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
   return out;
 }
-function saveUserForm(){
+function saveUserForm(){ if(srvUsersBlocked()) return false;
   if(!isAdmin()) return false;
   const name=(document.getElementById("uf_name").value||"").trim(), role=document.getElementById("uf_role").value;
   if(!name){ toast("اكتب اسم المستخدم","err"); return false; }
@@ -4388,7 +4476,7 @@ function toggleUser(no){
   if(!confirm(`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}؟`)) return;
   u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
 }
-function delUser(no){
+function delUser(no){ if(srvUsersBlocked()) return;
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
   if(currentUser&&u.no===currentUser.no){ toast("مينفعش تحذف حسابك الحالي","err"); return; }
   if(u.role==="admin"&&u.active!==false&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return; }
@@ -4402,6 +4490,7 @@ function openUserPass(no){
     <div class="fld" style="margin-bottom:12px"><label>تأكيد كلمة المرور</label><input class="inp" id="pw_new2" type="password" autocomplete="new-password"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="pw_force" checked> إجبار المستخدم يغيّرها عند أول دخول</label>`,
   ()=>{
+    if(srvUsersBlocked()) return false;
     const a=document.getElementById("pw_new").value, b=document.getElementById("pw_new2").value;
     if(a.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
     if(a!==b){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
@@ -4419,12 +4508,20 @@ function openMyPassword(first){
     <div class="fld"><label>تأكيد كلمة المرور الجديدة</label><input class="inp" id="mp_new2" type="password" autocomplete="new-password"></div>`,
   ()=>{
     const o=document.getElementById("mp_old").value, a=document.getElementById("mp_new").value, b=document.getElementById("mp_new2").value;
-    if(!verifyPassword(u,o)){ toast("كلمة المرور الحالية غير صحيحة","err"); return false; }
+    if(!o){ toast("أدخل كلمة المرور الحالية","err"); return false; }
     if(a.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
     if(a===o){ toast("اختار كلمة مرور مختلفة عن الحالية","err"); return false; }
     if(a!==b){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
-    setUserPassword(u,a); u.mustChange=false; saveState(); audit("user_pass","تغيير كلمة المرور الشخصية");
-    toast("تم تغيير كلمة المرور","ok"); updateTopbarUser(); return true;
+    (async()=>{
+      const chk = await sb.auth.signInWithPassword({ email:`u${u.no}@irongate.app`, password:o });
+      if(chk.error){ toast("كلمة المرور الحالية غير صحيحة","err"); return; }
+      const up = await sb.auth.updateUser({ password:a });
+      if(up.error){ toast("تعذر تغيير كلمة المرور: "+up.error.message,"err"); return; }
+      sb.rpc("password_changed").then(()=>{},()=>{});
+      u.mustChange=false; audit("user_pass","تغيير كلمة المرور الشخصية");
+      toast("تم تغيير كلمة المرور","ok"); updateTopbarUser();
+    })();
+    return true;
   });
   setTimeout(()=>document.getElementById("mp_old")?.focus(),50);
 }
