@@ -4463,7 +4463,7 @@ function permDiff(a,b){
   if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
   return out;
 }
-function saveUserForm(){ if(srvUsersBlocked()) return false;
+function saveUserForm(){
   if(!isAdmin()) return false;
   const name=(document.getElementById("uf_name").value||"").trim(), role=document.getElementById("uf_role").value;
   if(!name){ toast("اكتب اسم المستخدم","err"); return false; }
@@ -4475,9 +4475,15 @@ function saveUserForm(){ if(srvUsersBlocked()) return false;
     if(state.users.some(x=>x.no===no)){ toast("رقم المستخدم مستخدم قبل كده","err"); return false; }
     if(p1.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
     if(p1!==p2){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
-    const u={ no, name, role, active:true, perms, createdAt:Date.now() }; setUserPassword(u,p1);
-    state.users.push(u); saveState();
-    audit("user_add",`إضافة مستخدم #${no} ${name} — الدور: ${roleLabel(u)}`);
+    (async()=>{
+      const r=await sb.functions.invoke("admin-users",{ body:{ action:"create", no, name, role, password:p1, perms } });
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر الإضافة: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      const u={ no, name, role, active:true, mustChange:true, perms, createdAt:Date.now() };
+      state.users.push(u); saveState();
+      audit("user_add",`إضافة مستخدم #${no} ${name} — الدور: ${roleLabel(u)}`);
+      toast("تمت الإضافة","ok"); go("users"); updateTopbarUser();
+    })();
+    return true;
   } else {
     const u=state.users.find(x=>x.no===userFormEditing); if(!u) return false;
     if(u.role==="admin"&&role!=="admin"&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return false; }
@@ -4496,12 +4502,16 @@ function toggleUser(no){
   if(!confirm(`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}؟`)) return;
   u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
 }
-function delUser(no){ if(srvUsersBlocked()) return;
+function delUser(no){
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
   if(currentUser&&u.no===currentUser.no){ toast("مينفعش تحذف حسابك الحالي","err"); return; }
   if(u.role==="admin"&&u.active!==false&&activeAdmins().length<=1){ toast("لازم يفضل أدمن نشط واحد على الأقل","err"); return; }
   if(!confirm(`حذف المستخدم #${u.no} ${u.name} نهائيًا؟`)) return;
-  state.users=state.users.filter(x=>x.no!==no); saveState(); audit("user_del",`حذف المستخدم #${u.no} ${u.name}`); go("users");
+  (async()=>{
+    const r=await sb.functions.invoke("admin-users",{ body:{ action:"delete", no } });
+    if(r.error||(r.data&&r.data.error)){ toast("تعذر الحذف: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+    state.users=state.users.filter(x=>x.no!==no); saveState(); audit("user_del",`حذف المستخدم #${u.no} ${u.name}`); go("users");
+  })();
 }
 function openUserPass(no){
   if(!isAdmin()) return; const u=state.users.find(x=>x.no===no); if(!u) return;
@@ -4510,12 +4520,18 @@ function openUserPass(no){
     <div class="fld" style="margin-bottom:12px"><label>تأكيد كلمة المرور</label><input class="inp" id="pw_new2" type="password" autocomplete="new-password"></div>
     <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" id="pw_force" checked> إجبار المستخدم يغيّرها عند أول دخول</label>`,
   ()=>{
-    if(srvUsersBlocked()) return false;
     const a=document.getElementById("pw_new").value, b=document.getElementById("pw_new2").value;
     if(a.length<PW_MIN){ toast(`كلمة المرور لازم ${PW_MIN} حروف على الأقل`,"err"); return false; }
     if(a!==b){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
-    setUserPassword(u,a); u.mustChange=!!document.getElementById("pw_force").checked; saveState();
-    audit("user_pass",`إعادة تعيين كلمة مرور #${u.no} ${u.name}`); toast("تم تغيير كلمة المرور","ok"); go("users"); return true;
+    const force=!!document.getElementById("pw_force").checked;
+    (async()=>{
+      const r=await sb.functions.invoke("admin-users",{ body:{ action:"set_password", no:u.no, password:a, mustChange:force } });
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      u.mustChange=force; saveState();
+      audit("user_pass",`إعادة تعيين كلمة مرور #${u.no} ${u.name}`);
+      toast("تم تغيير كلمة المرور","ok"); go("users");
+    })();
+    return true;
   });
   setTimeout(()=>document.getElementById("pw_new")?.focus(),50);
 }
