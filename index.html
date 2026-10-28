@@ -748,6 +748,13 @@ th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
 th.sortable:hover{color:var(--gold)}
 th.sortable.sort-asc::after{content:" ▲";font-size:9px;color:var(--gold)}
 th.sortable.sort-desc::after{content:" ▼";font-size:9px;color:var(--gold)}
+
+/* تمييز سطور أمر البيع الواحد */
+tr.so-row>td{background:var(--so-bg)}
+tr.so-row>td:first-child{box-shadow:inset -5px 0 0 var(--so)}
+tr.so-row.so-start>td{border-top:2px solid var(--so)}
+tr.so-row.so-end>td{border-bottom:2px solid var(--so)}
+tr.so-row.so-hl>td{background-image:linear-gradient(var(--so-bg),var(--so-bg))}
 </style>
 </head>
 <body>
@@ -3194,11 +3201,16 @@ function supExportPdf(){
 // ========== عرض عادي (كل البوالص بصفوف) ==========
 function renderSupplyFlat(L, T){
   const SB=showBuy("supply"), SS=showSell("supply");
-  const body = L.map(({s,it,first})=>{
+  const soKey=l=>l?String(l.s.saleOrderId||l.s.saleOrderNo||""):"";
+  const SO_HUES=[212,152,28,282,350,174,48,322,98,246];
+  const soHue=k=>{ let h=0; for(const c of k) h=(h*31+c.charCodeAt(0))>>>0; return SO_HUES[h%SO_HUES.length]; };
+  const body = L.map(({s,it,first},idx)=>{
     const sub=r2(it.actualWeight*it.sellPrice);
+    const sk=soKey(L[idx]), hue=sk?soHue(sk):0;
+    const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)"`:"";
     const terms=`${fmt(s.terms.cashPct,0)}% نقدي`+(s.terms.installments?` + ${s.terms.installments}×${s.terms.periodDays}ي`:"");
     const soTag = first && s.saleOrderNo ? `<div style="font-size:10px;color:var(--gold);margin-top:2px">🔗 أمر #${escapeHtml(s.saleOrderNo)}</div>` : "";
-    return `<tr>
+    return `<tr${rowAttr}>
       <td>${first?`<strong style="color:var(--gold)">${escapeHtml(s.policyNo)}</strong>${soTag}`:""}</td>
       <td>${first?s.date:""}</td><td>${first?escapeHtml(s.supplier):""}</td><td>${first?escapeHtml(s.customer):""}</td><td>${first?escapeHtml(s.company||""):""}</td><td>${first?escapeHtml(s.site||""):""}</td>
       <td>${escapeHtml(itemFactory(s,it))}</td>
@@ -5228,6 +5240,22 @@ if('serviceWorker' in navigator){
   document.addEventListener("click",()=>setTimeout(q,60),true);
   new MutationObserver(q).observe(document.body,{childList:true,subtree:true});
   q();
+})();
+</script>
+<script>
+// تظليل كل سطور نفس أمر البيع عند المرور بالماوس
+(function(){
+  let cur=null;
+  const clear=()=>{ if(cur){ cur.forEach(r=>r.classList.remove("so-hl")); cur=null; } };
+  document.addEventListener("mouseover",e=>{
+    const tr=e.target.closest&&e.target.closest("tr[data-so]");
+    if(!tr){ clear(); return; }
+    if(cur&&cur[0]&&cur[0].dataset.so===tr.dataset.so&&cur[0].closest("table")===tr.closest("table")) return;
+    clear(); const k=tr.dataset.so;
+    cur=[...tr.closest("table").querySelectorAll("tr[data-so]")].filter(r=>r.dataset.so===k);
+    cur.forEach(r=>r.classList.add("so-hl"));
+  });
+  document.addEventListener("mouseleave",clear,true);
 })();
 </script>
 </body>
