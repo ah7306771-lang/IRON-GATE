@@ -2282,7 +2282,8 @@ const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:""
   notes:"",items:[blankItem()]});
 let draft=null, editingId=null, editingSrc="new", viewOnly=false, dirty=false;
 // editingSrc: "new" = جديدة | "policies" = محفوظة لم تُرحَّل | "shipments" = مرحّلة لبيانات التوريد
-let supFilter={q:"",supplier:"",customer:"",factory:"",status:"",grouped:true};
+let supFilter={q:"",supplier:"",customer:"",factory:"",status:"",from:"",to:"",grouped:true};
+let supBreak="";
 let supGroupExpanded = {}; // { saleOrderId_or_"none": true/false }
 const itemFactory=(s,it)=>it.factory||s.factory||"";
 
@@ -2896,6 +2897,8 @@ function supplyLines(){
   list.forEach(s=>{
     if(supFilter.supplier&&s.supplier!==supFilter.supplier) return;
     if(supFilter.customer&&s.customer!==supFilter.customer) return;
+    if(supFilter.from&&(!s.date||s.date<supFilter.from)) return;
+    if(supFilter.to&&(!s.date||s.date>supFilter.to)) return;
     const items=s.items.filter(it=>(!supFilter.factory||itemFactory(s,it)===supFilter.factory)&&(!supFilter.status||it.agingStatus===supFilter.status));
     if(!items.length) return;
     if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,s.saleOrderNo,...s.items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
@@ -2912,17 +2915,54 @@ function viewSupply(){
     <button class="btn ${supFilter.grouped?'':'ghost'} sm" onclick="supFilter.grouped=true;renderSupply()">📁 تجميع حسب أمر البيع</button>
     <button class="btn ${supFilter.grouped?'ghost':''} sm" onclick="supFilter.grouped=false;renderSupply()">📋 عرض عادي</button>
     <div class="spacer"></div>
+    <button class="btn ghost sm" onclick="supExportExcel()">⬇ Excel</button>
+    <button class="btn ghost sm" onclick="supExportPdf()">🖨 PDF / طباعة</button>
     <button class="btn" onclick="newPolicy()">+ بوليصة جديدة</button></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px">
+    <span style="color:var(--text-dim);font-size:12px">تفصيل المبالغ:</span>
+    <button id="supBrC" class="btn ${supBreak==='customer'?'':'ghost'} sm" onclick="supToggleBreak('customer')">👥 حسب العميل</button>
+    <button id="supBrS" class="btn ${supBreak==='supplier'?'':'ghost'} sm" onclick="supToggleBreak('supplier')">🏭 حسب المورد</button>
+  </div>
   <div class="filters">
     <input class="inp" placeholder="بحث: رقم البوليصة / مورد / عميل / شركة / موقع / مصنع / أمر بيع / ملاحظات" value="${escapeAttr(supFilter.q)}" oninput="supFilter.q=this.value;renderSupply()">
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-dim)">من <input class="inp" type="date" value="${escapeAttr(supFilter.from)}" onchange="supFilter.from=this.value;renderSupply()"></label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-dim)">إلى <input class="inp" type="date" value="${escapeAttr(supFilter.to)}" onchange="supFilter.to=this.value;renderSupply()"></label>
     ${sel("supplier",state.suppliers,"كل الموردين")}${sel("customer",state.customers,"كل العملاء")}
     ${sel("factory",state.factories,"كل المصانع")}${sel("status",state.statuses,"كل الحالات")}
-    <button class="btn ghost" onclick="supFilter={q:'',supplier:'',customer:'',factory:'',status:'',grouped:${supFilter.grouped}};go('supply')">مسح</button>
+    <button class="btn ghost" onclick="supFilter={q:'',supplier:'',customer:'',factory:'',status:'',from:'',to:'',grouped:${supFilter.grouped}};go('supply')">مسح</button>
   </div>
   <div class="kpis" id="supKpis"></div>
+  <div id="supBreak"></div>
   <div id="supView"></div>`;
 }
-function renderSupply(){
+const SUP_OK=["collected","deposited","cash_received"];
+function supPartial(){ return !!(supFilter.q.trim()||supFilter.factory||supFilter.status); }
+function supInRange(d){ if(supFilter.from&&(!d||d<supFilter.from)) return false; if(supFilter.to&&(!d||d>supFilter.to)) return false; return true; }
+function supTreasury(direction){
+  const field=direction==="in"?"customer":"supplier";
+  const r={ok:0,pending:0,returned:0,by:{}};
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.direction!==direction||!supInRange(e.date)) return;
+    if(supFilter[field]&&e[field]!==supFilter[field]) return;
+    const v=+e.amount||0, nm=e[field]||"—";
+    const b=r.by[nm]||(r.by[nm]={ok:0,pending:0,returned:0});
+    if(SUP_OK.includes(e.status)){ r.ok+=v; b.ok+=v; }
+    else if(e.status==="returned"){ r.returned+=v; b.returned+=v; }
+    else { r.pending+=v; b.pending+=v; }
+  });
+  return r;
+}
+function supGroup(L,key){
+  const m={};
+  L.forEach(({s,it})=>{
+    const k=s[key]||"—";
+    const g=m[k]||(m[k]={ids:new Set(),w:0,sub:0,tax:0,dis:0,tot:0,buy:0});
+    g.ids.add(s.id); g.w+=it.actualWeight; g.sub+=r2(it.actualWeight*it.sellPrice);
+    g.tax+=it.tax; g.dis+=it.discount; g.tot+=it.total; g.buy+=r2(it.actualWeight*it.buyPrice);
+  });
+  return m;
+}
+function supCompute(){
   const SB=showBuy("supply"), SS=showSell("supply");
   const L=supplyLines(), T={sq:0,w:0,sub:0,tax:0,dis:0,tot:0,buy:0}, orders=new Set();
   L.forEach(({s,it})=>{
@@ -2930,12 +2970,81 @@ function renderSupply(){
     T.tax+=it.tax; T.dis+=it.discount; T.tot+=it.total; T.buy+=r2(it.actualWeight*it.buyPrice);
     orders.add(s.id);
   });
-  const k=(l,v,s)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${v}</div><div class="sub">${s}</div></div>`;
-  document.getElementById("supKpis").innerHTML=
-    k("عدد البوالص",orders.size,`${L.length} صنف`)+k("إجمالي كمية التوريد (طن)",fmt(T.sq,3),"")+k("إجمالي الوزن الفعلي (طن)",fmt(T.w,3),`الفرق ${fmt(T.w-T.sq,3)}`)+
-    (SS?k("إجمالي المبيعات",fmt(T.tot),state.settings.currency):"")+(SB?k("إجمالي المشتريات",fmt(T.buy),"بدون ضريبة"):"")+((SS&&SB)?k("هامش قبل الضريبة",fmt(T.sub-T.buy),""):"")+
-    k("بوالص محفوظة لم تُرحَّل",state.policies.length,"من شاشة البوليصة ← بحث");
-
+  const partial=supPartial();
+  const showIn=SS&&!partial&&!supFilter.supplier, showOut=SB&&!partial&&!supFilter.customer;
+  return {SB,SS,L,T,orders,showIn,showOut,
+    cin:showIn?supTreasury("in"):null, cout:showOut?supTreasury("out"):null,
+    cust:supGroup(L,"customer"), sup:supGroup(L,"supplier")};
+}
+function supKpiList(C){
+  const {SB,SS,T,L,orders,cin,cout}=C, cur=state.settings.currency, out=[];
+  out.push({l:"عدد البوالص",n:orders.size,d:0,s:`${L.length} صنف`});
+  out.push({l:"إجمالي كمية التوريد (طن)",n:T.sq,d:3,s:""});
+  out.push({l:"إجمالي الوزن الفعلي (طن)",n:T.w,d:3,s:`الفرق ${fmt(T.w-T.sq,3)}`});
+  if(SS){
+    out.push({l:"إجمالي المبيعات قبل الضريبة",n:T.sub,d:2,s:"المبلغ الأساسي · "+cur});
+    out.push({l:"ضريبة القيمة المضافة",n:T.tax,d:2,s:"مضافة · "+cur});
+    out.push({l:"المبيعات بعد الضريبة",n:r2(T.sub+T.tax),d:2,s:"قبل خصم ضريبة الأرباح · "+cur});
+    out.push({l:"خصم ضريبة الأرباح التجارية والصناعية",n:T.dis,d:2,s:"مخصومة · "+cur,c:"var(--danger)"});
+    out.push({l:"صافي المبيعات بعد الخصم",n:T.tot,d:2,s:"المستحق · "+cur,c:"var(--gold-2)"});
+  }
+  if(SB) out.push({l:"إجمالي المشتريات",n:T.buy,d:2,s:"بدون ضريبة · "+cur});
+  if(SS&&SB){
+    out.push({l:"هامش قبل الضريبة",n:r2(T.sub-T.buy),d:2,s:"المبيعات − المشتريات"});
+    out.push({l:"هامش بعد خصم ضريبة الأرباح",n:r2(T.sub-T.dis-T.buy),d:2,s:"الربح الفعلي",c:"var(--ok)"});
+  }
+  if(cin){
+    out.push({l:"المحصّل من العملاء",n:cin.ok,d:2,s:"محصل / مودع / مستلم",c:"var(--ok)"});
+    out.push({l:"تحت التحصيل (شيكات)",n:cin.pending,d:2,s:cur,c:"var(--warn)"});
+    out.push({l:"المتبقي على العملاء",n:r2(T.tot-cin.ok),d:2,s:"الصافي − المحصّل",c:"var(--danger)"});
+  }
+  if(cout){
+    out.push({l:"المدفوع للموردين",n:cout.ok,d:2,s:cur,c:"var(--ok)"});
+    out.push({l:"المتبقي للموردين",n:r2(T.buy-cout.ok),d:2,s:"المشتريات − المدفوع",c:"var(--danger)"});
+  }
+  out.push({l:"بوالص محفوظة لم تُرحَّل",n:state.policies.length,d:0,s:"من شاشة البوليصة ← بحث"});
+  return out;
+}
+// جداول التفصيل: كل جدول = {title, cols:[{h,d}], rows:[[...]], foot:[...]}
+function supBreakTable(kind,C){
+  const {SB,SS,cin,cout,T}=C;
+  const isC=kind==="customer", G=isC?C.cust:C.sup, tr=isC?cin:cout;
+  const names=new Set(Object.keys(G)); if(tr) Object.keys(tr.by).forEach(n=>names.add(n));
+  const cols=[{h:isC?"العميل":"المورد"},{h:"بوالص",d:0},{h:"الوزن الفعلي",d:3}];
+  if(isC&&SS) cols.push({h:"قبل الضريبة",d:2},{h:"القيمة المضافة",d:2},{h:"بعد الضريبة",d:2},{h:"خصم ضريبة الأرباح",d:2},{h:"الصافي",d:2});
+  if(!isC&&SB) cols.push({h:"المشتريات",d:2});
+  if(tr) cols.push({h:isC?"المحصّل":"المدفوع",d:2},{h:isC?"تحت التحصيل":"معلّق",d:2},{h:"المتبقي",d:2});
+  const rows=[], tot=cols.map(()=>0);
+  [...names].sort((x,y)=>{ const gx=G[x]||{}, gy=G[y]||{}; return ((gy.sub||gy.buy||0)-(gx.sub||gx.buy||0))||x.localeCompare(y,"ar"); }).forEach(n=>{
+    const g=G[n]||{ids:new Set(),w:0,sub:0,tax:0,dis:0,tot:0,buy:0}, t=tr&&tr.by[n]||{ok:0,pending:0};
+    const row=[n,g.ids.size,g.w];
+    if(isC&&SS) row.push(g.sub,g.tax,r2(g.sub+g.tax),g.dis,g.tot);
+    if(!isC&&SB) row.push(g.buy);
+    if(tr) row.push(t.ok,t.pending,r2((isC?g.tot:g.buy)-t.ok));
+    rows.push(row); row.forEach((v,i)=>{ if(i>0) tot[i]+=v; });
+  });
+  const foot=["الإجمالي",...tot.slice(1)];
+  return {title:isC?"تفصيل المبالغ حسب العميل":"تفصيل المبالغ حسب المورد",cols,rows,foot};
+}
+function supTableHtml(tb,xl){
+  const nm=(v,d)=> xl?Number(v||0).toFixed(d):fmt(v,d);
+  const cell=(v,c,tag)=> typeof v==="number" ? `<${tag} class="num">${nm(v,c.d==null?2:c.d)}</${tag}>` : `<${tag}>${escapeHtml(String(v))}</${tag}>`;
+  return `<thead><tr>${tb.cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead><tbody>${tb.rows.map(r=>`<tr>${r.map((v,i)=>cell(v,tb.cols[i],"td")).join("")}</tr>`).join("")}</tbody><tfoot><tr>${tb.foot.map((v,i)=>cell(v,tb.cols[i],"td")).join("")}</tr></tfoot>`;
+}
+function supToggleBreak(k){ supBreak = supBreak===k ? "" : k; renderSupply();
+  const bc=document.getElementById("supBrC"), bs=document.getElementById("supBrS");
+  if(bc) bc.className="btn "+(supBreak==="customer"?"":"ghost")+" sm"; if(bs) bs.className="btn "+(supBreak==="supplier"?"":"ghost")+" sm"; }
+function renderSupply(){
+  const C=supCompute(), {L,T}=C;
+  const k=(x)=>`<div class="kpi"><div class="lbl">${x.l}</div><div class="val small"${x.c?` style="color:${x.c}"`:""}>${fmt(x.n,x.d)}</div><div class="sub">${x.s||""}</div></div>`;
+  document.getElementById("supKpis").innerHTML=supKpiList(C).map(k).join("");
+  const sb=document.getElementById("supBreak");
+  if(sb){
+    if(supBreak){
+      const tb=supBreakTable(supBreak,C);
+      sb.innerHTML=`<div class="card" style="margin-bottom:14px"><div class="head"><h3>${tb.title}</h3><span class="count">${tb.rows.length}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table>${supTableHtml(tb,false)}</table></div></div></div>`;
+    } else sb.innerHTML="";
+  }
   const container = document.getElementById("supView");
   if(!L.length){
     container.innerHTML = `<div class="empty" style="padding:30px"><p>${state.shipments.length?"مفيش نتائج للفلتر ده":"لسه مفيش بيانات مرحّلة. احفظ بوليصة من شاشة الإدخال وبعدين دوس \"ترحيل\"."}</p></div>`;
@@ -2946,6 +3055,51 @@ function renderSupply(){
   } else {
     container.innerHTML = renderSupplyFlat(L, T);
   }
+}
+
+
+function supFilterText(){
+  const p=[]; if(supFilter.from) p.push("من "+supFilter.from); if(supFilter.to) p.push("إلى "+supFilter.to);
+  if(supFilter.supplier) p.push("المورد: "+supFilter.supplier); if(supFilter.customer) p.push("العميل: "+supFilter.customer);
+  if(supFilter.factory) p.push("المصنع: "+supFilter.factory); if(supFilter.status) p.push("الحالة: "+supFilter.status);
+  if(supFilter.q.trim()) p.push("بحث: "+supFilter.q.trim());
+  return p.length?p.join(" · "):"كل البيانات";
+}
+function supReportHtml(C,xl){
+  const {SB,SS,L,T}=C, nm=(v,d)=> xl?Number(v||0).toFixed(d):fmt(v,d);
+  let h=`<h2>تقرير بيانات التوريد</h2><p class="muted">${escapeHtml(supFilterText())} · ${new Date().toLocaleDateString("en-GB")}</p>`;
+  h+=`<h3>ملخص المبالغ</h3><table border="1"><tbody>${supKpiList(C).map(x=>`<tr><th style="text-align:right">${x.l}</th><td class="num">${nm(x.n,x.d)}</td><td>${x.s||""}</td></tr>`).join("")}</tbody></table>`;
+  if(SS){ const tb=supBreakTable("customer",C); h+=`<h3>${tb.title}</h3><table border="1">${supTableHtml(tb,xl)}</table>`; }
+  if(SB){ const tb=supBreakTable("supplier",C); h+=`<h3>${tb.title}</h3><table border="1">${supTableHtml(tb,xl)}</table>`; }
+  const head=["البوليصة","التاريخ","المورد","العميل","المصنع","القطر","النوع","كمية التوريد","الوزن الفعلي"]
+    .concat(SB?["سعر الشراء"]:[]).concat(SS?["سعر البيع","قبل الضريبة","الضريبة","الخصم","الإجمالي"]:[]);
+  const rows=L.map(({s,it})=>{
+    const sub=r2(it.actualWeight*it.sellPrice);
+    return `<tr><td>${escapeHtml(String(s.policyNo||""))}</td><td>${escapeHtml(s.date||"")}</td><td>${escapeHtml(s.supplier||"")}</td><td>${escapeHtml(s.customer||"")}</td><td>${escapeHtml(itemFactory(s,it)||"")}</td><td>${escapeHtml(String(it.diameter||""))}</td><td>${escapeHtml(String(it.type||""))}</td><td class="num">${nm(it.supplyQty,3)}</td><td class="num">${nm(it.actualWeight,3)}</td>`
+      +(SB?`<td class="num">${nm(it.buyPrice,2)}</td>`:"")
+      +(SS?`<td class="num">${nm(it.sellPrice,2)}</td><td class="num">${nm(sub,2)}</td><td class="num">${nm(it.tax,2)}</td><td class="num">${nm(it.discount,2)}</td><td class="num">${nm(it.total,2)}</td>`:"")+`</tr>`;
+  }).join("");
+  h+=`<h3>تفاصيل البوالص</h3><table border="1"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+  return h;
+}
+const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:rtl;padding:14px;color:#222}h2{margin:0 0 4px}h3{margin:18px 0 6px;color:#8a6a0f}.muted{color:#666;font-size:12px;margin:0 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th{background:#f1e6c2}td.num{text-align:left;direction:ltr;white-space:nowrap}tfoot td{font-weight:700;background:#faf3dc}`;
+function supExportExcel(){
+  const C=supCompute();
+  if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" dir="rtl"><head><meta charset="UTF-8"><style>${SUP_REPORT_CSS}</style></head><body>${supReportHtml(C,true)}</body></html>`;
+  const blob=new Blob(["\ufeff"+html],{type:"application/vnd.ms-excel;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="بيانات_التوريد_"+new Date().toISOString().slice(0,10)+".xls";
+  document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+  toast("تم تصدير الملف","ok");
+}
+function supExportPdf(){
+  const C=supCompute();
+  if(!C.L.length){ toast("مفيش بيانات للطباعة","err"); return; }
+  const w=window.open("","_blank");
+  if(!w){ toast("المتصفح منع فتح النافذة","err"); return; }
+  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>تقرير بيانات التوريد</title><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet"><style>@page{size:A4 landscape;margin:10mm}${SUP_REPORT_CSS}</style></head><body>${supReportHtml(C,false)}<script>setTimeout(()=>{window.print();},800);<\/script></body></html>`);
+  w.document.close();
 }
 
 // ========== عرض عادي (كل البوالص بصفوف) ==========
