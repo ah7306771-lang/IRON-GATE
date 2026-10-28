@@ -1074,6 +1074,13 @@ async function syncMaster(){
   }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
+async function fnErrMsg(r){
+  try{
+    if(r.data&&r.data.error) return r.data.error;
+    if(r.error&&r.error.context&&typeof r.error.context.json==="function"){ const j=await r.error.context.json(); if(j&&j.error) return j.error; if(j&&j.message) return j.message; }
+  }catch(e){}
+  return (r.error&&r.error.message)||"خطأ غير معروف";
+}
 function srvUsersBlocked(){ toast("إدارة المستخدمين لسه ما اتربطتش بالسيرفر (المرحلة 3) — التعديل ده مش هيتحفظ","err"); return true; }
 
 // ================= الأمان والصلاحيات: تسجيل الدخول + RBAC + سجل النشاط =================
@@ -4477,7 +4484,7 @@ function saveUserForm(){
     if(p1!==p2){ toast("تأكيد كلمة المرور غير مطابق","err"); return false; }
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"create", no, name, role, password:p1, perms } });
-      if(r.error||(r.data&&r.data.error)){ toast("تعذر الإضافة: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر الإضافة: "+(await fnErrMsg(r)),"err"); return; }
       const u={ no, name, role, active:true, mustChange:true, perms, createdAt:Date.now() };
       state.users.push(u); saveState();
       audit("user_add",`إضافة مستخدم #${no} ${name} — الدور: ${roleLabel(u)}`);
@@ -4490,7 +4497,7 @@ function saveUserForm(){
     const before=JSON.parse(JSON.stringify(u.perms)), oldRole=u.role, oldName=u.name;
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, name, role, perms } });
-      if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+(await fnErrMsg(r)),"err"); return; }
       u.name=name; u.role=role; u.perms=perms; saveState();
       const d=permDiff(before,perms);
       audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
@@ -4508,7 +4515,7 @@ function toggleUser(no){
   if(!confirm(`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}؟`)) return;
   (async()=>{
     const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, active:to } });
-    if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+    if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+(await fnErrMsg(r)),"err"); return; }
     u.active=to; saveState(); audit("user_toggle",`${to?"تفعيل":"إيقاف"} المستخدم #${u.no} ${u.name}`); go("users");
   })();
 }
@@ -4519,7 +4526,7 @@ function delUser(no){
   if(!confirm(`حذف المستخدم #${u.no} ${u.name} نهائيًا؟`)) return;
   (async()=>{
     const r=await sb.functions.invoke("smart-task",{ body:{ action:"delete", no } });
-    if(r.error||(r.data&&r.data.error)){ toast("تعذر الحذف: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+    if(r.error||(r.data&&r.data.error)){ toast("تعذر الحذف: "+(await fnErrMsg(r)),"err"); return; }
     state.users=state.users.filter(x=>x.no!==no); saveState(); audit("user_del",`حذف المستخدم #${u.no} ${u.name}`); go("users");
   })();
 }
@@ -4536,7 +4543,7 @@ function openUserPass(no){
     const force=!!document.getElementById("pw_force").checked;
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"set_password", no:u.no, password:a, mustChange:force } });
-      if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+((r.data&&r.data.error)||r.error.message),"err"); return; }
+      if(r.error||(r.data&&r.data.error)){ toast("تعذر التغيير: "+(await fnErrMsg(r)),"err"); return; }
       u.mustChange=force; saveState();
       audit("user_pass",`إعادة تعيين كلمة مرور #${u.no} ${u.name}`);
       toast("تم تغيير كلمة المرور","ok"); go("users");
