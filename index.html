@@ -993,26 +993,45 @@ function saveState(){
 const SB_URL = "https://wadovjghevemdmqkhhml.supabase.co";
 const SB_KEY = "sb_publishable_mZH6txuODQ5vAAxqK4Gl7A_1Uk5H-wr";
 const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:true, autoRefreshToken:true, storage:window.sessionStorage } });
-const MASTER_KINDS = ["suppliers","customers","diameters","types","factories","statuses","quoteDescs","cementTypes","banks","safes","treasuries"];
-const MASTER_KEYF  = { suppliers:"name", customers:"name", treasuries:"name", banks:"code", safes:"code" };
-let masterLoaded = false, syncTimer = null, syncBusy = false, syncAgain = false, lastSnap = "";
-function masterSnap(){ return JSON.stringify([MASTER_KINDS.map(k=>state[k]), state.settings]); }
+const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", commercialReg:"commercial_reg", email:"email", contactPerson:"contact_person", notes:"notes" };
+// كل نوع بيانات أساسية له جدول لوحده: t=اسم الجدول، k=عمود المفتاح، f=اسم المفتاح في التطبيق، cols=باقي الأعمدة (لو مفيش يبقى قايمة نصوص)
+const MASTER_TABLES = {
+  suppliers:   { t:"suppliers",       k:"name", f:"name", cols:PARTY_COLS },
+  customers:   { t:"customers",       k:"name", f:"name", cols:PARTY_COLS },
+  diameters:   { t:"diameters",       k:"name" },
+  types:       { t:"steel_types",     k:"name" },
+  factories:   { t:"factories",       k:"name" },
+  statuses:    { t:"policy_statuses", k:"name" },
+  quoteDescs:  { t:"quote_descs",     k:"name" },
+  cementTypes: { t:"cement_types",    k:"name" },
+  banks:       { t:"banks",           k:"code", f:"code", cols:{ name:"name" } },
+  safes:       { t:"safes",           k:"code", f:"code", cols:{ name:"name" } },
+  treasuries:  { t:"treasuries",      k:"name", f:"name", cols:{ kind:"kind", notes:"notes" } }
+};
+const MASTER_KINDS = Object.keys(MASTER_TABLES);
+let masterLoaded = false, syncTimer = null, syncBusy = false, syncAgain = false, lastSnaps = {};
+function snapOf(k){ return JSON.stringify(k==="settings" ? state.settings : state[k]); }
+function changedKinds(){ return MASTER_KINDS.concat(["settings"]).filter(k=>snapOf(k)!==lastSnaps[k]); }
 function mapProfile(r){ return { id:r.id, no:r.user_no, name:r.name, role:r.role, active:r.active, mustChange:r.must_change, perms:r.perms||{} }; }
+function toRow(cfg, it, i){
+  if(!cfg.cols) return { [cfg.k]:String(it), sort:i };
+  const row = { [cfg.k]:String(it[cfg.f]), sort:i };
+  for(const [js,col] of Object.entries(cfg.cols)){ row[col] = (it[js]===undefined||it[js]===null) ? (col==="kind" ? "safe" : "") : it[js]; }
+  return row;
+}
+function fromRow(cfg, r){
+  if(!cfg.cols) return r[cfg.k];
+  const o = { [cfg.f]:r[cfg.k] };
+  for(const [js,col] of Object.entries(cfg.cols)) o[js] = r[col];
+  return o;
+}
 
 async function loadMaster(admin){
-  const [m, st] = await Promise.all([
-    sb.from("master_items").select("kind,key,data,sort").order("sort"),
-    sb.from("settings").select("data").eq("id",1).maybeSingle()
-  ]);
-  if(m.error) throw m.error;
+  const kinds = MASTER_KINDS;
+  const res = await Promise.all(kinds.map(k=>sb.from(MASTER_TABLES[k].t).select("*").order("sort")));
+  const st = await sb.from("settings").select("data").eq("id",1).maybeSingle();
+  res.forEach((r,i)=>{ if(r.error) throw r.error; state[kinds[i]] = (r.data||[]).map(x=>fromRow(MASTER_TABLES[kinds[i]], x)); });
   if(st.error) throw st.error;
-  const by = {}; MASTER_KINDS.forEach(k=>by[k]=[]);
-  (m.data||[]).forEach(r=>{
-    if(!by[r.kind]) return;
-    const f = MASTER_KEYF[r.kind];
-    by[r.kind].push(f ? Object.assign({[f]:r.key}, r.data||{}) : r.key);
-  });
-  MASTER_KINDS.forEach(k=>{ state[k] = by[k]; });
   if(st.data && st.data.data) state.settings = Object.assign({}, state.settings, st.data.data);
   state.auditLog = [];
   if(admin){
@@ -1024,33 +1043,34 @@ async function loadMaster(admin){
     if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
   }
   securityMigrate(state);
-  lastSnap = masterSnap();
+  MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
 }
 function scheduleSync(){
-  if(!currentUser || !masterLoaded || masterSnap()===lastSnap) return;
+  if(!currentUser || !masterLoaded || !changedKinds().length) return;
   clearTimeout(syncTimer); syncTimer = setTimeout(syncMaster, 600);
 }
 async function syncMaster(){
   if(syncBusy){ syncAgain = true; return; }
   syncBusy = true;
-  const snap = masterSnap();
   try{
-    const rows = [];
-    MASTER_KINDS.forEach(k=>(state[k]||[]).forEach((it,i)=>{
-      const f = MASTER_KEYF[k];
-      if(f){ const key = it[f]; const data = Object.assign({}, it); delete data[f]; rows.push({kind:k, key:String(key), data, sort:i}); }
-      else rows.push({kind:k, key:String(it), data:{}, sort:i});
-    }));
-    const cur = await sb.from("master_items").select("kind,key");
-    if(cur.error) throw cur.error;
-    const keep = new Set(rows.map(r=>r.kind+"\u0001"+r.key));
-    const gone = (cur.data||[]).filter(r=>!keep.has(r.kind+"\u0001"+r.key));
-    if(rows.length){ const u = await sb.from("master_items").upsert(rows,{onConflict:"kind,key"}); if(u.error) throw u.error; }
-    for(const g of gone){ const d = await sb.from("master_items").delete().eq("kind",g.kind).eq("key",g.key); if(d.error) throw d.error; }
-    const s2 = await sb.from("settings").update({data:state.settings}).eq("id",1);
-    if(s2.error) throw s2.error;
-    lastSnap = snap;
+    for(const k of changedKinds()){
+      const snap = snapOf(k);
+      if(k==="settings"){
+        const r = await sb.from("settings").update({data:state.settings}).eq("id",1);
+        if(r.error) throw r.error;
+      }else{
+        const cfg = MASTER_TABLES[k];
+        const rows = (state[k]||[]).map((it,i)=>toRow(cfg,it,i));
+        const cur = await sb.from(cfg.t).select(cfg.k);
+        if(cur.error) throw cur.error;
+        const keep = new Set(rows.map(r=>r[cfg.k]));
+        const gone = (cur.data||[]).map(r=>r[cfg.k]).filter(x=>!keep.has(x));
+        if(rows.length){ const u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k}); if(u.error) throw u.error; }
+        if(gone.length){ const d = await sb.from(cfg.t).delete().in(cfg.k,gone); if(d.error) throw d.error; }
+      }
+      lastSnaps[k] = snap;
+    }
   }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
