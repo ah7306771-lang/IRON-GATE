@@ -3653,23 +3653,29 @@ function supExportPdf(){
 // ========== عرض عادي (كل البوالص بصفوف) ==========
 function renderSupplyFlat(L, T){
   const SB=showBuy("supply"), SS=showSell("supply");
-  const soKey=l=>l?String(l.s.saleOrderId||l.s.saleOrderNo||""):"";
+  // رقم أمر البيع المعروض هو المعيار الوحيد لإظهار بيانات العميل والبيانات المرتبطة به مرة واحدة.
+  const orderNoOf=l=>l?String(l.s.saleOrderNo||state.saleOrders.find(o=>o.id===l.s.saleOrderId)?.orderNo||"").trim():"";
+  const soKey=l=>orderNoOf(l).toLowerCase();
+  const shownOrderHeaders=new Set();
   const SO_HUES=[212,152,28,282,350,174,48,322,98,246];
   const soHue=k=>{ let h=0; for(const c of k) h=(h*31+c.charCodeAt(0))>>>0; return SO_HUES[h%SO_HUES.length]; };
   const body = L.map(({s,it,first},idx)=>{
     const amounts=supplyAmounts(s,it), sub=amounts.subtotal;
+    const orderNo=orderNoOf(L[idx]);
     const sk=soKey(L[idx]), hue=sk?soHue(sk):0;
+    const showOrderHeader=sk?!shownOrderHeaders.has(sk):!!first;
+    if(sk&&showOrderHeader) shownOrderHeaders.add(sk);
     const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)"`:"";
     const terms=`${fmt(s.terms.cashPct,0)}% نقدي`+(s.terms.installments?` + ${s.terms.installments}×${s.terms.periodDays}ي`:"");
     return `<tr${rowAttr}>
       <td>${first?`<strong style="color:var(--gold)">${escapeHtml(s.policyNo)}</strong>`:""}</td>
-      <td>${first?s.date:""}</td><td>${first?escapeHtml(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||"—"):""}</td><td>${first?escapeHtml(s.supplier):""}</td><td>${first?escapeHtml(s.customer):""}</td><td>${first?escapeHtml(s.company||""):""}</td><td>${first?escapeHtml(s.site||""):""}</td>
+      <td>${showOrderHeader?s.date:""}</td><td>${showOrderHeader?escapeHtml(orderNo||"—"):""}</td><td>${showOrderHeader?escapeHtml(s.supplier):""}</td><td>${showOrderHeader?escapeHtml(s.customer):""}</td><td>${showOrderHeader?escapeHtml(s.company||""):""}</td><td>${showOrderHeader?escapeHtml(s.site||""):""}</td>
       <td>${escapeHtml(itemFactory(s,it))}</td>
       <td>${escapeHtml(it.diameter)}</td><td>${escapeHtml(it.type)}</td>
       <td class="num">${fmt(it.supplyQty,3)}</td><td class="num"><strong>${fmt(it.actualWeight,3)}</strong></td>
       ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
       ${SS?`<td class="num">${fmt(sub)}</td><td class="num">${fmt(amounts.tax)}</td><td class="num">${fmt(amounts.discount)}</td><td class="num"><strong>${fmt(amounts.total)}</strong></td>`:""}
-      <td>${first?terms:""}</td><td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
+      <td>${showOrderHeader?terms:""}</td><td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
       <td>${first?`<div class="td-actions"><button onclick="editShipment('${s.id}')">تعديل</button><button class="del" onclick="delShipment('${s.id}')">حذف</button></div>`:""}</td>
     </tr>`;
   }).join("");
