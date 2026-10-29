@@ -831,6 +831,9 @@ body.rs-dragcol,body.rs-dragcol *{cursor:grabbing!important;user-select:none!imp
 .supply-page #supView tbody tr:hover,.supply-page #supBreak tbody tr:hover{background:#fff8e5}
 .supply-page #supView tfoot td,.supply-page #supView tfoot th{background:#f3ead0;font-weight:800;color:#332a15;border-top:2px solid #d4a017;padding:12px 10px;white-space:nowrap}
 .supply-page #supView .btn,.supply-page #supBreak .btn{border-radius:8px}
+.supply-page #supView th.pay-terms-head,.supply-page #supView td.pay-terms-cell{background:#fff8e5!important}
+.supply-page #supView th.pay-terms-start,.supply-page #supView td.pay-terms-start{border-inline-start:3px solid #c99724!important}
+.supply-page #supView th.pay-terms-head{color:#fff!important;background:#34445a!important;border-bottom:2px solid #c99724!important}
 .supply-page .empty{border:1px dashed #cbd5e1;border-radius:14px;background:#fff;color:#64748b}
 @media(max-width:900px){.supply-page .page-head{padding:15px}.supply-page .page-head h2{font-size:19px}.supply-page .page-head .spacer{display:none}.supply-page .filters.sup-filters select{flex:1 1 140px;max-width:none}.supply-page .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.supply-page .page-head{gap:7px}.supply-page .page-head h2{width:100%;margin-bottom:5px}.supply-page .page-head .btn{flex:1 1 auto}.supply-page .kpis{grid-template-columns:1fr 1fr;gap:7px}.supply-page .kpi{padding:11px}.supply-page .kpi .val{font-size:16px!important}.supply-page .sup-filters .inp,.supply-page .sup-filters label{width:100%;max-width:none}.supply-page .sup-filters label{flex:1 1 130px}.supply-page>div:nth-child(2){padding:9px}.supply-page #supView table{min-width:900px}}
@@ -3614,6 +3617,75 @@ function supFilterText(){
   if(supFilter.q.trim()) p.push("بحث: "+supFilter.q.trim());
   return p.length?p.join(" · "):"كل البيانات";
 }
+function supPaymentDateAdd(dateText, days){
+  if(!dateText) return "";
+  const m=String(dateText).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return "";
+  const d=new Date(+m[1],+m[2]-1,+m[3]);
+  if(Number.isNaN(d.getTime())) return "";
+  d.setDate(d.getDate()+(+days||0));
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function supPaymentDateLabel(dateText){
+  const m=String(dateText||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : (dateText||"");
+}
+// شروط النقدي والأجل مبنية على بيانات كل بوليصة مرتبطة بأمر البيع.
+function supGroupedPaymentInfo(items){
+  const policies=new Map();
+  (items||[]).forEach(({s,it})=>{
+    if(!s) return;
+    const id=String(s.id||s.policyNo||("row-"+policies.size));
+    if(!policies.has(id)) policies.set(id,{s,total:0});
+    policies.get(id).total += (+supplyAmounts(s,it).total||0);
+  });
+  let total=0, cashValue=0, creditValue=0, known=0, termsKnown=true;
+  const countSet=new Set(), daysSet=new Set(), dueByDate=new Map();
+  for(const {s,total:policyTotalRaw} of policies.values()){
+    const policyTotal=r2(policyTotalRaw); total+=policyTotal;
+    const t=s.terms||{};
+    const cpRaw=t.cashPct, cp=(cpRaw===""||cpRaw==null)?NaN:+cpRaw;
+    if(!Number.isFinite(cp)||cp<0||cp>100){ termsKnown=false; continue; }
+    known++;
+    const n=Math.max(0,parseInt(t.installments,10)||0);
+    const days=Math.max(0,parseInt(t.periodDays,10)||0);
+    const cash=r2(policyTotal*cp/100), rest=r2(policyTotal-cash);
+    cashValue+=cash; creditValue+=rest;
+    if(rest>0&&n>0){
+      countSet.add(n); daysSet.add(days);
+      const normal=r2(rest/n);
+      for(let i=0;i<n;i++){
+        const amount=i===n-1?r2(rest-normal*(n-1)):normal;
+        const due=supPaymentDateAdd(s.date,days*(i+1));
+        const key=due||"~";
+        if(!dueByDate.has(key)) dueByDate.set(key,{date:due,amount:0});
+        dueByDate.get(key).amount=r2(dueByDate.get(key).amount+amount);
+      }
+    }
+  }
+  total=r2(total); cashValue=r2(cashValue); creditValue=r2(creditValue);
+  const schedule=[...dueByDate.values()].sort((a,b)=>{
+    if(!a.date&&!b.date) return 0; if(!a.date) return 1; if(!b.date) return -1; return a.date.localeCompare(b.date);
+  });
+  const cashPct=termsKnown&&known&&total>0?r2(cashValue/total*100):null;
+  const sameOrList=set=>set.size===0?"—":set.size===1?String([...set][0]):[...set].sort((a,b)=>a-b).join(" / ");
+  return {total,cashPct,cashValue:termsKnown&&known?cashValue:null,creditValue:termsKnown&&known?creditValue:null,
+    installmentsText:termsKnown&&known?sameOrList(countSet):"—",periodDaysText:termsKnown&&known?sameOrList(daysSet):"—",schedule};
+}
+function supPaymentHeaders(maxSchedule){
+  const h=["نسبة النقدي %","مدة أجل (أقساط)","الأجل على قسط واحد (أيام)","قيمة الأجل","قيمة النقدي"];
+  for(let i=1;i<=maxSchedule;i++) h.push(`قسط شهر ${i}`,`استحقاق قسط ${i}`);
+  return h;
+}
+function supPaymentCells(p,maxSchedule,nm=fmt){
+  const cells=[p.cashPct==null?"—":`${nm(p.cashPct,2)}%`,p.installmentsText,p.periodDaysText,
+    p.creditValue==null?"—":nm(p.creditValue,2),p.cashValue==null?"—":nm(p.cashValue,2)];
+  for(let i=0;i<maxSchedule;i++){
+    const d=p.schedule[i]; cells.push(d?nm(d.amount,2):"",d?supPaymentDateLabel(d.date):"");
+  }
+  return cells;
+}
+
 function supReportHtml(C,xl){
   const {SB,SS,L,T}=C, nm=(v,d)=> xl?Number(v||0).toFixed(d):fmt(v,d);
   let h=`<h2>تقرير بيانات التوريد</h2><p class="muted">${escapeHtml(supFilterText())} · ${new Date().toLocaleDateString("en-GB")}</p>`;
@@ -3623,14 +3695,32 @@ function supReportHtml(C,xl){
   if(supFilter.grouped){
     const groups=new Map();
     L.forEach(({s,it})=>{
-      const key=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id);
-      if(!groups.has(key)) groups.set(key,{order:s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||"بدون أمر بيع",date:s.date||"",supplier:s.supplier||"",customer:s.customer||"",policies:new Set(),qty:0,weight:0,buy:0,sub:0,tax:0,discount:0,total:0});
-      const g=groups.get(key), a=supplyAmounts(s,it); if(s.date&&(!g.date||s.date<g.date)) g.date=s.date; g.policies.add(s.id); g.qty+=(+it.supplyQty||0); g.weight+=(+it.actualWeight||0); g.buy+=a.buyTotal; g.sub+=a.subtotal; g.tax+=a.tax; g.discount+=a.discount; g.total+=a.total;
+      const key=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+String(s.saleOrderNo).trim().toLowerCase():"policy:"+s.id);
+      if(!groups.has(key)) groups.set(key,{key,order:s.saleOrderNo||state.saleOrders.find(o=>String(o.id)===String(s.saleOrderId))?.orderNo||"بدون أمر بيع",date:s.date||"",supplier:s.supplier||"",customer:s.customer||"",policies:new Map(),items:[],qty:0,weight:0,buy:0,sub:0,tax:0,discount:0,total:0});
+      const g=groups.get(key), a=supplyAmounts(s,it);
+      g.policies.set(s.id,s); g.items.push({s,it});
+      g.qty+=(+it.supplyQty||0); g.weight+=(+it.actualWeight||0); g.buy+=a.buyTotal; g.sub+=a.subtotal; g.tax+=a.tax; g.discount+=a.discount; g.total+=a.total;
+      if(s.date&&(!g.date||s.date<g.date)) g.date=s.date;
+      if(!g.supplier&&s.supplier) g.supplier=s.supplier; if(!g.customer&&s.customer) g.customer=s.customer;
     });
+    const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1));
+    const maxSchedule=Math.max(0,...data.map(g=>g.payment.schedule.length));
     const cols=["أمر البيع","عدد البوالص","التاريخ","المورد","العميل","إجمالي كمية التوريد","إجمالي الوزن الفعلي"];
     if(SB) cols.push("إجمالي الشراء"); if(SS) cols.push("إجمالي البيع قبل الضريبة","ضريبة القيمة المضافة","الخصم","صافي البيع بعد الضريبة والخصم");
-    const rows=[...groups.values()].sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1)).map(g=>`<tr><td>${escapeHtml(String(g.order))}</td><td>${g.policies.size}</td><td>${escapeHtml(g.date)}</td><td>${escapeHtml(g.supplier)}</td><td>${escapeHtml(g.customer)}</td><td class="num">${nm(g.qty,3)}</td><td class="num">${nm(g.weight,3)}</td>${SB?`<td class="num">${nm(g.buy,2)}</td>`:""}${SS?`<td class="num">${nm(g.sub,2)}</td><td class="num">${nm(g.tax,2)}</td><td class="num">${nm(g.discount,2)}</td><td class="num">${nm(g.total,2)}</td>`:""}</tr>`).join("");
-    h+=`<h3>الإجماليات حسب أمر البيع</h3><table border="1"><thead><tr>${cols.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+    const paymentHeaders=supPaymentHeaders(maxSchedule), paymentStart=cols.length;
+    cols.push(...paymentHeaders);
+    const rows=data.map(g=>{
+      const p=supPaymentCells(g.payment,maxSchedule,nm);
+      return `<tr><td>${escapeHtml(String(g.order))}</td><td>${g.policies.size}</td><td>${escapeHtml(g.date)}</td><td>${escapeHtml(g.supplier)}</td><td>${escapeHtml(g.customer)}</td><td class="num">${nm(g.qty,3)}</td><td class="num">${nm(g.weight,3)}</td>${SB?`<td class="num">${nm(g.buy,2)}</td>`:""}${SS?`<td class="num">${nm(g.sub,2)}</td><td class="num">${nm(g.tax,2)}</td><td class="num">${nm(g.discount,2)}</td><td class="num">${nm(g.total,2)}</td>`:""}${p.map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<3||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}</tr>`;
+    }).join("");
+    const sum=k=>data.reduce((a,g)=>a+(+g[k]||0),0);
+    const payCash=data.reduce((a,g)=>a+(+g.payment.cashValue||0),0), payCredit=data.reduce((a,g)=>a+(+g.payment.creditValue||0),0);
+    const paySched=Array.from({length:maxSchedule},(_,i)=>data.reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0));
+    const footCells=["","","","","الإجمالي العام",nm(sum("qty"),3),nm(sum("weight"),3)];
+    if(SB) footCells.push(nm(sum("buy"),2)); if(SS) footCells.push(nm(sum("sub"),2),nm(sum("tax"),2),nm(sum("discount"),2),nm(sum("total"),2));
+    footCells.push("","","",nm(payCredit,2),nm(payCash,2));
+    for(let i=0;i<maxSchedule;i++) footCells.push(nm(paySched[i],2),"");
+    h+=`<h3>الإجماليات حسب أمر البيع</h3><table border="1"><thead><tr>${cols.map((x,i)=>`<th${i>=paymentStart?` class="pay-terms-head${i===paymentStart?' pay-terms-start':''}"`:''}>${escapeHtml(x)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody><tfoot><tr>${footCells.map(x=>`<td>${escapeHtml(String(x??""))}</td>`).join("")}</tr></tfoot></table>`;
     return h;
   }
   const head=["البوليصة","التاريخ","أمر البيع","المورد","العميل","المصنع","القطر","النوع","كمية التوريد","الوزن الفعلي"]
@@ -3644,7 +3734,7 @@ function supReportHtml(C,xl){
   h+=`<h3>تفاصيل البوالص</h3><table border="1"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
   return h;
 }
-const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:rtl;padding:14px;color:#222}h2{margin:0 0 4px}h3{margin:18px 0 6px;color:#8a6a0f}.muted{color:#666;font-size:12px;margin:0 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th{background:#f1e6c2}td.num{text-align:left;direction:ltr;white-space:nowrap}tfoot td{font-weight:700;background:#faf3dc}`;
+const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:rtl;padding:14px;color:#222}h2{margin:0 0 4px}h3{margin:18px 0 6px;color:#8a6a0f}.muted{color:#666;font-size:12px;margin:0 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th{background:#f1e6c2}td.num{text-align:left;direction:ltr;white-space:nowrap}tfoot td{font-weight:700;background:#faf3dc}th.pay-terms-head,td.pay-terms-cell{background:#fff8e5}th.pay-terms-start,td.pay-terms-start{border-inline-start:3px solid #c99724}`;
 function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
@@ -3758,7 +3848,9 @@ function renderSupplyGrouped(L){
     g.totals={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,total:0};
     g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);g.totals.sq+=(+it.supplyQty||0);g.totals.w+=(+it.actualWeight||0);g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
     g.orderNo=g.so?.orderNo || g.items[0]?.s.saleOrderNo || "";
+    g.payment=supGroupedPaymentInfo(g.items);
   });
+  const maxSchedule=Math.max(0,...[...groups.values()].map(g=>g.payment.schedule.length));
   const ge=supEff("grouped"), gget=GSORT[ge.key]||GSORT.date, gnum=GNUM.has(GSORT[ge.key]?ge.key:"date");
   const rows=[...groups.values()].sort((a,b)=>
     supCmp(gget(a),gget(b),gnum,ge.dir)
@@ -3780,6 +3872,7 @@ function renderSupplyGrouped(L){
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold)">${fmt(totals.total)}</strong></td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
       <td>${first?`<div class="td-actions"><button onclick="editShipment('${first.id}')">فتح بوليصة</button></div>`:"—"}</td>
+      ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<3||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}
     </tr>`;
   }).join("");
   const total={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,grand:0};
@@ -3787,7 +3880,8 @@ function renderSupplyGrouped(L){
   return `<div class="tbl-wrap"><table><thead><tr>
     ${["order|أمر البيع","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
-    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td></tr></tfoot></table></div>`;
+    ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}">${escapeHtml(h)}</th>`).join("")}
+    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td></td><td></td><td></td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td>${Array.from({length:maxSchedule},(_,i)=>`<td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td></td>`).join("")}</tr></tfoot></table></div>`;
 }
 
 function toggleSupGroup(key){
