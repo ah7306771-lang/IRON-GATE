@@ -881,6 +881,16 @@ tbody tr:hover{background:#fffaf0}
 .sup-sum-bar{border-color:#e0e5ed;border-radius:11px;background:#fff}
 .kpi .lbl{letter-spacing:0;font-weight:600}.kpi .val{font-variant-numeric:tabular-nums}
 @media(max-width:700px){.content{padding:12px}.supply-head{align-items:flex-start;gap:8px}.supply-head .spacer{display:none}.supply-head .btn{flex:1}.supply-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:5px}.supply-tab{padding:10px 7px;font-size:12px}}
+
+/* تاب تجميع حسب أمر البيع: كل محتوى الجدول في نص الخانات */
+table[data-rs-key="supply-grouped"] th,table[data-rs-key="supply-grouped"] td,table[data-rs-key="supply-grouped"] td.num,table[data-rs-key="supply-grouped"] th.sortable{text-align:center!important;vertical-align:middle}
+table[data-rs-key="supply-grouped"] .td-actions{justify-content:center}
+table[data-rs-key="supply-grouped"] td.num{direction:ltr;unicode-bidi:plaintext}
+
+/* أعمدة النقدي (نسبة + قيمة) بلون مختلف عن الآجل والأقساط */
+.supply-page #supView th.pay-terms-head.pay-cash{background:#1f6b4a!important;color:#fff!important;border-bottom-color:#16543a!important}
+.supply-page #supView td.pay-terms-cell.pay-cash{background:#e5f5ec!important;color:#14513a;font-weight:700}
+.supply-page #supView tfoot td.pay-cash{background:#cfe9da!important;color:#14513a;font-weight:800}
 </style>
 
 <style id="statement-filter-polish">
@@ -3808,13 +3818,14 @@ function supMaxScheduleAcrossAllSupplyOrders(){
 }
 
 function supPaymentHeaders(maxSchedule){
-  const h=["نسبة النقدي %","مدة أجل (أقساط)","الأجل على قسط واحد (أيام)","قيمة الأجل","قيمة النقدي"];
+  const h=["نسبة النقدي %","قيمة النقدي","قيمة الآجل","مدة أجل (أقساط)","الأجل على قسط واحد (أيام)"];
   for(let i=1;i<=maxSchedule;i++) h.push(`قسط شهر ${i}`,`استحقاق قسط ${i}`);
   return h;
 }
 function supPaymentCells(p,maxSchedule,nm=fmt){
-  const cells=[p.cashPct==null?"—":`${nm(p.cashPct,2)}%`,p.installmentsText,p.periodDaysText,
-    p.creditValue==null?"—":nm(p.creditValue,2),p.cashValue==null?"—":nm(p.cashValue,2)];
+  const cells=[p.cashPct==null?"—":`${nm(p.cashPct,2)}%`,
+    p.cashValue==null?"—":nm(p.cashValue,2),p.creditValue==null?"—":nm(p.creditValue,2),
+    p.installmentsText,p.periodDaysText];
   for(let i=0;i<maxSchedule;i++){
     const d=p.schedule[i]; cells.push(d?nm(d.amount,2):"",d?supPaymentDateLabel(d.date):"");
   }
@@ -3846,16 +3857,16 @@ function supReportHtml(C,xl){
     cols.push(...paymentHeaders);
     const rows=data.map(g=>{
       const p=supPaymentCells(g.payment,maxSchedule,nm);
-      return `<tr><td>${escapeHtml(String(g.order))}</td><td>${g.policies.size}</td><td>${escapeHtml(g.date)}</td><td>${escapeHtml(g.supplier)}</td><td>${escapeHtml(g.customer)}</td><td class="num">${nm(g.qty,3)}</td><td class="num">${nm(g.weight,3)}</td>${SB?`<td class="num">${nm(g.buy,2)}</td>`:""}${SS?`<td class="num">${nm(g.sub,2)}</td><td class="num">${nm(g.tax,2)}</td><td class="num">${nm(g.discount,2)}</td><td class="num">${nm(g.total,2)}</td>`:""}${p.map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<3||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}</tr>`;
+      return `<tr><td>${escapeHtml(String(g.order))}</td><td>${g.policies.size}</td><td>${escapeHtml(g.date)}</td><td>${escapeHtml(g.supplier)}</td><td>${escapeHtml(g.customer)}</td><td class="num">${nm(g.qty,3)}</td><td class="num">${nm(g.weight,3)}</td>${SB?`<td class="num">${nm(g.buy,2)}</td>`:""}${SS?`<td class="num">${nm(g.sub,2)}</td><td class="num">${nm(g.tax,2)}</td><td class="num">${nm(g.discount,2)}</td><td class="num">${nm(g.total,2)}</td>`:""}${p.map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}</tr>`;
     }).join("");
     const sum=k=>data.reduce((a,g)=>a+(+g[k]||0),0);
     const payCash=data.reduce((a,g)=>a+(+g.payment.cashValue||0),0), payCredit=data.reduce((a,g)=>a+(+g.payment.creditValue||0),0);
     const paySched=Array.from({length:maxSchedule},(_,i)=>data.reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0));
     const footCells=["","","","","الإجمالي العام",nm(sum("qty"),3),nm(sum("weight"),3)];
     if(SB) footCells.push(nm(sum("buy"),2)); if(SS) footCells.push(nm(sum("sub"),2),nm(sum("tax"),2),nm(sum("discount"),2),nm(sum("total"),2));
-    footCells.push("","","",nm(payCredit,2),nm(payCash,2));
+    footCells.push("",nm(payCash,2),nm(payCredit,2),"","");
     for(let i=0;i<maxSchedule;i++) footCells.push(nm(paySched[i],2),"");
-    h+=`<h3>الإجماليات حسب أمر البيع</h3><table border="1"><thead><tr>${cols.map((x,i)=>`<th${i>=paymentStart?` class="pay-terms-head${i===paymentStart?' pay-terms-start':''}"`:''}>${escapeHtml(x)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody><tfoot><tr>${footCells.map(x=>`<td>${escapeHtml(String(x??""))}</td>`).join("")}</tr></tfoot></table>`;
+    h+=`<h3>الإجماليات حسب أمر البيع</h3><table border="1"><thead><tr>${cols.map((x,i)=>`<th${i>=paymentStart?` class="pay-terms-head${i===paymentStart?' pay-terms-start':''}${i-paymentStart<=1?' pay-cash':''}"`:''}>${escapeHtml(x)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody><tfoot><tr>${footCells.map(x=>`<td>${escapeHtml(String(x??""))}</td>`).join("")}</tr></tfoot></table>`;
     return h;
   }
   const head=["البوليصة","التاريخ","أمر البيع","المورد","العميل","المصنع","القطر","النوع","كمية التوريد","الوزن الفعلي"]
@@ -3869,7 +3880,7 @@ function supReportHtml(C,xl){
   h+=`<h3>تفاصيل البوالص</h3><table border="1"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
   return h;
 }
-const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:rtl;padding:14px;color:#222}h2{margin:0 0 4px}h3{margin:18px 0 6px;color:#8a6a0f}.muted{color:#666;font-size:12px;margin:0 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th{background:#f1e6c2}td.num{text-align:left;direction:ltr;white-space:nowrap}tfoot td{font-weight:700;background:#faf3dc}th.pay-terms-head,td.pay-terms-cell{background:#fff8e5}th.pay-terms-start,td.pay-terms-start{border-inline-start:3px solid #c99724}`;
+const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:rtl;padding:14px;color:#222}h2{margin:0 0 4px}h3{margin:18px 0 6px;color:#8a6a0f}.muted{color:#666;font-size:12px;margin:0 0 8px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border:1px solid #bbb;padding:4px 6px;text-align:right}th{background:#f1e6c2}td.num{text-align:left;direction:ltr;white-space:nowrap}tfoot td{font-weight:700;background:#faf3dc}th.pay-terms-head,td.pay-terms-cell{background:#fff8e5}th.pay-terms-start,td.pay-terms-start{border-inline-start:3px solid #c99724}th.pay-cash{background:#cfe9da}td.pay-cash{background:#e5f5ec}`;
 function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
@@ -4007,7 +4018,7 @@ function renderSupplyGrouped(L){
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold)">${fmt(totals.total)}</strong></td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
       <td>${first?`<div class="td-actions"><button onclick="editShipment('${first.id}')">فتح بوليصة</button></div>`:"—"}</td>
-      ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<3||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}
+      ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}
     </tr>`;
   }).join("");
   const total={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,grand:0};
@@ -4015,8 +4026,8 @@ function renderSupplyGrouped(L){
   return `<div class="tbl-wrap"><table data-rs-key="supply-grouped"><thead><tr>
     ${["order|أمر البيع","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
-    ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}">${escapeHtml(h)}</th>`).join("")}
-    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td></td><td></td><td></td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td>${Array.from({length:maxSchedule},(_,i)=>`<td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td></td>`).join("")}</tr></tfoot></table></div>`;
+    ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}">${escapeHtml(h)}</th>`).join("")}
+    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td class="pay-cash"></td><td class="num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td></td><td></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td></td>`).join("")}</tr></tfoot></table></div>`;
 }
 
 function toggleSupGroup(key){
