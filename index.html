@@ -1251,6 +1251,7 @@ async function loadMaster(admin){
     if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
   }
   await loadDocs();
+  await supLoadPaymentPlansFromSupabase();
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
@@ -3068,6 +3069,23 @@ function unlinkSO(){
   draft.saleOrderId = ""; draft.saleOrderNo = ""; dirty = true; go("shipments");
 }
 
+function supOrderPaymentPlanPanel(orderNo){
+  const p=supPaymentPlanForOrder(orderNo);
+  if(!p) return `<div class="card" style="margin-top:14px"><div class="head"><h3>شروط السداد والاستحقاقات</h3></div><div class="body"><p style="color:var(--text-dim);font-size:12px">لا توجد بيانات مطابقة لرقم أمر البيع في شيت شروط السداد.</p></div></div>`;
+  const money=v=>v==null||!Number.isFinite(+v)?"—":fmt(+v,2);
+  const scheduleRows=p.schedule.map((d,i)=>`<tr><td>${i+1}</td><td class="num">${money(d.amount)}</td><td>${escapeHtml(supPaymentDateLabel(d.date)||"—")}</td></tr>`).join("");
+  return `<div class="card" style="margin-top:14px;border-color:var(--gold)"><div class="head"><h3>شروط السداد والاستحقاقات من شيت الإكسيل</h3><span class="count">أمر بيع ${escapeHtml(String(orderNo||"—"))}</span></div><div class="body">
+    <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:8px">
+      <div class="kpi"><div class="lbl">طريقة السداد</div><div class="val small">${escapeHtml(p.method||"—")}</div></div>
+      <div class="kpi"><div class="lbl">نسبة النقدي</div><div class="val small">${p.cashPct==null?"—":money(p.cashPct)+"%"}</div></div>
+      <div class="kpi"><div class="lbl">قيمة النقدي</div><div class="val small">${money(p.cashValue)}</div></div>
+      <div class="kpi"><div class="lbl">قيمة الآجل</div><div class="val small">${money(p.creditValue)}</div></div>
+      <div class="kpi"><div class="lbl">عدد الأقساط</div><div class="val small">${escapeHtml(p.installmentsText)}</div></div>
+    </div>
+    ${p.schedule.length?`<div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>القسط</th><th>قيمة القسط</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${scheduleRows}</tbody><tfoot><tr><td>إجمالي الآجل</td><td class="num">${money(p.schedule.reduce((a,d)=>a+(+d.amount||0),0))}</td><td></td></tr></tfoot></table></div>`:`<p style="margin-top:8px;color:var(--ok);font-weight:700">لا توجد أقساط آجلة — السداد نقدي بالكامل.</p>`}
+  </div></div>`;
+}
+
 function viewLinkedSO(){
   if(!draft || !draft.saleOrderId) return;
   const so = state.saleOrders.find(x=>x.id===draft.saleOrderId);
@@ -3084,6 +3102,7 @@ function viewLinkedSO(){
       </div>
       <div style="margin-top:10px;font-size:12px;color:var(--text-dim)">عدد البوالص المربوطة: <b style="color:var(--gold)">${r.linkedCount}</b></div>
     </div>
+    ${supOrderPaymentPlanPanel(so.orderNo)}
   `, ()=>true);
 }
 
@@ -3630,8 +3649,109 @@ function supPaymentDateLabel(dateText){
   const m=String(dateText||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : (dateText||"");
 }
-// شروط النقدي والأجل مبنية على بيانات كل بوليصة مرتبطة بأمر البيع.
-function supGroupedPaymentInfo(items){
+// بيانات شروط السداد ومواعيد الاستحقاق المستوردة من Book1.xlsx، مرتبطة برقم أمر البيع.
+const SUP_IMPORTED_PAYMENT_PLANS = [{"orderNo":"1","customer":"خالد صبري","policyNo":"64553","invoiceTotal":1946193.052631579,"cashPct":null,"installments":1,"periodDays":62,"cashValue":null,"creditValue":1946193.052631579,"method":"شيك 60يوم","schedule":[{"amount":1946193.052631579,"dueDate":"2026-08-28"}],"sourceRow":4},{"orderNo":"19","customer":"سامكريت مصر","policyNo":"8176","invoiceTotal":3043268.4210526315,"cashPct":null,"installments":1,"periodDays":57,"cashValue":null,"creditValue":3043268.4210526315,"method":"شيك 60يوم","schedule":[{"amount":3043268.4210526315,"dueDate":"2026-09-01"}],"sourceRow":6},{"orderNo":"3","customer":"فالتور","policyNo":"","invoiceTotal":7788965.105263158,"cashPct":null,"installments":1,"periodDays":90,"cashValue":null,"creditValue":7788965.105263158,"method":"شيك 90 يوم","schedule":[{"amount":7788965.105263158,"dueDate":"2026-10-06"}],"sourceRow":10},{"orderNo":"18","customer":"ويكادي","policyNo":"64941","invoiceTotal":4594860,"cashPct":25.0,"installments":1,"periodDays":null,"cashValue":1148715,"creditValue":3446145,"method":"كاش 25% - شيك شهر","schedule":[{"amount":3446145,"dueDate":"2026-08-14"}],"sourceRow":26},{"orderNo":"9--4","customer":"بيراميدز","policyNo":"49125","invoiceTotal":33278256,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":33278256,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":30},{"orderNo":"9--1","customer":"بيراميدز","policyNo":"2744","invoiceTotal":5237680,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":5237680,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":68},{"orderNo":"9--2","customer":"بيراميدز","policyNo":"409","invoiceTotal":3582904,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":3582904,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":78},{"orderNo":"9--3","customer":"بيراميدز","policyNo":"64950","invoiceTotal":11024320,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":11024320,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":88},{"orderNo":"C-102","customer":"سامكريت مصر","policyNo":"49203","invoiceTotal":5574593.315789473,"cashPct":null,"installments":1,"periodDays":45,"cashValue":null,"creditValue":5574593.315789473,"method":"شيك 45 يوم","schedule":[{"amount":5574593.315789473,"dueDate":"2026-09-04"}],"sourceRow":103},{"orderNo":"C-104-R/1","customer":"فالتور","policyNo":"49276","invoiceTotal":7077431.611842105,"cashPct":null,"installments":3,"periodDays":null,"cashValue":null,"creditValue":7077431.611842105,"method":"شيك 30 يوم - شيك 60 يوم - شيك 90 يوم","schedule":[{"amount":2359143.870614035,"dueDate":"2026-08-20"},{"amount":2359143.870614035,"dueDate":"2026-09-20"},{"amount":2359143.870614035,"dueDate":"2026-10-20"}],"sourceRow":115},{"orderNo":"D-105/1","customer":"جي دبيو","policyNo":"65125","invoiceTotal":1521212.9385964912,"cashPct":null,"installments":2,"periodDays":null,"cashValue":null,"creditValue":1521212.9385964912,"method":"شيك اجل 60  يوم","schedule":[{"amount":778114,"dueDate":"2026-08-19"},{"amount":743098.9385964912,"dueDate":"2026-09-03"}],"sourceRow":122},{"orderNo":"26","customer":"ويكادي","policyNo":"65206","invoiceTotal":2987348,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":2987348,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":126},{"orderNo":"27","customer":"خالد صبري","policyNo":"49408","invoiceTotal":3936592.8947368423,"cashPct":null,"installments":1,"periodDays":62,"cashValue":null,"creditValue":3936592.8947368423,"method":"شيك 60 يوم","schedule":[{"amount":3936592.8947368423,"dueDate":"2026-09-29"}],"sourceRow":127},{"orderNo":"28","customer":"ويكادي","policyNo":"49447","invoiceTotal":3746795,"cashPct":25.0,"installments":1,"periodDays":null,"cashValue":940000,"creditValue":2806795,"method":"كاش 25% - شيك شهر","schedule":[{"amount":2806795,"dueDate":"2026-08-30"}],"sourceRow":130},{"orderNo":"31","customer":"فالتور","policyNo":"49463","invoiceTotal":20832933.25877193,"cashPct":null,"installments":3,"periodDays":null,"cashValue":null,"creditValue":20832933.25877193,"method":"شيك 30 يوم - شيك 60 يوم - شيك 90 يوم","schedule":[{"amount":6944311.08625731,"dueDate":"2026-08-26"},{"amount":6944311.08625731,"dueDate":"2026-09-26"},{"amount":6944311.08625731,"dueDate":"2026-10-26"}],"sourceRow":136},{"orderNo":"32","customer":"ويكادي","policyNo":"49578","invoiceTotal":2268786,"cashPct":50.0,"installments":1,"periodDays":null,"cashValue":1135000,"creditValue":1134393,"method":"كاش 50% - شيك اجل شهر","schedule":[{"amount":1133786,"dueDate":"2026-09-06"}],"sourceRow":143},{"orderNo":"33","customer":"ويكادي","policyNo":"49639","invoiceTotal":2660112,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":2660112,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":147},{"orderNo":"34","customer":"ويكادي","policyNo":"65428","invoiceTotal":2496790,"cashPct":50.0,"installments":1,"periodDays":null,"cashValue":1248395,"creditValue":1248395,"method":"كاش 50% - شيك اجل شهر","schedule":[{"amount":1248395,"dueDate":"2026-09-09"}],"sourceRow":151},{"orderNo":"36","customer":"خالد صبري","policyNo":"65458","invoiceTotal":5129113.614035088,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":5129113.614035088,"method":"شيك اجل 60 يوم","schedule":[{"amount":5129113.614035088,"dueDate":"2026-10-10"}],"sourceRow":155},{"orderNo":"37","customer":"فالتور","policyNo":"65582","invoiceTotal":8800606.52631579,"cashPct":null,"installments":3,"periodDays":null,"cashValue":null,"creditValue":8800606.52631579,"method":"شيك 30 يوم - شيك 60 يوم - شيك 90 يوم","schedule":[{"amount":2933535.50877193,"dueDate":"2026-08-26"},{"amount":2933535.50877193,"dueDate":"2026-09-26"},{"amount":2933535.50877193,"dueDate":"2026-10-26"}],"sourceRow":161},{"orderNo":"38","customer":"ويكادي","policyNo":"65555","invoiceTotal":1859884,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1859884,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":167},{"orderNo":"39","customer":"بينتاكون","policyNo":"443","invoiceTotal":2017305,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":2017305,"method":"شيك اجل 60 يوم","schedule":[{"amount":2017305,"dueDate":"2026-10-15"}],"sourceRow":168},{"orderNo":"40","customer":"ويكادي","policyNo":"65621","invoiceTotal":2075800,"cashPct":25.0,"installments":1,"periodDays":30,"cashValue":518950,"creditValue":1556850,"method":"كاش 25% - شيك اجل شهر","schedule":[{"amount":1556850,"dueDate":"2026-09-17"}],"sourceRow":171},{"orderNo":"41","customer":"خالد صبري","policyNo":"2768","invoiceTotal":3979312.8421052634,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":3979312.8421052634,"method":"شيك اجل 60 يوم","schedule":[{"amount":3979312.8421052634,"dueDate":"2026-10-16"}],"sourceRow":174},{"orderNo":"42","customer":"ويكادي","policyNo":"65650","invoiceTotal":2772323,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":2772323,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":177},{"orderNo":"43","customer":"الشركة المتحده","policyNo":"","invoiceTotal":17745354,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":17745354,"method":"شيك اجل 60 يوم","schedule":[{"amount":17745354,"dueDate":"2026-10-22"}],"sourceRow":178},{"orderNo":"44","customer":"سامكريت مصر","policyNo":"","invoiceTotal":7179524.385964912,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":7179524.385964912,"method":"شيك اجل 60 يوم","schedule":[{"amount":7179524.385964912,"dueDate":"2026-10-26"}],"sourceRow":184},{"orderNo":"45","customer":"ويكادي","policyNo":"","invoiceTotal":2393531,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":2393531,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":188},{"orderNo":"46","customer":"فالتور","policyNo":"","invoiceTotal":9846915.157894736,"cashPct":null,"installments":3,"periodDays":null,"cashValue":null,"creditValue":9846915.157894736,"method":"شيك 30 يوم - شيك 60 يوم - شيك 90 يوم","schedule":[{"amount":3282305.052631579,"dueDate":"2026-08-26"},{"amount":3282305.052631579,"dueDate":"2026-09-26"},{"amount":3282305.052631579,"dueDate":"2026-10-26"}],"sourceRow":192},{"orderNo":"47","customer":"ويكادي","policyNo":"","invoiceTotal":4577624,"cashPct":25.0,"installments":1,"periodDays":30,"cashValue":1144406,"creditValue":3433218,"method":"كاش 25% - شيك اجل 30 يوم","schedule":[{"amount":3433218,"dueDate":"2026-10-20"}],"sourceRow":198},{"orderNo":"48","customer":"ويكادي","policyNo":"","invoiceTotal":1825859,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1825859,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":202},{"orderNo":"49","customer":"بينتاكون","policyNo":"","invoiceTotal":1923110,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":1923110,"method":"اجل 60 يوم","schedule":[{"amount":1923110,"dueDate":"2026-11-20"}],"sourceRow":207},{"orderNo":"50","customer":"ويكادي","policyNo":"","invoiceTotal":3915716,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":3915716,"creditValue":null,"method":"كاش 100%","schedule":[],"sourceRow":211},{"orderNo":"51","customer":"ويكادي","policyNo":"","invoiceTotal":4576040,"cashPct":null,"installments":2,"periodDays":null,"cashValue":null,"creditValue":4576040,"method":"شيك 30 يوم 50 % - شيك 60 يوم 50%","schedule":[{"amount":2288020,"dueDate":"2026-10-27"},{"amount":2288020,"dueDate":"2026-11-27"}],"sourceRow":216},{"orderNo":"52","customer":"الامين","policyNo":"","invoiceTotal":5384800,"cashPct":51.71594116773141,"installments":1,"periodDays":30,"cashValue":2784800.000000001,"creditValue":2599999.999999999,"method":"كاش 50% - 50 % شيك اجل 30 يوم","schedule":[{"amount":2599999.999999999,"dueDate":"2026-11-01"}],"sourceRow":224},{"orderNo":"53","customer":"ويكادي","policyNo":"","invoiceTotal":4062020,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":4062020,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":228},{"orderNo":"54","customer":"ويكادي","policyNo":"","invoiceTotal":1170468,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1170468,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":234},{"orderNo":"55","customer":"الامين","policyNo":"","invoiceTotal":4791465,"cashPct":50.0,"installments":1,"periodDays":30,"cashValue":2395732.5,"creditValue":2395732.5,"method":"كاش 50% - 50 % شيك اجل 30 يوم","schedule":[{"amount":2395732.5,"dueDate":"2026-11-05"}],"sourceRow":235},{"orderNo":"57","customer":"فالتور","policyNo":"","invoiceTotal":12289987.05263158,"cashPct":40.0,"installments":2,"periodDays":null,"cashValue":4915994.821052632,"creditValue":7373992.231578947,"method":"كاش 40% - 30% شيك اجل 45 يوم - 30% شيك اجل 75 يوم","schedule":[{"amount":3686996.1157894735,"dueDate":"2026-11-23"},{"amount":3686996.1157894735,"dueDate":"2026-12-23"}],"sourceRow":240},{"orderNo":"60","customer":"فالتور","policyNo":"","invoiceTotal":26271786.315789472,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":26271786.315789472,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":250},{"orderNo":"61","customer":"ويكادي","policyNo":"","invoiceTotal":1626240,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1626240,"creditValue":null,"method":"100% كاش","schedule":[],"sourceRow":263},{"orderNo":"62","customer":"ويكادي","policyNo":"","invoiceTotal":3795800,"cashPct":25.0,"installments":1,"periodDays":30,"cashValue":948950,"creditValue":2846850,"method":"كاش 25 % - باقي اجل 30 يوم","schedule":[{"amount":2846850,"dueDate":"2026-11-11"}],"sourceRow":269},{"orderNo":"63","customer":"ويكادي","policyNo":"","invoiceTotal":7171484,"cashPct":25.0,"installments":1,"periodDays":30,"cashValue":1792871,"creditValue":5378613,"method":"كاش 25 % - باقي اجل 30 يوم","schedule":[{"amount":5378613,"dueDate":"2026-11-12"}],"sourceRow":273},{"orderNo":"64","customer":"فالتور","policyNo":"","invoiceTotal":1238264.4078947369,"cashPct":40.0,"installments":2,"periodDays":null,"cashValue":495305.7631578948,"creditValue":742958.6447368421,"method":"كاش 40% - 30% شيك اجل 45 يوم - 30% شيك اجل 75 يوم","schedule":[{"amount":371479.32236842107,"dueDate":"2026-11-14"},{"amount":371479.32236842107,"dueDate":"2026-12-14"}],"sourceRow":279},{"orderNo":"67","customer":"فالتور","policyNo":"","invoiceTotal":538140.197368421,"cashPct":40.0,"installments":2,"periodDays":null,"cashValue":215256.07894736843,"creditValue":322884.1184210526,"method":"كاش 40% - 30% شيك اجل 45 يوم - 30% شيك اجل 75 يوم","schedule":[{"amount":161442.0592105263,"dueDate":"2026-11-14"},{"amount":161442.0592105263,"dueDate":"2026-12-14"}],"sourceRow":284},{"orderNo":"68","customer":"ويكادي","policyNo":"","invoiceTotal":1164066,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1164066,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":288},{"orderNo":"69","customer":"ويكادي","policyNo":"","invoiceTotal":1783434,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1783434,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":289},{"orderNo":"70","customer":"مصطفي عمر","policyNo":"","invoiceTotal":2083350,"cashPct":null,"installments":1,"periodDays":60,"cashValue":null,"creditValue":2083350,"method":"اجل  60 يوم","schedule":[{"amount":2083350,"dueDate":"2026-12-14"}],"sourceRow":291},{"orderNo":"71","customer":"ويكادي","policyNo":"","invoiceTotal":1156206,"cashPct":100.0,"installments":0,"periodDays":null,"cashValue":1156206,"creditValue":null,"method":"كاش 100 %","schedule":[],"sourceRow":295},{"orderNo":"72","customer":"الامين","policyNo":"","invoiceTotal":3053830,"cashPct":50.0,"installments":1,"periodDays":null,"cashValue":1526915,"creditValue":1526915,"method":"كاش 50 % - اجل 50% كاش","schedule":[{"amount":1526915,"dueDate":"2026-11-18"}],"sourceRow":298},{"orderNo":"73","customer":"فالتور","policyNo":"","invoiceTotal":5926550.649122807,"cashPct":40.0,"installments":2,"periodDays":null,"cashValue":2370620.259649123,"creditValue":3555930.389473684,"method":"كاش 40% - 30% شيك اجل 45 يوم - 30% شيك اجل 75 يوم","schedule":[{"amount":1777965.194736842,"dueDate":"2026-11-19"},{"amount":1777965.194736842,"dueDate":"2026-12-19"}],"sourceRow":302}];
+function supOrderNumberKey(value){ return String(value==null?"":value).replace(/[\u200e\u200f\u202a-\u202e]/g,"").trim().replace(/\s+/g," ").toLocaleLowerCase(); }
+const SUP_PAYMENT_PLAN_TABLE = "sale_order_payment_plans";
+const SUP_PAYMENT_SCHEDULE_TABLE = "sale_order_payment_schedule";
+let SUP_IMPORTED_PLAN_MAP = new Map();
+let SUP_IMPORTED_MAX_SCHEDULE = 0;
+let SUP_PAYMENT_DB_WARNING_SHOWN = false;
+function supPlanNum(v){ return v===null||v===undefined||v===""?null:Number(v); }
+function supSetPaymentPlanCache(plans){
+  const map=new Map();
+  (Array.isArray(plans)?plans:[]).forEach(p=>{ const k=supOrderNumberKey(p.orderNo); if(k) map.set(k,p); });
+  SUP_IMPORTED_PLAN_MAP=map;
+  SUP_IMPORTED_MAX_SCHEDULE=Math.max(0,...[...map.values()].map(p=>(p.schedule||[]).length));
+}
+supSetPaymentPlanCache(SUP_IMPORTED_PAYMENT_PLANS);
+function supImportedPaymentPlan(orderNo){ return SUP_IMPORTED_PLAN_MAP.get(supOrderNumberKey(orderNo))||null; }
+function supPaymentPlanToDb(p){
+  return {
+    order_no:String(p.orderNo||"").trim(), customer:String(p.customer||""), policy_no:String(p.policyNo||""),
+    invoice_total:supPlanNum(p.invoiceTotal), cash_pct:supPlanNum(p.cashPct), installment_count:Math.max(0,parseInt(p.installments,10)||0),
+    period_days:supPlanNum(p.periodDays), cash_value:supPlanNum(p.cashValue), credit_value:supPlanNum(p.creditValue),
+    method:String(p.method||""), source_row:supPlanNum(p.sourceRow), source:String(p.source||"Book1.xlsx"), updated_at:new Date().toISOString()
+  };
+}
+function supPaymentScheduleToDb(p){
+  return (Array.isArray(p.schedule)?p.schedule:[]).map((d,i)=>({
+    order_no:String(p.orderNo||"").trim(), installment_no:i+1, amount:supPlanNum(d.amount), due_date:(String(d.dueDate||d.date||"").match(/^\d{4}-\d{2}-\d{2}$/)?String(d.dueDate||d.date):null), updated_at:new Date().toISOString()
+  }));
+}
+async function supUpsertBatches(table, rows, conflict){
+  for(let i=0;i<rows.length;i+=100){
+    const r=await sb.from(table).upsert(rows.slice(i,i+100),{onConflict:conflict});
+    if(r.error) throw r.error;
+  }
+}
+async function supLoadPaymentPlansFromSupabase(){
+  try{
+    let hr=await sb.from(SUP_PAYMENT_PLAN_TABLE).select("*").order("order_no");
+    if(hr.error) throw hr.error;
+    let heads=hr.data||[];
+    let seeded=[];
+    const have=new Set(heads.map(r=>supOrderNumberKey(r.order_no)));
+    const missing=SUP_IMPORTED_PAYMENT_PLANS.filter(p=>!have.has(supOrderNumberKey(p.orderNo)));
+    // أول ربط: انقل بيانات الشيت المضمّنة للجدولين. في حالة وجود بيانات مسبقًا، أضف الناقص فقط ولا تستبدل تعديلات قاعدة البيانات.
+    if(missing.length){
+      await supUpsertBatches(SUP_PAYMENT_PLAN_TABLE,missing.map(supPaymentPlanToDb),"order_no");
+      const details=missing.flatMap(supPaymentScheduleToDb);
+      if(details.length) await supUpsertBatches(SUP_PAYMENT_SCHEDULE_TABLE,details,"order_no,installment_no");
+      seeded=missing;
+    }
+    // أعد قراءة الرؤوس بعد الاستيراد حتى تظهر بيانات Supabase في نفس جلسة التشغيل الأولى.
+    hr=await sb.from(SUP_PAYMENT_PLAN_TABLE).select("*").order("order_no");
+    if(hr.error) throw hr.error;
+    heads=hr.data||[];
+    let dr=await sb.from(SUP_PAYMENT_SCHEDULE_TABLE).select("*").order("order_no").order("installment_no");
+    if(dr.error) throw dr.error;
+    let details=dr.data||[];
+    // عند إنشاء الجدولين يدويًا دون استيراد، قد يكون هناك رأس أمر قديم بلا تفاصيل استحقاق؛ نضيف تفاصيل الأوامر التي أضفناها الآن فقط.
+    if(seeded.length){
+      const byOrder=new Set(details.map(r=>supOrderNumberKey(r.order_no)));
+      const missingDetails=seeded.filter(p=>(p.schedule||[]).length&&!byOrder.has(supOrderNumberKey(p.orderNo))).flatMap(supPaymentScheduleToDb);
+      if(missingDetails.length){
+        await supUpsertBatches(SUP_PAYMENT_SCHEDULE_TABLE,missingDetails,"order_no,installment_no");
+        dr=await sb.from(SUP_PAYMENT_SCHEDULE_TABLE).select("*").order("order_no").order("installment_no");
+        if(dr.error) throw dr.error;
+        details=dr.data||[];
+      }
+    }
+    const scheduleMap=new Map();
+    details.forEach(r=>{
+      const k=supOrderNumberKey(r.order_no); if(!scheduleMap.has(k)) scheduleMap.set(k,[]);
+      scheduleMap.get(k).push({amount:supPlanNum(r.amount)||0,dueDate:String(r.due_date||"").slice(0,10),installmentNo:Number(r.installment_no)||1});
+    });
+    const plans=heads.length?heads:[];
+    const mapped=plans.map(r=>({
+      orderNo:String(r.order_no||"").trim(),customer:r.customer||"",policyNo:r.policy_no||"",
+      invoiceTotal:supPlanNum(r.invoice_total),cashPct:supPlanNum(r.cash_pct),installments:Number(r.installment_count)||0,
+      periodDays:supPlanNum(r.period_days),cashValue:supPlanNum(r.cash_value),creditValue:supPlanNum(r.credit_value),
+      method:r.method||"",sourceRow:supPlanNum(r.source_row),source:r.source||"Supabase",
+      schedule:(scheduleMap.get(supOrderNumberKey(r.order_no))||[]).sort((a,b)=>a.installmentNo-b.installmentNo).map(d=>({amount:d.amount,dueDate:d.dueDate}))
+    }));
+    supSetPaymentPlanCache(mapped.length?mapped:SUP_IMPORTED_PAYMENT_PLANS);
+  }catch(e){
+    console.warn("Payment plans could not be loaded from Supabase; using embedded Excel backup.",e);
+    supSetPaymentPlanCache(SUP_IMPORTED_PAYMENT_PLANS);
+    if(!SUP_PAYMENT_DB_WARNING_SHOWN){
+      SUP_PAYMENT_DB_WARNING_SHOWN=true;
+      try{ toast("شروط السداد ما زالت من النسخة الاحتياطية؛ شغّل ملف supabase_payment_plans_setup.sql لربطها بقاعدة البيانات","err"); }catch(_){ }
+    }
+  }
+}function supPaymentPlanForOrder(orderNo){
+  const p=supImportedPaymentPlan(orderNo); if(!p) return null;
+  const schedule=(p.schedule||[]).map((d,i)=>({amount:Number(d.amount)||0,date:String(d.dueDate||d.date||"")}));
+  return {total:p.invoiceTotal==null?null:Number(p.invoiceTotal),cashPct:p.cashPct==null?null:Number(p.cashPct),
+    cashValue:p.cashValue==null?null:Number(p.cashValue),creditValue:p.creditValue==null?null:Number(p.creditValue),
+    installmentsText:p.installments?String(p.installments):"—",periodDaysText:p.periodDays==null||p.periodDays===""?"—":String(p.periodDays),
+    method:p.method||"",schedule,source:p.source||"excel",customer:p.customer||"",policyNo:p.policyNo||""};
+}
+// شروط النقدي والأجل: بيانات ملف الإكسيل لها الأولوية حسب رقم أمر البيع، ثم تُستخدم شروط البوليصة كبديل.
+function supGroupedPaymentInfo(items, orderNo){
+  const imported=supPaymentPlanForOrder(orderNo);
+  if(imported) return imported;
   const policies=new Map();
   (items||[]).forEach(({s,it})=>{
     if(!s) return;
@@ -3672,6 +3792,21 @@ function supGroupedPaymentInfo(items){
   return {total,cashPct,cashValue:termsKnown&&known?cashValue:null,creditValue:termsKnown&&known?creditValue:null,
     installmentsText:termsKnown&&known?sameOrList(countSet):"—",periodDaysText:termsKnown&&known?sameOrList(daysSet):"—",schedule};
 }
+
+function supMaxScheduleAcrossAllSupplyOrders(){
+  let max=SUP_IMPORTED_MAX_SCHEDULE;
+  const all=[...(state.shipments||[]),...(state.policies||[])], groups=new Map();
+  all.forEach(s=>{
+    const no=s.saleOrderNo||state.saleOrders.find(o=>String(o.id)===String(s.saleOrderId))?.orderNo||"";
+    const key=s.saleOrderId?"so:"+s.saleOrderId:(no?"no:"+supOrderNumberKey(no):"policy:"+s.id);
+    if(!groups.has(key)) groups.set(key,{items:[],orderNo:no});
+    const g=groups.get(key); if(!g.orderNo&&no)g.orderNo=no;
+    (s.items||[]).forEach(it=>g.items.push({s,it}));
+  });
+  groups.forEach(g=>{ max=Math.max(max,supGroupedPaymentInfo(g.items,g.orderNo).schedule.length); });
+  return max;
+}
+
 function supPaymentHeaders(maxSchedule){
   const h=["نسبة النقدي %","مدة أجل (أقساط)","الأجل على قسط واحد (أيام)","قيمة الأجل","قيمة النقدي"];
   for(let i=1;i<=maxSchedule;i++) h.push(`قسط شهر ${i}`,`استحقاق قسط ${i}`);
@@ -3703,8 +3838,8 @@ function supReportHtml(C,xl){
       if(s.date&&(!g.date||s.date<g.date)) g.date=s.date;
       if(!g.supplier&&s.supplier) g.supplier=s.supplier; if(!g.customer&&s.customer) g.customer=s.customer;
     });
-    const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1));
-    const maxSchedule=Math.max(0,...data.map(g=>g.payment.schedule.length));
+    const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items,g.order);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1));
+    const maxSchedule=Math.max(SUP_IMPORTED_MAX_SCHEDULE,supMaxScheduleAcrossAllSupplyOrders(),...data.map(g=>g.payment.schedule.length));
     const cols=["أمر البيع","عدد البوالص","التاريخ","المورد","العميل","إجمالي كمية التوريد","إجمالي الوزن الفعلي"];
     if(SB) cols.push("إجمالي الشراء"); if(SS) cols.push("إجمالي البيع قبل الضريبة","ضريبة القيمة المضافة","الخصم","صافي البيع بعد الضريبة والخصم");
     const paymentHeaders=supPaymentHeaders(maxSchedule), paymentStart=cols.length;
@@ -3824,7 +3959,7 @@ function renderSupplyFlat(L, T){
     </tr>`;
   }).join("");
   const foot = `<tr><td colspan="10">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td>${SB?`<td></td>`:""}${SS?`<td></td><td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
-  return `<div class="tbl-wrap"><table>
+  return `<div class="tbl-wrap"><table data-rs-key="supply-flat">
     <thead><tr>${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("saleOrder","أمر البيع")}${supTh("supplier","المورد")}${supTh("customer","العميل")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","القطر")}${supTh("type","النوع")}${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع")+supTh("sub","قبل الضريبة")+supTh("tax","الضريبة")+supTh("disc","الخصم")+supTh("total","الإجمالي"):""}${supTh("cash","الدفع")}${supTh("aging","التعتيق")}<th></th></tr></thead>
     <tbody>${body}</tbody><tfoot>${foot}</tfoot>
   </table></div>`;
@@ -3848,9 +3983,9 @@ function renderSupplyGrouped(L){
     g.totals={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,total:0};
     g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);g.totals.sq+=(+it.supplyQty||0);g.totals.w+=(+it.actualWeight||0);g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
     g.orderNo=g.so?.orderNo || g.items[0]?.s.saleOrderNo || "";
-    g.payment=supGroupedPaymentInfo(g.items);
+    g.payment=supGroupedPaymentInfo(g.items,g.orderNo);
   });
-  const maxSchedule=Math.max(0,...[...groups.values()].map(g=>g.payment.schedule.length));
+  const maxSchedule=Math.max(SUP_IMPORTED_MAX_SCHEDULE,supMaxScheduleAcrossAllSupplyOrders(),...[...groups.values()].map(g=>g.payment.schedule.length));
   const ge=supEff("grouped"), gget=GSORT[ge.key]||GSORT.date, gnum=GNUM.has(GSORT[ge.key]?ge.key:"date");
   const rows=[...groups.values()].sort((a,b)=>
     supCmp(gget(a),gget(b),gnum,ge.dir)
@@ -3877,7 +4012,7 @@ function renderSupplyGrouped(L){
   }).join("");
   const total={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,grand:0};
   L.forEach(({s,it})=>{const a=supplyAmounts(s,it);total.sq+=(+it.supplyQty||0);total.w+=(+it.actualWeight||0);total.buy+=a.buyTotal;total.sub+=a.subtotal;total.tax+=a.tax;total.dis+=a.discount;total.grand+=a.total;});
-  return `<div class="tbl-wrap"><table><thead><tr>
+  return `<div class="tbl-wrap"><table data-rs-key="supply-grouped"><thead><tr>
     ${["order|أمر البيع","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
     ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}">${escapeHtml(h)}</th>`).join("")}
@@ -5855,7 +5990,15 @@ function openMyPassword(first){
     if(t._rs||skip(t)) return;
     const hr=t.tHead&&t.tHead.rows[0]; if(!hr) return;
     const ths=[...hr.cells]; if(ths.length<2||ths.some(h=>h.colSpan>1)) return;
-    const k=location.hash+"|"+ths.map(h=>h.textContent.trim()).join("¦");
+    const sig=ths.map(h=>h.textContent.replace(/\s+/g," ").trim()).join("¦");
+    const legacySig=ths.map(h=>h.textContent.trim()).join("¦");
+    const legacyKey=location.hash+"|"+legacySig;
+    const k=t.dataset.rsKey?"ironGateTable:"+t.dataset.rsKey+"|"+sig:legacyKey;
+    // ترحيل إعدادات الأعمدة القديمة للشاشة ذات المفتاح الثابت بدل فقدان ترتيب المستخدم.
+    if(t.dataset.rsKey&&!cfg[k]){
+      const oldKey=cfg[legacyKey]?legacyKey:Object.keys(cfg).find(key=>key.endsWith("|"+legacySig));
+      if(oldKey&&cfg[oldKey]){ cfg[k]=JSON.parse(JSON.stringify(cfg[oldKey])); save(); }
+    }
     t._rs={ths,k};
     const wrap=t.parentElement;
     if(wrap&&wrap.classList.contains("tbl-wrap")&&!wrap.querySelector(":scope>.col-menu-anchor")){
