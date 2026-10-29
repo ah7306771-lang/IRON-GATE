@@ -1188,6 +1188,7 @@ function saveState(){
     localStorage.setItem(STORAGE_KEY, JSON.stringify(part));
   }catch(e){ toast("فشل الحفظ: "+e.message,"err"); }
   scheduleSync();
+  if(currentPage==="chequeRegister" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
 }
 
 // ---------- Supabase ----------
@@ -1605,6 +1606,8 @@ function can(scr, act){
 }
 function canView(page){
   if(page==="users") return isAdmin();
+  // دفتر الشيكات قراءة مشتقة من التحصيلات؛ يستخدم نفس صلاحية مشاهدة التحصيلات حتى للمستخدمين الحاليين.
+  if(page==="chequeRegister") return can("receipts","view");
   if(!SCREENS.some(s=>s.id===page)) return isAdmin();   // شاشات "قريبًا" للأدمن بس
   return can(page,"view");
 }
@@ -1791,6 +1794,9 @@ const navGroups = [
     { id:"payments", icon:"↑", label:"المدفوعات" },
     { id:"installments", icon:"⟐", label:"الأقساط والمستحقات", soon:true }
   ]},
+  { id:"banking", icon:"🏦", label:"البنوك", items:[
+    { id:"chequeRegister", icon:"🧾", label:"أوراق القبض وشيكات تحت التحصيل" }
+  ]},
   { id:"reports", icon:"📊", label:"التقارير", items:[
     { id:"accounts", icon:"≡", label:"كشوف الحساب", soon:true },
     { id:"balances", icon:"⚖", label:"الموازين", soon:true },
@@ -1871,6 +1877,7 @@ function go(page){
     purchaseReport:["تقرير المشتريات","تقرير تفصيلي للمشتريات مع فلاتر وتصدير PDF وExcel"],
     supplierStatement:["كشف حساب مورد","حركة المورد والرصيد الافتتاحي والرصيد الجاري"],
     receipts:["التحصيلات","شيكات وتحويلات ونقدية من العملاء"],
+    chequeRegister:["أوراق القبض وشيكات تحت التحصيل","متابعة الشيكات الواردة مباشرة من شاشة التحصيلات"],
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
     settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
     users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"]
@@ -1891,6 +1898,7 @@ function go(page){
   else if(page==="salesReport"||page==="purchaseReport"){ c.innerHTML = viewTradeReport(page); renderTradeReport(); }
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
+  else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
   else c.innerHTML = viewSoon();
 }
@@ -2097,8 +2105,10 @@ function partyStatementRows(kind){
   // التحصيلات الفعلية المسجلة للعملاء والمدفوعات المسجلة للموردين من شاشة الخزينة.
   (state.treasuryEntries||[]).forEach(e=>{
     if(e.direction!==(customer?'in':'out') || !parties.includes(customer?e.customer:e.supplier) || !e.date || !dateOk(e.date)) return;
+    // الشيك البنكي لا يدخل كشف حساب العميل إلا عند تحصيله فعليًا؛ أوراق القبض وتحت التحصيل تبقى خارج الرصيد.
+    if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
     const amount=+e.amount||0; if(!amount) return;
-    const ref='سند '+(e.no||e.refNo||e.id||'—'), status=({collected:'محصل',deposited:'مودع',cash_received:'تم الاستلام',pending:'تحت التحصيل',returned:'مرتد'})[e.status]||e.status||'';
+    const ref='سند '+(e.no||e.refNo||e.id||'—'), status=({receivable:'أوراق قبض',collected:'محصل',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',returned:'مرتد'})[e.status]||e.status||'';
     const desc=(customer?'تحصيل عميل':'دفعة مورد')+' — '+ref+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');
     if(q&&!(ref+' '+desc+' '+(e.notes||'')).toLowerCase().includes(q)) return;
     // لا تُحتسب السندات المرتدة كتحصيل/دفع؛ تُعرض كحركة عكسية لتظل ظاهرة في الكشف.
@@ -3455,8 +3465,10 @@ function supTreasury(direction){
     if(supFilter[field]&&e[field]!==supFilter[field]) return;
     const v=+e.amount||0, nm=e[field]||"—";
     const b=r.by[nm]||(r.by[nm]={ok:0,pending:0,returned:0});
-    if(SUP_OK.includes(e.status)){ r.ok+=v; b.ok+=v; }
-    else if(e.status==="returned"){ r.returned+=v; b.returned+=v; }
+    if(e.status==="returned"){ r.returned+=v; b.returned+=v; }
+    else if(direction==="in" && e.method==="bank" && e.status!=="collected"){ r.pending+=v; b.pending+=v; }
+    else if(direction==="in" && e.method!=="bank"){ r.ok+=v; b.ok+=v; }
+    else if(SUP_OK.includes(e.status) && e.status!=="deposited"){ r.ok+=v; b.ok+=v; }
     else { r.pending+=v; b.pending+=v; }
   });
   return r;
@@ -3653,33 +3665,65 @@ function supExportPdf(){
 // ========== عرض عادي (كل البوالص بصفوف) ==========
 function renderSupplyFlat(L, T){
   const SB=showBuy("supply"), SS=showSell("supply");
-  // رقم أمر البيع المعروض هو المعيار الوحيد لإظهار بيانات العميل والبيانات المرتبطة به مرة واحدة.
-  const orderNoOf=l=>l?String(l.s.saleOrderNo||state.saleOrders.find(o=>o.id===l.s.saleOrderId)?.orderNo||"").trim():"";
-  const soKey=l=>orderNoOf(l).toLowerCase();
-  const shownOrderHeaders=new Set();
+  // حل رقم أمر البيع بشكل موحّد، حتى لو كان محفوظًا في سجل أمر البيع فقط أو اختلف نوع المعرّف (رقم/نص).
+  const orderNoById=new Map();
+  (state.saleOrders||[]).forEach(o=>{
+    const id=String(o.id==null?"":o.id).trim(), no=String(o.orderNo||"").trim();
+    if(id&&no&&!orderNoById.has(id)) orderNoById.set(id,no);
+  });
+  // استعادة رقم الأمر من أي بوليصة أخرى مرتبطة بنفس أمر البيع إذا كان ناقصًا في إحدى البوالص.
+  [...(state.shipments||[]),...(state.policies||[])].forEach(r=>{
+    const id=String(r.saleOrderId==null?"":r.saleOrderId).trim(), no=String(r.saleOrderNo||"").trim();
+    if(id&&no&&!orderNoById.has(id)) orderNoById.set(id,no);
+  });
+  const orderNoOfRecord=s=>String(s.saleOrderNo||orderNoById.get(String(s.saleOrderId==null?"":s.saleOrderId).trim())||"").trim();
+  const normalizeOrderNo=no=>String(no||"").trim().replace(/\s+/g," ").toLowerCase();
+  const soKey=l=>normalizeOrderNo(l&&l.s?orderNoOfRecord(l.s):"");
   const SO_HUES=[212,152,28,282,350,174,48,322,98,246];
   const soHue=k=>{ let h=0; for(const c of k) h=(h*31+c.charCodeAt(0))>>>0; return SO_HUES[h%SO_HUES.length]; };
+
+  // تجميع بيانات رأس الأمر من كل صفوف رقم أمر البيع؛ بذلك لا تضيع بيانات العميل
+  // إذا كان أول سجل/بوليصة لهذا الأمر ناقصًا بينما سجل آخر لنفس الرقم يحتوي على البيانات.
+  const orderHeaders=new Map();
+  const headerFields=["date","supplier","customer","company","site"];
+  L.forEach(({s})=>{
+    const rawNo=orderNoOfRecord(s), key=normalizeOrderNo(rawNo);
+    if(!key) return;
+    if(!orderHeaders.has(key)) orderHeaders.set(key,{orderNo:rawNo,date:"",supplier:"",customer:"",company:"",site:"",terms:null});
+    const h=orderHeaders.get(key);
+    if(!h.orderNo&&rawNo) h.orderNo=rawNo;
+    headerFields.forEach(f=>{ if(!String(h[f]||"").trim()&&String(s[f]||"").trim()) h[f]=String(s[f]).trim(); });
+    if(!h.terms&&s.terms&&((s.terms.cashPct!==""&&s.terms.cashPct!=null)||s.terms.installments||s.terms.periodDays)) h.terms=s.terms;
+  });
+
+  const shownOrderData=new Set();
   const body = L.map(({s,it,first},idx)=>{
     const amounts=supplyAmounts(s,it), sub=amounts.subtotal;
-    const orderNo=orderNoOf(L[idx]);
     const sk=soKey(L[idx]), hue=sk?soHue(sk):0;
-    const showOrderHeader=sk?!shownOrderHeaders.has(sk):!!first;
-    if(sk&&showOrderHeader) shownOrderHeaders.add(sk);
-    const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)"`:"";
-    const terms=`${fmt(s.terms.cashPct,0)}% نقدي`+(s.terms.installments?` + ${s.terms.installments}×${s.terms.periodDays}ي`:"");
+    const showOrderData=sk?!shownOrderData.has(sk):!!first;
+    if(sk) shownOrderData.add(sk);
+    const header=sk?(orderHeaders.get(sk)||{}):{};
+    const displayOrderNo=header.orderNo||orderNoOfRecord(s);
+    const displayDate=header.date||s.date||"";
+    const displaySupplier=header.supplier||s.supplier||"";
+    const displayCustomer=header.customer||s.customer||"";
+    const displayCompany=header.company||s.company||"";
+    const displaySite=header.site||s.site||"";
+    const termsData=header.terms||s.terms||{};
+    const terms=`${fmt(termsData.cashPct,0)}% نقدي`+(termsData.installments?` + ${termsData.installments}×${termsData.periodDays}ي`:"");
+    const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)`:"";
     return `<tr${rowAttr}>
       <td>${first?`<strong style="color:var(--gold)">${escapeHtml(s.policyNo)}</strong>`:""}</td>
-      <td>${showOrderHeader?s.date:""}</td><td>${showOrderHeader?escapeHtml(orderNo||"—"):""}</td><td>${showOrderHeader?escapeHtml(s.supplier):""}</td><td>${showOrderHeader?escapeHtml(s.customer):""}</td><td>${showOrderHeader?escapeHtml(s.company||""):""}</td><td>${showOrderHeader?escapeHtml(s.site||""):""}</td>
+      <td>${showOrderData?escapeHtml(displayDate):""}</td><td>${showOrderData?escapeHtml(displayOrderNo||"—"):""}</td><td>${showOrderData?escapeHtml(displaySupplier):""}</td><td>${showOrderData?escapeHtml(displayCustomer):""}</td><td>${showOrderData?escapeHtml(displayCompany):""}</td><td>${showOrderData?escapeHtml(displaySite):""}</td>
       <td>${escapeHtml(itemFactory(s,it))}</td>
       <td>${escapeHtml(it.diameter)}</td><td>${escapeHtml(it.type)}</td>
       <td class="num">${fmt(it.supplyQty,3)}</td><td class="num"><strong>${fmt(it.actualWeight,3)}</strong></td>
       ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
       ${SS?`<td class="num">${fmt(sub)}</td><td class="num">${fmt(amounts.tax)}</td><td class="num">${fmt(amounts.discount)}</td><td class="num"><strong>${fmt(amounts.total)}</strong></td>`:""}
-      <td>${showOrderHeader?terms:""}</td><td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
+      <td>${showOrderData?terms:""}</td><td>${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
       <td>${first?`<div class="td-actions"><button onclick="editShipment('${s.id}')">تعديل</button><button class="del" onclick="delShipment('${s.id}')">حذف</button></div>`:""}</td>
     </tr>`;
   }).join("");
-  const pr=(SB?1:0)+(SS?1:0);
   const foot = `<tr><td colspan="10">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td>${SB?`<td></td>`:""}${SS?`<td></td><td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
   return `<div class="tbl-wrap"><table>
     <thead><tr>${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("saleOrder","أمر البيع")}${supTh("supplier","المورد")}${supTh("customer","العميل")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","القطر")}${supTh("type","النوع")}${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع")+supTh("sub","قبل الضريبة")+supTh("tax","الضريبة")+supTh("disc","الخصم")+supTh("total","الإجمالي"):""}${supTh("cash","الدفع")}${supTh("aging","التعتيق")}<th></th></tr></thead>
@@ -4590,15 +4634,17 @@ function qtToSaleOrder(id){
 // الحالة (status): "collected" | "pending" | "returned" | "deposited" | "cash_received"
 
 const txMethods = [
-  { v:"cash",      label:"نقدي",        ico:"💵" },
-  { v:"bank",      label:"بنكي",        ico:"🏦" }
+  { v:"cash",      label:"نقدي",         ico:"💵" },
+  { v:"transfer",  label:"تحويل بنكي",   ico:"🔁" },
+  { v:"bank",      label:"شيك بنكي",     ico:"🏦" }
 ];
 const txStatuses = [
-  { v:"pending",       label:"تحت التحصيل", color:"warn" },
-  { v:"collected",     label:"محصل",        color:"ok" },
-  { v:"returned",      label:"مرتد",        color:"danger" },
-  { v:"deposited",     label:"مودع",        color:"ok" },
-  { v:"cash_received", label:"تم الاستلام", color:"ok" }
+  { v:"receivable",    label:"أوراق قبض",          color:"warn" },
+  { v:"pending",       label:"شيكات تحت التحصيل",  color:"warn" },
+  { v:"collected",     label:"محصل",               color:"ok" },
+  { v:"returned",      label:"مرتد",               color:"danger" },
+  { v:"deposited",     label:"مودع",               color:"warn" },
+  { v:"cash_received", label:"تم الاستلام",        color:"ok" }
 ];
 function txMethodLabel(v){ const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—"; }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
@@ -4630,12 +4676,16 @@ function viewTreasury(direction){
   const list = treasuryList(direction);
 
   // KPIs
-  const totals = { all:0, collected:0, pending:0, returned:0 };
+  const totals = { all:0, collected:0, receivable:0, pending:0, returned:0 };
   list.forEach(e=>{
     const v = +e.amount||0;
     totals.all += v;
-    const key = e.status==="collected"||e.status==="deposited"||e.status==="cash_received" ? "collected"
-              : e.status==="returned" ? "returned" : "pending";
+    let key;
+    if(e.status==="returned") key="returned";
+    else if(e.method==="bank" && e.status==="receivable") key="receivable";
+    else if(e.method==="bank" && ["pending","deposited"].includes(e.status)) key="pending";
+    else if(e.status==="collected"||e.status==="cash_received"||e.method!=="bank") key="collected";
+    else key="pending";
     totals[key] += v;
   });
   const cur = state.settings.currency;
@@ -4651,8 +4701,9 @@ function viewTreasury(direction){
 
   <div class="kpis compact">
     ${k("إجمالي الحركة", totals.all, cur, "var(--gold-2)")}
-    ${k("محصل/مودع", totals.collected, cur, "var(--ok)")}
-    ${k("تحت التحصيل", totals.pending, cur, "var(--warn)")}
+    ${k("محصل", totals.collected, cur, "var(--ok)")}
+    ${isIn?k("أوراق قبض", totals.receivable, cur, "var(--warn)"):""}
+    ${k("شيكات تحت التحصيل", totals.pending, cur, "var(--warn)")}
     ${k("مرتد", totals.returned, cur, "var(--danger)")}
   </div>
 
@@ -4696,6 +4747,7 @@ function viewTreasury(direction){
     <tbody id="txBody"></tbody>
     <tfoot id="txFoot"></tfoot>
   </table></div>
+  ${isIn?`<div id="txCheckSummary" style="margin-top:18px"></div>`:""}
   `;
 }
 
@@ -4743,7 +4795,144 @@ function renderTreasury(direction){
   }).join("");
   document.getElementById("txBody").innerHTML = body || `<tr><td colspan="13"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
   document.getElementById("txFoot").innerHTML = filtered.length ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-2)">الإجمالي</td><td class="num" style="color:var(--gold-2)">${fmt(totalFiltered)}</td><td colspan="7"></td></tr>` : "";
+  if(direction==="in") renderIncomingCheckSummary();
 }
+
+// ملخص أوراق القبض والشيكات تحت التحصيل مجمّع لكل عميل وحالة.
+function renderIncomingCheckSummary(){
+  const el=document.getElementById("txCheckSummary"); if(!el) return;
+  const groups=new Map();
+  (state.treasuryEntries||[]).filter(e=>e.direction==="in" && e.method==="bank" && ["receivable","pending","deposited"].includes(e.status)).forEach(e=>{
+    const status=e.status==="receivable"?"أوراق قبض":"شيكات تحت التحصيل";
+    const key=String(e.customer||"—")+"|"+status;
+    if(!groups.has(key)) groups.set(key,{customer:e.customer||"—",status,count:0,total:0,checks:[]});
+    const g=groups.get(key); g.count++; g.total+=(+e.amount||0); g.checks.push(String(e.refNo||e.no||"—"));
+  });
+  const rows=[...groups.values()].sort((a,b)=>String(a.customer).localeCompare(String(b.customer),"ar")||a.status.localeCompare(b.status,"ar"));
+  const cur=state.settings.currency||"ج.م", total=rows.reduce((a,r)=>a+r.total,0);
+  el.innerHTML=`<div class="card"><div class="head"><h3>📋 ملخص أوراق القبض والشيكات تحت التحصيل</h3><span class="count">${rows.length} بند</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table><thead><tr><th>العميل</th><th>الحالة</th><th>عدد الشيكات</th><th>أرقام الشيكات</th><th>إجمالي القيمة (${escapeHtml(cur)})</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${escapeHtml(r.customer)}</strong></td><td>${r.status==="أوراق قبض"?'<span class="chip warn">أوراق قبض</span>':'<span class="chip warn">شيكات تحت التحصيل</span>'}</td><td>${r.count}</td><td>${r.checks.map(escapeHtml).join("، ")}</td><td class="num"><strong>${fmt(r.total)}</strong></td></tr>`).join("")||'<tr><td colspan="5"><div class="empty" style="padding:20px">لا توجد أوراق قبض أو شيكات تحت التحصيل حاليًا.</div></td></tr>'}</tbody><tfoot><tr><td colspan="4">إجمالي الشيكات غير المحصلة</td><td class="num">${fmt(total)}</td></tr></tfoot></table></div></div></div>`;
+}
+
+// ================= دفتر أوراق القبض والشيكات تحت التحصيل =================
+// مصدر البيانات الوحيد هو التحصيلات؛ أي تعديل في السند ينعكس هنا تلقائيًا عند إعادة الرسم.
+let chequeRegisterFilter={status:"",q:"",from:"",to:"",due:""};
+function chequeRegisterAll(){
+  return (state.treasuryEntries||[])
+    .filter(e=>e.direction==="in" && e.method==="bank" && ["receivable","pending","deposited"].includes(e.status))
+    .slice()
+    .sort((a,b)=>String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")) || String(a.date||"").localeCompare(String(b.date||"")) || (+a.no||0)-(+b.no||0));
+}
+function chequeStatusLabel(e){ return e.status==="receivable"?"أوراق قبض":"شيكات تحت التحصيل"; }
+function chequeDays(e){
+  if(!e.dueDate) return null;
+  const now=new Date(), today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const d=new Date(String(e.dueDate)+"T00:00:00");
+  if(Number.isNaN(d.getTime())) return null;
+  return Math.round((d.getTime()-today.getTime())/86400000);
+}
+function chequeDueInfo(e){
+  const days=chequeDays(e);
+  if(days===null) return {text:"بدون تاريخ استحقاق",cls:"",kind:"none"};
+  if(days<0) return {text:`⚠ فات ميعاد الاستحقاق — متأخر ${Math.abs(days)} يوم`,cls:"cr-overdue",kind:"overdue"};
+  if(days===0) return {text:"⚠ مستحق اليوم",cls:"cr-today",kind:"today"};
+  if(days<=3) return {text:`⚠ باقي ${days} يوم`,cls:"cr-today",kind:"soon"};
+  return {text:`باقي ${days} يوم`,cls:"cr-safe",kind:"future"};
+}
+function chequeRegisterFiltered(){
+  const q=String(chequeRegisterFilter.q||"").trim().toLowerCase();
+  return chequeRegisterAll().filter(e=>{
+    const under=["pending","deposited"].includes(e.status);
+    if(chequeRegisterFilter.status==="receivable" && e.status!=="receivable") return false;
+    if(chequeRegisterFilter.status==="pending" && !under) return false;
+    if(chequeRegisterFilter.from && String(e.date||"")<chequeRegisterFilter.from) return false;
+    if(chequeRegisterFilter.to && String(e.date||"")>chequeRegisterFilter.to) return false;
+    const due=chequeDueInfo(e).kind;
+    if(chequeRegisterFilter.due==="overdue" && due!=="overdue") return false;
+    if(chequeRegisterFilter.due==="today" && due!=="today") return false;
+    if(chequeRegisterFilter.due==="soon" && !["today","soon"].includes(due)) return false;
+    if(q){
+      const hay=[e.no,e.refNo,e.customer,e.bankDrawn,e.treasury,treasuryLabel(e.treasury),e.notes,e.date,e.dueDate].map(v=>String(v||"").toLowerCase()).join(" ");
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+function viewChequeRegister(){
+  return `<div class="cheque-register">
+    <div class="page-head"><h2>🏦 أوراق القبض وشيكات تحت التحصيل</h2><span class="chip gold">مرتبطة بالتحصيلات تلقائيًا</span><div class="spacer"></div>
+      <button class="btn ghost sm" onclick="renderChequeRegister()">↻ تحديث</button>
+      <button class="btn sm" onclick="printChequeRegister()">🖨 طباعة الكشف</button>
+    </div>
+    <div class="cr-filterbar">
+      <div class="fld cr-filter-status"><label>حالة الشيك</label><select class="inp" onchange="chequeRegisterFilter.status=this.value;renderChequeRegister()">
+        <option value="" ${chequeRegisterFilter.status===""?"selected":""}>كل الحالات</option>
+        <option value="receivable" ${chequeRegisterFilter.status==="receivable"?"selected":""}>أوراق قبض</option>
+        <option value="pending" ${chequeRegisterFilter.status==="pending"?"selected":""}>شيكات تحت التحصيل</option>
+      </select></div>
+      <div class="fld cr-filter-search"><label>بحث سريع</label><input class="inp" value="${escapeAttr(chequeRegisterFilter.q)}" placeholder="العميل / رقم الشيك / البنك" oninput="chequeRegisterFilter.q=this.value;renderChequeRegister()"></div>
+      <div class="fld"><label>من تاريخ الشيك</label><input class="inp" type="date" value="${escapeAttr(chequeRegisterFilter.from)}" onchange="chequeRegisterFilter.from=this.value;renderChequeRegister()"></div>
+      <div class="fld"><label>إلى تاريخ الشيك</label><input class="inp" type="date" value="${escapeAttr(chequeRegisterFilter.to)}" onchange="chequeRegisterFilter.to=this.value;renderChequeRegister()"></div>
+      <div class="fld"><label>الاستحقاق</label><select class="inp" onchange="chequeRegisterFilter.due=this.value;renderChequeRegister()">
+        <option value="" ${chequeRegisterFilter.due===""?"selected":""}>كل المواعيد</option>
+        <option value="overdue" ${chequeRegisterFilter.due==="overdue"?"selected":""}>المتأخرة</option>
+        <option value="today" ${chequeRegisterFilter.due==="today"?"selected":""}>مستحقة اليوم</option>
+        <option value="soon" ${chequeRegisterFilter.due==="soon"?"selected":""}>مستحقة خلال 3 أيام</option>
+      </select></div>
+      <button class="btn ghost sm cr-clear" onclick="chequeRegisterFilter={status:'',q:'',from:'',to:'',due:''};go('chequeRegister')">مسح الفلاتر</button>
+    </div>
+    <div id="chequeRegisterStats" class="cr-stats"></div>
+    <div id="chequeRegisterTable"></div>
+  </div>`;
+}
+function renderChequeRegister(){
+  const tableEl=document.getElementById("chequeRegisterTable"), statsEl=document.getElementById("chequeRegisterStats");
+  if(!tableEl || !statsEl) return;
+  const all=chequeRegisterAll(), rows=chequeRegisterFiltered(), cur=state.settings.currency||"ج.م";
+  const receivable=all.filter(e=>e.status==="receivable"), pending=all.filter(e=>["pending","deposited"].includes(e.status));
+  const overdue=all.filter(e=>chequeDueInfo(e).kind==="overdue");
+  const sum=a=>a.reduce((n,e)=>n+(+e.amount||0),0);
+  const stat=(label,count,total,color,sub)=>`<div class="cr-stat"><div class="cr-stat-title">${label}</div><div class="cr-stat-value" style="color:${color}">${fmt(total)}</div><div class="cr-stat-meta">${count} شيك · ${escapeHtml(cur)} ${sub||""}</div></div>`;
+  statsEl.innerHTML=stat("إجمالي أوراق القبض",receivable.length,sum(receivable),"#9a6700","")+
+    stat("إجمالي الشيكات تحت التحصيل",pending.length,sum(pending),"#2563eb","")+
+    stat("إجمالي الشيكات غير المحصلة",all.length,sum(all),"#1f2937","")+
+    stat("الشيكات المتأخرة",overdue.length,sum(overdue),"#b91c1c","");
+  const body=rows.map(e=>{
+    const due=chequeDueInfo(e);
+    return `<tr>
+      <td>${escapeHtml(String(e.no||"—"))}</td>
+      <td>${escapeHtml(e.date||"—")}</td>
+      <td><strong>${escapeHtml(e.customer||"—")}</strong></td>
+      <td style="direction:ltr;text-align:right;font-weight:700">${escapeHtml(String(e.refNo||"—"))}</td>
+      <td class="num"><strong>${fmt(e.amount)}</strong></td>
+      <td>${escapeHtml(e.dueDate||"—")}</td>
+      <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
+      <td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td>
+      <td>${e.status==="receivable"?'<span class="chip warn">أوراق قبض</span>':'<span class="chip warn">شيكات تحت التحصيل</span>'}</td>
+      <td><span class="cr-due ${due.cls}">${escapeHtml(due.text)}</span></td>
+      <td class="cr-notes">${escapeHtml(e.notes||"—")}</td>
+    </tr>`;
+  }).join("");
+  const shownTotal=sum(rows);
+  tableEl.innerHTML=`<div class="cr-resultline"><span>عدد الشيكات المعروضة: <strong>${rows.length}</strong></span><span>إجمالي المعروض: <strong>${fmt(shownTotal)} ${escapeHtml(cur)}</strong></span></div>
+    <div class="tbl-wrap cr-table-wrap"><table class="cr-table"><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>تاريخ الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك / الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق والمدة المتبقية</th><th>ملاحظات</th></tr></thead>
+    <tbody>${body||'<tr><td colspan="11"><div class="empty" style="padding:34px"><div class="ic">🏦</div><h3>لا توجد شيكات مطابقة</h3><p>الشيكات محملة تلقائيًا من شاشة التحصيلات حسب الحالة المختارة.</p></div></td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">إجمالي الشيكات المعروضة</td><td class="num">${fmt(shownTotal)}</td><td colspan="6">${rows.length} شيك</td></tr></tfoot></table></div>`;
+}
+function printChequeRegister(){
+  const rows=chequeRegisterFiltered(), cur=state.settings.currency||"ج.م";
+  const w=window.open("","_blank"); if(!w){toast("المتصفح منع فتح نافذة الطباعة","err");return;}
+  const body=rows.map(e=>{const due=chequeDueInfo(e);return `<tr><td>${escapeHtml(String(e.no||"—"))}</td><td>${escapeHtml(e.date||"—")}</td><td>${escapeHtml(e.customer||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td>${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(chequeStatusLabel(e))}</td><td>${escapeHtml(due.text)}</td><td>${escapeHtml(e.notes||"—")}</td></tr>`;}).join("");
+  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>أوراق القبض وشيكات تحت التحصيل</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:14px;color:#1f2937}h2{text-align:center;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #94a3b8;padding:6px;text-align:center}th{background:#fce4d6}@page{size:A4 landscape;margin:8mm}tr{break-inside:avoid}
+/* دفتر أوراق القبض وشيكات تحت التحصيل */
+.cheque-register{min-width:0}.cr-filterbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;padding:12px 14px;margin-bottom:14px;border:1px solid var(--line);border-radius:12px;background:#fffdf8;box-shadow:0 2px 8px rgba(0,0,0,.025)}
+.cr-filterbar .fld{min-width:125px;flex:1 1 130px;margin:0}.cr-filterbar .fld label{font-size:11px;font-weight:800;color:var(--text-dim)}.cr-filterbar .inp{height:36px;padding:5px 9px;font-size:12px}.cr-filterbar .cr-filter-status{flex:0 0 185px}.cr-filterbar .cr-filter-search{flex:1 1 230px}.cr-filterbar .cr-clear{height:36px;white-space:nowrap}
+.cr-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:10px;margin-bottom:14px}.cr-stat{background:#fff;border:1px solid #e7dfd1;border-radius:11px;padding:13px 15px;position:relative;overflow:hidden}.cr-stat:before{content:"";position:absolute;top:0;right:0;bottom:0;width:4px;background:#d4a017}.cr-stat-title{font-size:11px;color:#6b7280;font-weight:800;margin-bottom:5px}.cr-stat-value{font-size:21px;font-weight:800;direction:ltr;text-align:right}.cr-stat-meta{font-size:10px;color:#9ca3af;margin-top:3px}
+.cr-resultline{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px;padding:8px 12px;color:#334155;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:9px}.cr-resultline strong{color:#9a6700}.cr-table-wrap{max-height:calc(100vh - 390px);min-height:180px}.cr-table{min-width:1250px;border-collapse:collapse}.cr-table thead th{background:#fce4d6!important;color:#35261e!important;border-bottom:2px solid #d4a017!important;padding:10px 9px;white-space:nowrap;font-size:11px}.cr-table td{padding:9px 8px!important;white-space:nowrap;font-size:12px}.cr-table tbody tr:nth-child(even){background:#fffaf5}.cr-table tbody tr:hover{background:#fff1d6}.cr-table .cr-notes{max-width:220px;white-space:normal;min-width:130px}.cr-due{display:inline-block;padding:4px 7px;border-radius:6px;font-size:11px;font-weight:800;white-space:nowrap}.cr-overdue{background:#fee2e2;color:#b91c1c}.cr-today{background:#fef3c7;color:#a16207}.cr-safe{background:#dcfce7;color:#166534}
+@media(max-width:700px){.cr-filterbar .cr-filter-status,.cr-filterbar .cr-filter-search{flex:1 1 100%}.cr-table-wrap{max-height:calc(100vh - 340px)}.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{padding:10px}.cr-stat-value{font-size:16px}}
+</style></head><body><h2>أوراق القبض وشيكات تحت التحصيل</h2><p>عدد الشيكات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)} — تاريخ الطباعة: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك/الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`);
+  w.document.close();
+}
+function sumChequeAmounts(rows){ return rows.reduce((n,e)=>n+(+e.amount||0),0); }
 
 // نموذج إضافة/تعديل
 function txNew(direction){
@@ -4776,7 +4965,7 @@ function openTxForm(direction, existing){
     dueDate: "",
     treasury: "",
     bankDrawn: "",
-    status: "pending",
+    status: "collected",
     notes: "",
     allocations: []
   };
@@ -4819,7 +5008,7 @@ function openTxForm(direction, existing){
     `:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="fld"><label>نوع ${isIn?"التحصيل":"الدفع"} *</label>
-        <select class="inp" id="tx_method" onchange="txToggleFields()">
+        <select class="inp" id="tx_method" onchange="txToggleFields();txSetDefaultStatus()">
           ${txMethods.map(m=>`<option value="${m.v}" ${draft.method===m.v?'selected':''}>${m.ico} ${m.label}</option>`).join("")}
         </select>
       </div>
@@ -4838,7 +5027,7 @@ function openTxForm(direction, existing){
           ${bankOptions}
         </select>
       </div>
-      <div class="fld" id="tx_refNoWrap"><label>رقم الشيك</label>
+      <div class="fld" id="tx_refNoWrap"><label id="tx_refNoLabel">رقم الشيك</label>
         <input class="inp" id="tx_refNo" value="${escapeAttr(draft.refNo||"")}" placeholder="123456" style="direction:ltr;text-align:right">
       </div>
       <div class="fld" id="tx_dueWrap"><label>تاريخ الاستحقاق</label>
@@ -4881,7 +5070,8 @@ function openTxForm(direction, existing){
       status: document.getElementById("tx_status").value,
       notes: document.getElementById("tx_notes").value.trim(),
       allocationType: isIn ? (document.getElementById("tx_allocationType")?.value||"") : "",
-      allocations: isIn ? txBuildAllocations(document.getElementById("tx_allocationType")?.value||"", +document.getElementById("tx_amount").value||0) : (draft.allocations||[])
+      allocations: isIn ? txBuildAllocations(document.getElementById("tx_allocationType")?.value||"", +document.getElementById("tx_amount").value||0) : (draft.allocations||[]),
+      wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned"))
     };
     if(!d.date){ toast("التاريخ مطلوب","err"); return false; }
     if(!d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); return false; }
@@ -4917,7 +5107,7 @@ function txInvoiceRowsForCustomer(customer){
     const per=total/n;
     return Array.from({length:n},(_,i)=>{
       const due=new Date((so.date||new Date().toISOString().slice(0,10))+'T00:00:00'); due.setDate(due.getDate()+days*(i+1));
-      const paid=(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&e.customer===customer&&(e.allocations||[]).some(a=>a.orderId===so.id&&+a.installment===i+1)).reduce((a,e)=>a+(+(e.allocations||[]).find(a=>a.orderId===so.id&&+a.installment===i+1)?.amount||0),0);
+      const paid=(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&e.customer===customer&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned"&&(e.allocations||[]).some(a=>a.orderId===so.id&&+a.installment===i+1)).reduce((a,e)=>a+(+(e.allocations||[]).find(a=>a.orderId===so.id&&+a.installment===i+1)?.amount||0),0);
       return {orderId:so.id,orderNo:so.orderNo,date:so.date||'',total,installment:i+1,due:due.toISOString().slice(0,10),amount:per,paid,remaining:Math.max(0,per-paid)};
     });
   }).flat().sort((a,b)=>String(a.due).localeCompare(String(b.due)));
@@ -4983,31 +5173,27 @@ function txBuildAllocations(kind, amount){
   return [];
 }
 // إظهار/إخفاء حقول حسب النوع
+function txSetDefaultStatus(){
+  const method=document.getElementById("tx_method")?.value||"cash";
+  const status=document.getElementById("tx_status"); if(!status) return;
+  // عند تغيير النوع: الشيك يبدأ كأوراق قبض، والنقدي والتحويل يسجّلان فورًا.
+  status.value=method==="bank"?"receivable":"collected";
+}
 function txToggleFields(){
   const method = document.getElementById("tx_method")?.value || "cash";
+  const isCash=method==="cash", isCheck=method==="bank", isTransfer=method==="transfer";
   const treasuryCashWrap = document.getElementById("tx_treasuryCashWrap");
   const treasuryBankWrap = document.getElementById("tx_treasuryBankWrap");
   const refNoWrap = document.getElementById("tx_refNoWrap");
   const dueWrap = document.getElementById("tx_dueWrap");
   const bankWrap = document.getElementById("tx_bankWrap");
-  const txTreasury = document.getElementById("tx_treasury");
-  const txBank = document.getElementById("tx_bank");
-  
-  if(method === "cash"){
-    // نقدي: تظهر الخزينة فقط
-    if(treasuryCashWrap) treasuryCashWrap.style.display = "";
-    if(treasuryBankWrap) treasuryBankWrap.style.display = "none";
-    if(refNoWrap) refNoWrap.style.display = "none";
-    if(dueWrap) dueWrap.style.display = "none";
-    if(bankWrap) bankWrap.style.display = "none";
-  } else if(method === "bank"){
-    // بنكي: تظهر البنك، رقم الشيك، الاستحقاق
-    if(treasuryCashWrap) treasuryCashWrap.style.display = "none";
-    if(treasuryBankWrap) treasuryBankWrap.style.display = "";
-    if(refNoWrap) refNoWrap.style.display = "";
-    if(dueWrap) dueWrap.style.display = "";
-    if(bankWrap) bankWrap.style.display = "";
-  }
+  const refLabel = document.getElementById("tx_refNoLabel");
+  if(treasuryCashWrap) treasuryCashWrap.style.display=isCash?"":"none";
+  if(treasuryBankWrap) treasuryBankWrap.style.display=isCash?"none":"";
+  if(refNoWrap) refNoWrap.style.display=isCheck||isTransfer?"":"none";
+  if(dueWrap) dueWrap.style.display=isCheck?"":"none";
+  if(bankWrap) bankWrap.style.display=isCheck?"":"none";
+  if(refLabel) refLabel.textContent=isTransfer?"رقم مرجع التحويل": "رقم الشيك";
 }
 
 // ---------- utils ----------
