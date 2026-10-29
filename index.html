@@ -3682,11 +3682,12 @@ function renderSupplyFlat(L, T){
   const SO_HUES=[212,152,28,282,350,174,48,322,98,246];
   const soHue=k=>{ let h=0; for(const c of k) h=(h*31+c.charCodeAt(0))>>>0; return SO_HUES[h%SO_HUES.length]; };
 
-  // تجميع بيانات رأس الأمر من كل صفوف رقم أمر البيع؛ بذلك لا تضيع بيانات العميل
-  // إذا كان أول سجل/بوليصة لهذا الأمر ناقصًا بينما سجل آخر لنفس الرقم يحتوي على البيانات.
+  // اجمع بيانات رأس كل أمر من كل السجلات، وليس النتائج المعروضة فقط؛
+  // لأن فلاتر المصنع/الحالة قد تخفي البوليصة التي تحتوي على بيانات العميل.
   const orderHeaders=new Map();
   const headerFields=["date","supplier","customer","company","site"];
-  L.forEach(({s})=>{
+  const allSupplyRecords=[...(state.shipments||[]),...(state.policies||[])];
+  allSupplyRecords.forEach(s=>{
     const rawNo=orderNoOfRecord(s), key=normalizeOrderNo(rawNo);
     if(!key) return;
     if(!orderHeaders.has(key)) orderHeaders.set(key,{orderNo:rawNo,date:"",supplier:"",customer:"",company:"",site:"",terms:null});
@@ -3695,13 +3696,21 @@ function renderSupplyFlat(L, T){
     headerFields.forEach(f=>{ if(!String(h[f]||"").trim()&&String(s[f]||"").trim()) h[f]=String(s[f]).trim(); });
     if(!h.terms&&s.terms&&((s.terms.cashPct!==""&&s.terms.cashPct!=null)||s.terms.installments||s.terms.periodDays)) h.terms=s.terms;
   });
+  // احتياطي أخير من سجل أمر البيع نفسه لو بيانات العميل/المورد ناقصة في البوالص.
+  (state.saleOrders||[]).forEach(o=>{
+    const key=normalizeOrderNo(o.orderNo); if(!key) return;
+    if(!orderHeaders.has(key)) orderHeaders.set(key,{orderNo:String(o.orderNo||""),date:"",supplier:"",customer:"",company:"",site:"",terms:null});
+    const h=orderHeaders.get(key);
+    ["customer","supplier","date"].forEach(f=>{ if(!String(h[f]||"").trim()&&String(o[f]||"").trim()) h[f]=String(o[f]).trim(); });
+  });
 
-  const shownOrderData=new Set();
   const body = L.map(({s,it,first},idx)=>{
     const amounts=supplyAmounts(s,it), sub=amounts.subtotal;
     const sk=soKey(L[idx]), hue=sk?soHue(sk):0;
-    const showOrderData=sk?!shownOrderData.has(sk):!!first;
-    if(sk) shownOrderData.add(sk);
+    // تظهر بيانات الأمر عند بداية كل مجموعة متصلة من نفس رقم أمر البيع فقط.
+    // وبهذا لا تختفي البيانات إذا تكرر رقم الأمر بعد صفوف أمر آخر بسبب ترتيب التاريخ.
+    const prevSk=idx>0?soKey(L[idx-1]):"";
+    const showOrderData=sk ? (idx===0 || sk!==prevSk) : !!first;
     const header=sk?(orderHeaders.get(sk)||{}):{};
     const displayOrderNo=header.orderNo||orderNoOfRecord(s);
     const displayDate=header.date||s.date||"";
