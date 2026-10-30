@@ -1642,6 +1642,8 @@ async function fetchAllRows(table, orderCols){
 function groupBy(rows,fk){ const m=new Map(); rows.forEach(r=>{ if(!m.has(r[fk])) m.set(r[fk],[]); m.get(r[fk]).push(r); }); return m; }
 async function loadDocs(){
   docsReady=false;
+  // احتفظ بأوامر البيع المحلية قبل تحميل السيرفر؛ قد تكون هناك أوامر قديمة لم تُرفع بعد.
+  const localSaleOrders=(state.saleOrders||[]).map(r=>JSON.parse(JSON.stringify(r)));
   try{
     const [hs,his,ss,sis,cs] = await Promise.all([
       fetchAllRows("shipments",["id"]), fetchAllRows("shipment_items",["shipment_id","line_no"]),
@@ -1668,10 +1670,17 @@ async function loadDocs(){
     // أوامر البيع
     if(ss.length || docMeta.has("so")){
       const li=groupBy(sis,"sale_order_id");
-      state.saleOrders = ss.map(h=>{ const rec=unpackObj(h,SO_SPEC,{ id:h.id }); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SO_ITEM_SPEC)); return rec; });
-      docSnaps.so = docDiff("so").cur;
+      const serverSaleOrders = ss.map(h=>{ const rec=unpackObj(h,SO_SPEC,{ id:h.id }); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SO_ITEM_SPEC)); return rec; });
+      // السيرفر هو المرجع عند وجود نفس المعرّف أو رقم الأمر، لكن لا تسقط أي أمر محلي غير موجود عليه.
+      const serverIds=new Set(serverSaleOrders.map(o=>String(o.id)));
+      const serverNos=new Set(serverSaleOrders.map(o=>soKey(o.orderNo)).filter(Boolean));
+      const localOnly=localSaleOrders.filter(o=>o && o.id!=null && !serverIds.has(String(o.id)) && !(soKey(o.orderNo)&&serverNos.has(soKey(o.orderNo))));
+      state.saleOrders=[...serverSaleOrders,...localOnly];
+      // اجعل لقطة المزامنة تعكس صفوف السيرفر فقط حتى تُرفع الأوامر المحلية الناقصة تلقائياً.
+      docSnaps.so=new Map(serverSaleOrders.map(o=>[String(o.id),JSON.stringify(o)]));
     }else{
       if(legacy && (legacy.saleOrders||[]).length) state.saleOrders=legacy.saleOrders.map(r=>r.data);
+      else state.saleOrders=localSaleOrders;
       docSnaps.so = new Map();
     }
     // عداد أوامر البيع
