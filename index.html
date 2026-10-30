@@ -4873,6 +4873,69 @@ function renderSupplyFlat(L, T){
   </table></div>`;
 }
 
+// تعديل شروط السداد على مستوى أمر البيع من شاشة التجميع
+function supOrderDocsForEdit(orderNo){
+  return orderDocs(orderNo).filter(x=>x && (x.items||[]).length);
+}
+function supOpenOrderTermsEdit(orderNo){
+  const no=String(orderNo||'').trim(); if(!no) return;
+  const docs=supOrderDocsForEdit(no);
+  const imp=supImportedPaymentPlan(no);
+  const current=termsFromOrder(no);
+  const base=orderLastDate(no)||((imp&&imp.schedule&&imp.schedule[0]&&imp.schedule[0].dueDate)?'':'');
+  const cp=current.cashPct===''?(imp&&imp.cashPct!=null?imp.cashPct:100):current.cashPct;
+  const n=current.installments===''?(imp&&imp.installments!=null?imp.installments:0):current.installments;
+  const days=current.periodDays===''?(imp&&imp.periodDays!=null?imp.periodDays:30):current.periodDays;
+  const total=r2(docs.reduce((a,x)=>a+(+(x.totals&&x.totals.grandTotal||0)||((x.items||[]).reduce((z,it)=>z+(+it.total||0),0))),0)) || (imp?+imp.invoiceTotal||0:0);
+  const linkedOrder=(state.saleOrders||[]).find(o=>soKey(o.orderNo)===soKey(no))||null;
+  const collected=(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&e.status!=='returned').reduce((sum,e)=>sum+(e.allocations||[]).reduce((v,a)=>v+(txAllocMatches(a,linkedOrder,no)?(+a.amount||0):0),0),0);
+  openModal('تعديل شروط السداد — أمر بيع '+escapeHtml(no), `
+    <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px">
+      <div class="fld"><label>نسبة النقدي %</label><input id="sot_cash" class="inp num" type="number" min="0" max="100" step="0.01" value="${escapeAttr(cp)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
+      <div class="fld"><label>عدد الأقساط</label><input id="sot_count" class="inp num" type="number" min="0" max="60" step="1" value="${escapeAttr(n)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
+      <div class="fld"><label>الفترة بين الأقساط (يوم)</label><input id="sot_days" class="inp num" type="number" min="1" max="365" step="1" value="${escapeAttr(days||30)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
+    </div>
+    <div class="card" style="margin-top:12px;padding:12px">
+      <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
+        <div class="kpi"><div class="lbl">إجمالي أمر البيع</div><div class="val small">${fmt(total,2)}</div></div>
+        <div class="kpi"><div class="lbl">تحصيلات مسجلة (للعرض)</div><div class="val small">${fmt(collected,2)}</div></div>
+        <div class="kpi"><div class="lbl">تاريخ أساس الأقساط</div><div class="val small">${escapeHtml(base||'غير متاح')}</div></div>
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);margin:8px 0">تعديل الشروط لا يحذف أو يغيّر أي تحصيل مسجل. يتم توزيع الآجل بالتساوي، وآخر قسط يستوعب فرق التقريب. الشهر محسوب 30 يومًا.</p>
+      <div id="sot_preview" style="margin-top:8px"></div>
+    </div>
+  `, ()=>{
+    const cash=Number(document.getElementById('sot_cash')?.value), count=Number.parseInt(document.getElementById('sot_count')?.value,10)||0, period=Number.parseInt(document.getElementById('sot_days')?.value,10)||0;
+    if(!Number.isFinite(cash)||cash<0||cash>100){toast('نسبة النقدي لازم تكون من 0 إلى 100','err');return false;}
+    if(cash<100&&count<1){toast('حدد عدد الأقساط','err');return false;}
+    if(cash<100&&period<1){toast('حدد مدة بين الأقساط صحيحة','err');return false;}
+    if(!docs.length&&!imp){toast('لا توجد بوالص أو بيانات أمر بيع مرتبطة بهذا الرقم','err');return false;}
+    const k=soKey(no), old=orderTermsFor(no), nt={cashPct:cash,installments:cash>=100?0:count,periodDays:cash>=100?0:period};
+    const u=(typeof curU==='function'&&curU())||null, at=new Date().toISOString();
+    const hist=((old&&old.history)||[]).slice(-19); if(old) hist.push({at:old.updatedAt||'',by:old.updatedBy||'',cashPct:old.cashPct,installments:old.installments,periodDays:old.periodDays});
+    state.orderTerms[k]={...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist};
+    docs.forEach(x=>{x.terms={...nt};});
+    audit('order_terms','تعديل شروط السداد من شاشة التجميع — أمر بيع '+no);
+    saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع وإعادة توزيع الأقساط','ok'); return true;
+  });
+  supPreviewOrderTerms(no);
+}
+function supPreviewOrderTerms(no){
+  const el=document.getElementById('sot_preview'); if(!el)return;
+  const cash=Number(document.getElementById('sot_cash')?.value), count=Math.max(0,parseInt(document.getElementById('sot_count')?.value,10)||0), days=Math.max(0,parseInt(document.getElementById('sot_days')?.value,10)||0);
+  const docs=supOrderDocsForEdit(no), imp=supImportedPaymentPlan(no);
+  const total=r2(docs.reduce((a,x)=>a+(+(x.totals&&x.totals.grandTotal||0)||((x.items||[]).reduce((z,it)=>z+(+it.total||0),0))),0)) || (imp?+imp.invoiceTotal||0:0);
+  const base=orderLastDate(no);
+  if(!Number.isFinite(cash)||cash<0||cash>100){el.innerHTML='<span style="color:var(--danger)">نسبة النقدي غير صحيحة</span>';return;}
+  const cashVal=r2(total*cash/100), credit=r2(total-cashVal);
+  let html=`<div style="font-weight:700;margin-bottom:6px">معاينة التوزيع — نقدي ${fmt(cashVal,2)} · آجل ${fmt(credit,2)}</div>`;
+  if(credit>0&&count>0&&base){let left=credit;html+='<div class="tbl-wrap"><table><thead><tr><th>القسط</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>';for(let i=1;i<=count;i++){const amount=i===count?r2(left):r2(credit/count);left=r2(left-amount);const due=supPaymentDateAdd(base,days*i);html+=`<tr><td>${i}</td><td class="num">${fmt(amount,2)}</td><td><span class="sup-due-date sup-due-future">${escapeHtml(supPaymentDateLabel(due))}</span></td></tr>`;}html+='</tbody></table></div>';}
+  else if(credit>0) html+='<p style="color:var(--warn)">يلزم وجود تاريخ أساس من البوالص المرتبطة حتى نحسب تواريخ الأقساط.</p>';
+  else html+='<p style="color:var(--ok)">السداد نقدي بالكامل — لا توجد أقساط.</p>';
+  el.innerHTML=html;
+}
+function supDueDateClass(date){if(!date)return 'sup-due-none';const today=new Date();today.setHours(0,0,0,0);const d=new Date(date+'T00:00:00');if(Number.isNaN(d.getTime()))return 'sup-due-none';if(d<today)return 'sup-due-late';if(d.getTime()===today.getTime())return 'sup-due-today';return 'sup-due-future';}
+
 // ========== تجميع حسب أمر البيع (فاتورة واحدة لكل أمر) ==========
 function renderSupplyGrouped(L){
   const SB=showBuy("supply"), SS=showSell("supply");
@@ -4914,8 +4977,8 @@ function renderSupplyGrouped(L){
       ${SB?`<td class="num">${fmt(totals.buy)}</td>`:""}
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold)">${fmt(totals.total)}</strong></td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
-      <td>${first?`<div class="td-actions"><button onclick="editShipment('${first.id}')">فتح / تعديل البوليصة</button></div>`:"—"}</td>
-      ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>`<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${escapeHtml(String(v??""))}</td>`).join("")}
+      <td><div class="td-actions">${orderNo!=="—"?`<button class="primary" onclick="supOpenOrderTermsEdit('${escapeAttr(String(orderNo))}')">تعديل شروط الأمر</button>`:""}${first?`<button onclick="editShipment('${first.id}')">فتح / تعديل البوليصة</button>`:""}</div></td>
+      ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>{const isDate=i>=5&&(i-5)%2===1, due=isDate?g.payment.schedule[Math.floor((i-5)/2)]?.date:"";return `<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${isDate&&due?`<span class="sup-due-date ${supDueDateClass(due)}">${escapeHtml(String(v??""))}</span>`:escapeHtml(String(v??""))}</td>`;}).join("")}
     </tr>`;
   }).join("");
   const total={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,grand:0};
@@ -5562,10 +5625,37 @@ function soOpenSearch(){
       <input class="inp" id="soSearchInp" oninput="soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin:8px 0">كل السجلات المحفوظة وخطط السداد المستوردة (${list.length} أمر). الخانات غير الموجودة في المصدر ستظهر بشرطة أو «غير متاح».</div>
-    <div id="soSearchResults" style="max-height:58vh;overflow:auto;margin-top:10px"></div>
+    <div id="soSearchResults" style="max-height:72vh;overflow:auto;margin-top:10px"></div>
   `, ()=>true);
+  const mb=document.querySelector('#modalBackdrop .modal'); if(mb){mb.style.width='min(1500px,96vw)';mb.style.maxWidth='96vw';mb.style.maxHeight='94vh';}
+  const bd=document.querySelector('#modalBackdrop .mbody'); if(bd){bd.style.maxHeight='calc(94vh - 130px)';bd.style.overflow='auto';}
   setTimeout(soDoSearch,50);
 }
+function soSearchDetailHtml(x){
+  const r=x.record||{}, p=x.plan||{}, no=x.orderNo;
+  const docs=orderDocs(no);
+  const esc=v=>escapeHtml(v===null||v===undefined||v===''?'—':String(v));
+  const val=(label,v)=>`<div class="fld" style="padding:8px;background:var(--surface-2);border-radius:8px"><label>${label}</label><b>${esc(v)}</b></div>`;
+  const masterItems=Array.isArray(r.items)?r.items:[];
+  const itemRows=masterItems.map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.diameter||it.item||it.name)}</td><td>${esc(it.type||it.spec)}</td><td>${esc(it.qty)}</td><td>${esc(it.notes)}</td></tr>`).join('');
+  const policyRows=docs.map(d=>{
+    const its=(d.items||[]).map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.diameter)}</td><td>${esc(it.type)}</td><td>${esc(it.supplyQty??it.qty)}</td><td>${esc(it.actualWeight??it.weight)}</td><td>${esc(it.total)}</td></tr>`).join('');
+    return `<div class="card" style="margin:10px 0"><div class="head"><b>بوليصة ${esc(d.policyNo)}</b><span class="count">${esc(d.date)} · ${esc(d.customer)} · ${esc(d.supplier)}</span></div><div class="body"><div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">${val('الشركة',d.company)}${val('الموقع',d.site)}${val('المصنع',d.factory)}${val('إجمالي البوليصة',d.totals?.grandTotal)}${val('الحالة',d.status)}</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>القطر</th><th>النوع</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th>الإجمالي</th></tr></thead><tbody>${its||'<tr><td colspan="6">لا توجد تفاصيل أصناف محفوظة</td></tr>'}</tbody></table></div></div></div>`;
+  }).join('');
+  const sched=Array.isArray(p.schedule)?p.schedule:[];
+  return `<div style="padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)">
+    <h3 style="margin:0 0 10px;color:var(--gold)">البيانات الكاملة لأمر البيع #${esc(no)}</h3>
+    <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${val('نوع السجل',x.record?'أمر بيع محفوظ':'خطة سداد مستوردة')}${val('تاريخ الأمر',r.date||r.soDate|| (docs.at(-1)?.date))}${val('العميل',r.customer||p.customer)}${val('المورد',r.supplier||docs[0]?.supplier)}${val('عناية',r.attention)}${val('عنوان التوصيل',r.address)}${val('مسؤول التواصل',r.contactName)}${val('رقم التواصل',r.contactPhone)}${val('المندوب',r.rep)}${val('إجمالي الخطة',p.total??p.invoiceTotal)}${val('نسبة النقدي',p.cashPct==null?'غير متاح':p.cashPct+'%')}${val('قيمة النقدي',p.cashValue)}${val('المؤجل',p.creditValue)}${val('عدد الأقساط',p.installments)}${val('مدة القسط بالأيام',p.periodDays)}${val('طريقة السداد',p.method)}${val('رقم البوليصة من المصدر',p.policyNo)}
+    </div>
+    ${r.notes?`<p style="margin:10px 0"><b>ملاحظات الأمر:</b> ${esc(r.notes)}</p>`:''}
+    ${masterItems.length?`<h4>أصناف أمر البيع الأصلية</h4><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>القطر/الصنف</th><th>النوع/المواصفة</th><th>الكمية</th><th>ملاحظات</th></tr></thead><tbody>${itemRows}</tbody></table></div>`:''}
+    ${sched.length?`<h4>جدول السداد المستورد</h4><div class="tbl-wrap"><table class="tbl"><thead><tr><th>القسط</th><th>تاريخ الاستحقاق</th><th>القيمة</th><th>المسدد</th><th>الحالة</th></tr></thead><tbody>${sched.map((z,i)=>`<tr><td>${esc(z.installmentNo||i+1)}</td><td>${esc(z.dueDate||z.date)}</td><td>${esc(z.amount)}</td><td>${esc(z.paidAmount)}</td><td>${esc(z.status)}</td></tr>`).join('')}</tbody></table></div>`:''}
+    <h4>البوالص المرتبطة وتفاصيل أصنافها (${docs.length})</h4>${policyRows||'<p>لا توجد بوالص مرتبطة محفوظة لهذا الأمر.</p>'}
+    ${!x.record?'<p style="color:var(--warn);font-size:12px">تنبيه: السجل الرئيسي للأمر وأصنافه الأصلية غير متاحين في قاعدة البيانات؛ المعروض هو بيانات خطة السداد والبوالص المرتبطة فقط.</p>':''}
+  </div>`;
+}
+function soShowSearchDetails(no){const x=soSearchRows().find(z=>soKey(z.orderNo)===soKey(no));if(!x)return;const el=document.getElementById('soDetails_'+CSS.escape(soKey(no)));if(!el)return;const open=el.style.display!=='none';el.style.display=open?'none':'block';if(!open)el.innerHTML=soSearchDetailHtml(x);}
 function soDoSearch(){
   const q=(document.getElementById("soSearchInp")?.value||"").trim().toLowerCase();
   const rows=soSearchRows().filter(x=>{
@@ -5585,7 +5675,7 @@ function soDoSearch(){
     const method=p.method||"غير متاح";
     const status=isMaster?"أمر بيع محفوظ":"خطة مستوردة — سجل الأمر الأصلي غير موجود";
     const action=isMaster?`<button class="btn sm" onclick="soLoad('${escapeAttr(r.id)}')">فتح الأمر</button>`:`<button class="btn sm" onclick="goOrderScreen('${escapeAttr(x.orderNo)}')">فتح البيانات المتاحة</button>`;
-    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td>${action}</td></tr>`;
+    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td style="white-space:nowrap">${action} <button class="btn ghost sm" onclick="soShowSearchDetails('${escapeAttr(x.orderNo)}')">كل البيانات ▾</button></td></tr><tr><td colspan="12" style="padding:0;border:0"><div id="soDetails_${escapeAttr(soKey(x.orderNo))}" style="display:none"></div></td></tr>`;
   }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة</div>`;
   const el=document.getElementById("soSearchResults"); if(el) el.innerHTML=html;
 }
@@ -6394,6 +6484,13 @@ function printChequeRegister(){
 .cr-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(205px,1fr));gap:10px;margin-bottom:14px}.cr-stat{background:#fff;border:1px solid #e7dfd1;border-radius:11px;padding:13px 15px;position:relative;overflow:hidden}.cr-stat:before{content:"";position:absolute;top:0;right:0;bottom:0;width:4px;background:#d4a017}.cr-stat-title{font-size:11px;color:#6b7280;font-weight:800;margin-bottom:5px}.cr-stat-value{font-size:21px;font-weight:800;direction:ltr;text-align:right}.cr-stat-meta{font-size:10px;color:#9ca3af;margin-top:3px}
 .cr-resultline{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 8px;padding:8px 12px;color:#334155;font-size:12px;background:#fff;border:1px solid #e5e7eb;border-radius:9px}.cr-resultline strong{color:#9a6700}.cr-table-wrap{max-height:calc(100vh - 390px);min-height:180px}.cr-table{min-width:1250px;border-collapse:collapse}.cr-table thead th{background:#fce4d6!important;color:#35261e!important;border-bottom:2px solid #d4a017!important;padding:10px 9px;white-space:nowrap;font-size:11px}.cr-table td{padding:9px 8px!important;white-space:nowrap;font-size:12px}.cr-table tbody tr:nth-child(even){background:#fffaf5}.cr-table tbody tr:hover{background:#fff1d6}.cr-table .cr-notes{max-width:220px;white-space:normal;min-width:130px}.cr-due{display:block;min-width:130px;text-align:center;padding:5px 8px;border-radius:4px;font-size:12px;font-weight:800;white-space:nowrap}.cr-overdue{background:#fee2e2;color:#b91c1c}.cr-today{background:#fef3c7;color:#a16207}.cr-safe{background:#dcfce7;color:#166534}
 @media(max-width:700px){.cr-filterbar .cr-filter-status,.cr-filterbar .cr-filter-search{flex:1 1 100%}.cr-table-wrap{max-height:calc(100vh - 340px)}.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{padding:10px}.cr-stat-value{font-size:16px}}
+
+/* ألوان تواريخ استحقاق أقساط أوامر البيع */
+.sup-due-date{display:inline-block;padding:3px 7px;border-radius:6px;font-weight:800;white-space:nowrap}
+.sup-due-future{background:rgba(22,163,74,.14);color:#16803c}
+.sup-due-today{background:rgba(217,119,6,.18);color:#b45309}
+.sup-due-late{background:rgba(220,38,38,.15);color:#dc2626}
+.sup-due-none{color:var(--text-dim)}
 </style></head><body><h2>أوراق القبض وشيكات تحت التحصيل</h2><p>عدد الشيكات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)} — تاريخ الطباعة: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك/الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`);
   w.document.close();
 }
