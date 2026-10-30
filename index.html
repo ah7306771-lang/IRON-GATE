@@ -1266,7 +1266,7 @@ async function loadMaster(admin){
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
-  if(docsReady && docsChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
+  if((docsReady && docsChanged()) || txChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
 }
 // ---------- البوالص (المحفوظة والمرحّلة) وأوامر البيع: جداول بأعمدة منفصلة لكل حقل ----------
 // النوع: t=نص، n=رقم، b=صح/غلط، d=تاريخ، z=تاريخ ووقت. أي حقل مش معروف بيتحفظ في عمود extra عشان مفيش بيانات تضيع.
@@ -1345,27 +1345,69 @@ function docsChanged(){
   return Object.keys(DOC_GROUPS).some(g=>{ const d=docDiff(g); return d.up.length||d.del.length||!docMeta.has(g); }) || counterNow()!==counterSnap;
 }
 
-// ---------- تحميل التحصيلات المرفوعة (treasury_entries) من Supabase ----------
-// بتتضاف للتحصيلات المحلية لو مش موجودة (بالـ id)، وأي تعديل محلي عليها بيفضل زي ما هو.
-const TX_DELETED_KEY = "irongate_tx_deleted";
-function txDeletedIds(){ try{ return new Set(JSON.parse(localStorage.getItem(TX_DELETED_KEY)||"[]")); }catch(e){ return new Set(); } }
-function txMarkDeleted(id){ try{ const s=txDeletedIds(); s.add(id); localStorage.setItem(TX_DELETED_KEY, JSON.stringify([...s])); }catch(e){} }
+// ---------- مزامنة الخزينة مع Supabase (جدول treasury_entries) ----------
+// السيرفر هو المصدر الأساسي: التحصيلات والمدفوعات بتتحمّل منه وأي إضافة/تعديل/حذف بيتحفظ فيه تلقائيًا.
+// المتصفح بيفضل نسخة احتياطية، وبنحتفظ بآخر حالة اتزامنت (hash) لكل سجل عشان نعرف إيه اللي اتغيّر.
+const TX_SYNC_KEY = "irongate_tx_sync";
+let txReady = false, txSnap = new Map();   // txSnap: id -> hash آخر حالة معروفة على السيرفر
+function txStable(v){
+  if(Array.isArray(v)) return "["+v.map(txStable).join(",")+"]";
+  if(v && typeof v==="object") return "{"+Object.keys(v).sort().filter(k=>v[k]!==undefined).map(k=>JSON.stringify(k)+":"+txStable(v[k])).join(",")+"}";
+  return JSON.stringify(v===undefined?null:v);
+}
+function txHash(e){ const s=txStable(e); let h=5381; for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0)+":"+s.length; }
+function txLoadSyncMap(){ try{ return new Map(Object.entries(JSON.parse(localStorage.getItem(TX_SYNC_KEY)||"{}"))); }catch(e){ return new Map(); } }
+function txSaveSyncMap(){ try{ localStorage.setItem(TX_SYNC_KEY, JSON.stringify(Object.fromEntries(txSnap))); }catch(e){} }
 async function txLoadTreasuryFromDb(){
+  txReady=false;
   try{
     const rows=await fetchAllRows("treasury_entries",["id"]);
-    if(!Array.isArray(state.treasuryEntries)) state.treasuryEntries=[];
-    const idx=new Map(state.treasuryEntries.map((e,i)=>[e.id,i])), gone=txDeletedIds();
-    rows.forEach(r=>{
-      const d=r&&r.data; if(!d||!d.id||gone.has(d.id)) return;
-      if(!Array.isArray(d.allocations)) d.allocations=[];
-      if(idx.has(d.id)){
-        const i=idx.get(d.id), cur=state.treasuryEntries[i];
-        if(d.importVer && cur.importVer!==d.importVer) state.treasuryEntries[i]=d;   // إعادة رفع بنسخة جديدة
-        return;
+    const local=Array.isArray(state.treasuryEntries)?state.treasuryEntries:[], lastSync=txLoadSyncMap();
+    const db=new Map(); rows.forEach(r=>{ const d=r&&r.data; if(d&&d.id){ if(!Array.isArray(d.allocations)) d.allocations=[]; db.set(d.id,d); } });
+    const out=[], seen=new Set();
+    local.forEach(e=>{
+      if(!e||!e.id) return;
+      const d=db.get(e.id);
+      if(d){
+        seen.add(e.id);
+        const lh=txHash(e);
+        if(lh===txHash(d)) out.push(e);
+        else if(d.importVer && e.importVer!==d.importVer) out.push(d);   // إعادة رفع بنسخة جديدة من السكريبت
+        else if(lastSync.get(e.id)===lh) out.push(d);                    // مفيش تعديل محلي: ناخد نسخة السيرفر
+        else out.push(e);                                                 // تعديل محلي لسه ما اترفعش
+      }else{
+        if(lastSync.has(e.id)) return;   // اتحذف من جهاز تاني
+        out.push(e);                      // تحصيل محلي لسه ما اترفعش
       }
-      state.treasuryEntries.push(d); idx.set(d.id,state.treasuryEntries.length-1);
     });
-  }catch(e){ console.warn("تعذر تحميل التحصيلات من Supabase:", e&&e.message||e); }
+    db.forEach((d,id)=>{ if(!seen.has(id)) out.push(d); });
+    state.treasuryEntries=out;
+    txSnap=new Map([...db.entries()].map(([id,d])=>[id,txHash(d)]));
+    txSaveSyncMap(); txReady=true;
+  }catch(err){
+    console.warn("تعذر تحميل الخزينة من Supabase:", err&&err.message||err);
+    toast("تعذر تحميل الخزينة من السيرفر — شغّال محليًا مؤقتًا ("+((err&&err.message)||err)+")","err");
+  }
+}
+function txChanges(){
+  const up=[], cur=new Map();
+  (state.treasuryEntries||[]).forEach(e=>{ if(!e||!e.id) return; const h=txHash(e); cur.set(e.id,h); if(txSnap.get(e.id)!==h) up.push(e); });
+  const del=[...txSnap.keys()].filter(id=>!cur.has(id));
+  return {up,del,cur};
+}
+function txChanged(){ if(!txReady) return false; const d=txChanges(); return !!(d.up.length||d.del.length); }
+async function syncTreasury(){
+  if(!txReady) return;
+  const d=txChanges(); if(!d.up.length && !d.del.length) return;
+  const today=new Date().toISOString().slice(0,10), now=new Date().toISOString();
+  for(let i=0;i<d.up.length;i+=100){
+    const rows=d.up.slice(i,i+100).map(e=>({ id:e.id, direction:e.direction||"in", entry_date:/^\d{4}-\d{2}-\d{2}$/.test(String(e.date||""))?e.date:today, data:e, updated_at:now }));
+    const r=await sb.from("treasury_entries").upsert(rows,{ onConflict:"id" }); if(r.error) throw r.error;
+  }
+  for(let i=0;i<d.del.length;i+=100){
+    const r=await sb.from("treasury_entries").delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
+  }
+  txSnap=d.cur; txSaveSyncMap();
 }
 async function fetchAllRows(table, orderCols){
   const out=[]; let from=0;
@@ -1451,7 +1493,7 @@ async function syncDocs(){
   }
 }
 function scheduleSync(){
-  if(!currentUser || !masterLoaded || (!changedKinds().length && !docsChanged())) return;
+  if(!currentUser || !masterLoaded || (!changedKinds().length && !docsChanged() && !txChanged())) return;
   clearTimeout(syncTimer); syncTimer = setTimeout(syncMaster, 600);
 }
 async function syncMaster(){
@@ -1485,6 +1527,7 @@ async function syncMaster(){
       lastSnaps[k] = snap;
     }
     await syncDocs();
+    await syncTreasury();
   }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
@@ -5228,7 +5271,6 @@ function txDel(id, direction){
   const e = state.treasuryEntries.find(x=>x.id===id); if(!e) return;
   if(!confirm(`حذف السجل رقم ${e.no} (${fmt(e.amount)} ${state.settings.currency})؟`)) return;
   state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
-  if(String(id).indexOf('tx_import_')===0){ txMarkDeleted(id); try{ sb.from('treasury_entries').delete().eq('id',id).then(()=>{}); }catch(err){} }
   saveState(); renderTreasury(direction); toast("تم الحذف","ok");
 }
 
