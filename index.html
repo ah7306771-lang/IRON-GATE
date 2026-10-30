@@ -950,6 +950,20 @@ table.tbx tbody tr:nth-child(even) td:not(.nm){background:#f6f9fd}
 
 .cr-due{display:block;min-width:130px;text-align:center;padding:5px 8px;border-radius:4px;font-size:12px;font-weight:800;white-space:nowrap}
 .cr-overdue{background:#fee2e2;color:#b91c1c}.cr-today{background:#fef3c7;color:#a16207}.cr-safe{background:#dcfce7;color:#166534}
+
+/* Policy workspace: clearer visual separation and calmer reading rhythm */
+#content:has(.fgrid) .page-head{padding:14px 16px;background:linear-gradient(110deg,#172438,#2c4058);border:1px solid #26384d;border-radius:14px;box-shadow:0 6px 20px rgba(22,36,56,.10);margin-bottom:16px}
+#content:has(.fgrid) .page-head h2{color:#fff;font-weight:800}
+#content:has(.fgrid)>.card{margin-top:14px!important;border:1px solid #e1e7ef;border-radius:13px;box-shadow:0 4px 16px rgba(28,42,61,.045)}
+#content:has(.fgrid)>.card>.head{padding:13px 17px;background:#f6f8fb;border-bottom:1px solid #e5eaf1}
+#content:has(.fgrid)>.card>.head h3{font-weight:800;color:#29384d}
+#content:has(.fgrid)>.card>.body{padding:16px 18px}
+#content:has(.fgrid) .tbl-wrap{border-radius:10px;border-color:#e1e7ef}
+#content:has(.fgrid) table thead th{background:#293b52;color:#fff;border-bottom:2px solid #d4a017;padding:11px 10px;white-space:nowrap}
+#content:has(.fgrid) table tbody td{padding:10px;border-bottom:1px solid #edf0f4}
+#content:has(.fgrid) table tbody tr:nth-child(even){background:#f8fafc}
+#content:has(.fgrid) .inp{border-radius:8px;min-height:38px}
+
 </style>
 
 <style id="statement-filter-polish">
@@ -3909,11 +3923,24 @@ function applyTermsLock(){
     +' <button type="button" class="btn ghost sm" onclick="goOrderScreen(\''+escapeAttr(no)+'\')">فتح أمر البيع</button>';
   else n.textContent=no?'لا توجد شروط سداد لهذا الأمر بعد — ما تكتبه هنا يُسجَّل كشروط الأمر لأول مرة فقط، وبعدها تتعدل من شاشة أمر البيع.':'';
 }
+let soReturnContext = null;
 function goOrderScreen(no){
   if(!guard()) return;
-  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(no));
-  if(!so){ toast("أمر البيع غير مسجّل في شاشة أمر البيع — أنشئه أولًا","err"); return; }
+  const key=soKey(no), linkedPolicy=draft||null;
+  let so=linkedPolicy?.saleOrderId?(state.saleOrders||[]).find(x=>String(x.id)===String(linkedPolicy.saleOrderId)):null;
+  if(!so) so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===key);
+  if(!so){
+    const linked=[...(state.shipments||[]),...(state.policies||[])].filter(x=>(linkedPolicy?.id&&String(x.id)===String(linkedPolicy.id))||(key&&soKey(x.saleOrderNo)===key)||(linkedPolicy?.saleOrderId&&String(x.saleOrderId)===String(linkedPolicy.saleOrderId)));
+    console.error("تعذر العثور على سجل أمر البيع المرتبط",{no,saleOrderId:linkedPolicy?.saleOrderId,linkedPolicies:linked.length,saleOrders:(state.saleOrders||[]).length});
+    toast(linked.length?"البوليصة مرتبطة برقم أمر بيع، لكن سجل الأمر نفسه غير محمّل. حدّث البيانات أو راجع مزامنة أوامر البيع.":"تعذر تحديد أمر البيع المرتبط بهذه البوليصة. راجع رقم الأمر والربط.","err"); return;
+  }
+  soReturnContext={page:currentPage,policyId:editingId,policySrc:editingSrc,orderId:so.id};
   soDraft=JSON.parse(JSON.stringify(so)); soLoadedId=so.id; go("saleOrder");
+}
+function soReturnToPolicy(){
+  if(!soReturnContext){go("shipments");return;}
+  const c=soReturnContext; soReturnContext=null;
+  if(c.policyId&&c.policySrc) loadRecord(c.policySrc,c.policyId,true); else go(c.page||"shipments");
 }
 function refreshTotals(){
   applyTermsLock();
@@ -4944,11 +4971,13 @@ function viewSaleOrder(){
     <div class="spacer"></div>
     ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال الأمر</button>`):""}
     <button class="btn ghost sm" onclick="soNew()">+ جديد</button>
+    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة السابقة</button>':''}
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
 
   <div class="so-actions">
+    ${soReturnContext?'<button class="btn ghost" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
     <button class="btn ghost" onclick="soSave()">💾 حفظ الأمر</button>
     <button class="btn ghost" onclick="migOpen()" title="نقل شروط السداد من شيت الإكسيل المستورد إلى الأوامر مرة واحدة">📥 نقل شروط الشيت للأوامر</button>
     <button class="btn" onclick="soDownloadPdf()">⬇ تحميل PDF</button>
@@ -5178,7 +5207,7 @@ function soNew(){
   if(soDraft && (soDraft.customer||soDraft.supplier||soDraft.items.some(it=>it.diameter||it.qty))){
     if(!confirm("إنشاء أمر جديد سيلغي البيانات الحالية. متأكد؟")) return;
   }
-  soLoadedId = null; soDraft = soDefault();
+  soLoadedId = null; soDraft = soDefault(); soReturnContext = null;
   go("saleOrder");
 }
 function soValidate(){
