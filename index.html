@@ -5542,37 +5542,56 @@ function soRenderPreview(){
   if(brandLogo && paperLogo && !paperLogo.src){ paperLogo.src = brandLogo.src; }
 }
 
+function soSearchRows(){
+  const orders=(state.saleOrders||[]).map(r=>({kind:"order",record:r,plan:supPaymentPlanForOrder(r.orderNo)||null,orderNo:String(r.orderNo||"")}));
+  const byNo=new Map(orders.map(x=>[soKey(x.orderNo),x]));
+  // ضم كل خطط السداد المستوردة حتى لو لم يوجد سجل أمر بيع رئيسي لها.
+  (SUP_IMPORTED_PLAN_MAP instanceof Map?[...SUP_IMPORTED_PLAN_MAP.values()]:SUP_IMPORTED_PAYMENT_PLANS).forEach(p=>{
+    const k=soKey(p.orderNo); if(!k) return;
+    const existing=byNo.get(k);
+    if(existing){ existing.plan=supPaymentPlanForOrder(p.orderNo)||p; }
+    else { const row={kind:"plan",record:null,plan:supPaymentPlanForOrder(p.orderNo)||p,orderNo:String(p.orderNo||"")}; byNo.set(k,row); }
+  });
+  return [...byNo.values()].sort((a,b)=>String(a.orderNo).localeCompare(String(b.orderNo),"en",{numeric:true,sensitivity:"base"}));
+}
 function soOpenSearch(){
-  const list = state.saleOrders || [];
-  if(list.length===0){ toast("لا يوجد أوامر بيع محفوظة","ok"); return; }
-  openModal("البحث عن أمر بيع سابق", `
-    <div class="fld"><label>بحث برقم الأمر أو اسم العميل/المورد</label>
-      <input class="inp" id="soSearchInp" oninput="soDoSearch()" placeholder="اكتب للبحث..." autofocus>
+  const list=soSearchRows();
+  if(list.length===0){ toast("لا توجد أوامر بيع أو خطط سداد مستوردة للعرض","ok"); return; }
+  openModal("البحث في أوامر البيع والبيانات المستوردة", `
+    <div class="fld"><label>بحث برقم الأمر أو العميل أو المورد أو رقم البوليصة أو طريقة السداد</label>
+      <input class="inp" id="soSearchInp" oninput="soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
     </div>
-    <div id="soSearchResults" style="max-height:300px;overflow-y:auto;margin-top:10px"></div>
+    <div style="font-size:12px;color:var(--text-dim);margin:8px 0">كل السجلات المحفوظة وخطط السداد المستوردة (${list.length} أمر). الخانات غير الموجودة في المصدر ستظهر بشرطة أو «غير متاح».</div>
+    <div id="soSearchResults" style="max-height:58vh;overflow:auto;margin-top:10px"></div>
   `, ()=>true);
-  setTimeout(soDoSearch, 50);
+  setTimeout(soDoSearch,50);
 }
 function soDoSearch(){
-  const q = (document.getElementById("soSearchInp")?.value||"").trim().toLowerCase();
-  const list = (state.saleOrders||[]).slice().reverse();
-  const results = q ? list.filter(r=>
-    String(r.orderNo).toLowerCase().includes(q) ||
-    (r.customer||"").toLowerCase().includes(q) ||
-    (r.supplier||"").toLowerCase().includes(q) ||
-    (r.date||"").includes(q)
-  ) : list.slice(0,20);
-  const html = results.length ? results.map(r=>`
-    <div style="padding:10px 12px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--bg-2)" onclick="soLoad('${r.id}')">
-      <div style="color:var(--gold);font-weight:700">#${escapeHtml(r.orderNo)}</div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:3px">${escapeHtml(r.customer||"—")} ← ${escapeHtml(r.supplier||"—")} · ${escapeHtml(r.date||"")}</div>
-    </div>
-  `).join("") : `<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج</div>`;
-  const el = document.getElementById("soSearchResults"); if(el) el.innerHTML = html;
+  const q=(document.getElementById("soSearchInp")?.value||"").trim().toLowerCase();
+  const rows=soSearchRows().filter(x=>{
+    const r=x.record||{}, p=x.plan||{};
+    const hay=[x.orderNo,r.customer,r.supplier,r.date,p.customer,p.policyNo,p.method].join(" ").toLowerCase();
+    return !q||hay.includes(q);
+  });
+  const money=v=>(v===null||v===undefined||v==="")?"غير متاح":fmt(v);
+  const html=rows.length?`<div style="overflow-x:auto"><table class="tbl" style="min-width:1050px;width:100%;font-size:12px"><thead><tr>
+    <th>رقم الأمر</th><th>العميل</th><th>المورد</th><th>رقم البوليصة</th><th>إجمالي الخطة</th><th>نسبة النقدي</th><th>قيمة النقدي</th><th>المؤجل</th><th>عدد الأقساط</th><th>طريقة السداد</th><th>الحالة / المصدر</th><th>فتح</th>
+  </tr></thead><tbody>${rows.map(x=>{
+    const r=x.record||{},p=x.plan||{}; const isMaster=!!x.record;
+    const policy=p.policyNo||[...(state.shipments||[]),...(state.policies||[])].filter(z=>soKey(z.saleOrderNo)===soKey(x.orderNo)).map(z=>z.policyNo).filter(Boolean).join("، ")||"—";
+    const customer=r.customer||p.customer||"—", supplier=r.supplier||"—";
+    const cashPct=p.cashPct==null||p.cashPct===""?"غير متاح":fmt(p.cashPct,2)+"%";
+    const count=p.installments==null?"غير متاح":String(p.installments);
+    const method=p.method||"غير متاح";
+    const status=isMaster?"أمر بيع محفوظ":"خطة مستوردة — سجل الأمر الأصلي غير موجود";
+    const action=isMaster?`<button class="btn sm" onclick="soLoad('${escapeAttr(r.id)}')">فتح الأمر</button>`:`<button class="btn sm" onclick="goOrderScreen('${escapeAttr(x.orderNo)}')">فتح البيانات المتاحة</button>`;
+    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td>${action}</td></tr>`;
+  }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة</div>`;
+  const el=document.getElementById("soSearchResults"); if(el) el.innerHTML=html;
 }
 function soLoad(id){
   const r = state.saleOrders.find(x=>x.id===id); if(!r) return;
-  soDraft = JSON.parse(JSON.stringify(r)); soLoadedId = id;
+  soVirtualMode=false; soDraft = JSON.parse(JSON.stringify(r)); soLoadedId = id;
   closeModal(); go("saleOrder");
 }
 
