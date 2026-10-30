@@ -926,6 +926,9 @@ table[data-rs-key="supply-grouped"] td.num{direction:ltr;unicode-bidi:plaintext}
 #soPaper .ord-footer{text-align:center;font-size:.78em}
 
 /* ===== ميزان مراجعة العملاء / الموردين ===== */
+/* ميزان المراجعة: طي الفلاتر والتحكم بعرض الأعمدة */
+table.tbx{table-layout:fixed}table.tbx th,table.tbx td{overflow:hidden;text-overflow:ellipsis;position:relative}table.tbx td.nm{white-space:normal;overflow-wrap:anywhere}.tb-resize-th{position:relative!important;padding-left:13px!important}.tb-resizer{position:absolute;left:0;top:0;width:8px;height:100%;cursor:col-resize;touch-action:none;z-index:3}.tb-resizer:hover,.tb-resizer:active{background:rgba(255,255,255,.35)}
+
 .tbx-card{background:#fff;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.04)}
 .tbx-title{background:#2e75b6;color:#fff;text-align:center;font-size:20px;font-weight:800;padding:12px}
 .tbx-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));border-bottom:1px solid #9bb7d4}
@@ -2580,10 +2583,18 @@ function tradeReportExport(kind,format){
 // ========== ميزان مراجعة العملاء والموردين ==========
 const tbYear = new Date().getFullYear();
 const tbFilters = {
-  clientTB:{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true},
-  supplierTB:{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true}
+  clientTB:{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true,filtersOpen:true},
+  supplierTB:{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true,filtersOpen:true}
 };
 const tbMoney = v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+// حفظ إعدادات ميزان المراجعة محلياً لتظل بعد الخروج والدخول من نفس الجهاز والمتصفح
+const TB_UI_KEY='irongate_tb_ui_v1';
+let tbColumnWidths={clientTB:[22,13,13,13,13,13,13],supplierTB:[22,13,13,13,13,13,13]};
+(function tbLoadUi(){try{const x=JSON.parse(localStorage.getItem(TB_UI_KEY)||'{}');['clientTB','supplierTB'].forEach(k=>{if(x[k]){Object.assign(tbFilters[k],x[k].filters||{});if(Array.isArray(x[k].widths)&&x[k].widths.length===7)tbColumnWidths[k]=x[k].widths;}});}catch(e){}})();
+function tbSaveUi(){try{const x={};['clientTB','supplierTB'].forEach(k=>x[k]={filters:{from:tbFilters[k].from,to:tbFilters[k].to,partyFrom:tbFilters[k].partyFrom,partyTo:tbFilters[k].partyTo,hideZero:tbFilters[k].hideZero,filtersOpen:tbFilters[k].filtersOpen},widths:tbColumnWidths[k]});localStorage.setItem(TB_UI_KEY,JSON.stringify(x));}catch(e){}}
+function tbToggleFilters(kind){tbFilters[kind].filtersOpen=!tbFilters[kind].filtersOpen;tbSaveUi();const box=document.getElementById('tbFilterBody');if(box)box.style.display=tbFilters[kind].filtersOpen?'':'none';const b=document.getElementById('tbFilterToggle');if(b)b.textContent=tbFilters[kind].filtersOpen?'▲ إخفاء الفلاتر':'▼ إظهار الفلاتر';}
+function tbResizeStart(ev,kind,index){ev.preventDefault();ev.stopPropagation();const startX=ev.clientX, start=tbColumnWidths[kind][index], table=ev.target.closest('table');const total=table.getBoundingClientRect().width;const move=e=>{const delta=(startX-e.clientX)/total*100;const next=Math.max(index===0?14:7,Math.min(40,start+delta));tbColumnWidths[kind][index]=next;const cols=table.querySelectorAll('col');if(cols[index])cols[index].style.width=next+'%';};const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);tbSaveUi();};document.addEventListener('pointermove',move);document.addEventListener('pointerup',up,{once:true});}
+
 function tbOpeningMap(kind){
   if(!state.partyOpening) state.partyOpening={customers:{},suppliers:{}};
   const k=kind==='clientTB'?'customers':'suppliers';
@@ -2659,9 +2670,9 @@ function tbTableHtml(kind,data,opts){
   const cell=v=>`<td class="n ${Math.abs(v)<0.005?'z':''}">${tbMoney(v)}</td>`;
   const {rows,tot}=data;
   const body=rows.map(r=>`<tr><td class="nm" ${opts.click?`onclick="tbOpenStatement('${kind}','${escapeAttr(r.name).replace(/'/g,'&#39;')}')" title="فتح كشف الحساب"`:''}>${escapeHtml(r.name)}</td>${cell(r.od)}${cell(r.oc)}${cell(r.md)}${cell(r.mc)}${cell(r.cd)}${cell(r.cc)}</tr>`).join('');
-  return `<table class="tbx"><thead>
-    <tr><th rowspan="2" style="width:22%">${label}</th><th colspan="2">رصيد أول المدة</th><th colspan="2">حركات خلال المدة</th><th colspan="2">رصيد آخر المدة</th></tr>
-    <tr><th>مدين</th><th>دائن</th><th>مدين</th><th>دائن</th><th>مدين</th><th>دائن</th></tr></thead>
+  return `<table class="tbx" style="table-layout:fixed"><colgroup>${tbColumnWidths[kind].map(w=>`<col style="width:${w}%">`).join('')}</colgroup><thead>
+    <tr><th rowspan="2" class="tb-resize-th">${label}<i class="tb-resizer" onpointerdown="tbResizeStart(event,'${kind}',0)"></i></th><th colspan="2">رصيد أول المدة</th><th colspan="2">حركات خلال المدة</th><th colspan="2">رصيد آخر المدة</th></tr>
+    <tr>${['مدين','دائن','مدين','دائن','مدين','دائن'].map((h,i)=>`<th class="tb-resize-th">${h}<i class="tb-resizer" onpointerdown="tbResizeStart(event,'${kind}',${i+1})"></i></th>`).join('')}</tr></thead>
     <tbody><tr class="tot"><td>الإجمالي</td><td class="n">${tbMoney(tot.od)}</td><td class="n">${tbMoney(tot.oc)}</td><td class="n">${tbMoney(tot.md)}</td><td class="n">${tbMoney(tot.mc)}</td><td class="n">${tbMoney(tot.cd)}</td><td class="n">${tbMoney(tot.cc)}</td></tr>
     ${body||`<tr><td colspan="7" style="padding:26px;color:#8a94a6">لا توجد أرصدة مطابقة للفلاتر</td></tr>`}</tbody></table>`;
 }
@@ -2675,12 +2686,12 @@ function viewTB(kind){
       <button class="btn ghost" onclick="tbEditOpening('${kind}')">⚙ أرصدة أول المدة</button>
       <button class="btn ghost" onclick="tbExport('${kind}','pdf')">🖨 عرض / حفظ PDF</button>
       <button class="btn" onclick="tbExport('${kind}','excel')">⬇ تحميل Excel منسق</button></div>
-    <div class="card" style="margin-bottom:14px"><div class="head"><h3>تصفية الميزان</h3></div><div class="body"><div class="fgrid">
-      <div class="fld"><label>من ${who}</label><select class="inp" onchange="tbFilters['${kind}'].partyFrom=this.value;renderTB()">${opts(f.partyFrom)}</select></div>
-      <div class="fld"><label>إلى ${who}</label><select class="inp" onchange="tbFilters['${kind}'].partyTo=this.value;renderTB()">${opts(f.partyTo)}</select></div>
-      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="tbFilters['${kind}'].from=this.value;renderTB()"></div>
-      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="tbFilters['${kind}'].to=this.value;renderTB()"></div>
-      <div class="fld"><label>الأرصدة الصفرية</label><select class="inp" onchange="tbFilters['${kind}'].hideZero=(this.value==='1');renderTB()"><option value="1" ${f.hideZero?'selected':''}>بدون الأرصدة الصفرية</option><option value="0" ${!f.hideZero?'selected':''}>مع الأرصدة الصفرية</option></select></div>
+    <div class="card" style="margin-bottom:14px"><div class="head"><h3>تصفية الميزان</h3><div class="spacer"></div><button id="tbFilterToggle" class="btn ghost sm" onclick="tbToggleFilters('${kind}')">${f.filtersOpen?'▲ إخفاء الفلاتر':'▼ إظهار الفلاتر'}</button></div><div class="body" id="tbFilterBody" style="${f.filtersOpen?'':'display:none'}"><div class="fgrid">
+      <div class="fld"><label>من ${who}</label><select class="inp" onchange="tbFilters['${kind}'].partyFrom=this.value;tbSaveUi();renderTB()">${opts(f.partyFrom)}</select></div>
+      <div class="fld"><label>إلى ${who}</label><select class="inp" onchange="tbFilters['${kind}'].partyTo=this.value;tbSaveUi();renderTB()">${opts(f.partyTo)}</select></div>
+      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="tbFilters['${kind}'].from=this.value;tbSaveUi();renderTB()"></div>
+      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="tbFilters['${kind}'].to=this.value;tbSaveUi();renderTB()"></div>
+      <div class="fld"><label>الأرصدة الصفرية</label><select class="inp" onchange="tbFilters['${kind}'].hideZero=(this.value==='1');tbSaveUi();renderTB()"><option value="1" ${f.hideZero?'selected':''}>بدون الأرصدة الصفرية</option><option value="0" ${!f.hideZero?'selected':''}>مع الأرصدة الصفرية</option></select></div>
     </div></div></div>
     <div id="tbResults"></div></div>`;
 }
@@ -5170,23 +5181,54 @@ function soCopyFromSupply(){
 // لا يعدّل الأوامر الموجودة ولا يحذف/يغيّر أي تحصيل أو بوليصة أو خطة سداد.
 function soImportMissingFromSupply(){
   if(!guard()) return;
-  const docs=[...(state.shipments||[]),...(state.policies||[])].filter(x=>x && String(x.saleOrderNo||'').trim() && Array.isArray(x.items) && x.items.length);
+  const docs=[...(state.shipments||[]),...(state.policies||[])].filter(x=>x && Array.isArray(x.items) && x.items.length);
+  if(!docs.length){toast('لا توجد بوالص أو أصناف في بيانات التوريد للنسخ.','err');return;}
+  const noOrderDocs=docs.filter(d=>!String(d.saleOrderNo||'').trim());
   const groups=new Map();
-  docs.forEach(doc=>{
+  docs.filter(d=>String(d.saleOrderNo||'').trim()).forEach(doc=>{
     const no=String(doc.saleOrderNo||'').trim(), key=soKey(no); if(!key) return;
     if(!groups.has(key)) groups.set(key,{orderNo:no,docs:[]});
     groups.get(key).docs.push(doc);
   });
   const existing=new Set((state.saleOrders||[]).map(x=>soKey(x.orderNo)));
-  const missing=[...groups.values()].filter(g=>!existing.has(soKey(g.orderNo)));
-  if(!missing.length){ toast('كل أوامر البيع الموجودة في بيانات التوريد لها سجلات بالفعل.','ok'); return; }
+  const all=[...groups.values()];
+  const missing=all.filter(g=>!existing.has(soKey(g.orderNo)));
+  if(!missing.length && !noOrderDocs.length){toast('كل أوامر البيع الموجودة في بيانات التوريد لها سجلات بالفعل.','ok');return;}
+  const errors=[],warnings=[];
+  if(noOrderDocs.length) errors.push(`${noOrderDocs.length} بوليصة ليس لها رقم أمر بيع مرتبط في بيانات التوريد.`);
+  missing.forEach(g=>{
+    const sorted=[...g.docs].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const first=sorted[0]||{};
+    if(!sorted.some(d=>String(d.customer||'').trim())) errors.push(`أمر ${g.orderNo}: اسم العميل غير موجود.`);
+    if(!sorted.some(d=>d.date && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date)))) errors.push(`أمر ${g.orderNo}: تاريخ صحيح غير موجود.`);
+    if(!sorted.some(d=>Array.isArray(d.items)&&d.items.length)) errors.push(`أمر ${g.orderNo}: لا توجد أصناف.`);
+    sorted.forEach(doc=>(doc.items||[]).forEach((it,i)=>{
+      const q=Number(it.qty??it.supplyQty??0)||Number(it.actualWeight??it.weightTon??it.weight??0)||0;
+      if(!(q>0)) errors.push(`أمر ${g.orderNo} / بوليصة ${doc.policyNo||'بدون رقم'} / صنف ${i+1}: لا توجد كمية أو وزن فعلي صالح.`);
+      if(!String(it.diameter||'').trim()) warnings.push(`أمر ${g.orderNo} / صنف ${i+1}: القطر غير محدد.`);
+      if(!String(it.spec||it.grade||'').trim()) warnings.push(`أمر ${g.orderNo} / صنف ${i+1}: المواصفة غير محددة.`);
+    }));
+    if(!String(first.supplier||'').trim()) warnings.push(`أمر ${g.orderNo}: اسم المورد غير محدد.`);
+  });
   const lineCount=missing.reduce((n,g)=>n+g.docs.reduce((m,d)=>m+(d.items||[]).length,0),0);
-  const preview=missing.slice(0,18).map(g=>{
+  const preview=missing.slice(0,25).map(g=>{
     const d=g.docs[0]||{}; return `• أمر ${g.orderNo} — ${d.customer||'عميل غير محدد'} — ${g.docs.length} بوليصة / ${g.docs.reduce((n,x)=>n+(x.items||[]).length,0)} صنف`;
   }).join('\n');
-  const extra=missing.length>18?`\n... و${missing.length-18} أمر آخر`:'';
-  const msg=`سيتم إنشاء ${missing.length} سجل أمر بيع مفقود من بيانات التوريد، بإجمالي ${lineCount} بند.\n\n${preview}${extra}\n\nمهم: إذا لم تكن للصنف كمية أمر بيع/كمية توريد مسجلة، فسيتم استخدام الوزن الفعلي ككمية. سيتم توثيق الوزن الفعلي ورقم/أرقام البوالص في ملاحظات كل بند. لن يتم تعديل الأوامر الموجودة أو التحصيلات.\n\nهل تريد المتابعة؟`;
-  if(!confirm(msg)) return;
+  const extra=missing.length>25?`\n... و${missing.length-25} أمر آخر`:'';
+  const report=[
+    'فحص النسخ الجماعي من بيانات التوريد',
+    `أوامر بيع جديدة: ${missing.length}`,
+    `البوالص: ${missing.reduce((n,g)=>n+g.docs.length,0)}`,
+    `الأصناف: ${lineCount}`,'',
+    errors.length?`توقف النسخ — توجد ${errors.length} مشكلة:\n${errors.slice(0,35).map(x=>'• '+x).join('\n')}${errors.length>35?`\n... و${errors.length-35} مشكلة أخرى`:''}`:'الفحص الأساسي سليم، ويمكن نسخ الدفعة كاملة.',
+    warnings.length?`\nملاحظات للمراجعة (${warnings.length}):\n${warnings.slice(0,20).map(x=>'• '+x).join('\n')}${warnings.length>20?`\n... و${warnings.length-20} ملاحظة أخرى`:''}`:'',
+    '',preview,extra,'',
+    'لن يتم إنشاء أي أمر إذا وُجدت مشكلة أساسية. الأوامر الموجودة بالفعل لن تتكرر ولن تتغير.'
+  ].filter(Boolean).join('\n');
+  if(errors.length){alert(report);toast('لم يتم نسخ أي أمر. عالج المشاكل الظاهرة ثم أعد الفحص.','err');return;}
+  if(!missing.length){alert(report);toast('لا توجد أوامر جديدة للنسخ.','ok');return;}
+  if(!confirm(report+'\n\nهل تريد نسخ كل الأوامر السليمة دفعة واحدة؟')) return;
+
   const now=new Date().toISOString(); let made=0, linked=0;
   missing.forEach(g=>{
     const sorted=[...g.docs].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
@@ -5196,12 +5238,10 @@ function soImportMissingFromSupply(){
     sorted.forEach(doc=>(doc.items||[]).forEach((it,idx)=>{
       const enteredOrderQty=Number(it.qty??it.supplyQty??0)||0;
       const actualWeight=Number(it.actualWeight??it.weightTon??it.weight??0)||0;
-      // إذا لم توجد كمية أمر بيع/كمية توريد مسجلة، استخدم الوزن الفعلي ككمية للصنف.
       const qty=enteredOrderQty>0?enteredOrderQty:actualWeight;
       const policy=String(doc.policyNo||'بدون رقم');
       const factory=typeof itemFactory==='function'?(itemFactory(doc,it)||''):'';
-      const weight=actualWeight;
-      const note=[`من بيانات التوريد — بوليصة ${policy}`,factory?`المصنع: ${factory}`:'',weight?`الوزن الفعلي: ${weight}`:'',it.notes||''].filter(Boolean).join(' | ');
+      const note=[`من بيانات التوريد — بوليصة ${policy}`,factory?`المصنع: ${factory}`:'',actualWeight?`الوزن الفعلي: ${actualWeight}`:'',it.notes||''].filter(Boolean).join(' | ');
       items.push({id:'supply-'+String(doc.id||policy)+'-'+idx+'-'+Math.random().toString(36).slice(2,6),diameter:String(it.diameter||''),qty:String(qty||''),spec:String(it.spec||it.grade||''),type:String(it.type||''),notes:note});
     }));
     const uniqueCustomers=[...new Set(sorted.map(x=>String(x.customer||'').trim()).filter(Boolean))];
@@ -5211,7 +5251,7 @@ function soImportMissingFromSupply(){
       id:'SO-SUP-'+soKey(g.orderNo).replace(/[^a-z0-9\u0600-\u06ff]+/gi,'-')+'-'+Date.now()+'-'+made,
       orderNo:g.orderNo,date:first.date||last.date||new Date().toISOString().slice(0,10),
       customer:uniqueCustomers[0]||plan?.customer||'',supplier:uniqueSuppliers[0]||'',
-      attention:'',address:'',contactName:'',contactPhone:'',rep:'',
+      attention:'',address:first.address||first.site||'',contactName:'',contactPhone:'',rep:'',
       notes:`تم إنشاء سجل أمر البيع آليًا من بيانات التوريد. البوالص المصدر: ${policies.join('، ')||'—'}. ${uniqueCustomers.length>1?'تنبيه: بيانات التوريد تحتوي أكثر من اسم عميل لهذا الرقم.':''} ${uniqueSuppliers.length>1?'تنبيه: بيانات التوريد تحتوي أكثر من مورد لهذا الرقم.':''}`.trim(),
       items,closed:false,closedAt:null,closeReason:'',
       _generatedFromSupply:true,_supplyPolicyNos:policies,_supplyGeneratedAt:now,
@@ -5222,9 +5262,9 @@ function soImportMissingFromSupply(){
   });
   const numeric=missing.map(g=>parseInt(g.orderNo,10)).filter(Number.isFinite);
   if(numeric.length) state.soNextNum=Math.max(Number(state.soNextNum)||1,Math.max(...numeric)+1);
-  if(typeof audit==='function') audit('sale_order','إنشاء '+made+' أمر بيع من بيانات التوريد');
+  if(typeof audit==='function') audit('sale_order','إنشاء '+made+' أمر بيع من بيانات التوريد دفعة واحدة');
   saveState();
-  toast(`تم إنشاء ${made} أمر بيع وربط ${linked} بوليصة بنجاح.`, 'ok');
+  toast(`تم نسخ ${made} أمر بيع دفعة واحدة وربط ${linked} بوليصة بنجاح.`, 'ok');
   if(typeof soRenderItems==='function' && currentPage==='saleOrder') go('saleOrder');
 }
 
@@ -5280,7 +5320,7 @@ function viewSaleOrder(){
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
   <button class="btn" onclick="soCopyFromSupply()" title="نسخ بيانات التوريد إلى مسودة أمر بيع جديد">📋 نسخ من بيانات التوريد</button>
-  <button class="btn ghost" onclick="soImportMissingFromSupply()" title="إنشاء سجلات أوامر البيع الناقصة من بيانات التوريد">📥 إنشاء الأوامر الناقصة من بيانات التوريد</button>
+  <button class="btn ghost" onclick="soImportMissingFromSupply()" title="فحص ثم نسخ كل أوامر البيع الناقصة من بيانات التوريد مرة واحدة">📥 نسخ كل بيانات التوريد دفعة واحدة</button>
 
   <div class="so-actions">
     ${soReturnContext?'<button class="btn ghost" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
