@@ -715,6 +715,9 @@ table.qs-table{width:100%;border-collapse:collapse;margin-bottom:12px;white-spac
 table.qs-table th,table.qs-table td{border:1px solid #333;padding:5px 8px;text-align:center;font-size:12px;line-height:1.3;color:#1a1a1a}
 table.qs-table th{background:#efefef;font-weight:700}
 table.qs-table tr.qs-net td{font-weight:700;background:#f4f4f4}
+table.qs-table tr.qs-negative-balance td:last-child{color:#c62828!important;font-weight:800;background:#fff1f1}
+table.qs-table tr.qs-due-row td{background:#fde8ec!important;color:#9f1239!important;font-weight:700}
+table.qs-table tr.qs-due-row td:first-child{border-right:3px solid #e11d48}
 .qs-actions{display:flex;gap:8px;margin-top:16px}
 .qs-btn{flex:1;padding:10px 12px;border-radius:10px;font-family:inherit;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #e2621f}
 .qs-btn.pri{background:#e2621f;color:#fff}
@@ -7111,23 +7114,25 @@ function txAllDueRows(){
   const txDateLabel=v=>{ if(!v) return "—"; const d=new Date(String(v)+"T00:00:00"); return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString("ar-EG"); };
   const txCheckRows=()=>(state.treasuryEntries||[])
     .filter(e=>e.direction==="in" && e.method==="bank" && e.status==="receivable")
-    .slice().sort((a,b)=>String(a.dueDate||a.date||"9999-12-31").localeCompare(String(b.dueDate||b.date||"9999-12-31")))
+    .slice().sort((a,b)=>String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")))
     .map(e=>{
-      const due=String(e.dueDate||e.date||"");
+      const due=String(e.dueDate||"");
       const today=new Date(); today.setHours(0,0,0,0);
       const dd=due?new Date(due+"T00:00:00"):null;
       const days=dd&&!Number.isNaN(dd.getTime())?Math.round((dd-today)/86400000):null;
       const alert=days===null?"بدون تاريخ استحقاق":days<0?"متأخر "+Math.abs(days)+" يوم":days===0?"مستحق اليوم":days<=7?"يستحق خلال "+days+" يوم":"قادم";
-      return [e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bank||e.bankName||"—","ورقة قبض",({receivable:"ورقة قبض",pending:"تحت التحصيل",deposited:"مودع",collected:"محصل"})[e.status]||e.status||"—",alert,e.notes||e.refNo||e.no||"—"];
+      const dueClass=days!==null&&days<=0?"qs-due-row":"";
+      return [e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bank||e.bankName||"—","ورقة قبض","أوراق قبض",alert,e.notes||"—",dueClass];
     });
   Object.defineProperty(D,"loginChecksBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows();}catch(e){return [];} }});
   Object.defineProperty(D,"loginPartiesBtn",{configurable:true,enumerable:true,get(){
     try{
+      // نفس tbCompute المستخدم في ميزان العملاء والموردين الداخلي، بنفس فلاتر التاريخ الحالية.
       const c=tbCompute("clientTB"), v=tbCompute("supplierTB");
-      // العملاء: نظهر فقط الرصيد المدين للعميل (مبالغ مستحقة لنا عنده).
-      // الموردون: نظهر فقط الرصيد الدائن للمورد (مبالغ مستحقة عليه لنا).
-      return {clients:c.rows.filter(r=>r.closeNat>0.004).map(r=>[r.name,fmt(r.closeNat)+" مستحق لنا"]),
-              suppliers:v.rows.filter(r=>r.closeNat>0.004).map(r=>[r.name,fmt(r.closeNat)+" مستحق له"])};
+      // نعرض كل أرصدة العملاء غير الصفرية بنفس إشارة ميزان العملاء: الموجب لنا عنده، والسالب له عندنا.
+      // الأرصدة السالبة تظهر بإشارة سالبة ويُلوّن رقمها بالأحمر. الموردون: الرصيد الموجب هو المستحق لهم علينا.
+      return {clients:c.rows.filter(r=>Math.abs(Number(r.closeNat)||0)>0.004).map(r=>[r.name,fmt(r.closeNat)]),
+              suppliers:v.rows.filter(r=>r.closeNat>0.004).map(r=>[r.name,fmt(r.closeNat)])};
     }catch(e){return {clients:[],suppliers:[]};}
   }});
   Object.defineProperty(D,"loginInstallmentsBtn",{configurable:true,enumerable:true,get(){
@@ -7859,9 +7864,9 @@ function openMyPassword(first){
   // التقارير مربوطة ببيانات الخزينة والمستحقات عبر window.QS_DATA.
   var QS_DATA = window.QS_DATA = window.QS_DATA || {};
   var REPORTS = {
-    loginChecksBtn:{title:"🧾 أوراق القبض",wide:true,cols:["#","العميل","القيمة","تاريخ الاستحقاق","البنك","النوع","الحالة","التنبيه","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش أوراق قبض مسجلة لسه"},
+    loginChecksBtn:{title:"🧾 أوراق القبض",wide:true,cols:["#","العميل","القيمة","تاريخ الاستحقاق","البنك","النوع","الحالة","التنبيه","ملاحظات"],total:{label:"الإجمالي",col:2},rowClass:function(r){return r[8]||"";},empty:"مفيش أوراق قبض مسجلة لسه"},
     loginChecksAgainstUsBtn:{title:"📝 الشيكات الصادرة علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
-    loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لنا عندهم)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
+    loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 أرصدة العملاء",key:"clients"},{tag:"🏭 أرصدة الموردين",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},rowClass:function(r){return Number(String(r[1]||0).replace(/,/g,""))<0?"qs-negative-balance":"";},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير (يوم)"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
     loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,cols:["#","العميل","أمر البيع / القسط","تاريخ الاستحقاق","قيمة القسط","المسدد","المتبقي","الحالة"],total:{label:"الإجمالي",col:6},empty:"لا توجد أقساط مستحقة"},
     loginLastPricesBtn:{title:"🏷️ اخر سعر شراء وبيع",wide:true,cols:["#","العميل","الوزن الفعلي","اخر سعر شراء","اخر سعر بيع","اخر طريقة السداد","تاريخ اخر فاتورة"],empty:"مفيش أوامر بيع مسجلة لسه"},
@@ -7874,7 +7879,7 @@ function openMyPassword(first){
     if(!rows.length){
       body='<tr><td colspan="'+cfg.cols.length+'" style="color:#7a6a5a;padding:14px 8px">'+esc(cfg.empty)+'</td></tr>';
     }else{
-      body=rows.map(function(r,i){return "<tr><td>"+(i+1)+"</td>"+r.map(function(v){return "<td>"+esc(v)+"</td>"}).join("")+"</tr>"}).join("");
+      body=rows.map(function(r,i){var cls=cfg.rowClass?cfg.rowClass(r):"";return '<tr'+(cls?' class="'+esc(cls)+'"':'')+'><td>'+(i+1)+'</td>'+r.slice(0,cfg.cols.length-1).map(function(v){return "<td>"+esc(v)+"</td>"}).join("")+'</tr>';}).join("");
     }
     var foot="";
     if(cfg.total){
