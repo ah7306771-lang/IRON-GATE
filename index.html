@@ -1000,6 +1000,21 @@ table.tbx tbody tr:nth-child(even) td:not(.nm){background:#f6f9fd}
 .statement-filter-card .body{padding:18px}
 @media(max-width:650px){.statement-filter-grid{grid-template-columns:1fr}.statement-filter-head{align-items:flex-start;gap:10px}.statement-filter-card .body{padding:12px}}
 </style>
+
+<style id="sot-professional-style">
+.sot-fields .fld label{display:block;margin-bottom:7px;font-size:12px;font-weight:700;color:var(--text-dim)}
+.sot-fields .inp{min-height:44px;border-radius:10px;font-size:15px;font-weight:600}
+.sot-summary .kpi{min-height:82px;padding:13px;border:1px solid var(--border);border-radius:12px;background:var(--card, #fff)}
+.sot-summary .kpi:first-child{border-color:var(--gold);background:color-mix(in srgb,var(--gold) 7%,var(--card, #fff))}
+.sot-summary .lbl{font-size:11px;font-weight:700;line-height:1.6}
+.sot-summary .val{margin-top:7px;font-size:17px;font-weight:800;font-variant-numeric:tabular-nums}
+.sot-preview{font-size:13px;line-height:1.8}
+.sot-preview table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border:1px solid var(--border);border-radius:10px}
+.sot-preview th{font-size:12px;font-weight:800;background:var(--panel);white-space:nowrap}
+.sot-preview td,.sot-preview th{padding:10px 12px;border-bottom:1px solid var(--border)}
+.sot-preview tbody tr:last-child td{border-bottom:0}
+@media(max-width:600px){.sot-summary{padding:11px!important}.sot-summary .val{font-size:15px}.sot-preview td,.sot-preview th{padding:8px 7px;font-size:11px}}
+</style>
 </head>
 <body>
 
@@ -4586,11 +4601,12 @@ function orderLastDate(no, extraDates){
   const ds=orderDocs(no).map(x=>x.date||"").concat(extraDates||[]).filter(Boolean).sort();
   return ds.length?ds[ds.length-1]:"";
 }
-function orderScheduleRows(terms, docs){
+function orderScheduleRows(terms, docs, totalOverride){
   const rows=[]; const cp=(terms.cashPct===""||terms.cashPct==null)?NaN:+terms.cashPct;
   if(!Number.isFinite(cp)||cp<0||cp>100) return rows;
   const n=Math.max(0,parseInt(terms.installments,10)||0), days=Math.max(0,+terms.periodDays||0);
-  const total=r2(docs.reduce((a,x)=>a+(+x.total||0),0));
+  const docsTotal=r2(docs.reduce((a,x)=>a+(+x.total||0),0));
+  const total=Number.isFinite(+totalOverride)&&+totalOverride>0?r2(+totalOverride):docsTotal;
   const base=docs.map(x=>x.date||"").filter(Boolean).sort().pop()||"";   // تاريخ الفاتورة = آخر بوليصة
   const cash=r2(total*cp/100), rest=r2(total-cash), lbl="كل بوالص الأمر";
   if(cash>0||n<=0||cp>=100) rows.push({label:"نقدي",policy:lbl,amount:cash>0?cash:total,due:base,no:0});
@@ -4627,7 +4643,8 @@ function supManualPlanForOrder(orderNo){
   const ot=orderTermsFor(orderNo); if(!ot) return null;
   const docs=orderDocs(orderNo).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
   if(!docs.length) return null;
-  const rows=orderScheduleRows(ot,docs), total=r2(docs.reduce((a,x)=>a+(+x.total||0),0));
+  const total=supOrderTermsBaseTotal(orderNo,docs,imp);
+  const rows=orderScheduleRows(ot,docs,total);
   const cashRows=rows.filter(r=>r.no===0), cashValue=r2(cashRows.reduce((a,r)=>a+r.amount,0));
   const dues=new Map(); rows.filter(r=>r.no>0).forEach(r=>{ const k=r.due||"~"; if(!dues.has(k)) dues.set(k,{amount:0,date:r.due}); dues.get(k).amount=r2(dues.get(k).amount+r.amount); });
   const schedule=[...dues.values()].sort((a,b)=>!a.date?1:!b.date?-1:a.date.localeCompare(b.date));
@@ -4877,6 +4894,15 @@ function renderSupplyFlat(L, T){
 function supOrderDocsForEdit(orderNo){
   return orderDocs(orderNo).filter(x=>x && (x.items||[]).length);
 }
+// قيمة أمر البيع المعتمدة: إجمالي الأمر المستورد أولاً، ثم سجل أمر البيع، ثم مجموع البوالص كحل أخير.
+function supOrderTermsBaseTotal(orderNo, docs, imported){
+  const valid=v=>v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))&&Number(v)>0;
+  if(imported&&valid(imported.invoiceTotal)) return r2(Number(imported.invoiceTotal));
+  const so=(state.saleOrders||[]).find(o=>soKey(o.orderNo)===soKey(orderNo));
+  const soTotal=so&&(so.grandTotal??so.total??so.invoiceTotal??(so.data&&(so.data.grandTotal??so.data.total??so.data.invoiceTotal)));
+  if(valid(soTotal)) return r2(Number(soTotal));
+  return r2((docs||[]).reduce((a,x)=>a+(+(x.totals&&x.totals.grandTotal||x.total||0)||((x.items||[]).reduce((z,it)=>z+(+it.total||0),0))),0));
+}
 function supOpenOrderTermsEdit(orderNo){
   const no=String(orderNo||'').trim(); if(!no) return;
   const docs=supOrderDocsForEdit(no);
@@ -4886,23 +4912,23 @@ function supOpenOrderTermsEdit(orderNo){
   const cp=current.cashPct===''?(imp&&imp.cashPct!=null?imp.cashPct:100):current.cashPct;
   const n=current.installments===''?(imp&&imp.installments!=null?imp.installments:0):current.installments;
   const days=current.periodDays===''?(imp&&imp.periodDays!=null?imp.periodDays:30):current.periodDays;
-  const total=r2(docs.reduce((a,x)=>a+(+(x.totals&&x.totals.grandTotal||0)||((x.items||[]).reduce((z,it)=>z+(+it.total||0),0))),0)) || (imp?+imp.invoiceTotal||0:0);
+  const total=supOrderTermsBaseTotal(no,docs,imp);
   const linkedOrder=(state.saleOrders||[]).find(o=>soKey(o.orderNo)===soKey(no))||null;
   const collected=(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&e.status!=='returned').reduce((sum,e)=>sum+(e.allocations||[]).reduce((v,a)=>v+(txAllocMatches(a,linkedOrder,no)?(+a.amount||0):0),0),0);
   openModal('تعديل شروط السداد — أمر بيع '+escapeHtml(no), `
-    <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px">
+    <div class="sot-fields fgrid" style="grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px">
       <div class="fld"><label>نسبة النقدي %</label><input id="sot_cash" class="inp num" type="number" min="0" max="100" step="0.01" value="${escapeAttr(cp)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
       <div class="fld"><label>عدد الأقساط</label><input id="sot_count" class="inp num" type="number" min="0" max="60" step="1" value="${escapeAttr(n)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
       <div class="fld"><label>الفترة بين الأقساط (يوم)</label><input id="sot_days" class="inp num" type="number" min="1" max="365" step="1" value="${escapeAttr(days||30)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
     </div>
-    <div class="card" style="margin-top:12px;padding:12px">
-      <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px">
+    <div class="card sot-summary" style="margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--panel, #fff)">
+      <div class="fgrid sot-kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
         <div class="kpi"><div class="lbl">إجمالي أمر البيع</div><div class="val small">${fmt(total,2)}</div></div>
         <div class="kpi"><div class="lbl">تحصيلات مسجلة (للعرض)</div><div class="val small">${fmt(collected,2)}</div></div>
         <div class="kpi"><div class="lbl">تاريخ أساس الأقساط</div><div class="val small">${escapeHtml(base||'غير متاح')}</div></div>
       </div>
       <p style="font-size:11px;color:var(--text-dim);margin:8px 0">تعديل الشروط لا يحذف أو يغيّر أي تحصيل مسجل. يتم توزيع الآجل بالتساوي، وآخر قسط يستوعب فرق التقريب. الشهر محسوب 30 يومًا.</p>
-      <div id="sot_preview" style="margin-top:8px"></div>
+      <div id="sot_preview" class="sot-preview" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)"></div>
     </div>
   `, ()=>{
     const cash=Number(document.getElementById('sot_cash')?.value), count=Number.parseInt(document.getElementById('sot_count')?.value,10)||0, period=Number.parseInt(document.getElementById('sot_days')?.value,10)||0;
@@ -4924,7 +4950,7 @@ function supPreviewOrderTerms(no){
   const el=document.getElementById('sot_preview'); if(!el)return;
   const cash=Number(document.getElementById('sot_cash')?.value), count=Math.max(0,parseInt(document.getElementById('sot_count')?.value,10)||0), days=Math.max(0,parseInt(document.getElementById('sot_days')?.value,10)||0);
   const docs=supOrderDocsForEdit(no), imp=supImportedPaymentPlan(no);
-  const total=r2(docs.reduce((a,x)=>a+(+(x.totals&&x.totals.grandTotal||0)||((x.items||[]).reduce((z,it)=>z+(+it.total||0),0))),0)) || (imp?+imp.invoiceTotal||0:0);
+  const total=supOrderTermsBaseTotal(no,docs,imp);
   const base=orderLastDate(no);
   if(!Number.isFinite(cash)||cash<0||cash>100){el.innerHTML='<span style="color:var(--danger)">نسبة النقدي غير صحيحة</span>';return;}
   const cashVal=r2(total*cash/100), credit=r2(total-cashVal);
@@ -5625,37 +5651,10 @@ function soOpenSearch(){
       <input class="inp" id="soSearchInp" oninput="soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
     </div>
     <div style="font-size:12px;color:var(--text-dim);margin:8px 0">كل السجلات المحفوظة وخطط السداد المستوردة (${list.length} أمر). الخانات غير الموجودة في المصدر ستظهر بشرطة أو «غير متاح».</div>
-    <div id="soSearchResults" style="max-height:72vh;overflow:auto;margin-top:10px"></div>
+    <div id="soSearchResults" style="max-height:58vh;overflow:auto;margin-top:10px"></div>
   `, ()=>true);
-  const mb=document.querySelector('#modalBackdrop .modal'); if(mb){mb.style.width='min(1500px,96vw)';mb.style.maxWidth='96vw';mb.style.maxHeight='94vh';}
-  const bd=document.querySelector('#modalBackdrop .mbody'); if(bd){bd.style.maxHeight='calc(94vh - 130px)';bd.style.overflow='auto';}
   setTimeout(soDoSearch,50);
 }
-function soSearchDetailHtml(x){
-  const r=x.record||{}, p=x.plan||{}, no=x.orderNo;
-  const docs=orderDocs(no);
-  const esc=v=>escapeHtml(v===null||v===undefined||v===''?'—':String(v));
-  const val=(label,v)=>`<div class="fld" style="padding:8px;background:var(--surface-2);border-radius:8px"><label>${label}</label><b>${esc(v)}</b></div>`;
-  const masterItems=Array.isArray(r.items)?r.items:[];
-  const itemRows=masterItems.map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.diameter||it.item||it.name)}</td><td>${esc(it.type||it.spec)}</td><td>${esc(it.qty)}</td><td>${esc(it.notes)}</td></tr>`).join('');
-  const policyRows=docs.map(d=>{
-    const its=(d.items||[]).map((it,i)=>`<tr><td>${i+1}</td><td>${esc(it.diameter)}</td><td>${esc(it.type)}</td><td>${esc(it.supplyQty??it.qty)}</td><td>${esc(it.actualWeight??it.weight)}</td><td>${esc(it.total)}</td></tr>`).join('');
-    return `<div class="card" style="margin:10px 0"><div class="head"><b>بوليصة ${esc(d.policyNo)}</b><span class="count">${esc(d.date)} · ${esc(d.customer)} · ${esc(d.supplier)}</span></div><div class="body"><div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">${val('الشركة',d.company)}${val('الموقع',d.site)}${val('المصنع',d.factory)}${val('إجمالي البوليصة',d.totals?.grandTotal)}${val('الحالة',d.status)}</div><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>القطر</th><th>النوع</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th>الإجمالي</th></tr></thead><tbody>${its||'<tr><td colspan="6">لا توجد تفاصيل أصناف محفوظة</td></tr>'}</tbody></table></div></div></div>`;
-  }).join('');
-  const sched=Array.isArray(p.schedule)?p.schedule:[];
-  return `<div style="padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)">
-    <h3 style="margin:0 0 10px;color:var(--gold)">البيانات الكاملة لأمر البيع #${esc(no)}</h3>
-    <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-      ${val('نوع السجل',x.record?'أمر بيع محفوظ':'خطة سداد مستوردة')}${val('تاريخ الأمر',r.date||r.soDate|| (docs.at(-1)?.date))}${val('العميل',r.customer||p.customer)}${val('المورد',r.supplier||docs[0]?.supplier)}${val('عناية',r.attention)}${val('عنوان التوصيل',r.address)}${val('مسؤول التواصل',r.contactName)}${val('رقم التواصل',r.contactPhone)}${val('المندوب',r.rep)}${val('إجمالي الخطة',p.total??p.invoiceTotal)}${val('نسبة النقدي',p.cashPct==null?'غير متاح':p.cashPct+'%')}${val('قيمة النقدي',p.cashValue)}${val('المؤجل',p.creditValue)}${val('عدد الأقساط',p.installments)}${val('مدة القسط بالأيام',p.periodDays)}${val('طريقة السداد',p.method)}${val('رقم البوليصة من المصدر',p.policyNo)}
-    </div>
-    ${r.notes?`<p style="margin:10px 0"><b>ملاحظات الأمر:</b> ${esc(r.notes)}</p>`:''}
-    ${masterItems.length?`<h4>أصناف أمر البيع الأصلية</h4><div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>القطر/الصنف</th><th>النوع/المواصفة</th><th>الكمية</th><th>ملاحظات</th></tr></thead><tbody>${itemRows}</tbody></table></div>`:''}
-    ${sched.length?`<h4>جدول السداد المستورد</h4><div class="tbl-wrap"><table class="tbl"><thead><tr><th>القسط</th><th>تاريخ الاستحقاق</th><th>القيمة</th><th>المسدد</th><th>الحالة</th></tr></thead><tbody>${sched.map((z,i)=>`<tr><td>${esc(z.installmentNo||i+1)}</td><td>${esc(z.dueDate||z.date)}</td><td>${esc(z.amount)}</td><td>${esc(z.paidAmount)}</td><td>${esc(z.status)}</td></tr>`).join('')}</tbody></table></div>`:''}
-    <h4>البوالص المرتبطة وتفاصيل أصنافها (${docs.length})</h4>${policyRows||'<p>لا توجد بوالص مرتبطة محفوظة لهذا الأمر.</p>'}
-    ${!x.record?'<p style="color:var(--warn);font-size:12px">تنبيه: السجل الرئيسي للأمر وأصنافه الأصلية غير متاحين في قاعدة البيانات؛ المعروض هو بيانات خطة السداد والبوالص المرتبطة فقط.</p>':''}
-  </div>`;
-}
-function soShowSearchDetails(no){const x=soSearchRows().find(z=>soKey(z.orderNo)===soKey(no));if(!x)return;const el=document.getElementById('soDetails_'+CSS.escape(soKey(no)));if(!el)return;const open=el.style.display!=='none';el.style.display=open?'none':'block';if(!open)el.innerHTML=soSearchDetailHtml(x);}
 function soDoSearch(){
   const q=(document.getElementById("soSearchInp")?.value||"").trim().toLowerCase();
   const rows=soSearchRows().filter(x=>{
@@ -5675,7 +5674,7 @@ function soDoSearch(){
     const method=p.method||"غير متاح";
     const status=isMaster?"أمر بيع محفوظ":"خطة مستوردة — سجل الأمر الأصلي غير موجود";
     const action=isMaster?`<button class="btn sm" onclick="soLoad('${escapeAttr(r.id)}')">فتح الأمر</button>`:`<button class="btn sm" onclick="goOrderScreen('${escapeAttr(x.orderNo)}')">فتح البيانات المتاحة</button>`;
-    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td style="white-space:nowrap">${action} <button class="btn ghost sm" onclick="soShowSearchDetails('${escapeAttr(x.orderNo)}')">كل البيانات ▾</button></td></tr><tr><td colspan="12" style="padding:0;border:0"><div id="soDetails_${escapeAttr(soKey(x.orderNo))}" style="display:none"></div></td></tr>`;
+    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td>${action}</td></tr>`;
   }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة</div>`;
   const el=document.getElementById("soSearchResults"); if(el) el.innerHTML=html;
 }
