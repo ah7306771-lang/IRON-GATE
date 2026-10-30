@@ -387,6 +387,17 @@ tbody tr:last-child td{border-bottom:none}
 .filters{display:grid;grid-template-columns:2fr repeat(4,1fr) auto;gap:10px;margin-bottom:14px}
 tfoot td{background:var(--bg-3);font-weight:700;color:var(--gold);border-top:1px solid var(--line-2)}
 @media (max-width:900px){.filters{grid-template-columns:1fr 1fr}}
+.kpis.tx-kpis{gap:6px;margin:-6px 0 10px}
+.kpis.tx-kpis .kpi{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 10px;min-height:0}
+.kpis.tx-kpis .kpi .lbl{margin:0;font-size:11px;white-space:nowrap}
+.kpis.tx-kpis .kpi .val{font-size:12.5px;white-space:nowrap}
+.tx-filters{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;overflow-x:auto;padding-bottom:2px;margin-bottom:12px}
+.tx-filters .inp{flex:1 1 0;min-width:95px;padding:7px 8px;font-size:12px}
+.tx-filters .inp.tx-f-q{flex:2 1 0;min-width:140px}
+.tx-filters .inp[type=date]{flex:1 1 0;min-width:118px}
+.tx-filters .btn{flex:0 0 auto;padding:7px 12px}
+.tx-ftoggle{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.tx-ftoggle .tx-fsum{font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .filters.sup-filters{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;overflow-x:auto;padding-bottom:2px}
 .sup-filters .inp{min-width:0;flex:1 1 0;height:36px;padding:4px 8px;font-size:12.5px}
 .sup-filters .sf-q{flex:0 0 140px}
@@ -1030,7 +1041,6 @@ table.tbx tbody tr:nth-child(even) td:not(.nm){background:#f6f9fd}
       <nav id="nav"></nav>
       <div class="sidebar-foot">
         <button onclick="exportData()">⬇ تصدير نسخة احتياطية</button>
-        <button onclick="exportDeviceSnapshot()">📦 تصدير بيانات هذا الجهاز للمقارنة</button>
         <button onclick="document.getElementById('importFile').click()">⬆ استيراد نسخة</button>
         <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
         <button onclick="logout()" style="color:var(--danger)">تسجيل خروج</button>
@@ -1212,6 +1222,7 @@ const defaults = {
   payments: [],
   saleOrders: [],
   soNextNum: 1,
+  orderTerms: {},   // شروط السداد على مستوى أمر البيع: { مفتاح رقم الأمر: {cashPct,installments,periodDays} }
   quotes: [],
   qtNextNum: 1,
   quoteDescs: ["حديد","اسمنت"],
@@ -1242,7 +1253,7 @@ function loadState(){
     return JSON.parse(JSON.stringify(defaults));
   }
 }
-const LOCAL_ONLY_KEYS = ["shipments","policies","installments","receipts","payments","saleOrders","soNextNum","quotes","qtNextNum","treasuryEntries","partyOpening"];
+const LOCAL_ONLY_KEYS = ["shipments","policies","installments","receipts","payments","saleOrders","soNextNum","orderTerms","quotes","qtNextNum","treasuryEntries","partyOpening"];
 function saveState(){
   try{ securityMigrate(state); }catch(e){}
   // البيانات الأساسية والإعدادات والمستخدمين والسجل في Supabase، والباقي مؤقتًا في المتصفح لحد المرحلة 2
@@ -1508,6 +1519,7 @@ async function loadDocs(){
     const lc = legacy && (legacy.counter||[]).find(r=>r.id==="soNextNum");
     const serverN = c ? Number(c.value) : 1;
     const maxNo = Math.max(0, ...(state.saleOrders||[]).map(o=>parseInt(o.orderNo,10)||0));
+    syncAllOrderDates();
     state.soNextNum = Math.max(serverN, maxNo+1, c?1:Math.max(state.soNextNum||1, (lc&&lc.data&&Number(lc.data.v))||1));
     counterSnap = c ? String(serverN) : "";
     docsReady = true;
@@ -1602,7 +1614,7 @@ const SCREENS = [
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post"], prices:true },
   { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete"], prices:true },
   { id:"salesReport", label:"تقرير المبيعات", icon:"📊", acts:["print"], prices:true },
-  { id:"orderShipmentsReport", label:"البوالص حسب أمر البيع", icon:"📦", acts:["print"], prices:true },
+  { id:"orderReport", label:"تقرير أوامر البيع التفصيلي", icon:"🗂", acts:["print"], prices:true },
   { id:"clientStatement", label:"كشف حساب عميل", icon:"📒", acts:["print"], prices:true },
   { id:"purchaseReport", label:"تقرير المشتريات", icon:"📊", acts:["print"], prices:true },
   { id:"supplierStatement", label:"كشف حساب مورد", icon:"📒", acts:["print"], prices:true },
@@ -1634,7 +1646,7 @@ const ROLE_PRESETS = {
   accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص بكل الأسعار", build(){
     const p=permsBlank(false);
     ["dashboard","master","shipments","supply"].forEach(s=>permsGrant(p,s));
-    permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderShipmentsReport",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
+    permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderReport",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
   sales:{ label:"مبيعات", desc:"أمر البيع كامل + إدخال البوالص — سعر الشراء مخفي", build(){
     const p=permsBlank(false);
     ["dashboard","master","supply"].forEach(s=>permsGrant(p,s));
@@ -1917,7 +1929,7 @@ const navGroups = [
     { id:"shipments", icon:"📦", label:"إدخال البوليصة" },
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
     { id:"salesReport", icon:"📊", label:"تقرير المبيعات" },
-    { id:"orderShipmentsReport", icon:"📦", label:"البوالص حسب أمر البيع" },
+    { id:"orderReport", icon:"🗂", label:"تقرير أوامر البيع التفصيلي" },
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
     { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" }
   ]},
@@ -2010,7 +2022,7 @@ function go(page){
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
     supply:["بيانات التوريد","كل البوالص والأصناف"],
     salesReport:["تقرير المبيعات","تقرير تفصيلي للمبيعات مع فلاتر وتصدير PDF وExcel"],
-    orderShipmentsReport:["البوالص حسب أمر البيع","تفاصيل كل بوليصة وأصنافها مجمعة تحت أمر البيع"],
+    orderReport:["تقرير أوامر البيع التفصيلي","كل أمر بيع وتحته بوالصه وشروط السداد والأقساط والمسدد والمتبقي"],
     clientStatement:["كشف حساب عميل","حركة العميل والرصيد الافتتاحي والرصيد الجاري"],
     purchaseReport:["تقرير المشتريات","تقرير تفصيلي للمشتريات مع فلاتر وتصدير PDF وExcel"],
     supplierStatement:["كشف حساب مورد","حركة المورد والرصيد الافتتاحي والرصيد الجاري"],
@@ -2035,8 +2047,8 @@ function go(page){
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
   else if(page==="shipments"){ c.innerHTML = viewShipments(); bindShipments(); }
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
+  else if(page==="orderReport"){ c.innerHTML = viewOrderReport(); renderOrderReport(); }
   else if(page==="salesReport"||page==="purchaseReport"){ c.innerHTML = viewTradeReport(page); renderTradeReport(); }
-  else if(page==="orderShipmentsReport"){ c.innerHTML=viewOrderShipmentsReport(); renderOrderShipmentsReport(); }
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
@@ -2174,6 +2186,104 @@ function openReportPreview(html,title){
   w.document.open();w.document.write(out);w.document.close();
 }
 
+
+// ========== تقرير أوامر البيع التفصيلي (كل أمر وتحته بوالصه) ==========
+const orderReportFilters={from:"",to:"",customer:"",supplier:"",order:"",q:"",items:false,pay:true};
+function orderReportData(){
+  const f=orderReportFilters, q=(f.q||"").trim().toLowerCase(), map=new Map(), SOs=state.saleOrders||[];
+  const grp=(key,no)=>{ if(!map.has(key)) map.set(key,{key,no,docs:[]}); return map.get(key); };
+  SOs.forEach(o=>{ const k=soKey(o.orderNo); if(k) grp(k,String(o.orderNo)); });
+  [["shipments","مرحّلة"],["policies","محفوظة"]].forEach(([arr,st])=>(state[arr]||[]).forEach(s=>{
+    const so=SOs.find(o=>o.id===s.saleOrderId), no=String(s.saleOrderNo||(so&&so.orderNo)||"").trim();
+    grp(no?soKey(no):"policy:"+s.id, no||"بدون أمر بيع").docs.push({s,st});
+  }));
+  const out=[];
+  map.forEach(g=>{
+    const real=g.key.indexOf("policy:")!==0;
+    const so=real?SOs.find(o=>soKey(o.orderNo)===g.key)||null:null; g.so=so;
+    g.docs.sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||String(a.s.policyNo).localeCompare(String(b.s.policyNo),undefined,{numeric:true}));
+    const first=(g.docs[0]&&g.docs[0].s)||{}, imp=real?supImportedPaymentPlan(g.no):null;
+    g.customer=(so&&so.customer)||first.customer||(imp&&imp.customer)||"";
+    g.supplier=(so&&so.supplier)||first.supplier||"";
+    g.date=(so&&so.date)||(g.docs.length?g.docs[g.docs.length-1].s.date:"")||"";
+    if(f.from&&(!g.date||g.date<f.from)) return; if(f.to&&(!g.date||g.date>f.to)) return;
+    if(f.customer&&g.customer!==f.customer) return; if(f.supplier&&g.supplier!==f.supplier) return;
+    if(f.order&&g.key!==soKey(f.order)) return;
+    if(q&&![g.no,g.customer,g.supplier,...g.docs.map(d=>d.s.policyNo),...g.docs.map(d=>d.s.site)].some(v=>String(v||"").toLowerCase().includes(q))) return;
+    g.rows=g.docs.map(({s,st})=>{
+      const r={policy:s.policyNo||"",date:s.date||"",st,items:[],qty:0,weight:0,sub:0,tax:0,disc:0,total:0};
+      (s.items||[]).forEach(it=>{ const a=supplyAmounts(s,it);
+        r.qty+=+it.supplyQty||0; r.weight+=+it.actualWeight||0; r.sub+=a.subtotal; r.tax+=a.tax; r.disc+=a.discount; r.total+=a.total;
+        r.items.push({factory:itemFactory(s,it)||"",diameter:it.diameter||"",type:it.type||"",qty:+it.supplyQty||0,weight:+it.actualWeight||0,total:a.total}); });
+      return r; });
+    g.tot=g.rows.reduce((t,r)=>{ ["qty","weight","sub","tax","disc","total"].forEach(k=>t[k]+=r[k]); return t; },{qty:0,weight:0,sub:0,tax:0,disc:0,total:0});
+    const ot=orderTermsFor(g.no);
+    g.termsText=ot?(ot.cashPct+"% نقدي"+((+ot.installments>0&&+ot.cashPct<100)?" + "+ot.installments+" قسط كل "+ot.periodDays+" يوم":"")):(imp?(imp.method||"من شيت الإكسيل"):"—");
+    g.status=so?(so.closed?"مقفول":"مفتوح"):"—";
+    g.exec=null; try{ if(so){ const r=soComputeRemaining(so); g.exec={planned:r.totalPlanned,used:r.totalUsed,rem:r.totalRemaining}; } }catch(e){}
+    g.inst=[]; try{ if(g.customer&&real) g.inst=txInvoiceRowsForCustomer(g.customer).filter(r=>soKey(r.orderNo)===g.key); }catch(e){}
+    out.push(g);
+  });
+  return out.sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(b.no).localeCompare(String(a.no),undefined,{numeric:true}));
+}
+function viewOrderReport(){
+  const f=orderReportFilters;
+  const sel=(key,list,label)=>`<select class="inp" onchange="orderReportFilters.${key}=this.value;renderOrderReport()"><option value="">${label}</option>${list.map(v=>`<option value="${escapeAttr(v)}" ${f[key]===v?"selected":""}>${escapeHtml(v)}</option>`).join("")}</select>`;
+  const orders=[...soNoSet().values()].sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
+  return `<div class="trade-report" dir="rtl">
+    <div class="page-head"><div><h2>🗂 تقرير أوامر البيع التفصيلي</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">كل أمر بيع وتحته بوالصه، مع شروط السداد والأقساط والمسدد والمتبقي</div></div><div class="spacer"></div><button class="btn ghost" onclick="orderReportExport('pdf')">🖨 عرض / حفظ PDF</button><button class="btn" onclick="orderReportExport('excel')">⬇ تحميل Excel منسق</button></div>
+    <div class="card" style="margin-bottom:14px"><div class="head"><h3>فلاتر التقرير</h3><span class="count">التاريخ هنا هو تاريخ أمر البيع (آخر بوليصة)</span></div><div class="body"><div class="fgrid statement-filter-grid">
+      <div class="fld statement-filter-field"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="orderReportFilters.from=this.value;renderOrderReport()"></div>
+      <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="orderReportFilters.to=this.value;renderOrderReport()"></div>
+      <div class="fld"><label>العميل</label>${sel("customer",partyNames(state.customers),"كل العملاء")}</div>
+      <div class="fld"><label>المورد</label>${sel("supplier",partyNames(state.suppliers),"كل الموردين")}</div>
+      <div class="fld"><label>أمر البيع</label>${sel("order",orders,"كل الأوامر")}</div>
+      <div class="fld"><label>بحث عام</label><input class="inp" placeholder="رقم أمر / بوليصة / موقع" value="${escapeAttr(f.q)}" oninput="orderReportFilters.q=this.value;renderOrderReport()"></div>
+      <div class="fld"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" ${f.items?"checked":""} onchange="orderReportFilters.items=this.checked;renderOrderReport()"> إظهار أصناف كل بوليصة</label></div>
+      <div class="fld"><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" ${f.pay?"checked":""} onchange="orderReportFilters.pay=this.checked;renderOrderReport()"> إظهار الأقساط والمتبقي</label></div>
+      <div class="fld" style="justify-content:end"><label>&nbsp;</label><button class="btn ghost" onclick="orderReportFilters={from:'',to:'',customer:'',supplier:'',order:'',q:'',items:false,pay:true};go('orderReport')">مسح كل الفلاتر</button></div>
+    </div></div></div><div id="orderReportResults"></div></div>`;
+}
+const orderRepMoney=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+function orderReportBlock(g,SS){
+  const f=orderReportFilters, m=orderRepMoney, q3=v=>Number(v||0).toFixed(3), cols=6+(SS?4:0);
+  const head=`<tr><th>رقم البوليصة</th><th>التاريخ</th><th>الحالة</th><th>الأصناف</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th>${SS?"<th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الصافي</th>":""}</tr>`;
+  const body=g.rows.map(r=>`<tr><td><b>${escapeHtml(String(r.policy))}</b></td><td>${escapeHtml(r.date)}</td><td>${r.st}</td><td>${r.items.length}</td><td class="num">${q3(r.qty)}</td><td class="num">${q3(r.weight)}</td>${SS?`<td class="num">${m(r.sub)}</td><td class="num">${m(r.tax)}</td><td class="num">${m(r.disc)}</td><td class="num"><b>${m(r.total)}</b></td>`:""}</tr>`
+    +(f.items?`<tr><td></td><td colspan="${cols-1}" style="text-align:right;font-size:11px;color:#64748b">${r.items.map(i=>`${escapeHtml(String(i.diameter))} ${escapeHtml(i.type)} — ${escapeHtml(i.factory)} — ${q3(i.qty)} طن / ${q3(i.weight)}${SS?" — "+m(i.total):""}`).join("<br>")}</td></tr>`:"")).join("")
+    ||`<tr><td colspan="${cols}">لا توجد بوالص على هذا الأمر بعد</td></tr>`;
+  const foot=`<tr><td colspan="4">إجمالي الأمر (${g.rows.length} بوليصة)</td><td class="num">${q3(g.tot.qty)}</td><td class="num">${q3(g.tot.weight)}</td>${SS?`<td class="num">${m(g.tot.sub)}</td><td class="num">${m(g.tot.tax)}</td><td class="num">${m(g.tot.disc)}</td><td class="num">${m(g.tot.total)}</td>`:""}</tr>`;
+  const exec=g.exec?` · كمية الأمر ${q3(g.exec.planned)} — المسحوب ${q3(g.exec.used)} — المتبقي ${q3(g.exec.rem)} طن`:"";
+  const meta=`<p class="ordmeta" style="margin:8px 12px;font-size:12px;color:#64748b;text-align:right">العميل: <b>${escapeHtml(g.customer||"—")}</b> · المورد: <b>${escapeHtml(g.supplier||"—")}</b> · تاريخ الأمر: <b>${escapeHtml(g.date||"—")}</b> · شروط السداد: <b>${escapeHtml(g.termsText)}</b> · الحالة: ${g.status}${exec}</p>`;
+  let pay="";
+  if(SS&&f.pay&&g.inst.length){
+    const pr=g.inst.map(r=>`<tr><td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.due||"—")}</td><td class="num">${m(r.amount)}</td><td class="num">${m(r.paid)}</td><td class="num"><b>${m(r.remaining)}</b></td></tr>`).join("");
+    const sa=g.inst.reduce((a,r)=>a+r.amount,0), sp=g.inst.reduce((a,r)=>a+r.paid,0), sr=g.inst.reduce((a,r)=>a+r.remaining,0);
+    pay=`<div style="margin:10px 12px 4px;font-weight:700;text-align:right">الأقساط وتواريخ الاستحقاق</div><table class="trade-report-table"><thead><tr><th>القسط</th><th>تاريخ الاستحقاق</th><th>المبلغ</th><th>المسدد</th><th>المتبقي</th></tr></thead><tbody>${pr}</tbody><tfoot><tr><td colspan="2">الإجمالي</td><td class="num">${m(sa)}</td><td class="num">${m(sp)}</td><td class="num">${m(sr)}</td></tr></tfoot></table>`;
+  }
+  return meta+`<div class="tbl-wrap"><table class="trade-report-table"><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div>`+pay;
+}
+function renderOrderReport(){
+  const el=document.getElementById("orderReportResults"); if(!el) return;
+  const SS=showSell("orderReport"), data=orderReportData(), cur=state.settings.currency||"جنيه";
+  const pol=data.reduce((a,g)=>a+g.rows.length,0), qty=data.reduce((a,g)=>a+g.tot.qty,0), tot=data.reduce((a,g)=>a+g.tot.total,0);
+  const k=[["عدد الأوامر",data.length,"أمر"],["عدد البوالص",pol,"بوليصة"],["كمية التوريد",qty.toFixed(3),"طن"]]; if(SS) k.push(["صافي المبيعات",orderRepMoney(tot),cur]);
+  el.innerHTML=`<div class="kpis compact">${k.map(([l,v,u])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${v}</div><div class="sub">${u}</div></div>`).join("")}</div>`
+    +(data.length?data.map(g=>`<div class="card" style="margin-bottom:14px"><div class="head"><h3>أمر بيع رقم ${escapeHtml(g.no)}</h3><span class="count">${g.rows.length} بوليصة</span></div><div class="body" style="padding:0">${orderReportBlock(g,SS)}</div></div>`).join(""):`<div class="card"><div class="body"><div class="empty">لا توجد أوامر مطابقة للفلاتر</div></div></div>`);
+}
+function orderReportExport(format){
+  const SS=showSell("orderReport"), data=orderReportData();
+  if(!data.length){ toast("لا توجد بيانات مطابقة للتصدير","err"); return; }
+  const title="تقرير أوامر البيع التفصيلي";
+  const css="body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}h3{background:#263449;color:#fff;padding:7px 10px;margin:18px 0 0;font-size:14px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#e2e8f0}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}tfoot td{font-weight:bold;background:#f1f5f9}.num{direction:ltr;white-space:nowrap}.ordmeta{text-align:right;font-size:12px}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}h3,tr{break-inside:avoid}}";
+  const f=orderReportFilters, rng=(f.from||f.to)?` · الفترة: ${f.from||"—"} إلى ${f.to||"—"}`:"";
+  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>${css}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p style="text-align:center;color:#64748b">${data.length} أمر${rng}</p>`
+    +data.map(g=>`<h3>أمر بيع رقم ${escapeHtml(g.no)}</h3>${orderReportBlock(g,SS)}`).join("")+`</body></html>`;
+  if(format==="excel"){
+    const blob=new Blob(["\ufeff"+html],{type:"application/vnd.ms-excel;charset=utf-8"}), a=document.createElement("a");
+    a.href=URL.createObjectURL(blob); a.download="تقرير_أوامر_البيع_"+new Date().toISOString().slice(0,10)+".xls"; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500); toast("تم تجهيز ملف Excel المنسق","ok");
+  } else openReportPreview(html,title);
+}
+
 function tradeReportExport(kind,format){
   const rows=tradeReportRows(kind), sales=kind==='salesReport', title=sales?'تقرير المبيعات':'تقرير المشتريات';
   if(!rows.length){toast('لا توجد بيانات مطابقة للتصدير','err');return;}
@@ -2189,83 +2299,6 @@ function tradeReportExport(kind,format){
 }
 
 
-
-
-// ========== تقرير البوالص التفصيلي حسب أمر البيع ==========
-const orderShipmentReportFilters={from:"",to:"",customer:"",order:"",q:""};
-function orderShipmentReportData(){
-  const f=orderShipmentReportFilters, q=String(f.q||"").trim().toLowerCase();
-  const groups=new Map();
-  const orderKey=v=>String(v||"").trim().toLowerCase().replace(/[ـ\s\-_/]+/g,"");
-  ([...((state.shipments||[]).map(s=>({...s,_reportStatus:"مرحّلة"}))), ...((state.policies||[]).map(s=>({...s,_reportStatus:"محفوظة غير مرحّلة"}))) ]).forEach(s=>{
-    if(!s.date || (f.from&&s.date<f.from) || (f.to&&s.date>f.to)) return;
-    if(f.customer && s.customer!==f.customer) return;
-    const so=(state.saleOrders||[]).find(o=>(s.saleOrderId&&String(o.id)===String(s.saleOrderId)) || (s.saleOrderNo&&orderKey(o.orderNo)===orderKey(s.saleOrderNo)));
-    const orderNo=String(s.saleOrderNo||so?.orderNo||"").trim();
-    const key=so?("id:"+so.id):(orderNo?("no:"+orderKey(orderNo)):"no-order");
-    if(f.order && key!==f.order) return;
-    if(q && ![orderNo,s.policyNo,s.customer,s.supplier,s.company,s.site,s.notes,so?.customer,so?.supplier]
-      .some(v=>String(v||"").toLowerCase().includes(q))) return;
-    if(!groups.has(key)) groups.set(key,{key,orderNo:orderNo||"بدون أمر بيع",order:so||null,customer:s.customer||so?.customer||"",supplier:s.supplier||so?.supplier||"",policies:new Map()});
-    const g=groups.get(key);
-    const pk=String(s.id||s.policyNo||Math.random());
-    if(!g.policies.has(pk)) g.policies.set(pk,{s,items:[]});
-    (s.items||[]).forEach(it=>g.policies.get(pk).items.push({s,it,a:supplyAmounts(s,it)}));
-  });
-  return [...groups.values()].map(g=>{
-    const policies=[...g.policies.values()].sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||String(a.s.policyNo||"").localeCompare(String(b.s.policyNo||""),"ar",{numeric:true}));
-    const lines=policies.flatMap(p=>p.items);
-    const sum=k=>lines.reduce((n,x)=>n+(+x[k]||0),0);
-    return {...g,policies,lines,policyCount:policies.length,itemCount:lines.length,qty:sum("supplyQty"),weight:sum("actualWeight"),subtotal:lines.reduce((n,x)=>n+(+x.a.subtotal||0),0),tax:lines.reduce((n,x)=>n+(+x.a.tax||0),0),discount:lines.reduce((n,x)=>n+(+x.a.discount||0),0),net:lines.reduce((n,x)=>n+(+x.a.total||0),0),buy:lines.reduce((n,x)=>n+(+x.a.buyTotal||0),0)};
-  }).sort((a,b)=>String(b.orderNo).localeCompare(String(a.orderNo),"ar",{numeric:true}));
-}
-function viewOrderShipmentsReport(){
-  const f=orderShipmentReportFilters, data=orderShipmentReportData();
-  const orderOpts=[...new Map([...((state.shipments||[])),...((state.policies||[]))].map(s=>{
-    const so=(state.saleOrders||[]).find(o=>(s.saleOrderId&&String(o.id)===String(s.saleOrderId))||(s.saleOrderNo&&String(o.orderNo)===String(s.saleOrderNo)));
-    const no=String(s.saleOrderNo||so?.orderNo||"بدون أمر بيع"), key=so?("id:"+so.id):(no==="بدون أمر بيع"?"no-order":"no:"+no.toLowerCase().replace(/[ـ\s\-_/]+/g,""));
-    return [key,{key,no}];
-  }))].map(([k,v])=>`<option value="${escapeAttr(k)}" ${f.order===k?"selected":""}>${escapeHtml(v.no)}</option>`).join("");
-  const customers=partyNames(state.customers);
-  const customerOpts=`<option value="">كل العملاء</option>${customers.map(v=>`<option value="${escapeAttr(v)}" ${f.customer===v?"selected":""}>${escapeHtml(v)}</option>`).join("")}`;
-  return `<div class="trade-report" dir="rtl">
-    <div class="page-head"><div><h2>📦 تقرير البوالص حسب أمر البيع</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">عرض كل أمر بيع وتحته البوالص التابعة له وأصناف كل بوليصة بالتفصيل</div></div><div class="spacer"></div><button class="btn ghost" onclick="orderShipmentsReportExport('pdf')">🖨 عرض / حفظ PDF</button><button class="btn" onclick="orderShipmentsReportExport('excel')">⬇ تحميل Excel</button></div>
-    <div class="card" style="margin-bottom:14px"><div class="head"><h3>فلاتر التقرير</h3><span class="count">الفترة تطبق على تاريخ البوليصة</span></div><div class="body"><div class="fgrid">
-      <div class="fld"><label>من تاريخ البوليصة</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="orderShipmentReportFilters.from=this.value;renderOrderShipmentsReport()"></div>
-      <div class="fld"><label>إلى تاريخ البوليصة</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="orderShipmentReportFilters.to=this.value;renderOrderShipmentsReport()"></div>
-      <div class="fld"><label>العميل</label><select class="inp" onchange="orderShipmentReportFilters.customer=this.value;renderOrderShipmentsReport()">${customerOpts}</select></div>
-      <div class="fld"><label>أمر البيع</label><select class="inp" onchange="orderShipmentReportFilters.order=this.value;renderOrderShipmentsReport()"><option value="">كل أوامر البيع</option>${orderOpts}</select></div>
-      <div class="fld"><label>بحث برقم البوليصة / الأمر / الصنف / المورد</label><input class="inp" value="${escapeAttr(f.q)}" oninput="orderShipmentReportFilters.q=this.value;renderOrderShipmentsReport()" placeholder="اكتب كلمة للبحث"></div>
-      <div class="fld" style="justify-content:end"><label>&nbsp;</label><button class="btn ghost" onclick="orderShipmentReportFilters={from:'',to:'',customer:'',order:'',q:''};go('orderShipmentsReport')">مسح الفلاتر</button></div>
-    </div></div></div>
-    <div id="orderShipmentsReportResults"></div></div>`;
-}
-function renderOrderShipmentsReport(){
-  if(currentPage!=="orderShipmentsReport")return;
-  const el=document.getElementById("orderShipmentsReportResults"); if(!el)return;
-  const groups=orderShipmentReportData(), money=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-  const qty=groups.reduce((n,g)=>n+g.qty,0), weight=groups.reduce((n,g)=>n+g.weight,0), net=groups.reduce((n,g)=>n+g.net,0);
-  const html=groups.map(g=>{
-    const policyHtml=g.policies.map(p=>{
-      const s=p.s, lines=p.items.map(({it,a})=>`<tr><td>${escapeHtml(it.diameter||"—")}</td><td>${escapeHtml(it.type||"—")}</td><td>${escapeHtml(itemFactory(s,it)||"—")}</td><td>${Number(it.supplyQty||0).toFixed(3)}</td><td>${Number(it.actualWeight||0).toFixed(3)}</td><td>${money(a.subtotal)}</td><td>${money(a.tax)}</td><td>${money(a.discount)}</td><td><b>${money(a.total)}</b></td><td>${money(a.buyTotal)}</td></tr>`).join("");
-      const ps=p.items.reduce((n,x)=>n+(+x.a.total||0),0), pq=p.items.reduce((n,x)=>n+(+x.it.supplyQty||0),0), pw=p.items.reduce((n,x)=>n+(+x.it.actualWeight||0),0);
-      return `<div class="card" style="margin:10px 0;border-color:#d8c388"><div class="head"><h3>بوليصة رقم ${escapeHtml(s.policyNo||"—")}</h3><span class="count">${escapeHtml(s._reportStatus||"بوليصة")} · التاريخ: ${escapeHtml(s.date||"—")} · ${p.items.length} صنف</span></div><div class="body"><div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:9px;font-size:12px;color:var(--text-dim)"><span>المورد: <b>${escapeHtml(s.supplier||"—")}</b></span><span>الشركة: <b>${escapeHtml(s.company||"—")}</b></span><span>الموقع: <b>${escapeHtml(s.site||"—")}</b></span></div><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>القطر</th><th>النوع</th><th>المصنع</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>صافي البيع</th><th>إجمالي الشراء</th></tr></thead><tbody>${lines||'<tr><td colspan="10">لا توجد أصناف</td></tr>'}</tbody><tfoot><tr><td colspan="3">إجمالي البوليصة</td><td>${pq.toFixed(3)}</td><td>${pw.toFixed(3)}</td><td colspan="3"></td><td>${money(ps)}</td><td>${money(p.items.reduce((n,x)=>n+(+x.a.buyTotal||0),0))}</td></tr></tfoot></table></div></div></div>`;
-    }).join("");
-    return `<div class="card" style="margin-bottom:16px"><div class="head"><h3>أمر البيع: ${escapeHtml(g.orderNo)}</h3><span class="count">${g.policyCount} بوليصة · ${g.itemCount} صنف</span></div><div class="body"><div class="kpis compact"><div class="kpi"><div class="lbl">العميل</div><div class="val small">${escapeHtml(g.customer||"—")}</div></div><div class="kpi"><div class="lbl">المورد</div><div class="val small">${escapeHtml(g.supplier||"—")}</div></div><div class="kpi"><div class="lbl">كمية التوريد</div><div class="val small">${g.qty.toFixed(3)} طن</div></div><div class="kpi"><div class="lbl">الوزن الفعلي</div><div class="val small">${g.weight.toFixed(3)} طن</div></div><div class="kpi"><div class="lbl">صافي المبيعات</div><div class="val small">${money(g.net)}</div></div><div class="kpi"><div class="lbl">إجمالي المشتريات</div><div class="val small">${money(g.buy)}</div></div></div>${policyHtml}</div></div>`;
-  }).join("");
-  el.innerHTML=`<div class="kpis compact"><div class="kpi"><div class="lbl">عدد أوامر البيع</div><div class="val">${groups.length}</div></div><div class="kpi"><div class="lbl">عدد البوالص</div><div class="val">${groups.reduce((n,g)=>n+g.policyCount,0)}</div></div><div class="kpi"><div class="lbl">إجمالي كمية التوريد</div><div class="val small">${qty.toFixed(3)} طن</div></div><div class="kpi"><div class="lbl">إجمالي الوزن الفعلي</div><div class="val small">${weight.toFixed(3)} طن</div></div><div class="kpi"><div class="lbl">صافي المبيعات</div><div class="val small">${money(net)}</div></div></div>${html||'<div class="empty"><div class="ic">📦</div><h3>لا توجد بوالص مطابقة</h3><p>جرّب تغيير الفترة أو الفلاتر المحددة.</p></div>'}`;
-}
-function orderShipmentsReportExport(format){
-  const groups=orderShipmentReportData(); if(!groups.length){toast("لا توجد بيانات مطابقة للتصدير","err");return;}
-  const money=v=>Number(v||0).toFixed(2);
-  const rows=[];
-  groups.forEach(g=>g.policies.forEach(p=>p.items.forEach(({s,it,a})=>rows.push(`<tr><td>${escapeHtml(g.orderNo)}</td><td>${escapeHtml(g.customer)}</td><td>${escapeHtml(g.supplier)}</td><td>${escapeHtml(s.date||"")}</td><td>${escapeHtml(s.policyNo||"")}</td><td>${escapeHtml(s._reportStatus||"")}</td><td>${escapeHtml(s.company||"")}</td><td>${escapeHtml(s.site||"")}</td><td>${escapeHtml(itemFactory(s,it)||"")}</td><td>${escapeHtml(it.diameter||"")}</td><td>${escapeHtml(it.type||"")}</td><td>${(+it.supplyQty||0).toFixed(3)}</td><td>${(+it.actualWeight||0).toFixed(3)}</td><td>${money(a.subtotal)}</td><td>${money(a.tax)}</td><td>${money(a.discount)}</td><td>${money(a.total)}</td><td>${money(a.buyTotal)}</td></tr>`))));
-  const head=["أمر البيع","العميل","المورد","تاريخ البوليصة","رقم البوليصة","حالة البوليصة","الشركة","الموقع","المصنع","القطر","النوع","كمية التوريد (طن)","الوزن الفعلي (طن)","قبل الضريبة","الضريبة","الخصم","صافي البيع","إجمالي الشراء"];
-  const title="تقرير البوالص حسب أمر البيع";
-  const doc=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:18px;color:#222}h1{text-align:center;color:#9a7410}p{text-align:center;color:#666}table{width:100%;border-collapse:collapse;font-size:10px}th{background:#263449;color:#fff}th,td{border:1px solid #bbb;padding:6px;text-align:center}tbody tr:nth-child(even){background:#f5f2e9}@media print{@page{size:A4 landscape;margin:7mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>عدد أوامر البيع: ${groups.length} · عدد البوالص: ${groups.reduce((n,g)=>n+g.policyCount,0)} · تاريخ استخراج التقرير: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></body></html>`;
-  if(format==="excel"){const blob=new Blob(["\ufeff"+doc],{type:"application/vnd.ms-excel;charset=utf-8"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="تقرير_البوالص_حسب_أمر_البيع_"+new Date().toISOString().slice(0,10)+".xls";document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},500);toast("تم تجهيز ملف Excel","ok");}
-  else openReportPreview(doc,title);
-}
 
 // ========== ميزان مراجعة العملاء والموردين ==========
 const tbYear = new Date().getFullYear();
@@ -2499,7 +2532,7 @@ function partyStatementRows(kind){
     if(e.status==="guarantee") return;
     if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
     const amount=+e.amount||0; if(!amount) return;
-    const ref='سند '+(e.no||e.refNo||e.id||'—'), status=({receivable:'أوراق قبض',collected:'محصل',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
+    const ref='سند '+(e.no||e.refNo||e.id||'—'), status=({receivable:'أوراق قبض',collected:'محصل شيك',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
     const desc=(customer?'تحصيل عميل':'دفعة مورد')+' — '+ref+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');
     if(q&&!(ref+' '+desc+' '+(e.notes||'')).toLowerCase().includes(q)) return;
     // لا تُحتسب السندات المرتدة كتحصيل/دفع؛ تُعرض كحركة عكسية لتظل ظاهرة في الكشف.
@@ -3068,32 +3101,6 @@ function toast(msg,type=""){
 }
 
 // ---------- Import/Export ----------
-function exportDeviceSnapshot(){
-  // تصدير آمن للمقارنة: نحتفظ بنسخة التخزين المحلية الخام قبل أي دمج،
-  // ونسخة الحالة الحالية التي قد تحتوي بيانات محمّلة من Supabase. لا نصدر بيانات الدخول.
-  let localState = null, localParseError = null;
-  try{ const raw=localStorage.getItem(STORAGE_KEY); localState=raw?JSON.parse(raw):null; }
-  catch(e){ localParseError=String(e&&e.message||e); }
-  const payload = {
-    backupType:"irongate_device_snapshot",
-    backupVersion:1,
-    exportedAt:new Date().toISOString(),
-    device:{ userAgent:navigator.userAgent, language:navigator.language, timezone:Intl.DateTimeFormat().resolvedOptions().timeZone, userNo:currentUser?.no||null, userName:currentUser?.name||null },
-    source:{ storageKey:STORAGE_KEY, localStorageParseError:localParseError, note:"localState هو محتوى التخزين المحلي الخام؛ runtimeState هي الحالة الحالية بعد تحميل ما توفر من السيرفر." },
-    localState:localState,
-    runtimeState:state
-  };
-  const data=JSON.stringify(payload,null,2);
-  const blob=new Blob([data],{type:"application/json"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  const d=new Date();
-  const stamp=`${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}_${String(d.getHours()).padStart(2,'0')}${String(d.getMinutes()).padStart(2,'0')}${String(d.getSeconds()).padStart(2,'0')}`;
-  a.href=url; a.download=`irongate_device_snapshot_${stamp}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),1500);
-  toast("تم تصدير نسخة هذا الجهاز للمقارنة — لا تستوردها الآن", "ok");
-}
 function exportData(){
   const data = JSON.stringify(state, null, 2);
   const blob = new Blob([data],{type:"application/json"});
@@ -3174,6 +3181,7 @@ const itemFactory=(s,it)=>it.factory||s.factory||"";
 function migrateState(s){
   if(!Array.isArray(s.policies)) s.policies=[];
   if(!Array.isArray(s.saleOrders)) s.saleOrders=[];
+  if(!s.orderTerms||typeof s.orderTerms!=="object"||Array.isArray(s.orderTerms)) s.orderTerms={};
   if(typeof s.soNextNum !== "number") s.soNextNum = 1;
   if(!Array.isArray(s.quotes)) s.quotes=[];
   if(typeof s.qtNextNum !== "number") s.qtNextNum = 1;
@@ -3203,6 +3211,8 @@ function migrateState(s){
   s.treasuryEntries.forEach(e=>{
     if(!e.allocations) e.allocations = [];
     if(e.notes===undefined) e.notes = "";
+    if(e.status==="deposited") e.status = "pending";          // مودع ← شيكات تحت التحصيل
+    else if(e.status==="cash_received") e.status = "receivable"; // تم الاستلام ← أوراق قبض
   });
   // المستخدمين + الصلاحيات + كلمات المرور المشفّرة
   securityMigrate(s);
@@ -3307,6 +3317,7 @@ function viewShipments(){
   ${pendingPanel()}
   <div class="card" style="margin-top:16px"><div class="head"><h3>بيانات الأمر</h3></div><div class="body">
     <div class="fgrid">
+      ${F("🔑 رقم أمر البيع (أساسي)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div>`)}
       ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
       ${F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
@@ -3315,6 +3326,10 @@ function viewShipments(){
       ${F("الموقع",`<input class="inp" ${ro} list="dlSite" value="${escapeAttr(d.site)}" oninput="setF('site',this.value)" placeholder="موقع التوريد / المشروع"><datalist id="dlSite">${polyHist("site")}</datalist>`)}
     </div>
   </div></div>
+
+  <div class="card" style="margin-top:16px;border-color:var(--gold)"><div class="head"><h3>أمر البيع بكامل بياناته</h3><span class="count" id="soFullTag"></span></div>
+    <div class="body" id="soFullBox"></div>
+  </div>
 
   <div class="card" style="margin-top:16px"><div class="head"><h3>الأصناف</h3>
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
@@ -3340,14 +3355,19 @@ function viewShipments(){
     <p style="margin-top:10px;color:var(--text-dim);font-size:12px">أسعار الشراء والبيع المدخلة شاملة الضريبة. يتم استخراج الضريبة من سعر البيع دون إضافتها مرة أخرى، ويُخصم 1% من البيع قبل الضريبة للعملاء المحددين فقط من إعدادات العملاء.</p>
   </div></div>
 
-  <div class="card" style="margin-top:16px"><div class="head"><h3>شروط الدفع <span style="color:var(--text-dim);font-weight:400;font-size:12px">— اختيارية عند الحفظ، مطلوبة للترحيل</span></h3></div><div class="body">
+  <div class="card" style="margin-top:16px"><div class="head"><h3>شروط السداد <span style="color:var(--text-dim);font-weight:400;font-size:12px">— على مستوى أمر البيع: تنطبق على كل بوالصه، وآخر حفظ هو المعتمد</span></h3></div><div class="body">
     <div class="fgrid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
       ${F("عدد الأقساط",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.installments}" id="t_installments" oninput="setT('installments',this.value)">`)}
       ${F("فترة القسط (يوم)",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.periodDays}" id="t_periodDays" oninput="setT('periodDays',this.value)">`)}
     </div>
+    <p id="termsLockNote" style="margin-top:10px;font-size:12px;color:var(--text-dim)"></p>
     <p id="termsBox" style="margin-top:12px;color:var(--text-dim);font-size:13px"></p>
-  </div></div>`;
+  </div></div>
+
+  <div class="card" style="margin-top:16px;border-color:var(--gold)"><div class="head"><h3>السدادات والنسب وتواريخ الاستحقاق (على أمر البيع)</h3><span class="count" id="paySchedTag"></span></div>
+    <div class="body" id="paySchedBox"></div>
+  </div>`;
 }
 // اقتراحات من القيم المدخلة قبل كده في البوالص (محفوظة ومرحّلة)
 function polyHist(k){ return [...new Set([...state.policies,...state.shipments].map(r=>(r[k]||"").trim()).filter(Boolean))].map(v=>`<option value="${escapeAttr(v)}">`).join(""); }
@@ -3520,7 +3540,7 @@ function viewLinkedSO(){
 }
 
 function setF(k,v){ draft[k]=v; dirty=true; if(k==="policyNo") checkDup(); }
-function setT(k,v){ draft.terms[k]=v; dirty=true; if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad"); refreshTotals(); }
+function setT(k,v){ draft.terms[k]=v; draft.termsEdited=true; dirty=true; if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad"); refreshTotals(); }
 function setI(i,k,v){ draft.items[i][k]=v; dirty=true; if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad"); refreshTotals(); }
 function addRow(){
   const last=draft.items[draft.items.length-1];
@@ -3577,7 +3597,133 @@ function draftTotals(){
   Object.keys(t).forEach(k=>t[k]=r2(t[k]));
   return t;
 }
+function soNoOptions(){
+  const set=new Set((state.saleOrders||[]).map(x=>String(x.orderNo)));
+  SUP_IMPORTED_PLAN_MAP.forEach(p=>{ if(p.orderNo!=null) set.add(String(p.orderNo)); });
+  return [...set].filter(Boolean).sort((x,y)=>x.localeCompare(y,undefined,{numeric:true})).map(v=>`<option value="${escapeAttr(v)}">`).join("");
+}
+function soNoSet(){
+  const set=new Map();
+  (state.saleOrders||[]).forEach(x=>{ const k=soKey(x.orderNo); if(k) set.set(k,String(x.orderNo)); });
+  SUP_IMPORTED_PLAN_MAP.forEach(pl=>{ if(pl.orderNo!=null){ const k=soKey(pl.orderNo); if(k&&!set.has(k)) set.set(k,String(pl.orderNo)); } });
+  return set;
+}
+function soNoExists(no){ return soNoSet().has(soKey(no)); }
+function soNoSelectOptions(cur){
+  const set=soNoSet(), c=String(cur||"").trim();
+  const list=[...set.values()].sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
+  let h='<option value="">— اختر أمر البيع —</option>';
+  if(c&&!set.has(soKey(c))) h+=`<option value="${escapeAttr(c)}" selected>${escapeHtml(c)} (غير مسجّل)</option>`;
+  return h+list.map(v=>`<option value="${escapeAttr(v)}"${c&&soKey(v)===soKey(c)?" selected":""}>${escapeHtml(v)}</option>`).join("");
+}
+function newOrderFromPolicy(){ if(!guard()) return; soLoadedId=null; soDraft=soDefault(); go("saleOrder"); }
+function setSoNo(v){
+  draft.saleOrderNo=String(v||"").trim(); dirty=true;
+  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(draft.saleOrderNo));
+  draft.saleOrderId=so?so.id:"";
+  const el=document.getElementById("f_soNo"); if(el) el.classList.remove("bad");
+  const ot=orderTermsFor(draft.saleOrderNo);
+  if(ot){   // أمر البيع له شروط محفوظة ← هي المعتمدة
+    draft.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; draft.termsEdited=false;
+    ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.value=draft.terms[k]==null?"":draft.terms[k]; });
+  }
+  refreshTotals();
+}
+function soPoliciesRows(no, t){
+  const SS=showSell("shipments"), rows=[];
+  orderDocs(no, editingId).forEach(x=>{
+    const w=(x.items||[]).reduce((a,it)=>a+(+it.actualWeight||0),0);
+    rows.push({no:x.policyNo,date:x.date,w,total:(x.totals&&+x.totals.grandTotal)||0,st:editingSrc==="shipments"||state.shipments.some(y=>y.id===x.id)?"مرحّلة":"محفوظة",cur:false});
+  });
+  rows.push({no:draft.policyNo||"(هذه البوليصة)",date:draft.date,w:t.weight,total:t.grandTotal,st:"قيد التعديل",cur:true});
+  rows.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const sumW=rows.reduce((a,r)=>a+r.w,0), sumT=rows.reduce((a,r)=>a+r.total,0);
+  return `<div style="font-weight:700;color:var(--gold);margin:12px 0 6px">بوالص أمر البيع</div><div class="tbl-wrap"><table style="white-space:nowrap"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>الوزن الفعلي (طن)</th>${SS?"<th>إجمالي البوليصة</th>":""}<th>الحالة</th></tr></thead><tbody>${
+    rows.map(r=>`<tr${r.cur?' style="background:var(--bg-2)"':""}><td>${escapeHtml(String(r.no))}</td><td>${escapeHtml(r.date||"")}</td><td class="num">${fmt(r.w,3)}</td>${SS?`<td class="num">${fmt(r.total)}</td>`:""}<td>${r.st}</td></tr>`).join("")
+  }</tbody><tfoot><tr><td>الإجمالي</td><td></td><td class="num">${fmt(sumW,3)}</td>${SS?`<td class="num">${fmt(sumT)}</td>`:""}<td></td></tr></tfoot></table></div>`;
+}
+function renderSoFullCard(t){
+  const box=document.getElementById("soFullBox"), tag=document.getElementById("soFullTag"); if(!box) return;
+  t=t||draftTotals();
+  const no=String(draft.saleOrderNo||"").trim();
+  if(!no){ if(tag) tag.textContent=""; box.innerHTML='<p style="color:var(--warn);font-size:13px">اكتب أو اختر رقم أمر البيع — هو المفتاح الأساسي للبوليصة وعليه السداد.</p>'; return; }
+  if(tag) tag.textContent="أمر بيع "+no;
+  const key=soKey(no), so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===key)||null, imp=supImportedPaymentPlan(no);
+  if(!so){
+    box.innerHTML=`<p style="color:var(--text-dim);font-size:13px">أمر البيع <b>${escapeHtml(no)}</b> غير مسجّل في شاشة "أمر بيع"${imp?` — بيانات السداد من شيت شروط السداد (العميل: ${escapeHtml(imp.customer||"—")})`:" ولا توجد له شروط سداد مستوردة"}.</p>`+soPoliciesRows(no,t);
+    return;
+  }
+  const r=soComputeRemaining(so, editingId), mine={};
+  draft.items.forEach(it=>{ const w=parseFloat(String(it.actualWeight).replace(",",".")); if(isNaN(w)) return; const k=`${it.diameter}|${it.type}`; mine[k]=(mine[k]||0)+w; });
+  const meta={}; (so.items||[]).forEach(it=>{ const k=`${it.diameter}|${it.type}`; const m=meta[k]||(meta[k]={spec:new Set(),notes:[]}); if(it.spec) m.spec.add(it.spec); if((it.notes||"").trim()) m.notes.push(it.notes.trim()); });
+  const keys=[...new Set([...Object.keys(r.planned),...Object.keys(r.used),...Object.keys(mine)])];
+  const kp=(l,v)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${v}</div></div>`;
+  const facts=[kp("العميل",escapeHtml(so.customer||"—")),kp("المورد",escapeHtml(so.supplier||"—")),kp("التاريخ",escapeHtml(so.date||"—")),
+    kp("الحالة",so.closed?'<span class="chip warn">مقفول</span>':'<span class="chip ok">مفتوح</span>')];
+  if(so.rep) facts.push(kp("المندوب",escapeHtml(so.rep)));
+  if(so.attention) facts.push(kp("عناية",escapeHtml(so.attention)));
+  if(so.contactName||so.contactPhone) facts.push(kp("جهة الاتصال",escapeHtml([so.contactName,so.contactPhone].filter(Boolean).join(" — "))));
+  if(so.address) facts.push(kp("العنوان",escapeHtml(so.address)));
+  const body=keys.map(k=>{ const [dia,typ]=k.split("|"), pl=r.planned[k]||0, us=r.used[k]||0, nw=mine[k]||0, rem=Math.round((pl-us-nw)*1000)/1000, m=meta[k];
+    return `<tr><td>${escapeHtml(dia)}</td><td>${escapeHtml(typ)}</td><td>${m?escapeHtml([...m.spec].join(" / ")):""}</td><td class="num">${fmt(pl,3)}</td><td class="num">${fmt(us,3)}</td><td class="num">${fmt(nw,3)}</td><td class="num" style="color:${rem<-0.0005?"var(--danger)":"var(--ok)"}">${fmt(rem,3)}</td><td>${m?escapeHtml(m.notes.join(" | ")):""}</td></tr>`; }).join("");
+  const totPl=r.totalPlanned, totUs=r.totalUsed, totNw=Object.values(mine).reduce((a,b)=>a+b,0);
+  box.innerHTML=`<div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">${facts.join("")}</div>
+    ${so.notes?`<p style="margin-top:8px;font-size:12px;color:var(--text-dim)">ملاحظات الأمر: ${escapeHtml(so.notes)}</p>`:""}
+    <div style="font-weight:700;color:var(--gold);margin:12px 0 6px">أصناف الأمر والكميات (طن)</div>
+    <div class="tbl-wrap"><table style="white-space:nowrap"><thead><tr><th>القطر</th><th>النوع</th><th>المواصفة</th><th>كمية الأمر</th><th>بوالص أخرى</th><th>هذه البوليصة</th><th>المتبقي</th><th>ملاحظات</th></tr></thead><tbody>${body||'<tr><td colspan="8">لا توجد أصناف</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">الإجمالي</td><td class="num">${fmt(totPl,3)}</td><td class="num">${fmt(totUs,3)}</td><td class="num">${fmt(totNw,3)}</td><td class="num">${fmt(Math.round((totPl-totUs-totNw)*1000)/1000,3)}</td><td></td></tr></tfoot></table></div>`+soPoliciesRows(no,t);
+}
+// جدول السداد على مستوى أمر البيع (كل بوالصه): نقدي + أقساط بالنسبة والقيمة وتاريخ الاستحقاق
+function policyPaySchedule(t){
+  const no=String(draft.saleOrderNo||"").trim();
+  const docs=orderDocs(no, editingId).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
+  docs.push({policyNo:draft.policyNo||"هذه البوليصة",date:draft.date,total:t.grandTotal});
+  let rows=[], source="";
+  if(!termsBlank(draft.terms)){
+    rows=orderScheduleRows(draft.terms,docs); source=no?"حسب شروط أمر البيع "+no+(docs.length>1?" — على كل بوالصه":""):"حسب شروط الدفع (معاينة)";
+  } else {
+    const plan=no?supPaymentPlanForOrder(no):null;
+    if(plan){
+      const cash=plan.cashValue||0, sched=plan.schedule||[];
+      if(cash>0) rows.push({label:"نقدي",policy:"—",amount:cash,due:draft.date||"",no:0});
+      sched.forEach((d,i)=>rows.push({label:"قسط "+(i+1),policy:"—",amount:+d.amount||0,due:d.date||"",no:i+1}));
+      source="من خطة سداد أمر البيع "+no+(plan.method?" — "+plan.method:"");
+      return {rows,total:plan.total!=null?plan.total:rows.reduce((a,x)=>a+x.amount,0),source};
+    }
+  }
+  return {rows,total:docs.reduce((a,x)=>a+(+x.total||0),0),source};
+}
+function renderPolicyPaySchedule(t){
+  const box=document.getElementById("paySchedBox"), tag=document.getElementById("paySchedTag");
+  if(!box) return;
+  if(!showSell("shipments")){ const c=box.closest(".card"); if(c) c.style.display="none"; return; }
+  const r=policyPaySchedule(t);
+  if(tag) tag.textContent=r.rows.length?r.source:"";
+  if(!r.rows.length){ box.innerHTML='<p style="color:var(--warn);font-size:13px">لا توجد شروط سداد لعرض الاستحقاقات — حدّد شروط السداد (على أمر البيع) أو اختر أمر بيع له خطة سداد.</p>'; return; }
+  const base=r.total||r.rows.reduce((a,x)=>a+x.amount,0), sum=r.rows.reduce((a,x)=>a+x.amount,0);
+  const pct=v=>base>0?fmt(v/base*100,2)+"%":"—";
+  box.innerHTML=`<div class="tbl-wrap"><table style="white-space:nowrap"><thead><tr><th>#</th><th>نوع السداد</th><th>البوليصة</th><th>النسبة من الأمر</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${
+    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(x.label)}</td><td>${escapeHtml(String(x.policy))}</td><td class="num">${pct(x.amount)}</td><td class="num">${fmt(x.amount)}</td><td>${escapeHtml(supPaymentDateLabel(x.due)||"—")}</td></tr>`).join("")
+  }</tbody><tfoot><tr><td></td><td>الإجمالي</td><td></td><td class="num">${pct(sum)}</td><td class="num">${fmt(sum)}</td><td></td></tr></tfoot></table></div>`;
+}
+function applyTermsLock(){
+  const no=String(draft.saleOrderNo||"").trim();
+  const ot=no?orderTermsFor(no):null, locked=!!no&&(!!ot||!!supImportedPaymentPlan(no));
+  ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.disabled=!!(viewOnly||locked); });
+  const n=document.getElementById("termsLockNote"); if(!n) return;
+  if(locked) n.innerHTML='🔒 شروط السداد معتمدة على <b>أمر البيع '+escapeHtml(no)+'</b> للعرض فقط — للتعديل افتح شاشة أمر البيع.'
+    +(ot&&ot.updatedAt?' <span style="opacity:.8">آخر تعديل: '+escapeHtml(ot.updatedBy||"—")+' — '+escapeHtml(String(ot.updatedAt).slice(0,16).replace("T"," "))+'</span>':'')
+    +' <button type="button" class="btn ghost sm" onclick="goOrderScreen(\''+escapeAttr(no)+'\')">فتح أمر البيع</button>';
+  else n.textContent=no?'لا توجد شروط سداد لهذا الأمر بعد — ما تكتبه هنا يُسجَّل كشروط الأمر لأول مرة فقط، وبعدها تتعدل من شاشة أمر البيع.':'';
+}
+function goOrderScreen(no){
+  if(!guard()) return;
+  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(no));
+  if(!so){ toast("أمر البيع غير مسجّل في شاشة أمر البيع — أنشئه أولًا","err"); return; }
+  soDraft=JSON.parse(JSON.stringify(so)); soLoadedId=so.id; go("saleOrder");
+}
 function refreshTotals(){
+  applyTermsLock();
   const set=(id,h)=>{const e=document.getElementById(id); if(e) e.innerHTML=h;};
   const opts = draftCalcOpts();
   const SS=showSell("shipments"), SB=showBuy("shipments");
@@ -3598,6 +3744,8 @@ function refreshTotals(){
     ${SB?`<div><span>إجمالي الشراء</span><strong>${fmt(t.buyTotal)}</strong></div>`:""}
     ${(SS&&SB)?`<div><span>هامش قبل الضريبة</span><strong>${fmt(t.subtotal-t.buyTotal)}</strong></div>`:""}
     ${SS?`<div class="grand"><span>إجمالي الأمر (${cur})</span><strong>${fmt(t.grandTotal)}</strong></div>`:""}`);
+  renderSoFullCard(t);
+  renderPolicyPaySchedule(t);
   const cp=+draft.terms.cashPct||0, n=parseInt(draft.terms.installments)||0, days=+draft.terms.periodDays||0;
   const cash=r2(t.grandTotal*cp/100), rest=r2(t.grandTotal-cash);
   set("termsBox", !SS?(termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط الدفع لسه متحددتش — لازم تتحدد قبل الترحيل.</span>':`نسبة النقدي ${cp}% — ${n>0&&cp<100?`${n} قسط كل ${days} يوم`:"بدون أقساط"}`):termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط الدفع لسه متحددتش — لازم تتحدد قبل الترحيل (الحفظ عادي بدونها).</span>':n>0&&cp<100
@@ -3610,7 +3758,8 @@ function guard(){ return !(dirty&&!viewOnly) || confirm("فيه تعديلات �
 function toDraft(r){
   return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
-    terms:(r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:"",installments:"",periodDays:""},
+    terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo); if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
+      return (r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:"",installments:"",periodDays:""}; })(),
     applyDiscount:r.applyDiscount,
     applyVat: r.applyVat !== false,
     vatPct: r.vatPct ?? (+state.settings.tax||14),
@@ -3635,7 +3784,7 @@ function cancelEdit(){
 function deletePolicy(){
   if(editingSrc!=="policies") return;
   if(!confirm(`حذف البوليصة ${draft.policyNo} (غير مرحّلة)؟`)) return;
-  state.policies=state.policies.filter(x=>x.id!==editingId); saveState();
+  const _no=draft.saleOrderNo; state.policies=state.policies.filter(x=>x.id!==editingId); syncOrderDate(_no); saveState();
   toast("تم الحذف","ok"); draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
 }
 
@@ -3650,7 +3799,9 @@ function missingList(d){
     if(!(+it.buyPrice>0)) add("سعر الشراء",i+1,"buyPrice");
     if(!(+it.sellPrice>0)) add("سعر البيع",i+1,"sellPrice"); });
   const t=d.terms, cp=(t.cashPct===""||t.cashPct==null)?NaN:+t.cashPct;
-  if(isNaN(cp)||cp<0||cp>100) add("نسبة النقدي",0,"t_cashPct");
+  const hasOrderPlan=!!(String(d.saleOrderNo||"").trim()&&(orderTermsFor(d.saleOrderNo)||supImportedPaymentPlan(d.saleOrderNo)));
+  if(hasOrderPlan&&termsBlank(t)){ /* السداد معتمد من أمر البيع */ }
+  else if(isNaN(cp)||cp<0||cp>100) add("نسبة النقدي",0,"t_cashPct");
   else if(cp<100){
     if(!(parseInt(t.installments)>=1)) add("عدد الأقساط",0,"t_installments");
     if(t.periodDays===""||t.periodDays==null||isNaN(+t.periodDays)||+t.periodDays<0) add("فترة القسط",0,"t_periodDays");
@@ -3670,6 +3821,9 @@ function buildRecord(strict){
   const err=m=>{toast(m,"err");return null;};
   if(!p) return err("اكتب رقم البوليصة");
   if(allRecords().some(({r})=>String(r.policyNo)===p&&r.id!==editingId)) return err("رقم البوليصة مكرر");
+  if(!String(d.saleOrderNo||"").trim()){ document.getElementById("f_soNo")?.classList.add("bad"); return err("رقم أمر البيع مطلوب — هو المفتاح الأساسي للبوليصة"); }
+  if(!soNoExists(d.saleOrderNo)){ document.getElementById("f_soNo")?.classList.add("bad"); return err("رقم أمر البيع غير مسجّل — اختره من القائمة أو أنشئ أمرًا جديدًا"); }
+  { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; }
   if(!d.date) return err("اختر التاريخ");
   if(!d.supplier||!d.customer) return err("اختر المورد والعميل");
   const blank=termsBlank(d.terms);
@@ -3715,13 +3869,25 @@ function buildRecord(strict){
     notes:d.notes.trim()
   };
 }
+// أول مرة فقط: لو الأمر ليس له شروط، شروط أول بوليصة تُسجَّل كشروط الأمر. بعد كده الشروط تتعدل من شاشة أمر البيع فقط.
+function commitOrderTerms(rec){
+  const k=soKey(rec.saleOrderNo); if(!k||!rec.terms||rec.terms.cashPct==null) return;
+  if(orderTermsFor(rec.saleOrderNo)||supImportedPaymentPlan(rec.saleOrderNo)) return;
+  const u=(typeof curU==="function"&&curU())||null;
+  const ot={cashPct:rec.terms.cashPct,installments:rec.terms.installments,periodDays:rec.terms.periodDays,updatedAt:new Date().toISOString(),updatedBy:u?u.name:"",history:[]};
+  state.orderTerms[k]=ot;
+  orderDocs(rec.saleOrderNo, rec.id).forEach(x=>{ x.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; });
+}
 function saveShipment(){
   if(viewOnly) return;
   const rec=buildRecord(editingSrc==="shipments"); if(!rec) return;
+  const prevSoNo=(allRecords().find(({r})=>r.id===rec.id)||{r:{}}).r.saleOrderNo||"";
   const list=editingSrc==="shipments"?state.shipments:state.policies;
   const idx=list.findIndex(s=>s.id===rec.id);
   if(idx>=0) list[idx]=rec; else list.push(rec);
   if(editingSrc==="new") editingSrc="policies";
+  commitOrderTerms(rec);
+  syncOrderDate(rec.saleOrderNo); if(prevSoNo&&soKey(prevSoNo)!==soKey(rec.saleOrderNo)) syncOrderDate(prevSoNo);
   editingId=rec.id; saveState();
   draft=toDraft(rec); viewOnly=true; dirty=false;
   toast(`تم حفظ البوليصة ${rec.policyNo}`,"ok");
@@ -3734,7 +3900,7 @@ function postShipment(){
   const rec=buildRecord(true); if(!rec) return;
   if(!confirm(`ترحيل البوليصة ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟`)) return;
   state.policies=state.policies.filter(x=>x.id!==rec.id);
-  state.shipments.push(rec); saveState();
+  state.shipments.push(rec); commitOrderTerms(rec); syncOrderDate(rec.saleOrderNo); saveState();
   toast(`تم ترحيل البوليصة ${rec.policyNo} — بوليصة جديدة جاهزة`,"ok");
   draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
 }
@@ -4153,7 +4319,75 @@ async function supLoadPaymentPlansFromSupabase(){
       try{ toast("شروط السداد ما زالت من النسخة الاحتياطية؛ شغّل ملف supabase_payment_plans_setup.sql لربطها بقاعدة البيانات","err"); }catch(_){ }
     }
   }
-}function supPaymentPlanForOrder(orderNo){
+}
+// ===== أمر البيع هو الأساس: شروط السداد على مستوى الأمر وتنطبق على كل بوالصه =====
+function soKey(no){ return supOrderNumberKey(no); }
+function orderTermsFor(no){ const k=soKey(no); return (k&&state.orderTerms&&state.orderTerms[k])||null; }
+function orderDocs(no, excludeId){
+  const key=soKey(no); if(!key) return [];
+  const imp=SUP_IMPORTED_PLAN_MAP.get(key)||null;
+  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===key)||null;
+  return [...(state.shipments||[]),...(state.policies||[])].filter(x=>x.id!==excludeId && (
+    soKey(x.saleOrderNo)===key || (so&&x.saleOrderId===so.id) || (imp&&imp.policyNo&&String(x.policyNo||"").trim()===String(imp.policyNo).trim())));
+}
+// جدول سداد أمر بيع من شروطه: تاريخ الفاتورة = تاريخ آخر بوليصة على الأمر، ومنه يُحسب النقدي والأقساط (فترة القسط × رقم القسط)
+function orderLastDate(no, extraDates){
+  const ds=orderDocs(no).map(x=>x.date||"").concat(extraDates||[]).filter(Boolean).sort();
+  return ds.length?ds[ds.length-1]:"";
+}
+function orderScheduleRows(terms, docs){
+  const rows=[]; const cp=(terms.cashPct===""||terms.cashPct==null)?NaN:+terms.cashPct;
+  if(!Number.isFinite(cp)||cp<0||cp>100) return rows;
+  const n=Math.max(0,parseInt(terms.installments,10)||0), days=Math.max(0,+terms.periodDays||0);
+  const total=r2(docs.reduce((a,x)=>a+(+x.total||0),0));
+  const base=docs.map(x=>x.date||"").filter(Boolean).sort().pop()||"";   // تاريخ الفاتورة = آخر بوليصة
+  const cash=r2(total*cp/100), rest=r2(total-cash), lbl="كل بوالص الأمر";
+  if(cash>0||n<=0||cp>=100) rows.push({label:"نقدي",policy:lbl,amount:cash>0?cash:total,due:base,no:0});
+  if(n>0&&cp<100){ let left=rest; for(let i=1;i<=n;i++){ const amt=i===n?r2(left):r2(rest/n); left=r2(left-amt);
+    rows.push({label:"قسط "+i,policy:lbl,amount:amt,due:supPaymentDateAdd(base,days*i),no:i}); } }
+  return rows;
+}
+// هل على الأمر تحصيلات مخصّصة (غير مرتجعة)؟ لو أيوه: الشروط تتقفل
+function orderHasCollections(no){
+  const k=soKey(no); if(!k) return false;
+  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===k)||null;
+  return (state.treasuryEntries||[]).some(e=>e.direction==="in"&&e.status!=="returned"&&(e.allocations||[]).some(a=>(+a.amount||0)>0&&txAllocMatches(a,so,no)));
+}
+// تاريخ أمر البيع = تاريخ آخر بوليصة عليه (تلقائي)
+function syncOrderDate(no){
+  const k=soKey(no); if(!k) return false;
+  const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===k); if(!so) return false;
+  const d=orderLastDate(no); if(!d||so.date===d) return false;
+  so.date=d; if(typeof soDraft!=="undefined"&&soDraft&&soLoadedId===so.id) soDraft.date=d; return true;
+}
+function soDateFor(no, id){ const k=soKey(no); const so=(state.saleOrders||[]).find(x=>(id&&x.id===id)||(k&&soKey(x.orderNo)===k)); return so&&so.date?so.date:""; }
+function syncAllOrderDates(){ let c=0; try{ (state.saleOrders||[]).forEach(o=>{ if(syncOrderDate(o.orderNo)) c++; }); }catch(e){} return c; }
+function sameTerms(a,b){
+  if(!a||!b) return false; const n=v=>(v===""||v==null)?null:+v;
+  return n(a.cashPct)===n(b.cashPct)&&(parseInt(a.installments,10)||0)===(parseInt(b.installments,10)||0)&&(+a.periodDays||0)===(+b.periodDays||0);
+}
+function termsFromOrder(no){
+  const ot=orderTermsFor(no); if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
+  const imp=no?supImportedPaymentPlan(no):null;
+  if(imp) return {cashPct:imp.cashPct==null?"":imp.cashPct,installments:imp.installments||"",periodDays:imp.periodDays==null?"":imp.periodDays};
+  return {cashPct:"",installments:"",periodDays:""};
+}
+function supManualPlanForOrder(orderNo){
+  const ot=orderTermsFor(orderNo); if(!ot) return null;
+  const docs=orderDocs(orderNo).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
+  if(!docs.length) return null;
+  const rows=orderScheduleRows(ot,docs), total=r2(docs.reduce((a,x)=>a+(+x.total||0),0));
+  const cashRows=rows.filter(r=>r.no===0), cashValue=r2(cashRows.reduce((a,r)=>a+r.amount,0));
+  const dues=new Map(); rows.filter(r=>r.no>0).forEach(r=>{ const k=r.due||"~"; if(!dues.has(k)) dues.set(k,{amount:0,date:r.due}); dues.get(k).amount=r2(dues.get(k).amount+r.amount); });
+  const schedule=[...dues.values()].sort((a,b)=>!a.date?1:!b.date?-1:a.date.localeCompare(b.date));
+  const imp=supImportedPaymentPlan(orderNo);
+  const cp=+ot.cashPct||0;
+  return {total,cashPct:cp,cashValue:cashValue,creditValue:r2(total-cashValue),installmentsText:String(parseInt(ot.installments,10)||0),
+    periodDaysText:String(+ot.periodDays||0),method:"حسب شروط أمر البيع",schedule,source:"order",
+    customer:(imp&&imp.customer)||docs[0].customer||"",policyNo:docs.map(x=>x.policyNo).join(" / ")};
+}
+function supPaymentPlanForOrder(orderNo){
+  const man=supManualPlanForOrder(orderNo); if(man) return man;
   const p=supImportedPaymentPlan(orderNo); if(!p) return null;
   const schedule=(p.schedule||[]).map((d,i)=>({amount:Number(d.amount)||0,date:String(d.dueDate||d.date||"")}));
   return {total:p.invoiceTotal==null?null:Number(p.invoiceTotal),cashPct:p.cashPct==null?null:Number(p.cashPct),
@@ -4249,9 +4483,9 @@ function supReportHtml(C,xl){
       const g=groups.get(key), a=supplyAmounts(s,it);
       g.policies.set(s.id,s); g.items.push({s,it});
       g.qty+=(+it.supplyQty||0); g.weight+=(+it.actualWeight||0); g.buy+=a.buyTotal; g.sub+=a.subtotal; g.tax+=a.tax; g.discount+=a.discount; g.total+=a.total;
-      if(s.date&&(!g.date||s.date<g.date)) g.date=s.date;
       if(!g.supplier&&s.supplier) g.supplier=s.supplier; if(!g.customer&&s.customer) g.customer=s.customer;
     });
+    groups.forEach(g=>{ const od=soDateFor(g.order); if(od) g.date=od; });   // تاريخ الأمر نفسه
     const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items,g.order);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1));
     const maxSchedule=Math.max(SUP_IMPORTED_MAX_SCHEDULE,supMaxScheduleAcrossAllSupplyOrders(),...data.map(g=>g.payment.schedule.length));
     const cols=["أمر البيع","عدد البوالص","التاريخ","المورد","العميل","إجمالي كمية التوريد","إجمالي الوزن الفعلي"];
@@ -4397,8 +4631,8 @@ function renderSupplyGrouped(L){
     if(!groups.has(key)) groups.set(key,{key,so:null,policies:new Map(),items:[],customer:s.customer||"—",supplier:s.supplier||"—",company:s.company||"",site:s.site||"",date:s.date||""});
     const g=groups.get(key); g.items.push({s,it}); g.policies.set(s.id,s);
     if(s.saleOrderId) g.so=state.saleOrders.find(x=>x.id===s.saleOrderId)||g.so;
-    if(s.date&&(!g.date||s.date<g.date)) g.date=s.date; // أقدم تاريخ في الأمر (كان بيتصفّر لو بوليصة من غير تاريخ)
   });
+  groups.forEach(g=>{ const f=[...g.policies.values()][0]||{}; const od=soDateFor(f.saleOrderNo, f.saleOrderId); if(od) g.date=od; });   // تاريخ أمر البيع نفسه (بيتحدّث تلقائيًا من آخر بوليصة)
   const GSORT={order:g=>g.orderNo,pol:g=>g.policies.size,date:g=>g.date,supplier:g=>g.supplier,customer:g=>g.customer,company:g=>g.company,site:g=>g.site,
     qty:g=>g.totals.sq,weight:g=>g.totals.w,buy:g=>g.totals.buy,sub:g=>g.totals.sub,tax:g=>g.totals.tax,dis:g=>g.totals.dis,total:g=>g.totals.total,status:g=>g.so?.closed?1:0};
   const GNUM=new Set(["pol","qty","weight","buy","sub","tax","dis","total","status"]);
@@ -4453,7 +4687,7 @@ function editShipment(id){
 function delShipment(id){
   const s=state.shipments.find(x=>x.id===id); if(!s) return;
   if(!confirm(`حذف البوليصة ${s.policyNo} نهائيًا؟`)) return;
-  state.shipments=state.shipments.filter(x=>x.id!==id); saveState(); renderSupply(); toast("تم الحذف","ok");
+  state.shipments=state.shipments.filter(x=>x.id!==id); syncOrderDate(s.saleOrderNo); saveState(); renderSupply(); toast("تم الحذف","ok");
   if(editingId===id){ draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; }
 }
 
@@ -4507,6 +4741,9 @@ function viewSaleOrder(){
   if(!soDraft) soDraft = soDefault();
   const d = soDraft;
   const loaded = !!soLoadedId;
+  if(!d._termsEdited) d.terms = termsFromOrder(d.orderNo);
+  const lastD = orderLastDate(d.orderNo); if(lastD) d.date = lastD;
+  const tLocked = orderHasCollections(d.orderNo), tOt = orderTermsFor(d.orderNo), tDis = tLocked?"disabled":"";
   return `
   <div class="page-head">
     <h2>${loaded?"أمر بيع رقم "+escapeHtml(d.orderNo):"أمر بيع جديد"}</h2>
@@ -4520,6 +4757,7 @@ function viewSaleOrder(){
 
   <div class="so-actions">
     <button class="btn ghost" onclick="soSave()">💾 حفظ الأمر</button>
+    <button class="btn ghost" onclick="migOpen()" title="نقل شروط السداد من شيت الإكسيل المستورد إلى الأوامر مرة واحدة">📥 نقل شروط الشيت للأوامر</button>
     <button class="btn" onclick="soDownloadPdf()">⬇ تحميل PDF</button>
     <button class="btn ghost" onclick="soSharePdf()">↗ مشاركة</button>
     <button class="btn ghost" onclick="soPrint()">🖨 طباعة</button>
@@ -4540,7 +4778,8 @@ function viewSaleOrder(){
         <input class="inp" id="soOrderNo" value="${escapeAttr(d.orderNo)}" oninput="soDraft.orderNo=this.value;soRenderPreview()" placeholder="0001">
       </div>
       <div class="fld"><label>التاريخ</label>
-        <input class="inp" type="date" id="soDate" value="${d.date}" oninput="soDraft.date=this.value;soRenderPreview()">
+        <input class="inp" type="date" id="soDate" value="${d.date}" ${lastD?'readonly title="يتحدد تلقائيًا من تاريخ آخر بوليصة على الأمر"':''} oninput="soDraft.date=this.value;soRenderPreview()">
+        ${lastD?'<small style="color:var(--text-dim);font-size:11px">تلقائي = تاريخ آخر بوليصة</small>':''}
       </div>
       <div class="fld"><label>اسم العميل</label>
         <select class="inp" id="soCustomer" onchange="soPickCustomer(this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>
@@ -4571,6 +4810,17 @@ function viewSaleOrder(){
   </div><div class="body">
     <div class="so-items-wrap" id="soItemsWrap"></div>
     <div class="so-total-row">إجمالي الكمية: <b id="soTotalQty">0</b> طن</div>
+  </div></div>
+
+  <div class="card" style="margin-top:16px;${tLocked?'border-color:var(--warn)':''}"><div class="head"><h3>شروط السداد <span style="color:var(--text-dim);font-weight:400;font-size:12px">— المصدر الوحيد لكل بوالص الأمر</span></h3></div><div class="body">
+    <div class="so-grid">
+      <div class="fld"><label>نسبة النقدي %</label><input class="inp num" type="number" min="0" max="100" step="0.01" id="so_cashPct" ${tDis} value="${escapeAttr(d.terms.cashPct??"")}" oninput="soSetT('cashPct',this.value)"></div>
+      <div class="fld"><label>عدد الأقساط</label><input class="inp num" type="number" min="0" step="1" id="so_installments" ${tDis} value="${escapeAttr(d.terms.installments??"")}" oninput="soSetT('installments',this.value)"></div>
+      <div class="fld"><label>فترة القسط (يوم)</label><input class="inp num" type="number" min="0" step="1" id="so_periodDays" ${tDis} value="${escapeAttr(d.terms.periodDays??"")}" oninput="soSetT('periodDays',this.value)"></div>
+    </div>
+    ${tLocked?'<p style="margin-top:10px;color:var(--warn);font-size:12px">🔒 على هذا الأمر تحصيلات مسجّلة — لا يمكن تعديل الشروط. لتعديلها لازم تلغي/ترجّع التحصيلات المخصّصة عليه أولًا.</p>':''}
+    <p style="margin-top:8px;color:var(--text-dim);font-size:12px">تاريخ الفاتورة = تاريخ آخر بوليصة على الأمر${lastD?` (<b>${escapeHtml(lastD)}</b>)`:' (لا توجد بوالص بعد)'} — ومنه يُحسب النقدي ومواعيد الأقساط، ويتغيّر تلقائيًا مع كل بوليصة جديدة.</p>
+    ${tOt&&tOt.updatedAt?`<p style="margin-top:4px;color:var(--text-dim);font-size:12px">آخر تعديل للشروط: ${escapeHtml(tOt.updatedBy||"—")} — ${escapeHtml(String(tOt.updatedAt).slice(0,16).replace("T"," "))}</p>`:''}
   </div></div>
 
   <div class="card" style="margin-top:16px"><div class="head"><h3>ملاحظات عامة</h3></div><div class="body">
@@ -4622,6 +4872,91 @@ function soOpenItemNote(i){
   });
   setTimeout(()=>document.getElementById("soItemNoteInp")?.focus(), 50);
 }
+// ===== نقل شروط شيت الإكسيل إلى الأوامر (مرة واحدة) =====
+function migDerive(p){
+  const nm=String(p.method||""), n=Math.max(0,parseInt(p.installments,10)||0);
+  const cp=p.cashPct!=null?+p.cashPct:((+p.creditValue||0)>0?0:100);
+  if(n===0) return {cashPct:cp>0?cp:100,installments:0,periodDays:0,status:"ok",note:"كاش بالكامل"};
+  const amts=(p.schedule||[]).map(x=>+x.amount||0);
+  if(n>1&&amts.length>1){ const mx=Math.max(...amts), mn=Math.min(...amts); if(mx>0&&(mx-mn)/mx>0.02) return {cashPct:cp,installments:n,periodDays:"",status:"nomatch",note:"أقساط غير متساوية — لا يدعمها النموذج الحالي"}; }
+  let ds=[...nm.matchAll(/(\d+)\s*يوم/g)].map(x=>+x[1]);
+  if(!ds.length&&/شهر/.test(nm)) ds=[30];
+  if(n===1){
+    const d=(p.periodDays!=null&&!isNaN(+p.periodDays))?+p.periodDays:(ds.length?ds[0]:"");
+    return {cashPct:cp,installments:1,periodDays:d,status:d===""?"review":"ok",note:d===""?"فترة القسط غير واضحة — اكتبها":(ds.length&&ds[0]!==d?"الفترة من الشيت "+d+" والبيان "+ds[0]:"")};
+  }
+  if(ds.length===n&&ds.every((v,i)=>v===ds[0]*(i+1))) return {cashPct:cp,installments:n,periodDays:ds[0],status:"ok",note:""};
+  if(ds.length<=1) return {cashPct:cp,installments:n,periodDays:"",status:"review",note:"فترة القسط غير واضحة — اكتبها"};
+  return {cashPct:cp,installments:n,periodDays:"",status:"nomatch",note:"مواعيد غير منتظمة ("+ds.join("/")+" يوم) — لا يدعمها النموذج الحالي"};
+}
+function migRows(){
+  const out=[];
+  SUP_IMPORTED_PLAN_MAP.forEach(pl=>{
+    const no=String(pl.orderNo), r={no,customer:pl.customer||"",method:pl.method||"",d:migDerive(pl)};
+    if(orderTermsFor(no)) r.skip="منقول من قبل";
+    else if(orderHasCollections(no)) r.skip="عليه تحصيلات";
+    else if(r.d.status==="nomatch") r.skip=r.d.note;
+    out.push(r);
+  });
+  return out.sort((a,b)=>a.no.localeCompare(b.no,undefined,{numeric:true}));
+}
+function migOpen(){
+  const rows=migRows(); window.__migRows=rows;
+  const todo=rows.filter(r=>!r.skip).length;
+  const body=rows.map((r,i)=>{
+    const d=r.d, dis=r.skip?"disabled":"";
+    return `<tr${r.skip?' style="opacity:.55"':''}><td><input type="checkbox" id="mg_c${i}" ${dis} ${!r.skip&&d.status==="ok"?"checked":""}></td><td>${escapeHtml(r.no)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.method)}</td>
+      <td><input class="inp num" style="width:70px" type="number" id="mg_p${i}" ${dis} value="${escapeAttr(d.cashPct)}"></td>
+      <td><input class="inp num" style="width:60px" type="number" id="mg_n${i}" ${dis} value="${escapeAttr(d.installments)}"></td>
+      <td><input class="inp num" style="width:70px;${d.periodDays===""&&!r.skip?"border-color:var(--warn)":""}" type="number" id="mg_d${i}" ${dis} value="${escapeAttr(d.periodDays)}"></td>
+      <td style="font-size:11px">${escapeHtml(r.skip||d.note||"جاهز")}</td></tr>`; }).join("");
+  openModal("نقل شروط السداد من الشيت إلى أوامر البيع", `
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">الشروط المقترحة مستخرجة من بيان السداد في الشيت. راجعها وعدّل أي قيمة، ثم علّم الأوامر المطلوب نقلها. بعد النقل يصبح الأمر هو المصدر الوحيد للشروط، وتاريخ الفاتورة = آخر بوليصة. الأوامر الباهتة تبقى على خطة الشيت لحد ما تتعالج يدويًا. (${todo} أمر قابل للنقل)</p>
+    <div class="tbl-wrap" style="max-height:55vh;overflow:auto"><table style="white-space:nowrap"><thead><tr><th></th><th>الأمر</th><th>العميل</th><th>البيان في الشيت</th><th>نقدي %</th><th>الأقساط</th><th>فترة القسط</th><th>ملاحظة</th></tr></thead><tbody>${body}</tbody></table></div>`,
+  ()=>{
+    const u=(typeof curU==="function"&&curU())||null, at=new Date().toISOString(); let c=0;
+    const todoRows=[];
+    for(let i=0;i<rows.length;i++){ const r=rows[i]; if(r.skip||!document.getElementById("mg_c"+i)?.checked) continue;
+      const cp=document.getElementById("mg_p"+i).value, n=parseInt(document.getElementById("mg_n"+i).value,10)||0, dv=document.getElementById("mg_d"+i).value;
+      const cpn=cp===""?NaN:+cp, days=dv===""?NaN:+dv;
+      if(!Number.isFinite(cpn)||cpn<0||cpn>100){ toast("نسبة النقدي غير صحيحة في الأمر "+r.no,"err"); return false; }
+      if(cpn<100&&!(n>=1)){ toast("عدد الأقساط مطلوب في الأمر "+r.no,"err"); return false; }
+      if(cpn<100&&!(days>=0)){ toast("فترة القسط مطلوبة في الأمر "+r.no,"err"); return false; }
+      todoRows.push({no:r.no,nt:{cashPct:cpn,installments:cpn<100?n:0,periodDays:cpn<100?days:0}});
+    }
+    todoRows.forEach(({no,nt})=>{ state.orderTerms[soKey(no)]={...nt,updatedAt:at,updatedBy:u?u.name:"",source:"excel",history:[]};
+      orderDocs(no).forEach(x=>{ x.terms={...nt}; }); syncOrderDate(no); c++; });
+    if(c){ audit("order_terms","نقل شروط "+c+" أمر من شيت الإكسيل"); saveState(); }
+    toast(c?`تم نقل شروط ${c} أمر إلى أوامر البيع`:"لم يتم اختيار أي أمر","ok");
+    if(c) go("saleOrder");
+    return true;
+  });
+}
+function soSetT(k,v){ soDraft.terms=soDraft.terms||{}; soDraft.terms[k]=v; soDraft._termsEdited=true; }
+// فحص الشروط قبل الحفظ (قيم + قفل التحصيلات)
+function soTermsCheck(){
+  const d=soDraft; if(!d._termsEdited||!d.terms||termsBlank(d.terms)) return "";
+  const t=d.terms, cp=(t.cashPct===""||t.cashPct==null)?NaN:+t.cashPct, n=parseInt(t.installments,10)||0, days=+t.periodDays||0;
+  if(!Number.isFinite(cp)||cp<0||cp>100) return "نسبة النقدي لازم بين 0 و 100";
+  if(cp<100&&!(n>=1)) return "حدد عدد الأقساط (1 على الأقل)";
+  if(days<0) return "فترة القسط غير صحيحة";
+  if(orderHasCollections(d.orderNo)&&!sameTerms(t,termsFromOrder(d.orderNo))) return "لا يمكن تعديل شروط السداد — على الأمر تحصيلات مسجّلة";
+  return "";
+}
+// تطبيق الشروط على الأمر (وكل بوالصه) مع تسجيل من غيّر ومتى
+function soApplyTerms(rec){
+  const d=soDraft; if(!d._termsEdited||!d.terms||termsBlank(d.terms)) return;
+  const k=soKey(rec.orderNo); if(!k) return;
+  const t=d.terms, cp=+t.cashPct, n=cp<100?(parseInt(t.installments,10)||0):0, days=+t.periodDays||0;
+  const nt={cashPct:cp,installments:n,periodDays:days}, old=orderTermsFor(rec.orderNo);
+  rec.terms=nt;
+  if(old&&sameTerms(old,nt)) return;
+  const u=(typeof curU==="function"&&curU())||null, at=new Date().toISOString();
+  const hist=((old&&old.history)||[]).slice(-19); if(old) hist.push({at:old.updatedAt||"",by:old.updatedBy||"",cashPct:old.cashPct,installments:old.installments,periodDays:old.periodDays});
+  state.orderTerms[k]={...nt,updatedAt:at,updatedBy:u?u.name:"",history:hist};
+  orderDocs(rec.orderNo).forEach(x=>{ x.terms={...nt}; });
+  audit("order_terms","أمر بيع "+rec.orderNo+": "+(old?old.cashPct+"%/"+old.installments+"/"+old.periodDays+" ← ":"")+nt.cashPct+"%/"+nt.installments+"/"+nt.periodDays);
+}
 function soUpdateTotal(){
   let t=0; soDraft.items.forEach(it=>{ const n=parseFloat(String(it.qty).replace(',','.')); if(!isNaN(n)) t+=n; });
   const el=document.getElementById("soTotalQty"); if(el) el.textContent = Math.round(t*1000)/1000;
@@ -4664,6 +4999,10 @@ function soValidate(){
     if(!it.qty) return "من فضلك أدخل الكمية لكل صنف";
     if(!it.type) return "من فضلك اختر النوع لكل صنف";
   }
+  const k=soKey(soDraft.orderNo);
+  if((state.saleOrders||[]).some(x=>x.id!==soLoadedId&&soKey(x.orderNo)===k)) return "رقم الأمر مستخدم في أمر بيع آخر";
+  if(soLoadedId){ const old=(state.saleOrders||[]).find(x=>x.id===soLoadedId);
+    if(old&&soKey(old.orderNo)!==k&&(orderDocs(old.orderNo).length||orderTermsFor(old.orderNo)||orderHasCollections(old.orderNo))) return "لا يمكن تغيير رقم أمر عليه بوالص أو شروط أو تحصيلات"; }
   return "";
 }
 function soStatus(msg,isErr){
@@ -4672,8 +5011,12 @@ function soStatus(msg,isErr){
   if(msg && !isErr) setTimeout(()=>{ if(el.textContent===msg) el.textContent=""; }, 3500);
 }
 function soSave(){
-  const err = soValidate(); if(err){ soStatus(err,true); return; }
+  const err = soValidate()||soTermsCheck(); if(err){ soStatus(err,true); return; }
   const rec = JSON.parse(JSON.stringify(soDraft));
+  delete rec._termsEdited; delete rec.terms;
+  { const ld=orderLastDate(rec.orderNo); if(ld) rec.date=ld; }
+  soApplyTerms(rec);
+  if(!rec.terms){ const tf=termsFromOrder(rec.orderNo); if(!termsBlank(tf)&&tf.cashPct!=="") rec.terms={cashPct:+tf.cashPct,installments:parseInt(tf.installments,10)||0,periodDays:+tf.periodDays||0}; }
   rec.savedAt = new Date().toISOString();
   if(soLoadedId){
     const i = state.saleOrders.findIndex(x=>x.id===soLoadedId);
@@ -4682,7 +5025,7 @@ function soSave(){
     state.saleOrders.push(rec); soLoadedId = rec.id;
     const n = parseInt(rec.orderNo,10); if(!isNaN(n) && n>=state.soNextNum) state.soNextNum = n+1;
   }
-  saveState(); soStatus("تم الحفظ ✓"); go("saleOrder");
+  soDraft._termsEdited=false; soDraft.date=rec.date; saveState(); soStatus("تم الحفظ ✓"); go("saleOrder");
 }
 function soDelete(){
   if(!soLoadedId) return;
@@ -5326,17 +5669,48 @@ const txMethods = [
 const txStatuses = [
   { v:"receivable",    label:"أوراق قبض",          color:"warn" },
   { v:"pending",       label:"شيكات تحت التحصيل",  color:"warn" },
-  { v:"collected",     label:"محصل",               color:"ok" },
+  { v:"collected",     label:"محصل شيك",           color:"ok" },
   { v:"returned",      label:"مرتد",               color:"danger" },
-  { v:"deposited",     label:"مودع",               color:"warn" },
-  { v:"guarantee",     label:"شيك ضمان",           color:"warn" },
-  { v:"cash_received", label:"تم الاستلام",        color:"ok" }
+  { v:"guarantee",     label:"شيك ضمان",           color:"warn" }
 ];
 function txMethodLabel(v){ const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—"; }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
 
 let txFilter = { q:"", method:"", status:"", treasury:"", party:"", from:"", to:"" };
 let txEditingId = null; // لو بنعدّل سجل
+// حفظ الفلتر والترتيب لكل شاشة (تحصيلات / مدفوعات) — يفضلوا زي ما هما عند الخروج والدخول
+const TX_VIEW_KEY = "ig_tx_view_v1";
+let txViewStore = null, txCurDir = null;
+function txViewLoad(){
+  if(txViewStore) return txViewStore;
+  try{ txViewStore = JSON.parse(localStorage.getItem(TX_VIEW_KEY)||"{}")||{}; }catch(e){ txViewStore = {}; }
+  return txViewStore;
+}
+function txViewSave(direction){
+  const d = direction||txCurDir; if(!d) return;
+  const st = txViewLoad();
+  st[d] = { filter:{...txFilter}, sort:{...txSort} };
+  try{ localStorage.setItem(TX_VIEW_KEY, JSON.stringify(st)); }catch(e){}
+}
+const TX_FOPEN_KEY = "ig_tx_filters_open_v1";
+function txFiltersOpen(){ try{ return localStorage.getItem(TX_FOPEN_KEY)!=="0"; }catch(e){ return true; } }
+function txToggleFilters(direction){
+  const open = !txFiltersOpen();
+  try{ localStorage.setItem(TX_FOPEN_KEY, open?"1":"0"); }catch(e){}
+  const box=document.getElementById("txFilters"), btn=document.getElementById("txFiltersBtn"), sum=document.getElementById("txFiltersSum");
+  if(box) box.style.display=open?"flex":"none";
+  if(btn) btn.textContent=(open?"▲":"▼")+" الفلاتر";
+  if(sum){ sum.style.display=open?"none":""; sum.textContent=txFilterSummary(direction); }
+}
+function txRestoreView(direction){
+  const st = txViewLoad();
+  if(txCurDir===direction) return;   // نفس الشاشة: الحالة الحالية في الذاكرة (يشمل زر "مسح")
+  if(txCurDir) txViewSave(txCurDir);   // احفظ حالة الشاشة اللي خارجين منها
+  const saved = st[direction];
+  txFilter = { q:"", method:"", status:"", treasury:"", party:"", from:"", to:"", ...(saved&&saved.filter||{}) };
+  txSort = (saved&&saved.sort&&saved.sort.key) ? { key:saved.sort.key, dir:saved.sort.dir==="desc"?"desc":"asc" } : { key:"date", dir:"asc" };
+  txCurDir = direction;
+}
 
 function treasuryAll(){ return [...(state.banks||[]).map(b=>({...b,kind:"bank"})),...(state.safes||[]).map(x=>({...x,kind:"safe"}))]; }
 function treasuryLabel(code){
@@ -5360,10 +5734,10 @@ function viewTreasury(direction){
   const partyLabel = isIn ? "العميل" : "المورد";
   const partyList = isIn ? partyNames(state.customers) : partyNames(state.suppliers);
   const list = treasuryList(direction);
-  txSort = { key:"date", dir:"asc" };   // الترتيب الافتراضي دايمًا: من الأقدم للأحدث
+  txRestoreView(direction);   // يرجّع آخر فلتر وترتيب لنفس الشاشة (الأفتراضي: التاريخ من الأقدم للأحدث)
 
   // KPIs
-  const totals = { all:0, collected:0, receivable:0, pending:0, returned:0, guarantee:0 };
+  const totals = { all:0, collected:0, cash:0, transfer:0, receivable:0, pending:0, returned:0, guarantee:0 };
   list.forEach(e=>{
     const v = +e.amount||0;
     totals.all += v;
@@ -5372,7 +5746,10 @@ function viewTreasury(direction){
     else if(e.status==="guarantee") key="guarantee";
     else if(e.method==="bank" && e.status==="receivable") key="receivable";
     else if(e.method==="bank" && ["pending","deposited"].includes(e.status)) key="pending";
-    else if(e.status==="collected"||e.status==="cash_received"||e.method!=="bank") key="collected";
+    else if(e.method==="cash") key="cash";
+    else if(e.method==="transfer") key="transfer";
+    else if(e.method!=="bank") key="cash";
+    else if(e.status==="collected"||e.status==="cash_received") key="collected";
     else key="pending";
     totals[key] += v;
   });
@@ -5389,17 +5766,23 @@ function viewTreasury(direction){
     <button class="btn" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
   </div>
 
-  <div class="kpis compact">
+  <div class="kpis compact tx-kpis" style="grid-template-columns:repeat(${isIn?8:7},minmax(150px,1fr));overflow-x:auto">
     ${k("إجمالي الحركة", totals.all, cur, "var(--gold-2)")}
-    ${k("محصل", totals.collected, cur, "var(--ok)")}
+    ${k("نقدي", totals.cash, cur, "var(--ok)")}
+    ${k("تحويلات", totals.transfer, cur, "var(--ok)")}
+    ${k("محصل شيك", totals.collected, cur, "var(--ok)")}
     ${isIn?k("أوراق قبض", totals.receivable, cur, "var(--warn)"):""}
     ${k("شيكات تحت التحصيل", totals.pending, cur, "var(--warn)")}
     ${k("شيكات ضمان", totals.guarantee, cur, "var(--warn)")}
     ${k("مرتد", totals.returned, cur, "var(--danger)")}
   </div>
 
-  <div class="filters">
-    <input class="inp" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
+  <div class="tx-ftoggle">
+    <button type="button" class="btn ghost sm" id="txFiltersBtn" onclick="txToggleFilters('${direction}')">${txFiltersOpen()?'▲':'▼'} الفلاتر</button>
+    <span class="tx-fsum" id="txFiltersSum" style="display:${txFiltersOpen()?'none':''}">${escapeHtml(txFilterSummary(direction))}</span>
+  </div>
+  <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
+    <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
     <select class="inp" onchange="txFilter.method=this.value;renderTreasury('${direction}')">
       <option value="">كل الأنواع</option>
       ${txMethods.map(m=>`<option value="${m.v}" ${txFilter.method===m.v?'selected':''}>${m.ico} ${m.label}</option>`).join("")}
@@ -5545,6 +5928,8 @@ function txExport(direction,format){
 }
 
 function renderTreasury(direction){
+  txViewSave(direction);
+  { const sm=document.getElementById("txFiltersSum"); if(sm) sm.textContent=txFilterSummary(direction); }
   const partyField = direction==="in" ? "customer" : "supplier";
   const filtered = txFilteredSorted(direction);
   txMarkSort();
@@ -5771,7 +6156,7 @@ function openTxForm(direction, existing){
       </div>
     </div>
     ${isIn?`<div class="fld" style="margin-top:12px"><label>طريقة السداد</label>
-      <select class="inp" id="tx_allocationType" onchange="txRenderSettlementDetails()">
+      <select class="inp" id="tx_allocationType" onchange="txOnAllocTypeChange()">
         <option value="">اختر طريقة السداد</option>
         <option value="invoice_deduction" ${draft.allocationType==='invoice_deduction'?'selected':''}>تنازلي فاتورة</option>
         <option value="invoice_assistance" ${draft.allocationType==='invoice_assistance'?'selected':''}>مساعدة فاتورة</option>
@@ -5784,7 +6169,13 @@ function openTxForm(direction, existing){
     </div>
     <div id="txSettlementDetails" style="display:none;margin-bottom:14px">
       <div style="font-weight:800;color:var(--gold);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
-      <div class="tbl-wrap"><table><thead><tr><th>اختيار</th><th>أمر البيع / القسط</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="9">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
+      <div id="txSettlementSummary" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:6px">قيمة التحصيل
+          <input class="inp num" id="tx_amountMirror" type="number" min="0" step="0.01" placeholder="0.00" style="width:150px;padding:6px 10px" oninput="txMirrorAmount(this.value)"></label>
+        <span>الموزَّع: <b class="num" id="txSumAlloc">0.00</b></span>
+        <span>غير موزَّع: <b class="num" id="txSumLeft">0.00</b></span>
+      </div>
+      <div class="tbl-wrap"><table id="txSettlementTable" style="white-space:nowrap;min-width:100%"><thead><tr><th>اختيار</th><th>أمر البيع</th><th>نوع السداد</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="10">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
     </div><div id="txMainForm">
     `:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -5877,7 +6268,28 @@ function txShowSettlementTab(which){
   const details=document.getElementById('txSettlementDetails'), main=document.getElementById('txMainForm');
   if(details) details.style.display=which==='details'?'':'none';
   if(main) main.style.display=which==='details'?'none':'';
+  const m=document.querySelector('#modalBackdrop .modal');
+  if(m){ m.style.width=which==='details'?'1200px':''; m.style.maxWidth=which==='details'?'97vw':''; }
   if(which==='details') txRenderSettlementDetails();
+}
+function txOnAllocTypeChange(){
+  txRenderSettlementDetails();
+  const kind=document.getElementById('tx_allocationType')?.value||'';
+  if(kind==='invoice_assistance' || kind==='invoice_deduction') txShowSettlementTab('details');
+  else txShowSettlementTab('form');
+}
+function txMirrorAmount(v){
+  const a=document.getElementById('tx_amount'); if(a) a.value=v;
+  const kind=document.getElementById('tx_allocationType')?.value||'';
+  if(kind==='invoice_deduction') txPreviewAutoAllocations(); else txPreviewAssistanceAllocations();
+}
+function txUpdateSettlementSummary(){
+  const total=+(document.getElementById('tx_amount')?.value||0);
+  let used=0;
+  document.querySelectorAll('.tx-alloc-amount').forEach(i=>used+=+i.value||0);
+  document.querySelectorAll('.tx-auto-alloc').forEach(c=>used+=parseFloat(String(c.textContent).replace(/,/g,''))||0);
+  const u=document.getElementById('txSumAlloc'), l=document.getElementById('txSumLeft');
+  if(u) u.textContent=fmt(used); if(l) l.textContent=fmt(Math.max(0,total-used));
 }
 function txOrderKey(v){ return supOrderNumberKey(v); }
 function txAllocMatches(a, so, orderNo){
@@ -5926,7 +6338,7 @@ function txInvoiceRowsForCustomer(customer){
       out.push({orderId,orderNo,date:docDate,total,installment:pt.no,label:pt.no===0?'قسط نقدي':'قسط '+pt.no,due:pt.due||'',amount:pt.amount,paid,remaining:rem<1?0:rem});
     });
   });
-  return out.sort((a,b)=>String(a.due).localeCompare(String(b.due)));
+  return out.sort((a,b)=>(a.due?0:1)-(b.due?0:1)||String(a.due).localeCompare(String(b.due))||String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true})||a.installment-b.installment);
 }
 
 // ---------- المستحقات: كل الأقساط المتبقية (القسط النقدي + أقساط الأجل) لكل العملاء ----------
@@ -5969,15 +6381,16 @@ function txRenderSettlementDetails(){
   if(detailsBtn) detailsBtn.style.display=kind==='credit_amount'?'none':'';
   if(kind==='credit_amount'){
     if(details) details.style.display='none'; if(main) main.style.display='';
-    body.innerHTML='<tr><td colspan="9">المبلغ الدائن لا يحتاج إلى تخصيص على قسط.</td></tr>'; window.__txCurrentAllocRows=[]; return;
+    body.innerHTML='<tr><td colspan="10">المبلغ الدائن لا يحتاج إلى تخصيص على قسط.</td></tr>'; window.__txCurrentAllocRows=[]; return;
   }
-  if(!customer){body.innerHTML='<tr><td colspan="9">اختر العميل أولًا.</td></tr>';return;}
-  if(!kind){body.innerHTML='<tr><td colspan="9">اختر طريقة السداد أولًا.</td></tr>';return;}
+  if(!customer){body.innerHTML='<tr><td colspan="10">اختر العميل أولًا.</td></tr>';return;}
+  if(!kind){body.innerHTML='<tr><td colspan="10">اختر طريقة السداد أولًا.</td></tr>';return;}
   let rows=txInvoiceRowsForCustomer(customer).filter(r=>r.remaining>0);
-  if(!rows.length){body.innerHTML='<tr><td colspan="9">لا توجد أقساط مستحقة أو متبقية لهذا العميل.</td></tr>';window.__txCurrentAllocRows=[];return;}
+  if(!rows.length){body.innerHTML='<tr><td colspan="10">لا توجد أقساط مستحقة أو متبقية لهذا العميل.</td></tr>';window.__txCurrentAllocRows=[];return;}
   window.__txCurrentAllocRows=rows;
   const auto=kind==='invoice_deduction';
-  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))} — ${r.label}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" max="${r.remaining}" step="0.01" value="0" readonly title="يتم توزيع مبلغ التحصيل تلقائيًا على الأقساط التي تختارها" style="min-width:90px;opacity:.9">`}</td></tr>`).join('');
+  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${r.installment===0?'نقدي':'قسط '+r.installment}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" max="${r.remaining}" step="0.01" value="0" readonly title="يتم توزيع مبلغ التحصيل تلقائيًا على الأقساط التي تختارها" style="min-width:90px;opacity:.9">`}</td></tr>`).join('');
+  const mir=document.getElementById('tx_amountMirror'); if(mir) mir.value=document.getElementById('tx_amount')?.value||'';
   if(auto) txPreviewAutoAllocations();
   else txPreviewAssistanceAllocations();
 }
@@ -5992,10 +6405,12 @@ function txPreviewAssistanceAllocations(){
     input.value=take.toFixed(2);
     left-=take;
   });
+  txUpdateSettlementSummary();
 }
 function txPreviewAutoAllocations(){
   const rows=window.__txCurrentAllocRows||[]; let left=+(document.getElementById('tx_amount')?.value||0);
   rows.forEach((r,i)=>{const take=Math.min(Math.max(0,left),r.remaining); const cell=document.querySelector(`.tx-auto-alloc[data-index="${i}"]`); if(cell) cell.textContent=fmt(take); left-=take;});
+  txUpdateSettlementSummary();
 }
 function txCollectAllocations(){
   const rows=window.__txCurrentAllocRows||[];
@@ -6083,7 +6498,6 @@ function noAccessHtml(){
   guard("saveSettings",S("settings","edit"));
   guard("resetAll",()=>({admin:true}),{type:"reset",counter:()=>state,info:()=>"إعادة تعيين كامل للبيانات"});
   guard("exportData",()=>({sys:"backup"}),{type:"backup_export",always:true,info:()=>"تصدير نسخة احتياطية"});
-  guard("exportDeviceSnapshot",()=>({sys:"backup"}),{type:"backup_export",always:true,info:()=>"تصدير بيانات الجهاز للمقارنة"});
   guard("importData",()=>({sys:"backup"}),{type:"backup_import",always:true,info:e=>"استيراد نسخة احتياطية"+((e&&e.target&&e.target.files&&e.target.files[0])?` (${e.target.files[0].name})`:"")});
   guard("soNew",S("saleOrder","add"));
   guard("soSave",()=>({scr:"saleOrder",act:soLoadedId?"edit":"add"}));
