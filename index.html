@@ -6962,12 +6962,25 @@ function txAllDueRows(){
   const D=window.QS_DATA=window.QS_DATA||{};
   // إشعارات شاشة الدخول تُقرأ مباشرة من سجلات الخزينة الحالية.
   const txDateLabel=v=>{ if(!v) return "—"; const d=new Date(String(v)+"T00:00:00"); return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString("ar-EG"); };
-  const txCheckRows=direction=>(state.treasuryEntries||[])
-    .filter(e=>e.direction===direction && e.method==="bank" && e.status!=="returned")
+  const txCheckRows=()=>(state.treasuryEntries||[])
+    .filter(e=>e.direction==="in" && e.method==="bank" && e.status!=="returned" && e.status!=="guarantee")
     .slice().sort((a,b)=>String(a.dueDate||a.date||"9999-12-31").localeCompare(String(b.dueDate||b.date||"9999-12-31")))
-    .map(e=>[e.customer||e.supplier||"—",fmt(+e.amount||0),txDateLabel(e.dueDate||e.date),e.bank||e.bankName||"—",e.method==="bank"?"شيك":"—",({receivable:"ورقة قبض",pending:"تحت التحصيل",deposited:"مودع",collected:"محصل",guarantee:"ضمان"})[e.status]||e.status||"—",e.notes||e.refNo||e.no||"—"]);
-  Object.defineProperty(D,"loginChecksBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows("in");}catch(e){return [];} }});
-  Object.defineProperty(D,"loginChecksAgainstUsBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows("out");}catch(e){return [];} }});
+    .map(e=>{
+      const due=String(e.dueDate||e.date||"");
+      const today=new Date(); today.setHours(0,0,0,0);
+      const dd=due?new Date(due+"T00:00:00"):null;
+      const days=dd&&!Number.isNaN(dd.getTime())?Math.round((dd-today)/86400000):null;
+      const alert=days===null?"بدون تاريخ استحقاق":days<0?"متأخر "+Math.abs(days)+" يوم":days===0?"مستحق اليوم":days<=7?"يستحق خلال "+days+" يوم":"قادم";
+      return [e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bank||e.bankName||"—","ورقة قبض",({receivable:"ورقة قبض",pending:"تحت التحصيل",deposited:"مودع",collected:"محصل"})[e.status]||e.status||"—",alert,e.notes||e.refNo||e.no||"—"];
+    });
+  Object.defineProperty(D,"loginChecksBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows();}catch(e){return [];} }});
+  Object.defineProperty(D,"loginPartiesBtn",{configurable:true,enumerable:true,get(){
+    try{
+      const c=tbCompute("clientTB"), v=tbCompute("supplierTB");
+      return {clients:c.rows.filter(r=>Math.abs(r.closeNat)>0.004).map(r=>[r.name,fmt(Math.abs(r.closeNat))+" "+(r.closeNat>0?"مدين لنا":"دائن علينا")]),
+              suppliers:v.rows.filter(r=>Math.abs(r.closeNat)>0.004).map(r=>[r.name,fmt(Math.abs(r.closeNat))+" "+(r.closeNat>0?"دائن له":"مدين عليه")])};
+    }catch(e){return {clients:[],suppliers:[]};}
+  }});
   Object.defineProperty(D,"loginInstallmentsBtn",{configurable:true,enumerable:true,get(){
     try{ return txAllDueRows().map(r=>[r.customer,r.orderNo+" — "+r.label,r.due||"—",fmt(r.amount),fmt(r.paid),fmt(r.remaining),r.late?"متأخر":"مستحق"]); }catch(e){ return []; }
   }});
@@ -7697,7 +7710,7 @@ function openMyPassword(first){
   // التقارير مربوطة ببيانات الخزينة والمستحقات عبر window.QS_DATA.
   var QS_DATA = window.QS_DATA = window.QS_DATA || {};
   var REPORTS = {
-    loginChecksBtn:{title:"🧾 التحصيلات والشيكات الواردة",wide:true,cols:["#","العميل","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات مسجلة لسه"},
+    loginChecksBtn:{title:"🧾 أوراق القبض",wide:true,cols:["#","العميل","القيمة","تاريخ الاستحقاق","البنك","النوع","الحالة","التنبيه","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش أوراق قبض مسجلة لسه"},
     loginChecksAgainstUsBtn:{title:"📝 الشيكات الصادرة علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
     loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لهم علينا)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير (يوم)"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
@@ -7743,7 +7756,7 @@ function openMyPassword(first){
     var b=document.getElementById(id); if(b) b.addEventListener("click",function(e){e.stopPropagation();openR(id)});
   });
   function refreshLoginNoticeBadges(){
-    [["loginChecksBtn","loginChecksBadge"],["loginChecksAgainstUsBtn","loginChecksAgainstUsBadge"],["loginInstallmentsBtn","loginInstallmentsBadge"],["loginOverdueBtn","loginOverdueBadge"]].forEach(function(pair){
+    [["loginChecksBtn","loginChecksBadge"],["loginInstallmentsBtn","loginInstallmentsBadge"],["loginOverdueBtn","loginOverdueBadge"]].forEach(function(pair){
       var btn=document.getElementById(pair[0]), badge=document.getElementById(pair[1]); if(!btn||!badge) return;
       var rows=QS_DATA[pair[0]]||[]; var n=Array.isArray(rows)?rows.length:0;
       badge.textContent=n>99?"99+":String(n); badge.style.display=n?"flex":"none";
