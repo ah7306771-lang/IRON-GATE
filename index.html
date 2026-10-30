@@ -990,6 +990,42 @@ table[data-rs-key="supply-grouped"] .icon-btn{width:34px;height:34px;min-width:3
 table[data-rs-key="supply-grouped"] .icon-btn.primary{background:#fff4d5;border-color:#e6c36b;color:#946500}
 table[data-rs-key="supply-grouped"] .icon-btn:hover{transform:translateY(-1px);box-shadow:0 3px 10px #00000012}
 table[data-rs-key="supply-grouped"] .icon-btn:hover:after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 8px);right:50%;transform:translateX(50%);white-space:nowrap;background:#202938;color:#fff;padding:6px 9px;border-radius:6px;font-size:11px;font-weight:600;z-index:50;pointer-events:none}
+
+/* ===== Mobile-first refinement: quote, sale order and order search ===== */
+.so-search-filters{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;align-items:end}
+.so-search-pager{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;position:sticky;bottom:0;background:var(--card);padding:10px 0;border-top:1px solid var(--line);z-index:3}
+.so-search-pager span{font-size:12px;font-weight:800;color:var(--text-dim)}
+.so-search-table-wrap{overflow:auto;max-height:50vh;border:1px solid var(--line);border-radius:10px}
+.so-search-table-wrap table{min-width:1180px;width:100%}
+@media(max-width:700px){
+  .content{padding:12px!important;overflow-x:hidden!important}
+  .page-head{gap:8px}
+  .page-head h2{font-size:17px}
+  .so-actions{position:sticky;bottom:0;z-index:20;background:color-mix(in srgb,var(--bg) 94%,transparent);padding:8px 0 calc(8px + env(safe-area-inset-bottom));margin:10px -4px 0;backdrop-filter:blur(10px);border-top:1px solid var(--line)}
+  .so-actions .btn{min-width:calc(50% - 6px);min-height:44px;font-size:12px}
+  .so-grid{grid-template-columns:minmax(0,1fr)!important;gap:10px!important}
+  .so-grid .fld{min-width:0}
+  .so-grid .inp,.qt-item-row .inp,.so-item-row .inp{min-height:42px;font-size:16px!important}
+  .so-item-row,.qt-item-row{min-width:0!important;display:grid;grid-template-columns:34px minmax(0,1fr) minmax(0,1fr)!important;gap:8px;padding:10px!important}
+  .so-item-row .srn,.qt-item-row .srn{grid-row:1 / span 2}
+  .so-item-row .mini,.qt-item-row .mini{min-width:0}
+  .so-item-row .mini.spec,.so-item-row .mini.type,.qt-item-row .mini.nt{grid-column:2 / -1!important}
+  .so-item-row .rm-btn,.qt-item-row .rm-btn{grid-column:3;justify-self:end;min-width:40px;min-height:40px}
+  .so-item-row .note-icon-btn{grid-column:2;justify-self:start}
+  .so-total-row{position:sticky;bottom:72px;z-index:5;box-shadow:0 -3px 12px rgba(0,0,0,.05)}
+  .so-search-filters{grid-template-columns:1fr 1fr}
+  .so-search-filters .fld:first-child{grid-column:1/-1}
+  .so-search-table-wrap{max-height:48vh;overflow:visible;border:0}
+  .so-search-table-wrap table{min-width:0!important;width:100%;border-collapse:separate;border-spacing:0 8px}
+  .so-search-table-wrap thead{display:none}
+  .so-search-table-wrap tbody,.so-search-table-wrap tr,.so-search-table-wrap td{display:block;width:100%}
+  .so-search-table-wrap tr{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-bottom:10px}
+  .so-search-table-wrap td{display:flex;justify-content:space-between;gap:12px;white-space:normal!important;text-align:left;padding:6px 0!important;border:0;border-bottom:1px solid var(--line);font-size:12px}
+  .so-search-table-wrap td:before{content:attr(data-label);font-weight:800;color:var(--text-dim);text-align:right}
+  .so-search-table-wrap td:last-child{border-bottom:0;justify-content:flex-start}
+  .so-search-table-wrap td:last-child:before{min-width:45px}
+}
+
 </style>
 
 <style id="statement-filter-polish">
@@ -2238,19 +2274,20 @@ let navExpanded = {};
 try{ navExpanded = JSON.parse(localStorage.getItem("irongate_nav_expanded") || "{}"); }catch(e){}
 function saveNavExpanded(){ try{ localStorage.setItem("irongate_nav_expanded", JSON.stringify(navExpanded)); }catch(e){} }
 function toggleNavGroup(gid){
-  // لو مجموعة فيها عنصر واحد فقط (single) نروح على طول للعنصر بدل التبديل
+  // مجموعة رئيسية واحدة فقط مفتوحة في كل مرة.
   const g = navGroups.find(x=>x.id===gid);
   if(g && g.single){ go(g.single); return; }
-  navExpanded[gid] = !navExpanded[gid];
+  const wasOpen = !!navExpanded[gid];
+  navExpanded = {};
+  if(!wasOpen) navExpanded[gid] = true;
   saveNavExpanded(); renderNav();
 }
-// افتح المجموعة اللي فيها الصفحة الحالية تلقائي
+// افتح المجموعة الحالية وحدها وأغلق أي مجموعة أخرى.
 function ensureCurrentGroupExpanded(){
-  for(const g of navGroups){
-    if(g.items.some(it=>it.id===currentPage)){
-      if(!navExpanded[g.id]){ navExpanded[g.id] = true; saveNavExpanded(); }
-      return;
-    }
+  const current = navGroups.find(g=>g.items.some(it=>it.id===currentPage) && !g.single);
+  if(!current) return;
+  if(Object.keys(navExpanded).length!==1 || !navExpanded[current.id]){
+    navExpanded = {[current.id]:true}; saveNavExpanded();
   }
 }
 
@@ -5934,28 +5971,50 @@ function soSearchRows(){
   });
   return [...byNo.values()].sort((a,b)=>String(a.orderNo).localeCompare(String(b.orderNo),"en",{numeric:true,sensitivity:"base"}));
 }
+let soSearchPage=1;
+const SO_SEARCH_PAGE_SIZE=20;
 function soOpenSearch(){
   const list=soSearchRows();
   if(list.length===0){ toast("لا توجد أوامر بيع أو خطط سداد مستوردة للعرض","ok"); return; }
-  openModal("البحث في أوامر البيع والبيانات المستوردة", `
-    <div class="fld"><label>بحث برقم الأمر أو العميل أو المورد أو رقم البوليصة أو طريقة السداد</label>
-      <input class="inp" id="soSearchInp" oninput="soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
+  soSearchPage=1;
+  openModal("البحث المتقدم في أوامر البيع", `
+    <div class="so-search-filters">
+      <div class="fld"><label>بحث برقم الأمر أو العميل أو المورد أو رقم البوليصة أو طريقة السداد</label>
+        <input class="inp" id="soSearchInp" oninput="soSearchPage=1;soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
+      </div>
+      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" id="soSearchFrom" onchange="soSearchPage=1;soDoSearch()"></div>
+      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" id="soSearchTo" onchange="soSearchPage=1;soDoSearch()"></div>
+      <div class="fld"><label>الحالة</label><select class="inp" id="soSearchStatus" onchange="soSearchPage=1;soDoSearch()"><option value="all">كل الحالات</option><option value="open">مفتوح</option><option value="closed">مقفل</option><option value="plan">خطط مستوردة فقط</option></select></div>
     </div>
-    <div style="font-size:12px;color:var(--text-dim);margin:8px 0">كل السجلات المحفوظة وخطط السداد المستوردة (${list.length} أمر). الخانات غير الموجودة في المصدر ستظهر بشرطة أو «غير متاح».</div>
-    <div id="soSearchResults" style="max-height:58vh;overflow:auto;margin-top:10px"></div>
+    <div id="soSearchMeta" style="font-size:12px;color:var(--text-dim);margin:8px 0">عدد السجلات: ${list.length}</div>
+    <div id="soSearchResults" style="max-height:52vh;overflow:auto;margin-top:10px"></div>
+    <div class="so-search-pager"><button class="btn ghost sm" id="soSearchPrev" onclick="soSearchMove(-1)">→ السابق</button><span id="soSearchPageLabel">صفحة 1</span><button class="btn ghost sm" id="soSearchNext" onclick="soSearchMove(1)">التالي ←</button></div>
   `, ()=>true);
   document.querySelector('#modalBackdrop .modal')?.classList.add('so-search-modal');
   setTimeout(soDoSearch,50);
 }
+function soSearchMove(delta){ soSearchPage=Math.max(1,soSearchPage+delta); soDoSearch(); }
 function soDoSearch(){
   const q=(document.getElementById("soSearchInp")?.value||"").trim().toLowerCase();
-  const rows=soSearchRows().filter(x=>{
+  const from=document.getElementById("soSearchFrom")?.value||"", to=document.getElementById("soSearchTo")?.value||"";
+  const status=document.getElementById("soSearchStatus")?.value||"all";
+  const all=soSearchRows().filter(x=>{
     const r=x.record||{}, p=x.plan||{};
-    const hay=[x.orderNo,r.customer,r.supplier,r.date,p.customer,p.policyNo,p.method].join(" ").toLowerCase();
-    return !q||hay.includes(q);
+    const linkedPolicies=[...(state.shipments||[]),...(state.policies||[])].filter(z=>soKey(z.saleOrderNo)===soKey(x.orderNo));
+    const date=String(r.date||linkedPolicies.map(z=>z.date).filter(Boolean).sort().at(-1)||p.date||"").slice(0,10);
+    const hay=[x.orderNo,r.customer,r.supplier,r.date,p.customer,p.policyNo,p.method,...linkedPolicies.map(z=>z.policyNo)].join(" ").toLowerCase();
+    if(q&&!hay.includes(q)) return false;
+    if(from&&(!date||date<from)) return false;
+    if(to&&(!date||date>to)) return false;
+    if(status==="open"&&(!r.id||r.closed)) return false;
+    if(status==="closed"&&(!r.id||!r.closed)) return false;
+    if(status==="plan"&&r.id) return false;
+    return true;
   });
+  const pages=Math.max(1,Math.ceil(all.length/SO_SEARCH_PAGE_SIZE)); soSearchPage=Math.min(soSearchPage,pages);
+  const rows=all.slice((soSearchPage-1)*SO_SEARCH_PAGE_SIZE,soSearchPage*SO_SEARCH_PAGE_SIZE);
   const money=v=>(v===null||v===undefined||v==="")?"غير متاح":fmt(v);
-  const html=rows.length?`<div style="overflow-x:auto"><table class="tbl" style="min-width:1250px;width:100%;font-size:12px;table-layout:auto"><thead><tr>
+  const html=rows.length?`<div class="so-search-table-wrap"><table class="tbl"><thead><tr>
     <th>رقم الأمر</th><th>العميل</th><th>المورد</th><th>رقم البوليصة</th><th>إجمالي الخطة</th><th>نسبة النقدي</th><th>قيمة النقدي</th><th>المؤجل</th><th>عدد الأقساط</th><th>طريقة السداد</th><th>الحالة / المصدر</th><th>فتح</th>
   </tr></thead><tbody>${rows.map(x=>{
     const r=x.record||{},p=x.plan||{}; const isMaster=!!x.record;
@@ -5964,11 +6023,14 @@ function soDoSearch(){
     const cashPct=p.cashPct==null||p.cashPct===""?"غير متاح":fmt(p.cashPct,2)+"%";
     const count=p.installments==null?"غير متاح":String(p.installments);
     const method=p.method||"غير متاح";
-    const status=isMaster?"أمر بيع محفوظ":"خطة مستوردة — سجل الأمر الأصلي غير موجود";
+    const status=isMaster?(r.closed?"أمر بيع مقفل":"أمر بيع مفتوح"):"خطة مستوردة — سجل الأمر الأصلي غير موجود";
     const action=isMaster?`<button class="btn sm" onclick="soLoad('${escapeAttr(r.id)}')">فتح الأمر</button>`:`<button class="btn sm" onclick="goOrderScreen('${escapeAttr(x.orderNo)}')">فتح البيانات المتاحة</button>`;
-    return `<tr><td><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td>${escapeHtml(customer)}</td><td>${escapeHtml(supplier)}</td><td>${escapeHtml(policy)}</td><td class="num">${money(p.total??p.invoiceTotal)}</td><td class="num">${cashPct}</td><td class="num">${money(p.cashValue)}</td><td class="num">${money(p.creditValue)}</td><td class="num">${escapeHtml(count)}</td><td>${escapeHtml(method)}</td><td>${escapeHtml(status)}</td><td>${action}</td></tr>`;
-  }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة</div>`;
+    return `<tr><td data-label="رقم الأمر"><b style="color:var(--gold)">#${escapeHtml(x.orderNo)}</b></td><td data-label="العميل">${escapeHtml(customer)}</td><td data-label="المورد">${escapeHtml(supplier)}</td><td data-label="رقم البوليصة">${escapeHtml(policy)}</td><td data-label="إجمالي الخطة" class="num">${money(p.total??p.invoiceTotal)}</td><td data-label="نسبة النقدي" class="num">${cashPct}</td><td data-label="قيمة النقدي" class="num">${money(p.cashValue)}</td><td data-label="المؤجل" class="num">${money(p.creditValue)}</td><td data-label="عدد الأقساط" class="num">${escapeHtml(count)}</td><td data-label="طريقة السداد">${escapeHtml(method)}</td><td data-label="الحالة">${escapeHtml(status)}</td><td data-label="فتح">${action}</td></tr>`;
+  }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة للفلاتر المحددة</div>`;
   const el=document.getElementById("soSearchResults"); if(el) el.innerHTML=html;
+  const meta=document.getElementById("soSearchMeta"); if(meta) meta.textContent=`عدد النتائج: ${all.length} · الصفحة ${soSearchPage} من ${pages} · ${SO_SEARCH_PAGE_SIZE} سجلًا في الصفحة`;
+  const label=document.getElementById("soSearchPageLabel"); if(label) label.textContent=`صفحة ${soSearchPage} / ${pages}`;
+  const prev=document.getElementById("soSearchPrev"),next=document.getElementById("soSearchNext"); if(prev) prev.disabled=soSearchPage<=1; if(next) next.disabled=soSearchPage>=pages;
 }
 function soLoad(id){
   const r = state.saleOrders.find(x=>x.id===id); if(!r) return;
@@ -7062,8 +7124,10 @@ function txAllDueRows(){
   Object.defineProperty(D,"loginPartiesBtn",{configurable:true,enumerable:true,get(){
     try{
       const c=tbCompute("clientTB"), v=tbCompute("supplierTB");
-      return {clients:c.rows.filter(r=>Math.abs(r.closeNat)>0.004).map(r=>[r.name,fmt(Math.abs(r.closeNat))+" "+(r.closeNat>0?"مدين لنا":"دائن علينا")]),
-              suppliers:v.rows.filter(r=>Math.abs(r.closeNat)>0.004).map(r=>[r.name,fmt(Math.abs(r.closeNat))+" "+(r.closeNat>0?"دائن له":"مدين عليه")])};
+      // العملاء: نظهر فقط الرصيد المدين للعميل (مبالغ مستحقة لنا عنده).
+      // الموردون: نظهر فقط الرصيد الدائن للمورد (مبالغ مستحقة عليه لنا).
+      return {clients:c.rows.filter(r=>r.closeNat>0.004).map(r=>[r.name,fmt(r.closeNat)+" مستحق لنا"]),
+              suppliers:v.rows.filter(r=>r.closeNat>0.004).map(r=>[r.name,fmt(r.closeNat)+" مستحق له"])};
     }catch(e){return {clients:[],suppliers:[]};}
   }});
   Object.defineProperty(D,"loginInstallmentsBtn",{configurable:true,enumerable:true,get(){
@@ -7797,7 +7861,7 @@ function openMyPassword(first){
   var REPORTS = {
     loginChecksBtn:{title:"🧾 أوراق القبض",wide:true,cols:["#","العميل","القيمة","تاريخ الاستحقاق","البنك","النوع","الحالة","التنبيه","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش أوراق قبض مسجلة لسه"},
     loginChecksAgainstUsBtn:{title:"📝 الشيكات الصادرة علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
-    loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لهم علينا)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
+    loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لنا عندهم)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير (يوم)"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
     loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,cols:["#","العميل","أمر البيع / القسط","تاريخ الاستحقاق","قيمة القسط","المسدد","المتبقي","الحالة"],total:{label:"الإجمالي",col:6},empty:"لا توجد أقساط مستحقة"},
     loginLastPricesBtn:{title:"🏷️ اخر سعر شراء وبيع",wide:true,cols:["#","العميل","الوزن الفعلي","اخر سعر شراء","اخر سعر بيع","اخر طريقة السداد","تاريخ اخر فاتورة"],empty:"مفيش أوامر بيع مسجلة لسه"},
