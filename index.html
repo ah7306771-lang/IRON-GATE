@@ -4204,10 +4204,32 @@ function saveShipment(){
 function postShipment(){
   if(editingSrc==="shipments") return;
   const rec=buildRecord(true); if(!rec) return;
-  if(!confirm(`ترحيل البوليصة ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟`)) return;
+  // مراجعة تلقائية قبل الترحيل: التحذير لا يمنع الترحيل، والقرار يُحفظ مع البوليصة.
+  const so=(state.saleOrders||[]).find(x=>String(x.id)===String(rec.saleOrderId) || (rec.saleOrderNo && String(x.orderNo)===String(rec.saleOrderNo)));
+  let review={checkedAt:new Date().toISOString(),status:"unlinked",expected:0,actual:0,difference:0,details:[]};
+  if(so){
+    const remaining=soComputeRemaining(so,rec.id), expectedByKey={...remaining.remaining}, actualByKey={};
+    (rec.items||[]).forEach(it=>{
+      const key=`${it.diameter}|${it.type}`;
+      const q=Number(String(it.supplyQty??"").replace(",","."));
+      const w=Number(String(it.actualWeight??"").replace(",","."));
+      const approved=(Number.isFinite(q)&&q>0)?q:((Number.isFinite(w)&&w>0)?w:0);
+      actualByKey[key]=(actualByKey[key]||0)+approved;
+    });
+    const keys=new Set([...Object.keys(expectedByKey),...Object.keys(actualByKey)]);
+    review.details=[...keys].map(key=>({item:key,expected:+(expectedByKey[key]||0),actual:+(actualByKey[key]||0),difference:+((actualByKey[key]||0)-(expectedByKey[key]||0)).toFixed(3)})).filter(x=>Math.abs(x.difference)>0.001);
+    review.expected=Object.values(expectedByKey).reduce((a,b)=>a+(+b||0),0);
+    review.actual=Object.values(actualByKey).reduce((a,b)=>a+(+b||0),0);
+    review.difference=+(review.actual-review.expected).toFixed(3);
+    review.status=review.details.length?"needs_review":"matched";
+  }
+  rec.postReview=review;
+  const mismatch=review.status!=="matched";
+  const reviewText=review.status==="unlinked"?`\nتنبيه: البوليصة غير مرتبطة بأمر بيع؛ سيتم الترحيل مع تسجيل ذلك.`:mismatch?`\n\nتنبيه مراجعة: يوجد فرق بين المتبقي في أمر البيع والكمية المعتمدة في البوليصة.\nالمتبقي المتوقع: ${review.expected.toFixed(3)} طن\nالكمية المعتمدة: ${review.actual.toFixed(3)} طن\nالفرق: ${review.difference.toFixed(3)} طن\n\nسيتم الترحيل مع حفظ نتيجة المراجعة دون تعديل الكميات.`:`\n\nالمطابقة سليمة: الكميات متوافقة مع المتبقي في أمر البيع.`;
+  if(!confirm(`ترحيل البوليصة ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟${reviewText}\n\nهل تريد الاستمرار؟`)) return;
   state.policies=state.policies.filter(x=>x.id!==rec.id);
   state.shipments.push(rec); commitOrderTerms(rec); syncOrderDate(rec.saleOrderNo); saveState();
-  toast(`تم ترحيل البوليصة ${rec.policyNo} — بوليصة جديدة جاهزة`,"ok");
+  toast(mismatch?`تم الترحيل مع حفظ ملاحظة المراجعة للبوليصة ${rec.policyNo}`:`تم ترحيل البوليصة ${rec.policyNo} — بوليصة جديدة جاهزة`,mismatch?"warn":"ok");
   draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
 }
 
@@ -5268,6 +5290,68 @@ function soImportMissingFromSupply(){
   if(typeof soRenderItems==='function' && currentPage==='saleOrder') go('saleOrder');
 }
 
+
+// تقرير مطابقة فقط: لا ينشئ ولا يعدّل ولا يحذف أي بيانات.
+function soAuditSupplyVsSales(){
+  if(!guard()) return;
+  const docs=[...(state.shipments||[]),...(state.policies||[])].filter(d=>d&&Array.isArray(d.items));
+  const orders=Array.isArray(state.saleOrders)?state.saleOrders:[];
+  const norm=v=>soKey(String(v??'').trim());
+  const groups=new Map();
+  const noNo=[];
+  docs.forEach(d=>{
+    const no=String(d.saleOrderNo||'').trim();
+    if(!no){noNo.push(d);return;}
+    const k=norm(no); if(!k)return;
+    if(!groups.has(k)) groups.set(k,{no,docs:[]});
+    groups.get(k).docs.push(d);
+  });
+  const orderMap=new Map();
+  orders.forEach(o=>{
+    const k=norm(o.orderNo);
+    if(!k)return;
+    if(!orderMap.has(k))orderMap.set(k,[]);
+    orderMap.get(k).push(o);
+  });
+  const rows=[];
+  let missing=0, duplicates=0, itemDiff=0, qtyDiff=0, exact=0;
+  const qtyOfSupply=g=>g.docs.reduce((n,d)=>n+(d.items||[]).reduce((m,it)=>m+(Number(it.qty??it.supplyQty??0)||Number(it.actualWeight??it.weightTon??it.weight??0)||0),0),0);
+  const countSupply=g=>g.docs.reduce((n,d)=>n+(d.items||[]).length,0);
+  [...groups.entries()].sort((a,b)=>a[1].no.localeCompare(b[1].no,'ar')).forEach(([k,g])=>{
+    const found=orderMap.get(k)||[];
+    if(!found.length){missing++;rows.push({no:g.no,status:'غير موجود في أوامر البيع',srcDocs:g.docs.length,srcItems:countSupply(g),saleItems:0,srcQty:qtyOfSupply(g),saleQty:0});return;}
+    if(found.length>1)duplicates++;
+    const sale=found[0], si=Array.isArray(sale.items)?sale.items:[];
+    const sc=countSupply(g), sq=qtyOfSupply(g);
+    const saleQty=si.reduce((n,it)=>n+(Number(it.qty)||0),0);
+    const countMismatch=sc!==si.length, qtyMismatch=Math.abs(sq-saleQty)>0.0001;
+    if(countMismatch)itemDiff++;
+    if(qtyMismatch)qtyDiff++;
+    if(!countMismatch&&!qtyMismatch&&found.length===1)exact++;
+    rows.push({no:g.no,status:found.length>1?'مكرر في أوامر البيع':countMismatch||qtyMismatch?'موجود لكن توجد فروق':'متطابق حسب عدد الأصناف وإجمالي الكمية',srcDocs:g.docs.length,srcItems:sc,saleItems:si.length,srcQty:sq,saleQty});
+  });
+  const fmtN=n=>Number(n||0).toLocaleString('en-US',{maximumFractionDigits:3});
+  const esc=typeof escapeHtml==='function'?escapeHtml:(x=>String(x));
+  const body=rows.map(r=>`<tr><td>${esc(r.no)}</td><td>${esc(r.status)}</td><td>${r.srcDocs}</td><td>${r.srcItems}</td><td>${r.saleItems}</td><td>${fmtN(r.srcQty)}</td><td>${fmtN(r.saleQty)}</td></tr>`).join('');
+  const noNoHtml=noNo.length?`<p class="warn">تنبيه: ${noNo.length} سجل توريد بدون رقم أمر بيع؛ لا يمكن مطابقته تلقائيًا.</p>`:'';
+  const html=`<div class="table-wrap" style="max-height:55vh;overflow:auto">
+    <p><b>تقرير مطابقة بيانات التوريد مع أوامر البيع — فحص فقط دون تعديل البيانات.</b></p>
+    <div class="so-grid" style="margin:10px 0">
+      <div class="card"><b>مجموعات التوريد</b><h3>${groups.size}</h3></div>
+      <div class="card"><b>غير موجودة</b><h3>${missing}</h3></div>
+      <div class="card"><b>مكررة</b><h3>${duplicates}</h3></div>
+      <div class="card"><b>مطابقة مبدئيًا</b><h3>${exact}</h3></div>
+    </div>
+    <p>فروق عدد الأصناف: <b>${itemDiff}</b> — فروق إجمالي الكمية/الوزن: <b>${qtyDiff}</b> — سجلات التوريد بلا رقم أمر: <b>${noNo.length}</b></p>
+    ${noNoHtml}
+    <table class="tbl"><thead><tr><th>رقم الأمر</th><th>النتيجة</th><th>البوالص</th><th>أصناف التوريد</th><th>أصناف البيع</th><th>كمية التوريد</th><th>كمية البيع</th></tr></thead><tbody>${body||'<tr><td colspan="7">لا توجد بيانات قابلة للمطابقة.</td></tr>'}</tbody></table>
+    <p class="muted" style="margin-top:10px">ملاحظة: التطابق هنا يعتمد على رقم أمر البيع وعدد الأصناف وإجمالي الكمية/الوزن فقط، ولا يثبت تطابق كل تفاصيل الصنف أو الأسعار.</p>
+  </div>`;
+  openModal('تأكيد ومطابقة بيانات التوريد',html,()=>true);
+  const btn=document.querySelector('#modalBackdrop .mfoot .btn:not(.ghost)');
+  if(btn) btn.textContent='إغلاق التقرير';
+}
+
 // ================= أمر بيع (Sale Order) =================
 const soDefault = ()=>({
   id: "SO-"+Date.now()+"-"+Math.floor(Math.random()*1000),
@@ -5320,6 +5404,7 @@ function viewSaleOrder(){
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
   <button class="btn" onclick="soCopyFromSupply()" title="نسخ بيانات التوريد إلى مسودة أمر بيع جديد">📋 نسخ من بيانات التوريد</button>
+  <button class="btn ghost" onclick="soAuditSupplyVsSales()" title="مطابقة فقط دون تعديل أي بيانات">🔎 تأكيد ومطابقة الكل</button>
   <button class="btn ghost" onclick="soImportMissingFromSupply()" title="فحص ثم نسخ كل أوامر البيع الناقصة من بيانات التوريد مرة واحدة">📥 نسخ كل بيانات التوريد دفعة واحدة</button>
 
   <div class="so-actions">
@@ -6963,7 +7048,7 @@ function txAllDueRows(){
   // إشعارات شاشة الدخول تُقرأ مباشرة من سجلات الخزينة الحالية.
   const txDateLabel=v=>{ if(!v) return "—"; const d=new Date(String(v)+"T00:00:00"); return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString("ar-EG"); };
   const txCheckRows=()=>(state.treasuryEntries||[])
-    .filter(e=>e.direction==="in" && e.method==="bank" && e.status!=="returned" && e.status!=="guarantee")
+    .filter(e=>e.direction==="in" && e.method==="bank" && e.status==="receivable")
     .slice().sort((a,b)=>String(a.dueDate||a.date||"9999-12-31").localeCompare(String(b.dueDate||b.date||"9999-12-31")))
     .map(e=>{
       const due=String(e.dueDate||e.date||"");
