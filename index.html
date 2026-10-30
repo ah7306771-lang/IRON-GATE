@@ -5064,6 +5064,68 @@ document.addEventListener("DOMContentLoaded",()=>{
   }catch(e){}
 });
 
+// إنشاء سجلات أوامر البيع المفقودة من بيانات التوريد الحالية، مع الحفاظ على كل بوليصة وصنف كمصدر.
+// لا يعدّل الأوامر الموجودة ولا يحذف/يغيّر أي تحصيل أو بوليصة أو خطة سداد.
+function soImportMissingFromSupply(){
+  if(!guard()) return;
+  const docs=[...(state.shipments||[]),...(state.policies||[])].filter(x=>x && String(x.saleOrderNo||'').trim() && Array.isArray(x.items) && x.items.length);
+  const groups=new Map();
+  docs.forEach(doc=>{
+    const no=String(doc.saleOrderNo||'').trim(), key=soKey(no); if(!key) return;
+    if(!groups.has(key)) groups.set(key,{orderNo:no,docs:[]});
+    groups.get(key).docs.push(doc);
+  });
+  const existing=new Set((state.saleOrders||[]).map(x=>soKey(x.orderNo)));
+  const missing=[...groups.values()].filter(g=>!existing.has(soKey(g.orderNo)));
+  if(!missing.length){ toast('كل أوامر البيع الموجودة في بيانات التوريد لها سجلات بالفعل.','ok'); return; }
+  const lineCount=missing.reduce((n,g)=>n+g.docs.reduce((m,d)=>m+(d.items||[]).length,0),0);
+  const preview=missing.slice(0,18).map(g=>{
+    const d=g.docs[0]||{}; return `• أمر ${g.orderNo} — ${d.customer||'عميل غير محدد'} — ${g.docs.length} بوليصة / ${g.docs.reduce((n,x)=>n+(x.items||[]).length,0)} صنف`;
+  }).join('\n');
+  const extra=missing.length>18?`\n... و${missing.length-18} أمر آخر`:'';
+  const msg=`سيتم إنشاء ${missing.length} سجل أمر بيع مفقود من بيانات التوريد، بإجمالي ${lineCount} بند.\n\n${preview}${extra}\n\nمهم: إذا لم تكن للصنف كمية أمر بيع/كمية توريد مسجلة، فسيتم استخدام الوزن الفعلي ككمية. سيتم توثيق الوزن الفعلي ورقم/أرقام البوالص في ملاحظات كل بند. لن يتم تعديل الأوامر الموجودة أو التحصيلات.\n\nهل تريد المتابعة؟`;
+  if(!confirm(msg)) return;
+  const now=new Date().toISOString(); let made=0, linked=0;
+  missing.forEach(g=>{
+    const sorted=[...g.docs].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+    const first=sorted[0]||{}, last=sorted[sorted.length-1]||{};
+    const plan=typeof supImportedPaymentPlan==='function'?supImportedPaymentPlan(g.orderNo):null;
+    const items=[];
+    sorted.forEach(doc=>(doc.items||[]).forEach((it,idx)=>{
+      const enteredOrderQty=Number(it.qty??it.supplyQty??0)||0;
+      const actualWeight=Number(it.actualWeight??it.weightTon??it.weight??0)||0;
+      // إذا لم توجد كمية أمر بيع/كمية توريد مسجلة، استخدم الوزن الفعلي ككمية للصنف.
+      const qty=enteredOrderQty>0?enteredOrderQty:actualWeight;
+      const policy=String(doc.policyNo||'بدون رقم');
+      const factory=typeof itemFactory==='function'?(itemFactory(doc,it)||''):'';
+      const weight=actualWeight;
+      const note=[`من بيانات التوريد — بوليصة ${policy}`,factory?`المصنع: ${factory}`:'',weight?`الوزن الفعلي: ${weight}`:'',it.notes||''].filter(Boolean).join(' | ');
+      items.push({id:'supply-'+String(doc.id||policy)+'-'+idx+'-'+Math.random().toString(36).slice(2,6),diameter:String(it.diameter||''),qty:String(qty||''),spec:String(it.spec||it.grade||''),type:String(it.type||''),notes:note});
+    }));
+    const uniqueCustomers=[...new Set(sorted.map(x=>String(x.customer||'').trim()).filter(Boolean))];
+    const uniqueSuppliers=[...new Set(sorted.map(x=>String(x.supplier||'').trim()).filter(Boolean))];
+    const policies=[...new Set(sorted.map(x=>String(x.policyNo||'').trim()).filter(Boolean))];
+    const rec={
+      id:'SO-SUP-'+soKey(g.orderNo).replace(/[^a-z0-9\u0600-\u06ff]+/gi,'-')+'-'+Date.now()+'-'+made,
+      orderNo:g.orderNo,date:first.date||last.date||new Date().toISOString().slice(0,10),
+      customer:uniqueCustomers[0]||plan?.customer||'',supplier:uniqueSuppliers[0]||'',
+      attention:'',address:'',contactName:'',contactPhone:'',rep:'',
+      notes:`تم إنشاء سجل أمر البيع آليًا من بيانات التوريد. البوالص المصدر: ${policies.join('، ')||'—'}. ${uniqueCustomers.length>1?'تنبيه: بيانات التوريد تحتوي أكثر من اسم عميل لهذا الرقم.':''} ${uniqueSuppliers.length>1?'تنبيه: بيانات التوريد تحتوي أكثر من مورد لهذا الرقم.':''}`.trim(),
+      items,closed:false,closedAt:null,closeReason:'',
+      _generatedFromSupply:true,_supplyPolicyNos:policies,_supplyGeneratedAt:now,
+      ...(plan?{invoiceTotal:Number(plan.invoiceTotal)||0,importedPaymentMethod:plan.method||'',terms:{cashPct:plan.cashPct??'',installments:plan.installments??0,periodDays:plan.periodDays??''}}:{})
+    };
+    state.saleOrders.push(rec); made++;
+    sorted.forEach(doc=>{ if(!doc.saleOrderId){doc.saleOrderId=rec.id;linked++;} });
+  });
+  const numeric=missing.map(g=>parseInt(g.orderNo,10)).filter(Number.isFinite);
+  if(numeric.length) state.soNextNum=Math.max(Number(state.soNextNum)||1,Math.max(...numeric)+1);
+  if(typeof audit==='function') audit('sale_order','إنشاء '+made+' أمر بيع من بيانات التوريد');
+  saveState();
+  toast(`تم إنشاء ${made} أمر بيع وربط ${linked} بوليصة بنجاح.`, 'ok');
+  if(typeof soRenderItems==='function' && currentPage==='saleOrder') go('saleOrder');
+}
+
 // ================= أمر بيع (Sale Order) =================
 const soDefault = ()=>({
   id: "SO-"+Date.now()+"-"+Math.floor(Math.random()*1000),
@@ -5115,6 +5177,7 @@ function viewSaleOrder(){
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
+  <button class="btn ghost" onclick="soImportMissingFromSupply()" title="إنشاء سجلات أوامر البيع الناقصة من بيانات التوريد">📥 إنشاء الأوامر الناقصة من بيانات التوريد</button>
 
   <div class="so-actions">
     ${soReturnContext?'<button class="btn ghost" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
@@ -6753,6 +6816,14 @@ function txAllDueRows(){
 }
 (function(){
   const D=window.QS_DATA=window.QS_DATA||{};
+  // إشعارات شاشة الدخول تُقرأ مباشرة من سجلات الخزينة الحالية.
+  const txDateLabel=v=>{ if(!v) return "—"; const d=new Date(String(v)+"T00:00:00"); return Number.isNaN(d.getTime())?String(v):d.toLocaleDateString("ar-EG"); };
+  const txCheckRows=direction=>(state.treasuryEntries||[])
+    .filter(e=>e.direction===direction && e.method==="bank" && e.status!=="returned")
+    .slice().sort((a,b)=>String(a.dueDate||a.date||"9999-12-31").localeCompare(String(b.dueDate||b.date||"9999-12-31")))
+    .map(e=>[e.customer||e.supplier||"—",fmt(+e.amount||0),txDateLabel(e.dueDate||e.date),e.bank||e.bankName||"—",e.method==="bank"?"شيك":"—",({receivable:"ورقة قبض",pending:"تحت التحصيل",deposited:"مودع",collected:"محصل",guarantee:"ضمان"})[e.status]||e.status||"—",e.notes||e.refNo||e.no||"—"]);
+  Object.defineProperty(D,"loginChecksBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows("in");}catch(e){return [];} }});
+  Object.defineProperty(D,"loginChecksAgainstUsBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows("out");}catch(e){return [];} }});
   Object.defineProperty(D,"loginInstallmentsBtn",{configurable:true,enumerable:true,get(){
     try{ return txAllDueRows().map(r=>[r.customer,r.orderNo+" — "+r.label,r.due||"—",fmt(r.amount),fmt(r.paid),fmt(r.remaining),r.late?"متأخر":"مستحق"]); }catch(e){ return []; }
   }});
@@ -7479,11 +7550,11 @@ function openMyPassword(first){
 </div>
 <script>
 (function(){
-  // كل تقرير: العنوان + الأعمدة. البيانات فاضية دلوقتي — لما نربط داتا نعبّي window.QS_DATA[id] بمصفوفة صفوف (كل صف = قيم بترتيب الأعمدة بعد عمود #).
+  // التقارير مربوطة ببيانات الخزينة والمستحقات عبر window.QS_DATA.
   var QS_DATA = window.QS_DATA = window.QS_DATA || {};
   var REPORTS = {
-    loginChecksBtn:{title:"🧾 الشيكات المستحقة",wide:true,cols:["#","العميل","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات مسجلة لسه"},
-    loginChecksAgainstUsBtn:{title:"📝 شيكات علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
+    loginChecksBtn:{title:"🧾 التحصيلات والشيكات الواردة",wide:true,cols:["#","العميل","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات مسجلة لسه"},
+    loginChecksAgainstUsBtn:{title:"📝 الشيكات الصادرة علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
     loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لهم علينا)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير (يوم)"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
     loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,cols:["#","العميل","أمر البيع / القسط","تاريخ الاستحقاق","قيمة القسط","المسدد","المتبقي","الحالة"],total:{label:"الإجمالي",col:6},empty:"لا توجد أقساط مستحقة"},
@@ -7527,6 +7598,15 @@ function openMyPassword(first){
   Object.keys(REPORTS).forEach(function(id){
     var b=document.getElementById(id); if(b) b.addEventListener("click",function(e){e.stopPropagation();openR(id)});
   });
+  function refreshLoginNoticeBadges(){
+    [["loginChecksBtn","loginChecksBadge"],["loginChecksAgainstUsBtn","loginChecksAgainstUsBadge"],["loginInstallmentsBtn","loginInstallmentsBadge"],["loginOverdueBtn","loginOverdueBadge"]].forEach(function(pair){
+      var btn=document.getElementById(pair[0]), badge=document.getElementById(pair[1]); if(!btn||!badge) return;
+      var rows=QS_DATA[pair[0]]||[]; var n=Array.isArray(rows)?rows.length:0;
+      badge.textContent=n>99?"99+":String(n); badge.style.display=n?"flex":"none";
+    });
+  }
+  refreshLoginNoticeBadges();
+  window.refreshLoginNoticeBadges=refreshLoginNoticeBadges;
   document.getElementById("qsClose").addEventListener("click",closeR);
   document.getElementById("qsOverlay").addEventListener("click",function(e){if(e.target===this)closeR()});
   document.addEventListener("keydown",function(e){if(e.key==="Escape")closeR()});
