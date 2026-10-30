@@ -1262,6 +1262,7 @@ async function loadMaster(admin){
   }
   await loadDocs();
   await supLoadPaymentPlansFromSupabase();
+  await txLoadTreasuryFromDb();
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
@@ -1342,6 +1343,29 @@ function counterNow(){ return String(state.soNextNum||1); }
 function docsChanged(){
   if(!docsReady) return false;
   return Object.keys(DOC_GROUPS).some(g=>{ const d=docDiff(g); return d.up.length||d.del.length||!docMeta.has(g); }) || counterNow()!==counterSnap;
+}
+
+// ---------- تحميل التحصيلات المرفوعة (treasury_entries) من Supabase ----------
+// بتتضاف للتحصيلات المحلية لو مش موجودة (بالـ id)، وأي تعديل محلي عليها بيفضل زي ما هو.
+const TX_DELETED_KEY = "irongate_tx_deleted";
+function txDeletedIds(){ try{ return new Set(JSON.parse(localStorage.getItem(TX_DELETED_KEY)||"[]")); }catch(e){ return new Set(); } }
+function txMarkDeleted(id){ try{ const s=txDeletedIds(); s.add(id); localStorage.setItem(TX_DELETED_KEY, JSON.stringify([...s])); }catch(e){} }
+async function txLoadTreasuryFromDb(){
+  try{
+    const rows=await fetchAllRows("treasury_entries",["id"]);
+    if(!Array.isArray(state.treasuryEntries)) state.treasuryEntries=[];
+    const idx=new Map(state.treasuryEntries.map((e,i)=>[e.id,i])), gone=txDeletedIds();
+    rows.forEach(r=>{
+      const d=r&&r.data; if(!d||!d.id||gone.has(d.id)) return;
+      if(!Array.isArray(d.allocations)) d.allocations=[];
+      if(idx.has(d.id)){
+        const i=idx.get(d.id), cur=state.treasuryEntries[i];
+        if(d.importVer && cur.importVer!==d.importVer) state.treasuryEntries[i]=d;   // إعادة رفع بنسخة جديدة
+        return;
+      }
+      state.treasuryEntries.push(d); idx.set(d.id,state.treasuryEntries.length-1);
+    });
+  }catch(e){ console.warn("تعذر تحميل التحصيلات من Supabase:", e&&e.message||e); }
 }
 async function fetchAllRows(table, orderCols){
   const out=[]; let from=0;
@@ -3835,7 +3859,7 @@ function supPaymentCells(p,maxSchedule,nm=fmt){
 function supReportHtml(C,xl){
   const {SB,SS,L,T}=C, nm=(v,d)=> xl?Number(v||0).toFixed(d):fmt(v,d);
   let h=`<h2>تقرير بيانات التوريد</h2><p class="muted">${escapeHtml(supFilterText())} · ${new Date().toLocaleDateString("en-GB")}</p>`;
-  h+=`<h3>ملخص المبالغ</h3><table border="1"><tbody>${supKpiList(C).map(x=>`<tr><th style="text-align:right">${x.l}</th><td class="num">${nm(x.n,x.d)}</td><td>${x.s||""}</td></tr>`).join("")}</tbody></table>`;
+  if(xl) h+=`<h3>ملخص المبالغ</h3><table border="1"><tbody>${supKpiList(C).map(x=>`<tr><th style="text-align:right">${x.l}</th><td class="num">${nm(x.n,x.d)}</td><td>${x.s||""}</td></tr>`).join("")}</tbody></table>`;
   if(SS){ const tb=supBreakTable("customer",C); h+=`<h3>${tb.title}</h3><table border="1">${supTableHtml(tb,xl)}</table>`; }
   if(SB){ const tb=supBreakTable("supplier",C); h+=`<h3>${tb.title}</h3><table border="1">${supTableHtml(tb,xl)}</table>`; }
   if(supFilter.grouped){
@@ -3869,11 +3893,11 @@ function supReportHtml(C,xl){
     h+=`<h3>الإجماليات حسب أمر البيع</h3><table border="1"><thead><tr>${cols.map((x,i)=>`<th${i>=paymentStart?` class="pay-terms-head${i===paymentStart?' pay-terms-start':''}${i-paymentStart<=1?' pay-cash':''}"`:''}>${escapeHtml(x)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody><tfoot><tr>${footCells.map(x=>`<td>${escapeHtml(String(x??""))}</td>`).join("")}</tr></tfoot></table>`;
     return h;
   }
-  const head=["البوليصة","التاريخ","أمر البيع","المورد","العميل","المصنع","القطر","النوع","كمية التوريد","الوزن الفعلي"]
+  const head=(xl?["البوليصة"]:[]).concat(["التاريخ","أمر البيع","المورد","العميل","المصنع","القطر","النوع","كمية التوريد","الوزن الفعلي"])
     .concat(SB?["سعر الشراء"]:[]).concat(SS?["سعر البيع","قبل الضريبة","الضريبة","الخصم","الإجمالي"]:[]);
   const rows=L.map(({s,it})=>{
     const a=supplyAmounts(s,it), sub=a.subtotal;
-    return `<tr><td>${escapeHtml(String(s.policyNo||""))}</td><td>${escapeHtml(s.date||"")}</td><td>${escapeHtml(String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||""))}</td><td>${escapeHtml(s.supplier||"")}</td><td>${escapeHtml(s.customer||"")}</td><td>${escapeHtml(itemFactory(s,it)||"")}</td><td>${escapeHtml(String(it.diameter||""))}</td><td>${escapeHtml(String(it.type||""))}</td><td class="num">${nm(it.supplyQty,3)}</td><td class="num">${nm(it.actualWeight,3)}</td>`
+    return `<tr>${xl?`<td>${escapeHtml(String(s.policyNo||""))}</td>`:""}<td>${escapeHtml(s.date||"")}</td><td>${escapeHtml(String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||""))}</td><td>${escapeHtml(s.supplier||"")}</td><td>${escapeHtml(s.customer||"")}</td><td>${escapeHtml(itemFactory(s,it)||"")}</td><td>${escapeHtml(String(it.diameter||""))}</td><td>${escapeHtml(String(it.type||""))}</td><td class="num">${nm(it.supplyQty,3)}</td><td class="num">${nm(it.actualWeight,3)}</td>`
       +(SB?`<td class="num">${nm(it.buyPrice,2)}</td>`:"")
       +(SS?`<td class="num">${nm(it.sellPrice,2)}</td><td class="num">${nm(sub,2)}</td><td class="num">${nm(a.tax,2)}</td><td class="num">${nm(a.discount,2)}</td><td class="num">${nm(a.total,2)}</td>`:"")+`</tr>`;
   }).join("");
@@ -3894,7 +3918,16 @@ function supExportExcel(){
 function supExportPdf(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للطباعة","err"); return; }
-  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>تقرير بيانات التوريد</title><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet"><style>@page{size:A4 landscape;margin:10mm}${SUP_REPORT_CSS}</style></head><body>${supReportHtml(C,false)}</body></html>`;
+  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>تقرير بيانات التوريد</title><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet"><style>@page{size:A4 landscape;margin:8mm}${SUP_REPORT_CSS}body{padding:8px}th,td{white-space:nowrap}</style></head><body>${supReportHtml(C,false)}<script>
+(function(){
+  function fit(avail){ document.querySelectorAll('table').forEach(function(t){ t.style.zoom=1; var w=t.scrollWidth; if(w>avail) t.style.zoom=(avail/w).toFixed(3); }); }
+  function screenFit(){ fit(Math.max(300,document.documentElement.clientWidth-24)); }
+  window.addEventListener('load',screenFit);
+  window.addEventListener('resize',screenFit);
+  window.addEventListener('beforeprint',function(){ fit(1040); });
+  window.addEventListener('afterprint',screenFit);
+})();
+<\/script></body></html>`;
   openReportPreview(html,'تقرير بيانات التوريد');
 }
 
@@ -5195,6 +5228,7 @@ function txDel(id, direction){
   const e = state.treasuryEntries.find(x=>x.id===id); if(!e) return;
   if(!confirm(`حذف السجل رقم ${e.no} (${fmt(e.amount)} ${state.settings.currency})؟`)) return;
   state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
+  if(String(id).indexOf('tx_import_')===0){ txMarkDeleted(id); try{ sb.from('treasury_entries').delete().eq('id',id).then(()=>{}); }catch(err){} }
   saveState(); renderTreasury(direction); toast("تم الحذف","ok");
 }
 
@@ -5252,7 +5286,7 @@ function openTxForm(direction, existing){
     </div>
     <div id="txSettlementDetails" style="display:none;margin-bottom:14px">
       <div style="font-weight:800;color:var(--gold);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
-      <div class="tbl-wrap"><table><thead><tr><th>اختيار</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="8">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
+      <div class="tbl-wrap"><table><thead><tr><th>اختيار</th><th>أمر البيع / القسط</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="9">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
     </div><div id="txMainForm">
     `:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -5347,20 +5381,84 @@ function txShowSettlementTab(which){
   if(main) main.style.display=which==='details'?'none':'';
   if(which==='details') txRenderSettlementDetails();
 }
+function txOrderKey(v){ return supOrderNumberKey(v); }
+function txAllocMatches(a, so, orderNo){
+  const k=txOrderKey(orderNo);
+  if(so && a.orderId!=null && String(a.orderId)===String(so.id)) return true;
+  if(a.orderId!=null && txOrderKey(a.orderId)===k) return true;
+  return a.orderNo!=null && txOrderKey(a.orderNo)===k;
+}
+// أقساط العميل: من خطة السداد (جدول الأقساط لكل أمر بيع). القسط 1 = الكاش + أول قسط أجل.
+// أمر كاش 100% = قسط واحد. لو مفيش خطة للأمر نرجع للحساب القديم (تقسيم متساوي).
 function txInvoiceRowsForCustomer(customer){
   if(!customer) return [];
-  return (state.saleOrders||[]).filter(so=>so.customer===customer).map(so=>{
-    const linked=[...(state.shipments||[]),...(state.policies||[])].filter(x=>x.saleOrderId===so.id);
-    const total=linked.reduce((sum,x)=>sum+(x.items||[]).reduce((a,it)=>a+(+it.total||0),0),0);
-    const n=Math.max(1,parseInt(so.terms?.installments)||1), days=+so.terms?.periodDays||30;
-    const per=total/n;
-    return Array.from({length:n},(_,i)=>{
-      const due=new Date((so.date||new Date().toISOString().slice(0,10))+'T00:00:00'); due.setDate(due.getDate()+days*(i+1));
-      const paid=(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&e.customer===customer&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned"&&(e.allocations||[]).some(a=>a.orderId===so.id&&+a.installment===i+1)).reduce((a,e)=>a+(+(e.allocations||[]).find(a=>a.orderId===so.id&&+a.installment===i+1)?.amount||0),0);
-      return {orderId:so.id,orderNo:so.orderNo,date:so.date||'',total,installment:i+1,due:due.toISOString().slice(0,10),amount:per,paid,remaining:Math.max(0,per-paid)};
+  const cust=String(customer).trim();
+  const orders=new Map();
+  (state.saleOrders||[]).filter(so=>String(so.customer||"").trim()===cust).forEach(so=>{ orders.set(txOrderKey(so.orderNo),{so,orderNo:so.orderNo}); });
+  SUP_IMPORTED_PLAN_MAP.forEach((p,k)=>{
+    if(String(p.customer||"").trim()!==cust || orders.has(k)) return;
+    const so=(state.saleOrders||[]).find(x=>txOrderKey(x.orderNo)===k)||null;
+    orders.set(k,{so,orderNo:p.orderNo});
+  });
+  const allDocs=[...(state.shipments||[]),...(state.policies||[])];
+  const paidFor=(so,orderNo,inst)=>(state.treasuryEntries||[]).filter(e=>e.direction==='in'&&String(e.customer||"").trim()===cust&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned")
+    .reduce((s,e)=>s+(e.allocations||[]).filter(a=>+a.installment===inst&&txAllocMatches(a,so,orderNo)).reduce((x,a)=>x+(+a.amount||0),0),0);
+  const out=[];
+  orders.forEach(({so,orderNo},k)=>{
+    const plan=supPaymentPlanForOrder(orderNo);
+    const linked=so?allDocs.filter(x=>x.saleOrderId===so.id):[];
+    const docDate=so?.date||(allDocs.find(x=>txOrderKey(x.saleOrderNo)===k)||{}).date||'';
+    const orderId=so?so.id:String(orderNo);
+    let parts=[], total=0;
+    if(plan){
+      const cash=+plan.cashValue||0, sched=plan.schedule||[];
+      total=plan.total!=null?+plan.total:(cash+sched.reduce((s,d)=>s+d.amount,0));
+      if(cash>0||!sched.length) parts.push({no:0,amount:cash||total,due:docDate});   // قسط نقدي
+      sched.forEach((d,i)=>parts.push({no:i+1,amount:d.amount,due:d.date||docDate})); // أقساط الأجل
+    }else if(so){
+      total=linked.reduce((sum,x)=>sum+(x.items||[]).reduce((a,it)=>a+(+it.total||0),0),0);
+      const n=Math.max(1,parseInt(so.terms?.installments)||1), days=+so.terms?.periodDays||30;
+      parts=Array.from({length:n},(_,i)=>{
+        const due=new Date((so.date||new Date().toISOString().slice(0,10))+'T00:00:00'); due.setDate(due.getDate()+days*(i+1));
+        return {no:i+1,amount:total/n,due:due.toISOString().slice(0,10)};
+      });
+    }
+    parts.forEach(pt=>{
+      const paid=paidFor(so,orderNo,pt.no), rem=pt.amount-paid;
+      out.push({orderId,orderNo,date:docDate,total,installment:pt.no,label:pt.no===0?'قسط نقدي':'قسط '+pt.no,due:pt.due||'',amount:pt.amount,paid,remaining:rem<1?0:rem});
     });
-  }).flat().sort((a,b)=>String(a.due).localeCompare(String(b.due)));
+  });
+  return out.sort((a,b)=>String(a.due).localeCompare(String(b.due)));
 }
+
+// ---------- المستحقات: كل الأقساط المتبقية (القسط النقدي + أقساط الأجل) لكل العملاء ----------
+function txAllDueRows(){
+  const names=new Set();
+  (state.saleOrders||[]).forEach(o=>{ if(o.customer) names.add(String(o.customer).trim()); });
+  SUP_IMPORTED_PLAN_MAP.forEach(p=>{ if(p.customer) names.add(String(p.customer).trim()); });
+  const d=new Date(), today=d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+  const out=[];
+  names.forEach(c=>txInvoiceRowsForCustomer(c).forEach(r=>{
+    if(r.remaining<=0) return;
+    const late=!!r.due&&r.due<today;
+    out.push({customer:c,orderNo:r.orderNo,label:r.label,due:r.due,amount:r.amount,paid:r.paid,remaining:r.remaining,late,
+              days:late?Math.floor((new Date(today+"T00:00:00")-new Date(r.due+"T00:00:00"))/86400000):0});
+  }));
+  return out.sort((a,b)=>String(a.due).localeCompare(String(b.due)));
+}
+(function(){
+  const D=window.QS_DATA=window.QS_DATA||{};
+  Object.defineProperty(D,"loginInstallmentsBtn",{configurable:true,enumerable:true,get(){
+    try{ return txAllDueRows().map(r=>[r.customer,r.orderNo+" — "+r.label,r.due||"—",fmt(r.amount),fmt(r.paid),fmt(r.remaining),r.late?"متأخر":"مستحق"]); }catch(e){ return []; }
+  }});
+  Object.defineProperty(D,"loginOverdueBtn",{configurable:true,enumerable:true,get(){
+    try{
+      const m=new Map();
+      txAllDueRows().filter(r=>r.late).forEach(r=>{ const g=m.get(r.customer)||{sum:0,n:0,days:0}; g.sum+=r.remaining; g.n++; g.days+=r.days; m.set(r.customer,g); });
+      return [...m.entries()].sort((a,b)=>b[1].sum-a[1].sum).map(([c,g])=>[c,fmt(g.sum),g.n,Math.round(g.days/g.n)]);
+    }catch(e){ return []; }
+  }});
+})();
 function txRenderSettlementDetails(){
   const body=document.getElementById('txSettlementRows'); if(!body) return;
   const customer=document.getElementById('tx_party')?.value||'';
@@ -5373,15 +5471,15 @@ function txRenderSettlementDetails(){
   if(detailsBtn) detailsBtn.style.display=kind==='credit_amount'?'none':'';
   if(kind==='credit_amount'){
     if(details) details.style.display='none'; if(main) main.style.display='';
-    body.innerHTML='<tr><td colspan="8">المبلغ الدائن لا يحتاج إلى تخصيص على قسط.</td></tr>'; window.__txCurrentAllocRows=[]; return;
+    body.innerHTML='<tr><td colspan="9">المبلغ الدائن لا يحتاج إلى تخصيص على قسط.</td></tr>'; window.__txCurrentAllocRows=[]; return;
   }
-  if(!customer){body.innerHTML='<tr><td colspan="8">اختر العميل أولًا.</td></tr>';return;}
-  if(!kind){body.innerHTML='<tr><td colspan="8">اختر طريقة السداد أولًا.</td></tr>';return;}
+  if(!customer){body.innerHTML='<tr><td colspan="9">اختر العميل أولًا.</td></tr>';return;}
+  if(!kind){body.innerHTML='<tr><td colspan="9">اختر طريقة السداد أولًا.</td></tr>';return;}
   let rows=txInvoiceRowsForCustomer(customer).filter(r=>r.remaining>0);
-  if(!rows.length){body.innerHTML='<tr><td colspan="8">لا توجد أقساط مستحقة أو متبقية لهذا العميل.</td></tr>';window.__txCurrentAllocRows=[];return;}
+  if(!rows.length){body.innerHTML='<tr><td colspan="9">لا توجد أقساط مستحقة أو متبقية لهذا العميل.</td></tr>';window.__txCurrentAllocRows=[];return;}
   window.__txCurrentAllocRows=rows;
   const auto=kind==='invoice_deduction';
-  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" max="${r.remaining}" step="0.01" value="0" readonly title="يتم توزيع مبلغ التحصيل تلقائيًا على الأقساط التي تختارها" style="min-width:90px;opacity:.9">`}</td></tr>`).join('');
+  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))} — ${r.label}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" max="${r.remaining}" step="0.01" value="0" readonly title="يتم توزيع مبلغ التحصيل تلقائيًا على الأقساط التي تختارها" style="min-width:90px;opacity:.9">`}</td></tr>`).join('');
   if(auto) txPreviewAutoAllocations();
   else txPreviewAssistanceAllocations();
 }
@@ -6073,7 +6171,7 @@ function openMyPassword(first){
     loginChecksAgainstUsBtn:{title:"📝 شيكات علينا",wide:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},empty:"مفيش شيكات علينا مسجلة لسه"},
     loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 العملاء (لهم علينا)",key:"clients"},{tag:"🏭 الموردين (علينا لهم)",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير (يوم)"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
-    loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,cols:["#","العميل","إجمالي المستحق","المسدد","المتأخر","تاريخ الاستحقاق","الحالة"],total:{label:"الإجمالي",col:2},empty:"مفيش أقساط مسجلة لسه"},
+    loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,cols:["#","العميل","أمر البيع / القسط","تاريخ الاستحقاق","قيمة القسط","المسدد","المتبقي","الحالة"],total:{label:"الإجمالي",col:6},empty:"لا توجد أقساط مستحقة"},
     loginLastPricesBtn:{title:"🏷️ اخر سعر شراء وبيع",wide:true,cols:["#","العميل","الوزن الفعلي","اخر سعر شراء","اخر سعر بيع","اخر طريقة السداد","تاريخ اخر فاتورة"],empty:"مفيش أوامر بيع مسجلة لسه"},
     loginCustodyBtn:{title:"💼 العهد",cols:["#","الموظف","متبقي العهدة"],total:{label:"الإجمالي",col:2},empty:"مفيش عهد عليها رصيد دلوقتي"}
   };
