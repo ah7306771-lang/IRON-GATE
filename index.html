@@ -1552,9 +1552,9 @@ const SHIP_SPEC = [["policyNo","policy_no","t"],["date","date","d"],["supplier",
 const SHIP_ITEM_SPEC = [["factory","factory","t"],["diameter","diameter","t"],["type","type","t"],["agingStatus","aging_status","t"],["supplyQty","supply_qty","n"],
   ["actualWeight","actual_weight","n"],["weightTon","weight_ton","n"],["buyPrice","buy_price","n"],["sellPrice","sell_price","n"],
   ["tax","tax","n"],["discount","discount","n"],["total","total","n"],["notes","notes","t"]];
-const SO_SPEC = [["orderNo","order_no","t"],["date","date","d"],["customer","customer","t"],["supplier","supplier","t"],["attention","attention","t"],
-  ["contactName","contact_name","t"],["contactPhone","contact_phone","t"],["rep","rep","t"],["notes","notes","t"],
-  ["closed","closed","b"],["closedAt","closed_at","z"],["closeReason","close_reason","t"],["savedAt","saved_at","z"],["quoteId","quote_id","t"],["quoteNo","quote_no","t"]];
+// sale_orders schema الفعلي: الحقول الإضافية تحفظ داخل data JSONB ولا تُرسل كأعمدة غير موجودة.
+const SO_SPEC = [["orderNo","order_no","t"],["date","so_date","d"],["customer","customer","t"],["supplier","supplier","t"],
+  ["closed","closed","b"],["quoteId","quote_id","t"],["address","address","t"]];
 const SO_ITEM_SPEC = [["id","item_id","t"],["diameter","diameter","t"],["qty","qty","n"],["spec","spec","t"],["type","type","t"],["notes","notes","t"]];
 const DOC_GROUPS = { ship:{ t:"shipments", it:"shipment_items", fk:"shipment_id" }, so:{ t:"sale_orders", it:"sale_order_items", fk:"sale_order_id" } };
 let docSnaps = {}, docMeta = new Set(), counterSnap = "", docsReady = false;
@@ -1595,9 +1595,17 @@ function packShipment(rec,posted){
   return { row, items };
 }
 function packSO(rec){
-  const row=packObj(rec,SO_SPEC,["id","items"]); row.id=String(rec.id); row.updated_at=new Date().toISOString();
+  const row={id:String(rec.id),order_no:String(rec.orderNo||""),so_date:rec.date||null,customer:rec.customer||null,supplier:rec.supplier||null,
+    closed:!!rec.closed,quote_id:rec.quoteId||null,address:rec.address||null,
+    data:Object.fromEntries(Object.entries(rec).filter(([k])=>!['id','items','orderNo','date','customer','supplier','closed','quoteId','address'].includes(k))),
+    updated_at:new Date().toISOString()};
   const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SO_ITEM_SPEC); r.sale_order_id=row.id; r.line_no=i+1; return r; });
   return { row, items };
+}
+function unpackSO(row){
+  const data=row.data&&typeof row.data==='object'?row.data:{};
+  return Object.assign({},data,{id:String(row.id),orderNo:row.order_no||data.orderNo||'',date:row.so_date||data.date||'',
+    customer:row.customer??data.customer??'',supplier:row.supplier??data.supplier??'',closed:!!row.closed,quoteId:row.quote_id||data.quoteId||'',address:row.address??data.address??''});
 }
 function docEntries(g){
   if(g==="ship") return [...(state.policies||[]).map(r=>[r,false]), ...(state.shipments||[]).map(r=>[r,true])];
@@ -1723,7 +1731,7 @@ async function loadDocs(){
     // أوامر البيع
     if(ss.length || docMeta.has("so")){
       const li=groupBy(sis,"sale_order_id");
-      const serverSaleOrders = ss.map(h=>{ const rec=unpackObj(h,SO_SPEC,{ id:h.id }); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SO_ITEM_SPEC)); return rec; });
+      const serverSaleOrders = ss.map(h=>{ const rec=unpackSO(h); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SO_ITEM_SPEC)); return rec; });
       // السيرفر هو المرجع عند وجود نفس المعرّف أو رقم الأمر، لكن لا تسقط أي أمر محلي غير موجود عليه.
       const serverIds=new Set(serverSaleOrders.map(o=>String(o.id)));
       const serverNos=new Set(serverSaleOrders.map(o=>soKey(o.orderNo)).filter(Boolean));
@@ -5094,6 +5102,70 @@ document.addEventListener("DOMContentLoaded",()=>{
   }catch(e){}
 });
 
+// نسخ بيانات التوريد إلى أمر بيع بعد عرض فحص مسبق ومنع النسخ عند وجود أخطاء.
+function soCopyFromSupply(){
+  if(!guard()) return;
+  const docs=[...(state.shipments||[]),...(state.policies||[])].filter(x=>x&&Array.isArray(x.items)&&x.items.length);
+  if(!docs.length){toast('لا توجد بوالص أو أصناف في بيانات التوريد للنسخ.','err');return;}
+  const groups=new Map();
+  docs.forEach(doc=>{
+    const no=String(doc.saleOrderNo||'').trim()||String(doc.policyNo||'').trim();
+    const key=soKey(no); if(!key)return;
+    if(!groups.has(key))groups.set(key,{no,docs:[]}); groups.get(key).docs.push(doc);
+  });
+  if(!groups.size){toast('لا توجد أرقام أوامر بيع أو بوالص يمكن الاختيار منها في بيانات التوريد.','err');return;}
+  const list=[...groups.values()];
+  const opts=list.sort((a,b)=>a.no.localeCompare(b.no,'ar')).map((g,i)=>{
+    const first=g.docs[0]||{}; const count=g.docs.reduce((n,x)=>n+(x.items||[]).length,0);
+    return `<option value="${i}">${escapeHtml(g.no)} — ${escapeHtml(first.customer||'بدون عميل')} — ${g.docs.length} بوليصة / ${count} صنف</option>`;
+  }).join('');
+  const sortedGroup= [...list];
+  const inspect=(g)=>{
+    if(!g)return {errors:['لم يتم اختيار مصدر صحيح.'],warnings:[],items:[],docs:[]};
+    const sorted=[...g.docs].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))), first=sorted[0]||{};
+    const items=[];
+    sorted.forEach(doc=>(doc.items||[]).forEach(it=>{
+      const q=Number(it.qty??it.supplyQty??0)||Number(it.actualWeight??it.weightTon??it.weight??0)||0;
+      const factory=typeof itemFactory==='function'?(itemFactory(doc,it)||''):'';
+      items.push({id:'copy-'+Date.now()+'-'+items.length,diameter:String(it.diameter||''),qty:String(q||''),spec:String(it.spec||it.grade||''),type:String(it.type||''),notes:[factory?'المصنع: '+factory:'',it.notes||'',doc.policyNo?'بوليصة: '+doc.policyNo:''].filter(Boolean).join(' | ')});
+    }));
+    const errors=[],warnings=[];
+    if(!String(first.customer||'').trim()) errors.push('اسم العميل غير موجود في بيانات التوريد.');
+    if(!first.date || !/^\d{4}-\d{2}-\d{2}$/.test(String(first.date))) errors.push('تاريخ أمر التوريد غير موجود أو غير صحيح.');
+    if(!items.length) errors.push('لا توجد أصناف قابلة للنسخ.');
+    items.forEach((it,i)=>{
+      if(!(Number(it.qty)>0)) errors.push(`الصنف ${i+1}: الكمية غير موجودة أو تساوي صفرًا.`);
+      if(!it.diameter.trim()) warnings.push(`الصنف ${i+1}: القطر غير محدد.`);
+      if(!it.spec.trim()) warnings.push(`الصنف ${i+1}: المواصفة غير محددة.`);
+    });
+    if(!String(first.supplier||'').trim()) warnings.push('اسم المورد غير محدد.');
+    if(!String(first.address||first.site||'').trim()) warnings.push('العنوان/الموقع غير محدد.');
+    return {errors,warnings,items,docs:sorted,first};
+  };
+  const previewHtml=(result)=>{
+    const status=result.errors.length
+      ? `<div style="padding:10px;border:1px solid #dc6b6b;border-radius:8px;color:#a12626;background:#fff3f3"><b>لم يتم النسخ — توجد ${result.errors.length} مشكلة يجب حلها:</b><ul>${result.errors.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></div>`
+      : `<div style="padding:10px;border:1px solid #299764;border-radius:8px;color:#17633f;background:#effaf4"><b>الفحص الأساسي سليم. يمكن إتمام النسخ.</b></div>`;
+    const warnings=result.warnings.length?`<div style="margin-top:8px;padding:10px;border:1px solid #d6a33b;border-radius:8px;background:#fff9e9"><b>ملاحظات للمراجعة (${result.warnings.length}):</b><ul>${result.warnings.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul></div>`:'';
+    const summary=`<p><b>ملخص المصدر:</b> ${result.docs.length} بوليصة، ${result.items.length} صنف — العميل: ${escapeHtml(result.first?.customer||'غير محدد')} — التاريخ: ${escapeHtml(result.first?.date||'غير محدد')}</p>`;
+    return `<div id="soSupplyCopyPreview" style="margin-top:12px">${summary}${status}${warnings}</div>`;
+  };
+  const initial=inspect(sortedGroup[0]);
+  openModal('فحص ونسخ من بيانات التوريد إلى أمر البيع',`<p class="muted">اختر مصدر البيانات. سيظهر تقرير الفحص أولًا. لن يتم النسخ إذا وُجدت مشكلة أساسية، وستظل بيانات التوريد الأصلية كما هي.</p><div class="fld"><label>مصدر البيانات</label><select class="inp" id="soSupplyCopySource">${opts}</select></div>${previewHtml(initial)}`,()=>{
+    const idx=Number(document.getElementById('soSupplyCopySource')?.value||0), g=sortedGroup[idx];
+    const result=inspect(g);
+    const preview=document.getElementById('soSupplyCopyPreview'); if(preview) preview.outerHTML=previewHtml(result);
+    if(result.errors.length){toast('لم يتم النسخ. راجع المشاكل الظاهرة في تقرير الفحص.','err');return false;}
+    const first=result.first, items=result.items;
+    soDraft={...soDefault(),orderNo:String(first.saleOrderNo||g.no||state.soNextNum||'0001'),date:first.date||new Date().toISOString().slice(0,10),customer:first.customer||'',supplier:first.supplier||'',address:first.address||first.site||'',items,notes:'نسخة من بيانات التوريد — '+result.docs.map(x=>x.policyNo).filter(Boolean).join('، '),closed:false,closedAt:null,closeReason:'',_copiedFromSupply:true};
+    soLoadedId=null;soVirtualMode=false;go('saleOrder');toast('اجتاز المصدر الفحص وتم نسخ '+items.length+' صنف إلى مسودة أمر البيع.','ok');
+  });
+  const source=document.getElementById('soSupplyCopySource');
+  const updatePreview=()=>{const r=inspect(sortedGroup[Number(source?.value||0)]);const el=document.getElementById('soSupplyCopyPreview');if(el)el.outerHTML=previewHtml(r);};
+  source?.addEventListener('change',updatePreview);
+  const okBtn=document.querySelector('#modalBackdrop .mfoot .btn:not(.ghost)'); if(okBtn)okBtn.textContent='فحص ونسخ';
+}
+
 // إنشاء سجلات أوامر البيع المفقودة من بيانات التوريد الحالية، مع الحفاظ على كل بوليصة وصنف كمصدر.
 // لا يعدّل الأوامر الموجودة ولا يحذف/يغيّر أي تحصيل أو بوليصة أو خطة سداد.
 function soImportMissingFromSupply(){
@@ -5207,6 +5279,7 @@ function viewSaleOrder(){
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
+  <button class="btn" onclick="soCopyFromSupply()" title="نسخ بيانات التوريد إلى مسودة أمر بيع جديد">📋 نسخ من بيانات التوريد</button>
   <button class="btn ghost" onclick="soImportMissingFromSupply()" title="إنشاء سجلات أوامر البيع الناقصة من بيانات التوريد">📥 إنشاء الأوامر الناقصة من بيانات التوريد</button>
 
   <div class="so-actions">
