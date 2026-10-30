@@ -1286,6 +1286,149 @@ const MASTER_TABLES = {
 };
 const MASTER_KINDS = Object.keys(MASTER_TABLES);
 let masterLoaded = false, syncTimer = null, syncBusy = false, syncAgain = false, lastSnaps = {};
+
+// ---------- مزامنة عروض الأسعار والأرصدة الافتتاحية ----------
+// هذان الجزءان كانا محفوظين في localStorage فقط؛ نربطهما الآن بالسيرفر.
+let quotesReady=false, quoteSnap=new Map(), qtCounterSnap="";
+let openingReady=false, openingSnap=new Map();
+let orderTermsReady=false, orderTermsSnap=new Map();
+const QUOTE_TABLE="sale_quotes", OPENING_TABLE="party_opening_balances", ORDER_TERMS_TABLE="sale_order_terms";
+function stableJson(v){ return JSON.stringify(v===undefined?null:v); }
+function quoteDiff(){
+  const cur=new Map(), up=[];
+  (state.quotes||[]).forEach(q=>{ if(!q||!q.id) return; const id=String(q.id), val=stableJson(q); cur.set(id,val); if(quoteSnap.get(id)!==val) up.push(q); });
+  const del=[...quoteSnap.keys()].filter(id=>!cur.has(id));
+  return {cur,up,del};
+}
+function quotesChanged(){
+  if(!quotesReady) return false;
+  const d=quoteDiff();
+  return !!(d.up.length||d.del.length||String(state.qtNextNum||1)!==qtCounterSnap);
+}
+async function loadQuotesFromSupabase(){
+  quotesReady=false;
+  try{
+    const rows=await fetchAllRows(QUOTE_TABLE,["id"]);
+    // لو فيه بيانات على السيرفر، السيرفر هو المرجع. لو الجدول فاضي، نحافظ على عروض الجهاز ونرفعها أول مرة.
+    if(rows.length) state.quotes=rows.map(r=>r.data).filter(q=>q&&q.id);
+    quoteSnap=new Map(rows.filter(r=>r&&r.id&&r.data).map(r=>[String(r.id),stableJson(r.data)]));
+    const cr=await sb.from("app_counters").select("value").eq("name","qtNextNum").maybeSingle();
+    if(cr.error) throw cr.error;
+    const serverN=cr.data?Number(cr.data.value)||1:1;
+    const maxNo=Math.max(0,...(state.quotes||[]).map(q=>parseInt(q.quoteNo,10)||0));
+    state.qtNextNum=Math.max(serverN,maxNo+1,Number(state.qtNextNum)||1);
+    qtCounterSnap=cr.data?String(serverN):"";
+    quotesReady=true;
+  }catch(e){
+    quotesReady=false;
+    console.warn("تعذر تحميل عروض الأسعار من Supabase:",e);
+    toast("عروض الأسعار لم تُربط بالسيرفر بعد — شغّل ملف irongate_shared_sync_setup.sql","err");
+  }
+}
+async function syncQuotes(){
+  if(!quotesReady) return;
+  const d=quoteDiff();
+  for(let i=0;i<d.up.length;i+=100){
+    const rows=d.up.slice(i,i+100).map(q=>({id:String(q.id),quote_no:String(q.quoteNo||""),quote_date:/^\d{4}-\d{2}-\d{2}$/.test(String(q.date||""))?q.date:null,customer:String(q.customer||""),data:q,updated_at:new Date().toISOString()}));
+    const r=await sb.from(QUOTE_TABLE).upsert(rows,{onConflict:"id"}); if(r.error) throw r.error;
+  }
+  for(let i=0;i<d.del.length;i+=100){
+    const r=await sb.from(QUOTE_TABLE).delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
+  }
+  const cn=String(state.qtNextNum||1);
+  if(cn!==qtCounterSnap){
+    const r=await sb.from("app_counters").upsert({name:"qtNextNum",value:Number(cn)},{onConflict:"name"}); if(r.error) throw r.error;
+    qtCounterSnap=cn;
+  }
+  quoteSnap=d.cur;
+}
+function openingDiff(){
+  const cur=new Map(), up=[];
+  const root=state.partyOpening||{customers:{},suppliers:{}};
+  ["customers","suppliers"].forEach(kind=>{
+    Object.entries(root[kind]||{}).forEach(([name,amount])=>{
+      const key=kind+"::"+name, val=String(Number(amount)||0);
+      cur.set(key,val); if(openingSnap.get(key)!==val) up.push({kind,party_name:name,amount:Number(amount)||0});
+    });
+  });
+  const del=[...openingSnap.keys()].filter(k=>!cur.has(k));
+  return {cur,up,del};
+}
+function openingChanged(){
+  if(!openingReady) return false;
+  const d=openingDiff(); return !!(d.up.length||d.del.length);
+}
+async function loadOpeningFromSupabase(){
+  openingReady=false;
+  try{
+    const rows=await fetchAllRows(OPENING_TABLE,["kind","party_name"]);
+    if(rows.length){
+      const next={customers:{},suppliers:{}};
+      rows.forEach(r=>{ if((r.kind==="customers"||r.kind==="suppliers")&&r.party_name) next[r.kind][r.party_name]=Number(r.amount)||0; });
+      state.partyOpening=next;
+    }else if(!state.partyOpening) state.partyOpening={customers:{},suppliers:{}};
+    openingSnap=new Map(rows.filter(r=>r&&r.kind&&r.party_name).map(r=>[r.kind+"::"+r.party_name,String(Number(r.amount)||0)]));
+    openingReady=true;
+  }catch(e){
+    openingReady=false;
+    console.warn("تعذر تحميل الأرصدة الافتتاحية من Supabase:",e);
+    toast("الأرصدة الافتتاحية لم تُربط بالسيرفر بعد — شغّل ملف irongate_shared_sync_setup.sql","err");
+  }
+}
+async function syncOpeningBalances(){
+  if(!openingReady) return;
+  const d=openingDiff();
+  for(let i=0;i<d.up.length;i+=100){
+    const r=await sb.from(OPENING_TABLE).upsert(d.up.slice(i,i+100),{onConflict:"kind,party_name"}); if(r.error) throw r.error;
+  }
+  for(const key of d.del){
+    const p=key.indexOf("::"), kind=key.slice(0,p), name=key.slice(p+2);
+    const r=await sb.from(OPENING_TABLE).delete().eq("kind",kind).eq("party_name",name); if(r.error) throw r.error;
+  }
+  openingSnap=d.cur;
+}
+function orderTermsDiff(){
+  const cur=new Map(), up=[];
+  Object.entries(state.orderTerms||{}).forEach(([orderNo,data])=>{
+    const key=String(orderNo), val=stableJson(data);
+    cur.set(key,val); if(orderTermsSnap.get(key)!==val) up.push({order_no:key,data,updated_at:new Date().toISOString()});
+  });
+  const del=[...orderTermsSnap.keys()].filter(k=>!cur.has(k));
+  return {cur,up,del};
+}
+function orderTermsChanged(){
+  if(!orderTermsReady) return false;
+  const d=orderTermsDiff(); return !!(d.up.length||d.del.length);
+}
+async function loadOrderTermsFromSupabase(){
+  orderTermsReady=false;
+  try{
+    const rows=await fetchAllRows(ORDER_TERMS_TABLE,["order_no"]);
+    if(rows.length){
+      const next={};
+      rows.forEach(r=>{ if(r&&r.order_no&&r.data) next[String(r.order_no)]=r.data; });
+      state.orderTerms=next;
+    }else if(!state.orderTerms || typeof state.orderTerms!=="object") state.orderTerms={};
+    orderTermsSnap=new Map(rows.filter(r=>r&&r.order_no&&r.data).map(r=>[String(r.order_no),stableJson(r.data)]));
+    orderTermsReady=true;
+  }catch(e){
+    orderTermsReady=false;
+    console.warn("تعذر تحميل شروط السداد اليدوية من Supabase:",e);
+    toast("شروط السداد اليدوية لم تُربط بالسيرفر بعد — شغّل ملف irongate_shared_sync_setup.sql","err");
+  }
+}
+async function syncOrderTerms(){
+  if(!orderTermsReady) return;
+  const d=orderTermsDiff();
+  for(let i=0;i<d.up.length;i+=100){
+    const r=await sb.from(ORDER_TERMS_TABLE).upsert(d.up.slice(i,i+100),{onConflict:"order_no"}); if(r.error) throw r.error;
+  }
+  for(let i=0;i<d.del.length;i+=100){
+    const r=await sb.from(ORDER_TERMS_TABLE).delete().in("order_no",d.del.slice(i,i+100)); if(r.error) throw r.error;
+  }
+  orderTermsSnap=d.cur;
+}
+
 function snapOf(k){ return JSON.stringify(k==="settings" ? state.settings : state[k]); }
 function changedKinds(){ return MASTER_KINDS.concat(["settings"]).filter(k=>snapOf(k)!==lastSnaps[k]); }
 function mapProfile(r){ return { id:r.id, no:r.user_no, name:r.name, role:r.role, active:r.active, mustChange:r.must_change, perms:r.perms||{} }; }
@@ -1324,10 +1467,13 @@ async function loadMaster(admin){
   await loadDocs();
   await supLoadPaymentPlansFromSupabase();
   await txLoadTreasuryFromDb();
+  await loadQuotesFromSupabase();
+  await loadOpeningFromSupabase();
+  await loadOrderTermsFromSupabase();
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   masterLoaded = true;
-  if((docsReady && docsChanged()) || txChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
+  if((docsReady && docsChanged()) || txChanged() || quotesChanged() || openingChanged() || orderTermsChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
 }
 // ---------- البوالص (المحفوظة والمرحّلة) وأوامر البيع: جداول بأعمدة منفصلة لكل حقل ----------
 // النوع: t=نص، n=رقم، b=صح/غلط، d=تاريخ، z=تاريخ ووقت. أي حقل مش معروف بيتحفظ في عمود extra عشان مفيش بيانات تضيع.
@@ -1555,7 +1701,7 @@ async function syncDocs(){
   }
 }
 function scheduleSync(){
-  if(!currentUser || !masterLoaded || (!changedKinds().length && !docsChanged() && !txChanged())) return;
+  if(!currentUser || !masterLoaded || (!changedKinds().length && !docsChanged() && !txChanged() && !quotesChanged() && !openingChanged() && !orderTermsChanged())) return;
   clearTimeout(syncTimer); syncTimer = setTimeout(syncMaster, 600);
 }
 async function syncMaster(){
@@ -1590,8 +1736,52 @@ async function syncMaster(){
     }
     await syncDocs();
     await syncTreasury();
+    await syncQuotes();
+    await syncOpeningBalances();
+    await syncOrderTerms();
   }catch(e){ toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
+}
+// تحديث تلقائي من الأجهزة الأخرى عبر Supabase Realtime.
+// لا نستبدل حالة محلية عليها تغييرات غير مرفوعة أو نموذج مفتوح غير محفوظ.
+let sharedRealtimeChannel=null, remoteRefreshTimer=null, remoteRefreshBusy=false, remoteRefreshNotice=false;
+const SHARED_REALTIME_TABLES=[...Object.values(MASTER_TABLES).map(x=>x.t),"settings","shipments","shipment_items","sale_orders","sale_order_items","app_counters","treasury_entries","sale_order_payment_plans","sale_order_payment_schedule",QUOTE_TABLE,OPENING_TABLE,ORDER_TERMS_TABLE,"profiles","audit_log"];
+function hasPendingLocalChanges(){
+  return changedKinds().length>0 || (docsReady&&docsChanged()) || txChanged() || quotesChanged() || openingChanged() || orderTermsChanged();
+}
+function scheduleRemoteRefresh(){
+  if(!currentUser) return;
+  clearTimeout(remoteRefreshTimer);
+  remoteRefreshTimer=setTimeout(runRemoteRefresh,1200);
+}
+async function runRemoteRefresh(){
+  if(!currentUser || remoteRefreshBusy) return;
+  if(syncBusy || (typeof dirty!=="undefined" && dirty) || hasPendingLocalChanges()){
+    if(!remoteRefreshNotice){ toast("فيه تغييرات محلية لم تُحفظ أو شاشة مفتوحة؛ تم تأجيل تحديث البيانات المشتركة لحمايتها","err"); remoteRefreshNotice=true; }
+    remoteRefreshTimer=setTimeout(runRemoteRefresh,4000);
+    return;
+  }
+  remoteRefreshBusy=true;
+  try{
+    await loadMaster(isAdmin());
+    remoteRefreshNotice=false;
+    const page=canView(currentPage)?currentPage:firstAllowedPage();
+    if(page) go(page);
+  }catch(e){
+    console.warn("تعذر تحديث البيانات المشتركة:",e);
+    remoteRefreshTimer=setTimeout(runRemoteRefresh,5000);
+  }finally{ remoteRefreshBusy=false; }
+}
+function subscribeSharedRealtime(){
+  if(sharedRealtimeChannel){ try{ sb.removeChannel(sharedRealtimeChannel); }catch(e){} sharedRealtimeChannel=null; }
+  if(!currentUser) return;
+  let ch=sb.channel("irongate-shared-"+currentUser.no);
+  SHARED_REALTIME_TABLES.forEach(table=>{
+    ch=ch.on("postgres_changes",{event:"*",schema:"public",table},()=>scheduleRemoteRefresh());
+  });
+  sharedRealtimeChannel=ch.subscribe(status=>{
+    if(status==="CHANNEL_ERROR"||status==="TIMED_OUT") console.warn("Supabase Realtime status:",status);
+  });
 }
 async function fnErrMsg(r){
   try{
@@ -1805,6 +1995,7 @@ async function startSession(user, restored){
   catch(e){ await sb.auth.signOut(); currentUser = null; masterLoaded = false; loginErr("فشل تحميل البيانات: "+(e.message||e)); return false; }
   const u = state.users.find(x=>x.no===me.no) || me;
   enterApp(u, restored);
+  subscribeSharedRealtime();
   if(!restored){ audit("login","تسجيل دخول",u); sb.rpc("touch_login").then(()=>{},()=>{}); }
   return true;
 }
@@ -1865,6 +2056,8 @@ function resetSessionMemory(){
 function doLogout(reason){
   if(currentUser) audit(reason?"session_timeout":"logout", reason||"تسجيل خروج");
   currentUser=null; masterLoaded=false;
+  if(sharedRealtimeChannel){ try{ sb.removeChannel(sharedRealtimeChannel); }catch(e){} sharedRealtimeChannel=null; }
+  clearTimeout(remoteRefreshTimer);
   setTimeout(()=>{ try{ sb.auth.signOut(); }catch(e){} },600);
   try{ sessionStorage.removeItem("irongate_user_no"); }catch(e){}
   resetSessionMemory();
