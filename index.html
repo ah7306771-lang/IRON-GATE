@@ -4513,7 +4513,7 @@ const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOS
 const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:"",sellPrice:"",agingStatus:"",notes:""});
 const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:"",site:"",
   saleOrderId:"", saleOrderNo:"",
-  terms:{cashPct:0,installments:0,periodDays:0},
+  terms:{cashPct:0,installments:0,periodDays:0}, paySchedule:null, payScheduleReset:false, payScheduleResetImported:false, payScheduleResetOrderNo:"",
   applyDiscount:!!state.settings.discount1pct, // توافق قديم
   applyVat: true,
   vatPct: +state.settings.tax || 14,
@@ -5025,14 +5025,15 @@ function soNoSelectOptions(cur){
 }
 async function newOrderFromPolicy(){ if(!(await guard())) return; soLoadedId=null; soDraft=soDefault(); go("saleOrder"); }
 function setSoNo(v){
-  draft.saleOrderNo=String(v||"").trim(); dirty=true;
+  draft.saleOrderNo=String(v||"").trim(); dirty=true; draft.paySchedule=null; draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
   const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(draft.saleOrderNo));
   draft.saleOrderId=so?so.id:"";
   const el=document.getElementById("f_soNo"); if(el) el.classList.remove("bad");
   const ot=orderTermsFor(draft.saleOrderNo);
-  if(ot){   // أمر البيع له شروط محفوظة ← هي المعتمدة
+  if(ot){
     draft.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; draft.termsEdited=false;
     ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.value=draft.terms[k]==null?"":draft.terms[k]; });
+    if(Array.isArray(ot.paymentSchedule)) draft.paySchedule={orderNo:draft.saleOrderNo,rows:JSON.parse(JSON.stringify(ot.paymentSchedule))};
   }
   refreshTotals();
 }
@@ -5081,24 +5082,64 @@ function renderSoFullCard(t){
     <tfoot><tr><td colspan="3">الإجمالي</td><td class="num">${fmt(totPl,3)}</td><td class="num">${fmt(totUs,3)}</td><td class="num">${fmt(totNw,3)}</td><td class="num">${fmt(Math.round((totPl-totUs-totNw)*1000)/1000,3)}</td><td></td></tr></tfoot></table></div>`+soPoliciesRows(no,t);
 }
 // جدول السداد على مستوى أمر البيع (كل بوالصه): نقدي + أقساط بالنسبة والقيمة وتاريخ الاستحقاق
+function paymentScheduleRowId(x,i){ return x.id || ((+x.no||0)===0?"cash":"inst-"+(+x.no||i)); }
+function paymentScheduleRowsWithOverrides(no,rows){
+  const key=soKey(no), ot=key?orderTermsFor(no):null;
+  const reset=!!draft.payScheduleReset&&(!draft.payScheduleResetOrderNo||soKey(draft.payScheduleResetOrderNo)===key);
+  const saved=reset?null:((draft.paySchedule&&soKey(draft.paySchedule.orderNo||no)===key&&Array.isArray(draft.paySchedule.rows))?draft.paySchedule.rows:(ot&&Array.isArray(ot.paymentSchedule)?ot.paymentSchedule:null));
+  if(!saved) return rows.map((x,i)=>({...x,id:paymentScheduleRowId(x,i)}));
+  const byId=new Map(saved.map((x,i)=>[paymentScheduleRowId(x,i),x]));
+  return rows.map((x,i)=>{const id=paymentScheduleRowId(x,i), z=byId.get(id);return {...x,...(z?{amount:z.amount,due:z.due??z.date}:{}),id};});
+}
 function policyPaySchedule(t){
-  const no=String(draft.saleOrderNo||"").trim();
+  const no=String(draft.saleOrderNo||"").trim(), key=soKey(no);
   const docs=orderDocs(no, editingId).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
   docs.push({policyNo:draft.policyNo||"هذه البوليصة",date:draft.date,total:t.grandTotal});
-  let rows=[], source="";
-  if(!termsBlank(draft.terms)){
-    rows=orderScheduleRows(draft.terms,docs); source=no?"حسب شروط أمر البيع "+no+(docs.length>1?" — على كل بوالصه":""):"حسب شروط الدفع (معاينة)";
+  let rows=[], source="", total=docs.reduce((a,x)=>a+(+x.total||0),0);
+  const localRows=(!draft.payScheduleReset&&draft.paySchedule&&soKey(draft.paySchedule.orderNo||no)===key&&Array.isArray(draft.paySchedule.rows))?draft.paySchedule.rows:null;
+  const savedRows=draft.payScheduleReset?null:(localRows||(orderTermsFor(no)&&Array.isArray(orderTermsFor(no).paymentSchedule)?orderTermsFor(no).paymentSchedule:null));
+  const resetImportedOnly=!!(draft.payScheduleReset&& (draft.payScheduleResetImported||orderTermsFor(no)?.paymentScheduleOverrideOnly));
+  if(savedRows&&savedRows.length){
+    rows=savedRows.map((x,i)=>({...x,id:paymentScheduleRowId(x,i),due:x.due??x.date??""}));
+    const plan=no?supPaymentPlanForOrder(no):null;
+    if(plan&&plan.total!=null) total=plan.total;
+    source=no?"جدول الاستحقاقات المحفوظ لأمر البيع "+no:"جدول الاستحقاقات (معاينة)";
+  } else if(!resetImportedOnly&&!termsBlank(draft.terms)&&draft.terms.cashPct!==""&&draft.terms.cashPct!=null&&Number.isFinite(+draft.terms.cashPct)){
+    rows=orderScheduleRows(draft.terms,docs); source=no?("حسب شروط أمر البيع "+no+(docs.length>1?" — على كل بوالصه":"")):"حسب شروط الدفع (معاينة)";
   } else {
     const plan=no?supPaymentPlanForOrder(no):null;
     if(plan){
       const cash=plan.cashValue||0, sched=plan.schedule||[];
-      if(cash>0) rows.push({label:"نقدي",policy:"—",amount:cash,due:draft.date||"",no:0});
-      sched.forEach((d,i)=>rows.push({label:"قسط "+(i+1),policy:"—",amount:+d.amount||0,due:d.date||"",no:i+1}));
+      if(cash>0) rows.push({label:"نقدي",policy:"—",amount:cash,due:draft.date||"",no:0,id:"cash"});
+      sched.forEach((d,i)=>rows.push({label:"قسط "+(i+1),policy:"—",amount:+d.amount||0,due:d.date||"",no:i+1,id:"inst-"+(i+1)}));
       source="من خطة سداد أمر البيع "+no+(plan.method?" — "+plan.method:"");
-      return {rows,total:plan.total!=null?plan.total:rows.reduce((a,x)=>a+x.amount,0),source};
+      total=plan.total!=null?plan.total:rows.reduce((a,x)=>a+x.amount,0);
     }
   }
-  return {rows,total:docs.reduce((a,x)=>a+(+x.total||0),0),source};
+  if(rows.length && !rows.some(x=>(+x.no||0)===0 || x.id==="cash")){
+    rows.unshift({label:"نقدي",policy:"—",amount:0,due:orderLastDate(no)||draft.date||"",no:0,id:"cash"});
+  }
+  rows=paymentScheduleRowsWithOverrides(no,rows);
+  return {rows,total,source};
+}
+function setPayScheduleField(id,field,value){
+  if(viewOnly) return;
+  const t=draftTotals(), r=policyPaySchedule(t), rows=r.rows.map(x=>({...x}));
+  const row=rows.find(x=>x.id===id); if(!row) return;
+  if(field==="amount") row.amount=value===""?"":Math.max(0,Number(value)||0);
+  else if(field==="due") row.due=String(value||"");
+  draft.paySchedule={orderNo:String(draft.saleOrderNo||""),total:r.total,rows};
+  draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
+  dirty=true;
+  const sum=rows.reduce((a,x)=>a+(+x.amount||0),0), diff=r2(sum-(+r.total||0));
+  const sumEl=document.getElementById("paySchedSummary");
+  if(sumEl) sumEl.innerHTML=`إجمالي الجدول: <b>${fmt(sum)}</b> — إجمالي الفواتير/الخطة: <b>${fmt(r.total||0)}</b> — الفرق: <b style="color:${Math.abs(diff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(diff)}</b>`;
+}
+function refreshPayScheduleView(){ renderPolicyPaySchedule(draftTotals()); }
+function clearPayScheduleEdits(){
+  if(viewOnly) return;
+  draft.paySchedule=null; draft.payScheduleReset=true; draft.payScheduleResetImported=!!(orderTermsFor(draft.saleOrderNo)?.paymentScheduleOverrideOnly||draft.payScheduleResetImported); draft.payScheduleResetOrderNo=String(draft.saleOrderNo||""); dirty=true; refreshPayScheduleView();
+  toast("تم إرجاع جدول الاستحقاقات للحساب التلقائي — احفظ البوليصة لتثبيت التعديل","ok");
 }
 function renderPolicyPaySchedule(t){
   const box=document.getElementById("paySchedBox"), tag=document.getElementById("paySchedTag");
@@ -5107,11 +5148,16 @@ function renderPolicyPaySchedule(t){
   const r=policyPaySchedule(t);
   if(tag) tag.textContent=r.rows.length?r.source:"";
   if(!r.rows.length){ box.innerHTML='<p style="color:var(--warn);font-size:13px">لا توجد شروط سداد لعرض الاستحقاقات — حدّد شروط السداد (على أمر البيع) أو اختر أمر بيع له خطة سداد.</p>'; return; }
-  const base=r.total||r.rows.reduce((a,x)=>a+x.amount,0), sum=r.rows.reduce((a,x)=>a+x.amount,0);
-  const pct=v=>base>0?fmt(v/base*100,2)+"%":"—";
-  box.innerHTML=`<div class="tbl-wrap"><table style="white-space:nowrap"><thead><tr><th>#</th><th>نوع السداد</th><th>البوليصة</th><th>النسبة من الأمر</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${
-    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(x.label)}</td><td>${escapeHtml(String(x.policy))}</td><td class="num">${pct(x.amount)}</td><td class="num">${fmt(x.amount)}</td><td>${escapeHtml(supPaymentDateLabel(x.due)||"—")}</td></tr>`).join("")
-  }</tbody><tfoot><tr><td></td><td>الإجمالي</td><td></td><td class="num">${pct(sum)}</td><td class="num">${fmt(sum)}</td><td></td></tr></tfoot></table></div>`;
+  const base=+r.total||r.rows.reduce((a,x)=>a+(+x.amount||0),0), sum=r.rows.reduce((a,x)=>a+(+x.amount||0),0), diff=r2(sum-base);
+  const pct=v=>base>0?fmt(v/base*100,2)+"%":"—", ro=viewOnly?"disabled":"";
+  box.innerHTML=`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px">
+    <div style="font-size:12px;color:var(--text-dim)">يمكنك تعديل قيمة النقدي وكل قسط وتاريخ استحقاقه يدويًا بعد الحساب. التعديلات تُحفظ مع حفظ البوليصة أو ترحيلها.</div>
+    ${!viewOnly?`<button type="button" class="btn ghost sm" onclick="clearPayScheduleEdits()">↺ إعادة الحساب التلقائي</button>`:""}
+  </div>
+  <div class="tbl-wrap"><table style="white-space:nowrap;min-width:760px"><thead><tr><th>#</th><th>نوع السداد</th><th>البوليصة</th><th>النسبة من الإجمالي</th><th>القيمة القابلة للتعديل</th><th>تاريخ الاستحقاق القابل للتعديل</th></tr></thead><tbody>${
+    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.label)}</b></td><td>${escapeHtml(String(x.policy||"—"))}</td><td class="num" id="payPct_${escapeAttr(x.id)}">${pct(+x.amount||0)}</td><td><input class="inp num" style="min-width:145px" type="number" min="0" step="0.01" ${ro} value="${escapeAttr(x.amount??0)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','amount',this.value)" onchange="refreshPayScheduleView()" aria-label="قيمة ${escapeAttr(x.label)}"></td><td><input class="inp" style="min-width:155px" type="date" ${ro} value="${escapeAttr(x.due||"")}" oninput="setPayScheduleField('${escapeAttr(x.id)}','due',this.value)" onchange="refreshPayScheduleView()" aria-label="تاريخ ${escapeAttr(x.label)}"></td></tr>`).join("")
+  }</tbody><tfoot><tr><td colspan="3">إجمالي الجدول</td><td class="num">${pct(sum)}</td><td class="num">${fmt(sum)}</td><td></td></tr></tfoot></table></div>
+  <div id="paySchedSummary" style="margin-top:10px;padding:11px 13px;border:1px solid ${Math.abs(diff)>0.01?'#e6a4a4':'var(--line)'};border-radius:9px;background:${Math.abs(diff)>0.01?'#fff5f5':'var(--bg-3)'};font-size:12px">إجمالي الجدول: <b>${fmt(sum)}</b> — إجمالي الفواتير/الخطة: <b>${fmt(base)}</b> — الفرق: <b style="color:${Math.abs(diff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(diff)}</b>${Math.abs(diff)>0.01?'<div style="color:var(--danger);margin-top:4px">تنبيه: يوجد فرق بين جدول الاستحقاقات وإجمالي الفواتير. عدّل النقدي أو الأقساط حتى تصل للتوزيع المطلوب.</div>':'<div style="color:var(--ok);margin-top:4px">إجمالي جدول السداد مطابق للإجمالي.</div>'}</div>`;
 }
 function applyTermsLock(){
   const no=String(draft.saleOrderNo||"").trim();
@@ -5173,9 +5219,14 @@ function refreshTotals(){
   renderPolicyPaySchedule(t);
   const cp=+draft.terms.cashPct||0, n=parseInt(draft.terms.installments)||0, days=+draft.terms.periodDays||0;
   const cash=r2(t.grandTotal*cp/100), rest=r2(t.grandTotal-cash);
-  set("termsBox", !SS?(termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط السداد غير محددة — يمكن ترحيل البوليصة واستكمالها لاحقًا من أمر البيع.</span>':`نسبة النقدي ${cp}% — ${n>0&&cp<100?`${n} قسط كل ${days} يوم`:"بدون أقساط"}`):termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط السداد غير محددة — الحفظ والترحيل متاحان، ويمكن استكمالها لاحقًا من أمر البيع.</span>':n>0&&cp<100
+  const payView=policyPaySchedule(t), hasSchedule=payView.rows.length>0;
+  const manualCash=payView.rows.filter(x=>(+x.no||0)===0||x.id==="cash").reduce((a,x)=>a+(+x.amount||0),0);
+  const manualCredit=payView.rows.filter(x=>(+x.no||0)>0).reduce((a,x)=>a+(+x.amount||0),0);
+  const manualDiff=r2(manualCash+manualCredit-(+payView.total||0));
+  const manualSummary=hasSchedule?`قيمة النقدي في الجدول: <strong style="color:var(--gold-text)">${fmt(manualCash)}</strong> — إجمالي الأقساط: ${fmt(manualCredit)} — فرق التوزيع: <strong style="color:${Math.abs(manualDiff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(manualDiff)}</strong>`:"";
+  set("termsBox", hasSchedule?manualSummary:(!SS?(termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط السداد غير محددة — يمكن ترحيل البوليصة واستكمالها لاحقًا من أمر البيع.</span>':`نسبة النقدي ${cp}% — ${n>0&&cp<100?`${n} قسط كل ${days} يوم`:"بدون أقساط"}`):termsBlank(draft.terms)?'<span style="color:var(--warn)">شروط السداد غير محددة — الحفظ والترحيل متاحان، ويمكن استكمالها لاحقًا من أمر البيع.</span>':n>0&&cp<100
     ? `نقدي: <strong style="color:var(--gold-text)">${fmt(cash)}</strong> — المتبقي ${fmt(rest)} على ${n} قسط، القسط ≈ <strong style="color:var(--gold-text)">${fmt(rest/n)}</strong> كل ${days} يوم (معاينة فقط — الجدولة الفعلية في الخطوة 5)`
-    : `نقدي: <strong style="color:var(--gold-text)">${fmt(cash)}</strong> — المتبقي ${fmt(rest)}`);
+    : `نقدي: <strong style="color:var(--gold-text)">${fmt(cash)}</strong> — المتبقي ${fmt(rest)}`));
 }
 
 // ---------- أزرار الشاشة ----------
@@ -5183,6 +5234,8 @@ async function guard(){ return !(dirty&&!viewOnly) || await askConfirm("فيه �
 function toDraft(r){
   return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
+    paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
+    payScheduleReset:!!r.paymentScheduleReset, payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
     terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo); if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
       return (r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:0,installments:0,periodDays:0}; })(),
     applyDiscount:r.applyDiscount,
@@ -5276,6 +5329,9 @@ function buildRecord(strict){
     supplier:d.supplier, customer:d.customer,
     company:(d.company||"").trim(), site:(d.site||"").trim(),
     saleOrderId:d.saleOrderId||"", saleOrderNo:d.saleOrderNo||"",
+    paymentSchedule:(d.paySchedule&&Array.isArray(d.paySchedule.rows))?d.paySchedule.rows.map((x,i)=>({id:paymentScheduleRowId(x,i),label:x.label||((+x.no||0)===0?"نقدي":"قسط "+(+x.no||i)),policy:x.policy||"—",no:+x.no||0,amount:(x.amount===""||x.amount==null)?0:+x.amount,due:String(x.due||x.date||"")})):null,
+    paymentScheduleReset:!!d.payScheduleReset,
+    paymentScheduleResetImported:!!d.payScheduleResetImported,
     terms:blank?{cashPct:null,installments:0,periodDays:0}:{cashPct:cp,installments:cp<100?n:0,periodDays:days},
     applyDiscount: !!d.applyProfitTax, // توافق قديم
     applyVat: d.applyVat !== false,
@@ -5289,12 +5345,32 @@ function buildRecord(strict){
 }
 // أول مرة فقط: لو الأمر ليس له شروط، شروط أول بوليصة تُسجَّل كشروط الأمر. بعد كده الشروط تتعدل من شاشة أمر البيع فقط.
 function commitOrderTerms(rec){
-  const k=soKey(rec.saleOrderNo); if(!k||!rec.terms||rec.terms.cashPct==null) return;
-  if(orderTermsFor(rec.saleOrderNo)||supImportedPaymentPlan(rec.saleOrderNo)) return;
-  const u=(typeof curU==="function"&&curU())||null;
-  const ot={cashPct:rec.terms.cashPct,installments:rec.terms.installments,periodDays:rec.terms.periodDays,updatedAt:new Date().toISOString(),updatedBy:u?u.name:"",history:[]};
-  state.orderTerms[k]=ot;
-  orderDocs(rec.saleOrderNo, rec.id).forEach(x=>{ x.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; });
+  const k=soKey(rec.saleOrderNo); if(!k) return;
+  const existing=orderTermsFor(rec.saleOrderNo), imported=supImportedPaymentPlan(rec.saleOrderNo);
+  const hasTerms=!!(rec.terms&&rec.terms.cashPct!=null);
+  if(!existing&&!imported&&!hasTerms&&!Array.isArray(rec.paymentSchedule)) return;
+  const u=(typeof curU==="function"&&curU())||null, at=new Date().toISOString();
+  let ot=existing?{...existing}:null;
+  if(!ot&&hasTerms&&!imported) ot={cashPct:rec.terms.cashPct,installments:rec.terms.installments,periodDays:rec.terms.periodDays,updatedAt:at,updatedBy:u?u.name:"",history:[]};
+  if(!ot&&Array.isArray(rec.paymentSchedule)) ot={cashPct:imported&&imported.cashPct!=null?imported.cashPct:(hasTerms?rec.terms.cashPct:null),installments:imported?imported.installments:(hasTerms?rec.terms.installments:0),periodDays:imported?imported.periodDays:(hasTerms?rec.terms.periodDays:0),paymentScheduleOverrideOnly:!!imported,updatedAt:at,updatedBy:u?u.name:"",history:[]};
+  if(!ot) return;
+  if(rec.paymentScheduleReset&&existing&&existing.paymentScheduleOverrideOnly&&imported){ delete state.orderTerms[k]; return; }
+  if(rec.paymentScheduleReset){ delete ot.paymentSchedule; ot.paymentScheduleUpdatedAt=at; ot.updatedAt=at; ot.updatedBy=u?u.name:""; }
+  else if(Array.isArray(rec.paymentSchedule)){
+    ot.paymentSchedule=JSON.parse(JSON.stringify(rec.paymentSchedule));
+    const cashValue=r2(rec.paymentSchedule.filter((x,i)=>(+x.no||0)===0||x.id==="cash").reduce((a,x)=>a+(+x.amount||0),0));
+    const creditValue=r2(rec.paymentSchedule.filter((x,i)=>(+x.no||0)>0).reduce((a,x)=>a+(+x.amount||0),0));
+    const linked=orderDocs(rec.saleOrderNo,rec.id).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
+    linked.push({policyNo:rec.policyNo,date:rec.date,total:(rec.totals&&+rec.totals.grandTotal)||0});
+    const planTotal=supOrderTermsBaseTotal(rec.saleOrderNo,linked,imported);
+    ot.cashValue=cashValue; ot.creditValue=creditValue;
+    if(planTotal>0) ot.cashPct=r2(cashValue/planTotal*100);
+    ot.paymentScheduleUpdatedAt=at; ot.updatedAt=at; ot.updatedBy=u?u.name:"";
+  }
+  if(!existing&&hasTerms&&!imported){
+    state.orderTerms[k]=ot;
+    orderDocs(rec.saleOrderNo, rec.id).forEach(x=>{ x.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; });
+  } else if(Array.isArray(rec.paymentSchedule)||rec.paymentScheduleReset) state.orderTerms[k]=ot;
 }
 function saveShipment(){
   if(viewOnly) return;
@@ -5823,14 +5899,25 @@ function supManualPlanForOrder(orderNo){
   const docs=orderDocs(orderNo).map(x=>({policyNo:x.policyNo,date:x.date,total:(x.totals&&+x.totals.grandTotal)||(x.items||[]).reduce((a,it)=>a+(+it.total||0),0)}));
   if(!docs.length) return null;
   const imp=supImportedPaymentPlan(orderNo);
+  if(!Array.isArray(ot.paymentSchedule)&&imp&&(ot.cashPct==null||ot.paymentScheduleOverrideOnly)) return null;
   const total=supOrderTermsBaseTotal(orderNo,docs,imp);
-  const rows=orderScheduleRows(ot,docs,total);
-  const cashRows=rows.filter(r=>r.no===0), cashValue=r2(cashRows.reduce((a,r)=>a+r.amount,0));
-  const dues=new Map(); rows.filter(r=>r.no>0).forEach(r=>{ const k=r.due||"~"; if(!dues.has(k)) dues.set(k,{amount:0,date:r.due}); dues.get(k).amount=r2(dues.get(k).amount+r.amount); });
-  const schedule=[...dues.values()].sort((a,b)=>!a.date?1:!b.date?-1:a.date.localeCompare(b.date));
-  const cp=+ot.cashPct||0;
-  return {total,cashPct:cp,cashValue:cashValue,creditValue:r2(total-cashValue),installmentsText:String(parseInt(ot.installments,10)||0),
-    periodDaysText:String(+ot.periodDays||0),method:"حسب شروط أمر البيع",schedule,source:"order",
+  let cashValue=0, cashDueDate="", schedule=[];
+  if(Array.isArray(ot.paymentSchedule)){
+    const rows=ot.paymentSchedule;
+    const cashRows=rows.filter((x,i)=>(+x.no||0)===0||x.id==="cash");
+    cashValue=r2(cashRows.reduce((a,x)=>a+(+x.amount||0),0));
+    cashDueDate=String(cashRows.find(x=>x.due||x.date)?.due||cashRows.find(x=>x.due||x.date)?.date||"");
+    schedule=rows.filter(x=>(+x.no||0)>0).map(x=>({amount:+x.amount||0,date:String(x.due||x.date||""),no:+x.no||0,label:x.label||""}));
+  } else {
+    const rows=orderScheduleRows(ot,docs,total), cashRows=rows.filter(r=>r.no===0);
+    cashValue=r2(cashRows.reduce((a,r)=>a+r.amount,0)); cashDueDate=String(cashRows[0]?.due||"");
+    const dues=new Map(); rows.filter(r=>r.no>0).forEach(r=>{ const k=r.due||"~"; if(!dues.has(k)) dues.set(k,{amount:0,date:r.due}); dues.get(k).amount=r2(dues.get(k).amount+r.amount); });
+    schedule=[...dues.values()].sort((a,b)=>!a.date?1:!b.date?-1:a.date.localeCompare(b.date));
+  }
+  const cp=total>0?r2(cashValue/total*100):(ot.cashPct==null?null:(+ot.cashPct||0));
+  const creditValue=r2(schedule.reduce((a,x)=>a+(+x.amount||0),0));
+  return {total,cashPct:cp,cashValue,cashDueDate,creditValue,installmentsText:String(schedule.length||parseInt(ot.installments,10)||0),
+    periodDaysText:String(+ot.periodDays||0),method:"حسب جدول السداد المعدل",schedule,source:"order",
     customer:(imp&&imp.customer)||docs[0].customer||"",policyNo:docs.map(x=>x.policyNo).join(" / ")};
 }
 function supPaymentPlanForOrder(orderNo){
@@ -5838,7 +5925,7 @@ function supPaymentPlanForOrder(orderNo){
   const p=supImportedPaymentPlan(orderNo); if(!p) return null;
   const schedule=(p.schedule||[]).map((d,i)=>({amount:Number(d.amount)||0,date:String(d.dueDate||d.date||"")}));
   return {total:p.invoiceTotal==null?null:Number(p.invoiceTotal),cashPct:p.cashPct==null?null:Number(p.cashPct),
-    cashValue:p.cashValue==null?null:Number(p.cashValue),creditValue:p.creditValue==null?null:Number(p.creditValue),
+    cashValue:p.cashValue==null?null:Number(p.cashValue),cashDueDate:p.cashDueDate||"",creditValue:p.creditValue==null?null:Number(p.creditValue),
     installmentsText:p.installments?String(p.installments):"—",periodDaysText:p.periodDays==null||p.periodDays===""?"—":String(p.periodDays),
     method:p.method||"",schedule,source:p.source||"excel",customer:p.customer||"",policyNo:p.policyNo||""};
 }
@@ -8162,7 +8249,7 @@ function txInvoiceRowsForCustomer(customer){
     if(plan){
       const cash=+plan.cashValue||0, sched=plan.schedule||[];
       total=plan.total!=null?+plan.total:(cash+sched.reduce((s,d)=>s+d.amount,0));
-      if(cash>0||!sched.length) parts.push({no:0,amount:cash||total,due:docDate});   // قسط نقدي
+      if(cash>0||!sched.length) parts.push({no:0,amount:cash||total,due:plan.cashDueDate||docDate});   // قسط نقدي
       sched.forEach((d,i)=>parts.push({no:i+1,amount:d.amount,due:d.date||docDate})); // أقساط الأجل
     }else if(so){
       total=linked.reduce((sum,x)=>sum+(x.items||[]).reduce((a,it)=>a+(+it.total||0),0),0);
@@ -8282,7 +8369,7 @@ function salesInstallmentBaseRows(){
     const parts=[];
     let cash=plan.cashValue;
     if(cash==null&&plan.cashPct!=null&&Number.isFinite(+plan.cashPct)) cash=total*(+plan.cashPct)/100;
-    if(cash!=null&&+cash>0.004) parts.push({no:0,label:"نقدي",amount:+cash,due:invoiceDate});
+    if(cash!=null&&+cash>0.004) parts.push({no:0,label:"نقدي",amount:+cash,due:plan.cashDueDate||invoiceDate});
     (plan.schedule||[]).forEach((d,i)=>{
       const amount=+d.amount||0;
       if(amount>0.004) parts.push({no:i+1,label:"قسط "+(i+1),amount,due:String(d.date||d.dueDate||"").slice(0,10)});
