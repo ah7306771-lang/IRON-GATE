@@ -2597,7 +2597,8 @@ async function loadDocs(){
       fetchAllRows("shipments",["id"]), fetchAllRows("shipment_items",["shipment_id","line_no"]),
       fetchAllRows("sale_orders",["id"]), fetchAllRows("sale_order_items",["sale_order_id","line_no"]),
       fetchAllRows("app_counters",["name"]) ]);
-    await verifySaleOrderClosureSchema();
+    // لا نوقف تحميل البوالص بسبب أعمدة إقفال اختيارية في أوامر البيع.
+    // غياب هذه الأعمدة لا يمنع عرض بيانات التوريد الموجودة في shipments.
     docMeta = new Set(cs.filter(r=>String(r.name).startsWith("migrated:")).map(r=>String(r.name).slice(9)));
     docSnaps = {};
     // لو لسه ماتنقلتش للجداول الجديدة: جرّب النسخة القديمة (app_docs) قبل بيانات المتصفح
@@ -2609,16 +2610,7 @@ async function loadDocs(){
       const li=groupBy(his,"shipment_id"); state.shipments=[]; state.policies=[];
       hs.forEach(h=>{
         const rec=unpackObj(h,SHIP_SPEC,{ id:h.id }); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SHIP_ITEM_SPEC));
-        // السجلات القديمة التي لا تحمل حالة ترحيل صريحة تُعامل كبيانات توريد
-        // حفاظًا على ظهور البيانات التاريخية بعد إضافة عمود is_posted.
-        // فقط false الصريحة تعني أنها ما زالت محفوظة ولم تُرحّل.
-        const postedRaw = h.is_posted;
-        const explicitlyUnposted = postedRaw === false || postedRaw === 0 ||
-          (typeof postedRaw === "string" && ["false","0","no","off"].includes(postedRaw.trim().toLowerCase()));
-        const explicitlyPosted = postedRaw === true || postedRaw === 1 ||
-          (typeof postedRaw === "string" && ["true","1","yes","on"].includes(postedRaw.trim().toLowerCase()));
-        // لا تُسقط السجلات القديمة ذات الحالة الفارغة: اعتبرها محفوظة غير مُرحّلة.
-        (explicitlyPosted ? state.shipments : state.policies).push(rec);
+        (h.is_posted?state.shipments:state.policies).push(rec);
       });
       docSnaps.ship = docDiff("ship").cur;
     }else{
@@ -2802,15 +2794,10 @@ const SCREENS = [
   { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete"] },
   { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] },
   { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
-  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
-  { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage"] }
+  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] }
 ];
-const ACT_LABEL = {
-  view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف",
-  post:"ترحيل", reverse:"عكس قيد", manage:"إدارة",
-  close:"إقفال/فتح", print:"طباعة/PDF"
-};
-const ACT_COLS = ["view","add","edit","delete","post","reverse","manage","close","print"];
+const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", close:"إقفال/فتح", print:"طباعة/PDF" };
+const ACT_COLS = ["view","add","edit","delete","post","close","print"];
 
 function permsBlank(on){
   const p = { screens:{}, hide:{}, sys:{ backup:!!on } };
@@ -2828,14 +2815,9 @@ function permsGrant(p, scr, acts){
 }
 const ROLE_PRESETS = {
   admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
-  manager:{ label:"مدير", desc:"كل الشاشات والصلاحيات العامة، دون ترحيل أو عكس قيود GL أو إدارة إعداداته", build(){
-    const p=permsBlank(true);
-    p.screens.gl.post=false; p.screens.gl.reverse=false; p.screens.gl.manage=false;
-    return p;
-  } },
-  accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص، وإنشاء وتعديل مسودات قيود GL", build(){
+  manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
+  accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص بكل الأسعار", build(){
     const p=permsBlank(false);
-    permsGrant(p,"gl",["add","edit"]);
     ["dashboard","master","shipments","supply"].forEach(s=>permsGrant(p,s));
     permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderReport",["print"]); permsGrant(p,"salesInstallments",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
   sales:{ label:"مبيعات", desc:"أمر البيع كامل + إدخال البوالص — سعر الشراء مخفي", build(){
@@ -6021,21 +6003,19 @@ function supplyLines(){
   const q=supFilter.q.trim().toLowerCase(), out=[];
   const nz=(x,y)=>String(y||"").localeCompare(String(x||""),undefined,{numeric:true});
   const fe=supEff("flat"), byDate=fe.key==="date";
+  // الترتيب بالتاريخ بيتم على مستوى البوليصة (فتفضل أصناف كل بوليصة متجمعة)؛ الفارغ دايماً في الآخر
   const ordK=supFilter.order?supOrderNumberKey(supFilter.order):"", ordSo=ordK?(state.saleOrders||[]).find(x=>supOrderNumberKey(x.orderNo)===ordK):null;
-  // اعرض البوالص المُرحّلة والمحفوظة غير المُرحّلة مع تمييز الحالة؛ لا تُخفِ السجلات التاريخية.
-  const all=[...(Array.isArray(state.shipments)?state.shipments:[]).map(s=>({s,unposted:false})),...(Array.isArray(state.policies)?state.policies:[]).map(s=>({s,unposted:true}))];
-  const list=all.sort((a,b)=>(byDate?supCmp(a.s.date,b.s.date,false,fe.dir):(b.s.date||"").localeCompare(a.s.date||""))||nz(a.s.saleOrderNo,b.s.saleOrderNo)||nz(a.s.policyNo,b.s.policyNo));
-  list.forEach(({s,unposted})=>{
-    const linkedNo=s.saleOrderNo||(state.saleOrders||[]).find(x=>String(x.id)===String(s.saleOrderId))?.orderNo||"";
-    if(ordK&&supOrderNumberKey(linkedNo)!==ordK) return;
+  const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
+  list.forEach(s=>{
+    if(ordK&&supOrderNumberKey(s.saleOrderNo)!==ordK&&!(ordSo&&s.saleOrderId===ordSo.id)) return;
     if(supFilter.supplier&&s.supplier!==supFilter.supplier) return;
     if(supFilter.customer&&s.customer!==supFilter.customer) return;
     if(supFilter.from&&(!s.date||s.date<supFilter.from)) return;
     if(supFilter.to&&(!s.date||s.date>supFilter.to)) return;
-    const items=(s.items||[]).filter(it=>(!supFilter.factory||itemFactory(s,it)===supFilter.factory)&&(!supFilter.status||it.agingStatus===supFilter.status));
+    const items=s.items.filter(it=>(!supFilter.factory||itemFactory(s,it)===supFilter.factory)&&(!supFilter.status||it.agingStatus===supFilter.status));
     if(!items.length) return;
-    if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,linkedNo,...items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
-    items.forEach((it,i)=>out.push({s,it,first:i===0,unposted}));
+    if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,s.saleOrderNo,...s.items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
+    items.forEach((it,i)=>out.push({s,it,first:i===0}));
   });
   const fs=supEff("flat");
   if(fs.key&&fs.key!=="date"&&SUP_SORT[fs.key]){
@@ -6238,20 +6218,9 @@ function supSetView(g){ supFilter.grouped=g; supBreak=""; supSaveUi(); go("suppl
 function supShowFlat(){ supFilter.grouped=false; supBreak=""; supSaveUi(); renderSupply(); }
 function supToggleBreak(k){ supBreak=k; supFilter.grouped=false; supSaveUi(); renderSupply(); }
 function renderSupply(){
-  const supplyContainer=document.getElementById("supView");
-  const kpis=document.getElementById("supKpis");
-  if(!supplyContainer) return;
-  let C;
-  try { C=supCompute(); }
-  catch(err){
-    console.error("renderSupply/supCompute:",err);
-    supplyContainer.innerHTML=`<div class="empty" style="padding:24px;text-align:right"><h3>تعذر عرض بيانات التوريد</h3><p>حصل خطأ أثناء تجهيز سجلات التوريد: ${escapeHtml(err&&err.message?err.message:String(err))}</p><button class="btn" type="button" onclick="renderSupply()">إعادة المحاولة</button></div>`;
-    return;
-  }
-  const {L,T}=C;
+  const C=supCompute(), {L,T}=C;
   const k=(x)=>`<div class="kpi"><div class="lbl">${x.l}</div><div class="val small"${x.c?` style="color:${x.c}"`:""}>${fmt(x.n,x.d)}</div><div class="sub">${x.s||""}</div></div>`;
-  try { if(kpis) kpis.innerHTML=supKpiList(C).map(k).join(""); }
-  catch(err){ console.error("renderSupply/kpis:",err); if(kpis) kpis.innerHTML=""; }
+  document.getElementById("supKpis").innerHTML=supKpiList(C).map(k).join("");
   const sb=document.getElementById("supBreak");
   if(sb) sb.innerHTML="";
   const oc=document.getElementById("supOrderChip");
@@ -6269,7 +6238,7 @@ function renderSupply(){
     return;
   }
   if(!L.length){
-    container.innerHTML = `<div class="empty" style="padding:30px"><p>${(state.shipments||[]).length||(state.policies||[]).length?"مفيش نتائج للفلتر ده":"لسه مفيش بوالص محفوظة. احفظ بوليصة من شاشة الإدخال ثم حدّث الصفحة."}</p></div>`;
+    container.innerHTML = `<div class="empty" style="padding:30px"><p>${state.shipments.length?"مفيش نتائج للفلتر ده":"لسه مفيش بيانات مرحّلة. احفظ بوليصة من شاشة الإدخال وبعدين دوس \"ترحيل\"."}</p></div>`;
     return;
   }
   if(supFilter.grouped){
@@ -6687,7 +6656,7 @@ function renderSupplyFlat(L, T){
     const terms=`${fmt(termsData.cashPct,0)}% نقدي`+(termsData.installments?` + ${termsData.installments}×${termsData.periodDays}ي`:"");
     const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)"`:"";
     return `<tr${rowAttr}>
-      <td data-label="البوليصة">${first?`<strong style="color:var(--gold-text)">${escapeHtml(s.policyNo)}</strong>${L[idx].unposted?` <span class="chip warn">غير مُرحّلة</span>`:""}`:""}</td>
+      <td data-label="البوليصة">${first?`<strong style="color:var(--gold-text)">${escapeHtml(s.policyNo)}</strong>`:""}</td>
       <td data-label="التاريخ">${showOrderData?escapeHtml(displayDate):""}</td><td data-label="أمر البيع">${showOrderData?escapeHtml(displayOrderNo||"—"):""}</td><td data-label="المورد">${showOrderData?escapeHtml(displaySupplier):""}</td><td data-label="العميل">${showOrderData?escapeHtml(displayCustomer):""}</td><td data-label="الشركة">${showOrderData?escapeHtml(displayCompany):""}</td><td data-label="الموقع">${showOrderData?escapeHtml(displaySite):""}</td>
       <td data-label="المصنع">${escapeHtml(itemFactory(s,it))}</td>
       <td data-label="القطر">${escapeHtml(it.diameter)}</td><td data-label="النوع">${escapeHtml(it.type)}</td>
@@ -9577,12 +9546,6 @@ function pmBulk(kind){
     if(kind==="hide"||kind==="show"){ if(s.prices){ p.hide[s.id].buy=kind==="hide"; p.hide[s.id].sell=kind==="hide"; } }
     if(kind==="view"){ p.screens[s.id].view=true; s.acts.forEach(a=>p.screens[s.id][a]=false); }
   });
-  // صلاحيات GL الحساسة لا تُمنح بالتحديد الجماعي.
-  if(p.screens.gl){
-    p.screens.gl.post=false;
-    p.screens.gl.reverse=false;
-    p.screens.gl.manage=false;
-  }
   if(kind==="all") p.sys.backup=true; if(kind==="none") p.sys.backup=false;
   pmRender(p); document.getElementById("uf_role").value="custom"; document.getElementById("uf_roleDesc").textContent=ROLE_PRESETS.custom.desc;
 }
@@ -11796,40 +11759,4 @@ function renderManagementReports(){
 </style>
 
 </body>
-
-<style id="ig-universal-screen-navigation">
-/* أزرار رجوع وخروج موحدة لكل الشاشات والتقارير */
-.topbar #tbBack{display:none;align-items:center;justify-content:center;flex:0 0 38px}
-.topbar #igTopExit{display:none;align-items:center;justify-content:center;gap:6px;white-space:nowrap;min-height:38px;padding:7px 12px;border:1px solid #d4a017;border-radius:9px;background:#fff8e8;color:#78540a;font:800 12px Cairo,sans-serif;cursor:pointer}
-.topbar #igTopExit:hover{background:#ffefc7}
-@media(max-width:700px){.topbar{gap:7px;padding:9px 10px;flex-wrap:wrap}.topbar #tbBack{width:38px;height:38px;flex-basis:38px}.topbar #igTopExit{min-height:38px;padding:6px 9px}.topbar .crumb{display:none}}
-</style>
-<script id="ig-universal-screen-navigation-script">
-(function(){
- "use strict";
- function ensureScreenNav(){
-   var bar=document.querySelector(".topbar");if(!bar)return;
-   var back=document.getElementById("tbBack");
-   if(!back){back=document.createElement("button");back.type="button";back.id="tbBack";back.className="tb-back";back.setAttribute("aria-label","رجوع للشاشة السابقة");back.title="رجوع";back.textContent="↩";bar.insertBefore(back,bar.querySelector("#pageTitle")||bar.firstChild);}
-   back.onclick=function(){if(typeof window.goBack==="function")window.goBack();else if(typeof window.go==="function")window.go("dashboard");};
-   var exit=document.getElementById("igTopExit");
-   if(!exit){exit=document.createElement("button");exit.type="button";exit.id="igTopExit";exit.innerHTML='<span aria-hidden="true">✕</span><span>خروج</span>';exit.title="الخروج من الشاشة والعودة للرئيسية";exit.setAttribute("aria-label","خروج من الشاشة والعودة للرئيسية");bar.insertBefore(exit,bar.querySelector(".spacer")||null);}
-   exit.onclick=function(){if(typeof window.igExitScreen==="function")window.igExitScreen();else if(typeof window.go==="function")window.go("dashboard");};
-   var pageTitle=document.getElementById("pageTitle"),isHome=pageTitle&&pageTitle.textContent.trim()==="لوحة التحكم";
-   back.style.display=(!isHome&&pageTitle) ? "inline-flex":"none";
-   exit.style.display=(!isHome&&pageTitle) ? "inline-flex":"none";
- }
- var oldGo=window.go;
- if(typeof oldGo==="function"&&!oldGo.__igUniversalNav){var wrapped=function(){var result=oldGo.apply(this,arguments);try{ensureScreenNav();}catch(e){}return result;};wrapped.__igUniversalNav=true;window.go=wrapped;}
- window.addEventListener("popstate",function(){setTimeout(ensureScreenNav,0);});
- document.addEventListener("DOMContentLoaded",ensureScreenNav);
- if(document.readyState!=="loading")ensureScreenNav();
- var root=document.getElementById("app");
- if(root&&typeof MutationObserver!=="undefined")new MutationObserver(ensureScreenNav).observe(root,{childList:true,subtree:true});
- window.igEnsureScreenNav=ensureScreenNav;
-})();
-</script>
-
-
 </html>
-
