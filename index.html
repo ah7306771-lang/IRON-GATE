@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Aref+Ruqaa:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -1804,6 +1805,52 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
 .sup-due-none{color:var(--text-dim)}
 </style>
 
+<style>
+
+/* ================= IRON GATE — نظام العهد المستقل ================= */
+.custody-wrap{display:grid;gap:16px}
+.custody-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.custody-kpi{background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+.custody-kpi small{display:block;color:var(--text-dim);font-size:11px}
+.custody-kpi b{display:block;font-size:20px;margin-top:4px}
+.custody-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.custody-toolbar .inp{max-width:260px}
+.custody-account-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.custody-account{background:#fff;border:1px solid var(--line);border-radius:11px;padding:13px;display:flex;flex-direction:column;gap:8px}
+.custody-account.active{border-color:var(--gold);box-shadow:0 0 0 2px rgba(212,160,23,.10)}
+.custody-account .ca-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.custody-account .ca-code{font-weight:900;color:var(--gold-text);direction:ltr}
+.custody-account .ca-owner{font-size:15px;font-weight:800}
+.custody-account .ca-balance{font-size:20px;font-weight:900;direction:ltr;text-align:right}
+.custody-account .ca-meta{font-size:11px;color:var(--text-dim)}
+.custody-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.custody-field{display:flex;flex-direction:column;gap:4px}
+.custody-field label{font-size:12px;color:var(--text-dim)}
+.custody-field .inp{min-width:0}
+.custody-actions{display:flex;gap:7px;flex-wrap:wrap}
+.custody-pill{display:inline-flex;align-items:center;padding:3px 9px;border-radius:20px;background:#f7e8b8;color:#7a5c0b;font-size:11px;font-weight:800}
+.custody-pill.lock{background:#fbe6e4;color:#b3261e}
+.custody-muted{color:var(--text-dim);font-size:12px}
+.custody-notice-btn{position:fixed;left:18px;bottom:18px;z-index:35;width:48px;height:48px;border-radius:50%;border:1px solid var(--gold);background:#fff;color:var(--gold-text);font-size:22px;box-shadow:0 5px 18px rgba(0,0,0,.18)}
+.custody-notice-btn:hover{background:#fff8e5}
+.custody-modal{position:fixed;inset:0;background:rgba(0,0,0,.48);z-index:10020;display:none;align-items:center;justify-content:center;padding:16px}
+.custody-modal-card{background:#fff;border:1px solid var(--line);border-radius:14px;width:min(760px,96vw);max-height:88vh;overflow:auto;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.25)}
+.custody-modal-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.custody-modal-head h3{color:var(--gold-text);font-size:17px}
+.custody-modal-head button{margin-right:auto;border:0;background:transparent;font-size:22px}
+.custody-status{font-size:12px;min-height:18px;color:var(--ok);margin:8px 0}
+.custody-status.err{color:var(--danger)}
+@media(max-width:640px){
+ .custody-notice-btn{left:12px;bottom:12px;width:44px;height:44px}
+ .custody-toolbar .inp{max-width:none;flex:1 1 100%}
+}
+@media print{
+ .custody-no-print{display:none!important}
+ #content{overflow:visible!important;padding:0!important}
+ .custody-account{break-inside:avoid}
+}
+
+</style>
 </head>
 <body>
 
@@ -1857,6 +1904,7 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
       </button>
       <button type="button" id="loginCustodyBtn" class="lgf-btn" data-label="العهد" aria-label="العهد" title="العهد">💼
       </button>
+      <button type="button" id="loginCustodyReportBtn" class="lgf-btn" data-label="تقرير العهد" aria-label="تقرير العهد" title="تقرير العهد">🧾</button>
     </div>
   </div>
   <div class="lg-by">BY Ahmed Hamdy</div>
@@ -2701,7 +2749,9 @@ const SCREENS = [
   { id:"clientTB", label:"ميزان مراجعة العملاء", icon:"⚖", acts:["edit","print"], prices:true },
   { id:"supplierTB", label:"ميزان مراجعة الموردين", icon:"⚖", acts:["edit","print"], prices:true },
   { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete"] },
-  { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] }
+  { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] },
+  { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
+  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] }
 ];
 const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", close:"إقفال/فتح", print:"طباعة/PDF" };
 const ACT_COLS = ["view","add","edit","delete","post","close","print"];
@@ -3043,6 +3093,10 @@ const navGroups = [
   ]},
   { id:"banking", icon:"🏦", label:"البنوك", items:[
     { id:"chequeRegister", icon:"🧾", label:"أوراق القبض وشيكات تحت التحصيل", badge:"chq" }
+  ]},
+  { id:"custody", icon:"💼", label:"نظام العهد", items:[
+    { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
+    { id:"custodyReport", icon:"🧾", label:"تقرير العهد" }
   ]}
 ];
 
@@ -3151,7 +3205,9 @@ function go(page){
     chequeRegister:["أوراق القبض وشيكات تحت التحصيل","متابعة الشيكات الواردة مباشرة من شاشة التحصيلات"],
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
     settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
-    users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"]
+    users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"],
+    custodyLedger:["العهد والخزن","إدارة أكواد العهد وأصحابها وحركات الوارد والمنصرف"],
+    custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"]
   };
   const t = titles[page] || ["",""];
   document.getElementById("pageTitle").textContent = t[0];
@@ -3174,7 +3230,219 @@ function go(page){
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
   else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
+  else if(page==="custodyLedger"||page==="custodyReport"){
+    c.innerHTML='<div class="empty"><div class="ic">💼</div><h3>جاري تحميل بيانات العهد…</h3></div>';
+    custodyLoad().then(()=>{
+      if(currentPage!==page)return;
+      c.innerHTML=page==="custodyLedger"?viewCustodyLedger():viewCustodyReport();
+      if(page==="custodyLedger")bindCustodyLedger();else bindCustodyReport();
+    }).catch(e=>{
+      if(currentPage!==page)return;
+      c.innerHTML='<div class="empty"><div class="ic">⚠️</div><h3>تعذر تحميل نظام العهد</h3><p>شغّل ملف custody_setup.sql في Supabase ثم أعد المحاولة.</p><p>'+custodyEsc(e.message||e)+'</p><button class="btn" onclick="go(\''+page+'\')">إعادة المحاولة</button></div>';
+    });
+  }
   else c.innerHTML = viewSoon();
+}
+
+
+// ================= نظام العهد والخزن — بيانات مستقلة على Supabase =================
+// كل خزنة لها كود عهدة فريد وصاحب عهدة؛ لا نعتمد على اسم مستخدم/موظف كمفتاح.
+const CUSTODY_TABLES={accounts:"custody_accounts",entries:"custody_entries"};
+let custodyCache={accounts:[],entries:[],loaded:false,selected:"",editing:null};
+const custodyMoney=n=>(Number(n)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const custodyEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const custodyUserName=()=>{const u=curU();return u?(u.name||u.username||String(u.no||"")):"";};
+const custodyCan=(act)=>can("custodyLedger",act);
+async function custodyLoad(){
+  const [a,e]=await Promise.all([
+    sb.from(CUSTODY_TABLES.accounts).select("*").order("code"),
+    sb.from(CUSTODY_TABLES.entries).select("*").is("deleted_at",null).order("entry_date").order("created_at")
+  ]);
+  if(a.error) throw a.error; if(e.error) throw e.error;
+  custodyCache.accounts=a.data||[]; custodyCache.entries=e.data||[]; custodyCache.loaded=true;
+  if(!custodyCache.selected||!custodyCache.accounts.some(x=>x.id===custodyCache.selected))
+    custodyCache.selected=(custodyCache.accounts.find(x=>x.is_active!==false)||{}).id||"";
+}
+function custodyAccount(id){return custodyCache.accounts.find(x=>String(x.id)===String(id));}
+function custodyRows(id){return custodyCache.entries.filter(x=>String(x.account_id)===String(id));}
+function custodyBalance(id,from="",to=""){
+  let opening=0,ins=0,outs=0;
+  custodyRows(id).forEach(r=>{
+    const v=Number(r.amount)||0,sg=r.entry_type==="in"?1:-1,d=String(r.entry_date||"").slice(0,10);
+    if(from&&d<from){opening+=sg*v;return;}
+    if(from&&d<from)return;
+    if(to&&d>to)return;
+    if(sg>0)ins+=v;else outs+=v;
+  });
+  return {opening,ins,outs,balance:opening+ins-outs};
+}
+function custodyAccountBalance(id){
+  return custodyRows(id).reduce((n,r)=>n+(r.entry_type==="in"?1:-1)*(Number(r.amount)||0),0);
+}
+function custodyStatus(id,msg,err=false){
+  const el=document.getElementById(id);if(el){el.textContent=msg||"";el.className="custody-status"+(err?" err":"");}
+}
+function custodyAccountCard(a){
+  const b=custodyAccountBalance(a.id),sel=String(custodyCache.selected)===String(a.id);
+  const lock=a.lock_date?`<span class="custody-pill lock">مقفولة حتى ${custodyEsc(a.lock_date)}</span>`:`<span class="custody-pill">مفتوحة</span>`;
+  return `<button type="button" class="custody-account ${sel?"active":""}" data-custody-select="${custodyEsc(a.id)}" style="text-align:right;color:inherit">
+    <span class="ca-top"><b class="ca-code">${custodyEsc(a.code)}</b>${lock}</span>
+    <span class="ca-owner">${custodyEsc(a.owner_name)}</span>
+    <span class="ca-meta">الرصيد الحالي</span><span class="ca-balance" style="color:${b<0?"var(--danger)":"var(--ok)"}">${custodyMoney(b)} ج.م</span>
+  </button>`;
+}
+function viewCustodyLedger(){
+  const accounts=custodyCache.accounts.filter(a=>a.is_active!==false);
+  const a=custodyAccount(custodyCache.selected), rows=a?custodyRows(a.id):[];
+  const bal=a?custodyAccountBalance(a.id):0;
+  const todayRows=rows.filter(r=>String(r.entry_date).slice(0,10)===today());
+  const tin=todayRows.filter(r=>r.entry_type==="in").reduce((n,r)=>n+(+r.amount||0),0);
+  const tout=todayRows.filter(r=>r.entry_type==="out").reduce((n,r)=>n+(+r.amount||0),0);
+  const canAdd=custodyCan("add"),canEdit=custodyCan("edit"),canDel=custodyCan("delete");
+  return `<div class="page-head"><h2>💼 العهد والخزن</h2><span class="spacer"></span><button class="btn ghost" onclick="custodyReload()">↻ تحديث</button></div>
+  <div class="custody-wrap">
+    <div class="custody-kpis">
+      <div class="custody-kpi"><small>عدد العهد المسجلة</small><b>${custodyCache.accounts.length}</b></div>
+      <div class="custody-kpi"><small>إجمالي أرصدة العهد</small><b>${custodyMoney(custodyCache.accounts.reduce((n,x)=>n+custodyAccountBalance(x.id),0))}</b></div>
+      <div class="custody-kpi"><small>وارد اليوم</small><b style="color:var(--ok)">${custodyMoney(tin)}</b></div>
+      <div class="custody-kpi"><small>منصرف اليوم</small><b style="color:var(--danger)">${custodyMoney(tout)}</b></div>
+    </div>
+    ${custodyCan("add")?`<section class="card"><div class="head"><h3>＋ إنشاء عهدة جديدة</h3></div><div class="body">
+      <div class="custody-form-grid">
+        <div class="custody-field"><label>كود العهدة / Serial *</label><input class="inp" id="caNewCode" placeholder="مثال: CUS-001" maxlength="40"></div>
+        <div class="custody-field"><label>اسم صاحب العهدة *</label><input class="inp" id="caNewOwner" placeholder="اسم صاحب العهدة" maxlength="160"></div>
+        <div class="custody-field"><label>ملاحظات</label><input class="inp" id="caNewNotes" placeholder="اختياري"></div>
+      </div><div class="custody-actions" style="margin-top:12px"><button class="btn" id="caCreate">حفظ العهدة</button></div><div id="caCreateStatus" class="custody-status"></div>
+    </div></section>`:""}
+    <section class="card"><div class="head"><h3>العهد المسجلة</h3><span class="count">${accounts.length} عهدة نشطة</span></div><div class="body">
+      <div class="custody-account-grid">${accounts.map(custodyAccountCard).join("")||'<div class="empty">لا توجد عهد مسجلة بعد</div>'}</div>
+    </div></section>
+    ${a?`<section class="card"><div class="head"><h3>خزنة العهدة — ${custodyEsc(a.code)} · ${custodyEsc(a.owner_name)}</h3><span class="spacer"></span>${a.lock_date?'<span class="custody-pill lock">مقفولة</span>':'<span class="custody-pill">مفتوحة</span>'}</div>
+      <div class="body">
+        <div class="custody-kpis">
+          <div class="custody-kpi"><small>وارد اليوم</small><b style="color:var(--ok)">${custodyMoney(tin)}</b></div>
+          <div class="custody-kpi"><small>منصرف اليوم</small><b style="color:var(--danger)">${custodyMoney(tout)}</b></div>
+          <div class="custody-kpi"><small>الرصيد الحالي</small><b>${custodyMoney(bal)}</b></div>
+        </div>
+        ${a.lock_date?`<p class="custody-muted" style="margin:10px 0">تم تقفيل العهدة حتى ${custodyEsc(a.lock_date)}. لا يمكن إضافة أو تعديل أو حذف حركات بتاريخ هذا اليوم أو قبله.</p>`:""}
+        ${canAdd?`<div class="custody-form-grid" style="margin:14px 0">
+          <div class="custody-field"><label>نوع الحركة</label><select class="inp" id="ceType"><option value="in">وارد</option><option value="out">منصرف</option></select></div>
+          <div class="custody-field"><label>التاريخ</label><input class="inp" type="date" id="ceDate" value="${today()}"></div>
+          <div class="custody-field"><label>القيمة *</label><input class="inp" type="number" min="0.01" step="0.01" id="ceAmount" placeholder="0.00"></div>
+          <div class="custody-field"><label>المشروع</label><input class="inp" id="ceProject" placeholder="اسم المشروع (اختياري)"></div>
+          <div class="custody-field" style="grid-column:1/-1"><label>البيان *</label><input class="inp" id="ceDescription" maxlength="250" placeholder="تفاصيل الحركة"></div>
+        </div><button class="btn" id="ceSave">＋ تسجيل الحركة</button><div id="ceStatus" class="custody-status"></div>`:""}
+        <div class="page-head" style="margin:18px 0 10px"><h3 style="font-size:14px">حركات العهدة</h3><span class="spacer"></span><span class="custody-muted">${rows.length} حركة</span></div>
+        <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>وارد</th><th>منصرف</th><th>الرصيد</th><th class="custody-no-print">إجراءات</th></tr></thead><tbody>
+        ${(()=>{let run=0;return rows.map(r=>{run+=(r.entry_type==="in"?1:-1)*(+r.amount||0);const locked=a.lock_date&&String(r.entry_date)<=a.lock_date;return `<tr><td dir="ltr">${custodyEsc(r.entry_date)}</td><td>${custodyEsc(r.description)}</td><td>${custodyEsc(r.project||"—")}</td><td style="color:var(--ok)">${r.entry_type==="in"?custodyMoney(r.amount):"—"}</td><td style="color:var(--danger)">${r.entry_type==="out"?custodyMoney(r.amount):"—"}</td><td><b>${custodyMoney(run)}</b></td><td class="custody-no-print"><div class="td-actions">${canEdit&&!locked?`<button data-ce-edit="${custodyEsc(r.id)}">تعديل</button>`:""}${canDel&&!locked?`<button class="del" data-ce-del="${custodyEsc(r.id)}">حذف</button>`:""}</div></td></tr>`;}).join("");})()||'<tr><td colspan="7" style="text-align:center">لا توجد حركات مسجلة</td></tr>'}
+        </tbody></table></div>
+        ${custodyCan("close")?`<div class="custody-form-grid custody-no-print" style="margin-top:16px"><div class="custody-field"><label>تقفيل العهدة حتى تاريخ</label><input class="inp" type="date" id="caLockDate" value="${custodyEsc(a.lock_date||"")}"></div><div class="custody-field" style="justify-content:end"><button class="btn ghost" id="caSaveLock">حفظ التقفيل</button></div></div>`:""}
+      </div></section>`:`<div class="empty"><div class="ic">💼</div><h3>اختر عهدة لعرض الخزنة</h3><p>ابدأ بإضافة عهدة جديدة أو اختر كود عهدة من القائمة.</p></div>`}
+  </div>`;
+}
+function bindCustodyLedger(){
+  document.querySelectorAll("[data-custody-select]").forEach(b=>b.addEventListener("click",()=>{custodyCache.selected=b.dataset.custodySelect;go("custodyLedger");}));
+  const create=document.getElementById("caCreate");
+  if(create)create.onclick=async()=>{
+    const code=document.getElementById("caNewCode").value.trim().toUpperCase(),owner=document.getElementById("caNewOwner").value.trim(),notes=document.getElementById("caNewNotes").value.trim();
+    if(!code||!owner){custodyStatus("caCreateStatus","اكتب كود العهدة واسم صاحبها",true);return;}
+    create.disabled=true;custodyStatus("caCreateStatus","جارٍ الحفظ…");
+    const r=await sb.from(CUSTODY_TABLES.accounts).insert({code,owner_name:owner,notes,created_by:custodyUserName()}).select().single();
+    if(r.error){custodyStatus("caCreateStatus",r.error.code==="23505"?"كود العهدة مستخدم بالفعل":r.error.message,true);create.disabled=false;return;}
+    custodyCache.accounts.push(r.data);custodyCache.selected=r.data.id;audit("إضافة عهدة",code+" — "+owner);go("custodyLedger");toast("تم إنشاء العهدة بنجاح","ok");
+  };
+  const save=document.getElementById("ceSave");
+  if(save)save.onclick=async()=>{
+    const a=custodyAccount(custodyCache.selected),type=document.getElementById("ceType").value,date=document.getElementById("ceDate").value,amount=Number(document.getElementById("ceAmount").value),description=document.getElementById("ceDescription").value.trim(),project=document.getElementById("ceProject").value.trim();
+    if(!a||!date||!description||!(amount>0)){custodyStatus("ceStatus","أكمل التاريخ والبيان واكتب قيمة أكبر من صفر",true);return;}
+    if(a.lock_date&&date<=a.lock_date){custodyStatus("ceStatus","التاريخ داخل فترة مقفولة ولا يمكن التسجيل",true);return;}
+    save.disabled=true;custodyStatus("ceStatus","جارٍ الحفظ…");
+    const r=await sb.from(CUSTODY_TABLES.entries).insert({account_id:a.id,entry_type:type,entry_date:date,amount,description,project,created_by:custodyUserName()}).select().single();
+    if(r.error){custodyStatus("ceStatus",r.error.message,true);save.disabled=false;return;}
+    custodyCache.entries.push(r.data);audit("حركة عهدة",a.code+" / "+type+" / "+amount);go("custodyLedger");toast("تم تسجيل الحركة","ok");
+  };
+  const lock=document.getElementById("caSaveLock");
+  if(lock)lock.onclick=async()=>{
+    const a=custodyAccount(custodyCache.selected),date=document.getElementById("caLockDate").value||null;
+    if(date&&a.lock_date&&date<a.lock_date){toast("لا يمكن إرجاع تاريخ التقفيل للخلف؛ فك التقفيل أولاً","err");return;}
+    const r=await sb.from(CUSTODY_TABLES.accounts).update({lock_date:date,updated_at:new Date().toISOString()}).eq("id",a.id);
+    if(r.error){toast("تعذر حفظ التقفيل: "+r.error.message,"err");return;}
+    a.lock_date=date;audit("تقفيل عهدة",a.code+" حتى "+(date||"فك التقفيل"));go("custodyLedger");toast(date?"تم تقفيل العهدة":"تم فك تقفيل العهدة","ok");
+  };
+  document.querySelectorAll("[data-ce-del]").forEach(b=>b.onclick=async()=>{
+    const r=custodyCache.entries.find(x=>String(x.id)===b.dataset.ceDel),a=custodyAccount(r?.account_id);if(!r||!a)return;
+    if(a.lock_date&&r.entry_date<=a.lock_date){toast("الحركة داخل فترة مقفولة","err");return;}
+    if(!await askConfirm("سيتم حذف الحركة حذفًا نهائيًا. هل تريد المتابعة؟"))return;
+    const q=await sb.from(CUSTODY_TABLES.entries).update({deleted_at:new Date().toISOString(),updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",r.id);if(q.error){toast(q.error.message,"err");return;}
+    custodyCache.entries=custodyCache.entries.filter(x=>x.id!==r.id);audit("حذف حركة عهدة",a.code+" / "+r.description);go("custodyLedger");
+  });
+  document.querySelectorAll("[data-ce-edit]").forEach(b=>b.onclick=async()=>{
+    const r=custodyCache.entries.find(x=>String(x.id)===b.dataset.ceEdit),a=custodyAccount(r?.account_id);if(!r||!a)return;
+    if(a.lock_date&&r.entry_date<=a.lock_date){toast("الحركة داخل فترة مقفولة","err");return;}
+    const description=prompt("البيان",r.description);if(description===null)return;
+    const amount=Number(prompt("القيمة",r.amount));if(!(amount>0)){toast("القيمة غير صحيحة","err");return;}
+    const date=prompt("التاريخ YYYY-MM-DD",r.entry_date);if(!date)return;
+    if(a.lock_date&&date<=a.lock_date){toast("التاريخ داخل فترة مقفولة","err");return;}
+    const q=await sb.from(CUSTODY_TABLES.entries).update({description:description.trim(),amount,entry_date:date,updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",r.id);
+    if(q.error){toast(q.error.message,"err");return;}Object.assign(r,{description:description.trim(),amount,entry_date:date});audit("تعديل حركة عهدة",a.code+" / "+r.description);go("custodyLedger");
+  });
+}
+async function custodyReload(){try{await custodyLoad();go(currentPage);toast("تم تحديث بيانات العهد","ok");}catch(e){toast("تعذر تحميل العهد: "+e.message,"err");}}
+function viewCustodyReport(){
+  const from=today().slice(0,8)+"01",to=today();
+  return `<div class="page-head"><h2>🧾 تقرير العهد</h2><span class="spacer"></span><button class="btn ghost" id="crRefresh">↻ تحديث</button></div>
+  <section class="card"><div class="head"><h3>فلاتر التقرير</h3></div><div class="body"><div class="custody-form-grid">
+    <div class="custody-field"><label>من تاريخ</label><input class="inp" id="crFrom" type="date" value="${from}"></div>
+    <div class="custody-field"><label>إلى تاريخ</label><input class="inp" id="crTo" type="date" value="${to}"></div>
+    <div class="custody-field"><label>كود العهدة</label><select class="inp" id="crAccount"><option value="*">كل العهد</option>${custodyCache.accounts.map(a=>`<option value="${custodyEsc(a.id)}">${custodyEsc(a.code)} — ${custodyEsc(a.owner_name)}</option>`).join("")}</select></div>
+    <div class="custody-field"><label>المشروع</label><input class="inp" id="crProject" placeholder="كل المشاريع"></div>
+  </div><div class="custody-actions custody-no-print" style="margin-top:12px"><button class="btn" id="crRun">عرض التقرير</button><button class="btn ghost" id="crPrint">🖨 طباعة / PDF</button><button class="btn ghost" id="crExcel">📊 تصدير Excel</button></div><div id="crStatus" class="custody-status"></div></div></section>
+  <div id="custodyReportResult" class="custody-wrap"></div>`;
+}
+function custodyReportHtml(){
+  const f=document.getElementById("crFrom").value,t=document.getElementById("crTo").value,aid=document.getElementById("crAccount").value,p=document.getElementById("crProject").value.trim();
+  if(f&&t&&f>t){custodyStatus("crStatus","تاريخ البداية أكبر من تاريخ النهاية",true);return [];}
+  const acc=aid==="*" ? custodyCache.accounts : custodyCache.accounts.filter(a=>a.id===aid);
+  return acc.map(a=>{
+    let op=0,run=0,ins=0,outs=0;const rows=custodyRows(a.id).slice().sort((x,y)=>String(x.entry_date).localeCompare(String(y.entry_date))||String(x.created_at).localeCompare(String(y.created_at)));
+    const visible=rows.filter(r=>!p||(r.project||"").trim()===p);
+    visible.forEach(r=>{const sg=r.entry_type==="in"?1:-1,v=+r.amount||0;if(f&&r.entry_date<f)op+=sg*v;});
+    run=op;const body=visible.filter(r=>(!f||r.entry_date>=f)&&(!t||r.entry_date<=t)).map(r=>{const v=+r.amount||0,inn=r.entry_type==="in";run+=(inn?1:-1)*v;if(inn)ins+=v;else outs+=v;return `<tr><td>${custodyEsc(r.entry_date)}</td><td>${custodyEsc(r.description)}</td><td>${custodyEsc(r.project||"—")}</td><td>${inn?custodyMoney(v):"—"}</td><td>${!inn?custodyMoney(v):"—"}</td><td>${custodyMoney(run)}</td></tr>`;}).join("");
+    return `<section class="card custody-report-card"><div class="head"><h3>كشف حساب العهدة — ${custodyEsc(a.code)}</h3><span class="spacer"></span><b>${custodyEsc(a.owner_name)}</b></div><div class="body"><div class="custody-kpis"><div class="custody-kpi"><small>رصيد أول المدة</small><b>${custodyMoney(op)}</b></div><div class="custody-kpi"><small>إجمالي الوارد</small><b style="color:var(--ok)">${custodyMoney(ins)}</b></div><div class="custody-kpi"><small>إجمالي المنصرف</small><b style="color:var(--danger)">${custodyMoney(outs)}</b></div><div class="custody-kpi"><small>الرصيد النهائي</small><b>${custodyMoney(run)}</b></div></div><p class="custody-muted" style="margin:8px 0">الكود: ${custodyEsc(a.code)} · صاحب العهدة: ${custodyEsc(a.owner_name)} · الفترة: ${f||"البداية"} إلى ${t||"اليوم"}${p?" · المشروع: "+custodyEsc(p):""}</p><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody>${body||'<tr><td colspan="6" style="text-align:center">لا توجد حركات في الفترة</td></tr>'}</tbody></table></div></div></section>`;
+  });
+}
+function bindCustodyReport(){
+  const run=()=>{const h=custodyReportHtml();document.getElementById("custodyReportResult").innerHTML=h.join("")||'<div class="empty">لا توجد عهد مسجلة</div>';};
+  document.getElementById("crRun").onclick=run;
+  document.getElementById("crRefresh").onclick=async()=>{try{await custodyLoad();go("custodyReport");}catch(e){custodyStatus("crStatus",e.message,true);}};
+  document.getElementById("crPrint").onclick=()=>{if(!can("custodyReport","print")){toast("ليس لديك صلاحية طباعة تقرير العهد","err");return;}run();window.print();};
+  document.getElementById("crExcel").onclick=()=>{
+    if(!can("custodyReport","print")){toast("ليس لديك صلاحية تصدير تقرير العهد","err");return;}
+    const h=custodyReportHtml(),root=document.createElement("div");root.innerHTML=h.join("");
+    const rows=[["كود العهدة","صاحب العهدة","التاريخ","البيان","المشروع","وارد","منصرف","الرصيد"]];
+    root.querySelectorAll(".custody-report-card").forEach(card=>{
+      const title=card.querySelector(".head h3")?.textContent||"",owner=card.querySelector(".head b")?.textContent||"";
+      card.querySelectorAll("tbody tr").forEach(tr=>{const c=[...tr.cells].map(x=>x.textContent.trim());if(c.length===6&&c[0]!=="لا توجد حركات في الفترة")rows.push([title,owner,...c]);});
+    });
+    if(!window.XLSX){toast("مكتبة Excel لم يتم تحميلها؛ أعد تحميل الصفحة","err");return;}
+    const ws=XLSX.utils.aoa_to_sheet(rows),wb=XLSX.utils.book_new();
+    ws["!cols"]=[{wch:24},{wch:24},{wch:14},{wch:40},{wch:22},{wch:16},{wch:16},{wch:16}];
+    XLSX.utils.book_append_sheet(wb,ws,"تقرير العهد");
+    XLSX.writeFile(wb,"Custody-Report-"+today()+".xlsx");
+  };
+  run();
+}
+async function custodyOpenExternalSummary(){
+  const modal=document.getElementById("custodyExternalModal"),body=document.getElementById("custodyExternalBody");
+  modal.style.display="flex";body.innerHTML='<div class="empty">جاري تحميل أرصدة العهد…</div>';
+  if(!currentUser){body.innerHTML='<div class="empty">🔒 سجّل الدخول أولاً لعرض أرصدة العهد.</div>';return;}
+  if(!canView("custodyLedger")&&!canView("custodyReport")){body.innerHTML='<div class="empty">🔒 ليس لديك صلاحية عرض أرصدة العهد.</div>';return;}
+  try{
+    await custodyLoad();
+    const rows=custodyCache.accounts.filter(a=>a.is_active!==false).map(a=>({a,b:custodyAccountBalance(a.id)})).filter(x=>Math.abs(x.b)>.004).sort((x,y)=>y.b-x.b);
+    const total=rows.reduce((n,x)=>n+x.b,0);
+    body.innerHTML=rows.length?`<div class="custody-kpis"><div class="custody-kpi"><small>عدد العهد ذات الرصيد</small><b>${rows.length}</b></div><div class="custody-kpi"><small>إجمالي صافي الأرصدة</small><b>${custodyMoney(total)} ج.م</b></div></div><div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>#</th><th>كود العهدة</th><th>اسم صاحب العهدة</th><th>الرصيد المتبقي</th><th>آخر تقفيل</th></tr></thead><tbody>${rows.map((x,i)=>`<tr><td>${i+1}</td><td dir="ltr">${custodyEsc(x.a.code)}</td><td>${custodyEsc(x.a.owner_name)}</td><td><b style="color:${x.b>=0?"var(--ok)":"var(--danger)"}">${custodyMoney(x.b)}</b></td><td>${custodyEsc(x.a.lock_date||"—")}</td></tr>`).join("")}</tbody><tfoot><tr><td colspan="3">الإجمالي</td><td>${custodyMoney(total)}</td><td></td></tr></tfoot></table></div>`:'<div class="empty">لا توجد أرصدة عهد حالياً ✓</div>';
+  }catch(e){body.innerHTML='<div class="empty">تعذّر تحميل العهد. تأكد من تشغيل ملف custody_setup.sql في Supabase.</div>';}
 }
 
 // ---------- views ----------
@@ -10506,6 +10774,26 @@ render();
   };
 })();
 
+</script>
+<div id="custodyExternalModal" class="custody-modal" role="dialog" aria-modal="true" aria-label="أرصدة العهد">
+  <div class="custody-modal-card">
+    <div class="custody-modal-head"><h3>💼 العهد — الأرصدة المتبقية</h3><button type="button" id="custodyExternalClose" aria-label="إغلاق">×</button></div>
+    <div id="custodyExternalBody"></div>
+  </div>
+</div>
+<button type="button" id="custodyExternalFloat" class="custody-notice-btn" title="إشعار العهد والأرصدة" aria-label="إشعار العهد">💼</button>
+<script>
+(function(){
+  const b=document.getElementById("custodyExternalFloat"),m=document.getElementById("custodyExternalModal");
+  if(b)b.addEventListener("click",custodyOpenExternalSummary);
+  const x=document.getElementById("custodyExternalClose");if(x)x.addEventListener("click",()=>m.style.display="none");
+  if(m)m.addEventListener("click",e=>{if(e.target===m)m.style.display="none";});
+  const login=document.getElementById("loginCustodyBtn");if(login)login.addEventListener("click",custodyOpenExternalSummary);
+  const report=document.getElementById("loginCustodyReportBtn");if(report)report.addEventListener("click",()=>{if(!currentUser){custodyOpenExternalSummary();return;}m.style.display="none";go("custodyReport");});
+  if(b)b.style.display="none";
+  const app=document.getElementById("app"),obs=new MutationObserver(()=>{if(b)b.style.display=(currentUser&&app&&app.style.display!=="none")?"grid":"none";});
+  if(app)obs.observe(app,{attributes:true,attributeFilter:["style"]});
+})();
 </script>
 </body>
 </html>
