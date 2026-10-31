@@ -2609,7 +2609,11 @@ async function loadDocs(){
       const li=groupBy(his,"shipment_id"); state.shipments=[]; state.policies=[];
       hs.forEach(h=>{
         const rec=unpackObj(h,SHIP_SPEC,{ id:h.id }); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SHIP_ITEM_SPEC));
-        (h.is_posted?state.shipments:state.policies).push(rec);
+        // السجلات القديمة التي لا تحمل حالة ترحيل صريحة تُعامل كبيانات توريد
+        // حفاظًا على ظهور البيانات التاريخية بعد إضافة عمود is_posted.
+        // فقط false الصريحة تعني أنها ما زالت محفوظة ولم تُرحّل.
+        const explicitlyUnposted = h.is_posted === false || h.is_posted === 0 || h.is_posted === "false" || h.is_posted === "0";
+        (explicitlyUnposted ? state.policies : state.shipments).push(rec);
       });
       docSnaps.ship = docDiff("ship").cur;
     }else{
@@ -2793,10 +2797,15 @@ const SCREENS = [
   { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete"] },
   { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] },
   { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
-  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] }
+  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
+  { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage"] }
 ];
-const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", close:"إقفال/فتح", print:"طباعة/PDF" };
-const ACT_COLS = ["view","add","edit","delete","post","close","print"];
+const ACT_LABEL = {
+  view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف",
+  post:"ترحيل", reverse:"عكس قيد", manage:"إدارة",
+  close:"إقفال/فتح", print:"طباعة/PDF"
+};
+const ACT_COLS = ["view","add","edit","delete","post","reverse","manage","close","print"];
 
 function permsBlank(on){
   const p = { screens:{}, hide:{}, sys:{ backup:!!on } };
@@ -2814,9 +2823,14 @@ function permsGrant(p, scr, acts){
 }
 const ROLE_PRESETS = {
   admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
-  manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
-  accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص بكل الأسعار", build(){
+  manager:{ label:"مدير", desc:"كل الشاشات والصلاحيات العامة، دون ترحيل أو عكس قيود GL أو إدارة إعداداته", build(){
+    const p=permsBlank(true);
+    p.screens.gl.post=false; p.screens.gl.reverse=false; p.screens.gl.manage=false;
+    return p;
+  } },
+  accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص، وإنشاء وتعديل مسودات قيود GL", build(){
     const p=permsBlank(false);
+    permsGrant(p,"gl",["add","edit"]);
     ["dashboard","master","shipments","supply"].forEach(s=>permsGrant(p,s));
     permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderReport",["print"]); permsGrant(p,"salesInstallments",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
   sales:{ label:"مبيعات", desc:"أمر البيع كامل + إدخال البوالص — سعر الشراء مخفي", build(){
@@ -9545,6 +9559,12 @@ function pmBulk(kind){
     if(kind==="hide"||kind==="show"){ if(s.prices){ p.hide[s.id].buy=kind==="hide"; p.hide[s.id].sell=kind==="hide"; } }
     if(kind==="view"){ p.screens[s.id].view=true; s.acts.forEach(a=>p.screens[s.id][a]=false); }
   });
+  // صلاحيات GL الحساسة لا تُمنح بالتحديد الجماعي.
+  if(p.screens.gl){
+    p.screens.gl.post=false;
+    p.screens.gl.reverse=false;
+    p.screens.gl.manage=false;
+  }
   if(kind==="all") p.sys.backup=true; if(kind==="none") p.sys.backup=false;
   pmRender(p); document.getElementById("uf_role").value="custom"; document.getElementById("uf_roleDesc").textContent=ROLE_PRESETS.custom.desc;
 }
@@ -11758,4 +11778,40 @@ function renderManagementReports(){
 </style>
 
 </body>
+
+<style id="ig-universal-screen-navigation">
+/* أزرار رجوع وخروج موحدة لكل الشاشات والتقارير */
+.topbar #tbBack{display:none;align-items:center;justify-content:center;flex:0 0 38px}
+.topbar #igTopExit{display:none;align-items:center;justify-content:center;gap:6px;white-space:nowrap;min-height:38px;padding:7px 12px;border:1px solid #d4a017;border-radius:9px;background:#fff8e8;color:#78540a;font:800 12px Cairo,sans-serif;cursor:pointer}
+.topbar #igTopExit:hover{background:#ffefc7}
+@media(max-width:700px){.topbar{gap:7px;padding:9px 10px;flex-wrap:wrap}.topbar #tbBack{width:38px;height:38px;flex-basis:38px}.topbar #igTopExit{min-height:38px;padding:6px 9px}.topbar .crumb{display:none}}
+</style>
+<script id="ig-universal-screen-navigation-script">
+(function(){
+ "use strict";
+ function ensureScreenNav(){
+   var bar=document.querySelector(".topbar");if(!bar)return;
+   var back=document.getElementById("tbBack");
+   if(!back){back=document.createElement("button");back.type="button";back.id="tbBack";back.className="tb-back";back.setAttribute("aria-label","رجوع للشاشة السابقة");back.title="رجوع";back.textContent="↩";bar.insertBefore(back,bar.querySelector("#pageTitle")||bar.firstChild);}
+   back.onclick=function(){if(typeof window.goBack==="function")window.goBack();else if(typeof window.go==="function")window.go("dashboard");};
+   var exit=document.getElementById("igTopExit");
+   if(!exit){exit=document.createElement("button");exit.type="button";exit.id="igTopExit";exit.innerHTML='<span aria-hidden="true">✕</span><span>خروج</span>';exit.title="الخروج من الشاشة والعودة للرئيسية";exit.setAttribute("aria-label","خروج من الشاشة والعودة للرئيسية");bar.insertBefore(exit,bar.querySelector(".spacer")||null);}
+   exit.onclick=function(){if(typeof window.igExitScreen==="function")window.igExitScreen();else if(typeof window.go==="function")window.go("dashboard");};
+   var pageTitle=document.getElementById("pageTitle"),isHome=pageTitle&&pageTitle.textContent.trim()==="لوحة التحكم";
+   back.style.display=(!isHome&&pageTitle) ? "inline-flex":"none";
+   exit.style.display=(!isHome&&pageTitle) ? "inline-flex":"none";
+ }
+ var oldGo=window.go;
+ if(typeof oldGo==="function"&&!oldGo.__igUniversalNav){var wrapped=function(){var result=oldGo.apply(this,arguments);try{ensureScreenNav();}catch(e){}return result;};wrapped.__igUniversalNav=true;window.go=wrapped;}
+ window.addEventListener("popstate",function(){setTimeout(ensureScreenNav,0);});
+ document.addEventListener("DOMContentLoaded",ensureScreenNav);
+ if(document.readyState!=="loading")ensureScreenNav();
+ var root=document.getElementById("app");
+ if(root&&typeof MutationObserver!=="undefined")new MutationObserver(ensureScreenNav).observe(root,{childList:true,subtree:true});
+ window.igEnsureScreenNav=ensureScreenNav;
+})();
+</script>
+
+
 </html>
+
