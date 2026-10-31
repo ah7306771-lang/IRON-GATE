@@ -2612,8 +2612,13 @@ async function loadDocs(){
         // السجلات القديمة التي لا تحمل حالة ترحيل صريحة تُعامل كبيانات توريد
         // حفاظًا على ظهور البيانات التاريخية بعد إضافة عمود is_posted.
         // فقط false الصريحة تعني أنها ما زالت محفوظة ولم تُرحّل.
-        const explicitlyUnposted = h.is_posted === false || h.is_posted === 0 || h.is_posted === "false" || h.is_posted === "0";
-        (explicitlyUnposted ? state.policies : state.shipments).push(rec);
+        const postedRaw = h.is_posted;
+        const explicitlyUnposted = postedRaw === false || postedRaw === 0 ||
+          (typeof postedRaw === "string" && ["false","0","no","off"].includes(postedRaw.trim().toLowerCase()));
+        const explicitlyPosted = postedRaw === true || postedRaw === 1 ||
+          (typeof postedRaw === "string" && ["true","1","yes","on"].includes(postedRaw.trim().toLowerCase()));
+        // لا تُسقط السجلات القديمة ذات الحالة الفارغة: اعتبرها محفوظة غير مُرحّلة.
+        (explicitlyPosted ? state.shipments : state.policies).push(rec);
       });
       docSnaps.ship = docDiff("ship").cur;
     }else{
@@ -6016,19 +6021,21 @@ function supplyLines(){
   const q=supFilter.q.trim().toLowerCase(), out=[];
   const nz=(x,y)=>String(y||"").localeCompare(String(x||""),undefined,{numeric:true});
   const fe=supEff("flat"), byDate=fe.key==="date";
-  // الترتيب بالتاريخ بيتم على مستوى البوليصة (فتفضل أصناف كل بوليصة متجمعة)؛ الفارغ دايماً في الآخر
   const ordK=supFilter.order?supOrderNumberKey(supFilter.order):"", ordSo=ordK?(state.saleOrders||[]).find(x=>supOrderNumberKey(x.orderNo)===ordK):null;
-  const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
-  list.forEach(s=>{
-    if(ordK&&supOrderNumberKey(s.saleOrderNo)!==ordK&&!(ordSo&&s.saleOrderId===ordSo.id)) return;
+  // اعرض البوالص المُرحّلة والمحفوظة غير المُرحّلة مع تمييز الحالة؛ لا تُخفِ السجلات التاريخية.
+  const all=[...(Array.isArray(state.shipments)?state.shipments:[]).map(s=>({s,unposted:false})),...(Array.isArray(state.policies)?state.policies:[]).map(s=>({s,unposted:true}))];
+  const list=all.sort((a,b)=>(byDate?supCmp(a.s.date,b.s.date,false,fe.dir):(b.s.date||"").localeCompare(a.s.date||""))||nz(a.s.saleOrderNo,b.s.saleOrderNo)||nz(a.s.policyNo,b.s.policyNo));
+  list.forEach(({s,unposted})=>{
+    const linkedNo=s.saleOrderNo||state.saleOrders.find(x=>String(x.id)===String(s.saleOrderId))?.orderNo||"";
+    if(ordK&&supOrderNumberKey(linkedNo)!==ordK) return;
     if(supFilter.supplier&&s.supplier!==supFilter.supplier) return;
     if(supFilter.customer&&s.customer!==supFilter.customer) return;
     if(supFilter.from&&(!s.date||s.date<supFilter.from)) return;
     if(supFilter.to&&(!s.date||s.date>supFilter.to)) return;
-    const items=s.items.filter(it=>(!supFilter.factory||itemFactory(s,it)===supFilter.factory)&&(!supFilter.status||it.agingStatus===supFilter.status));
+    const items=(s.items||[]).filter(it=>(!supFilter.factory||itemFactory(s,it)===supFilter.factory)&&(!supFilter.status||it.agingStatus===supFilter.status));
     if(!items.length) return;
-    if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,s.saleOrderNo,...s.items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
-    items.forEach((it,i)=>out.push({s,it,first:i===0}));
+    if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,linkedNo,...items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
+    items.forEach((it,i)=>out.push({s,it,first:i===0,unposted}));
   });
   const fs=supEff("flat");
   if(fs.key&&fs.key!=="date"&&SUP_SORT[fs.key]){
@@ -6669,7 +6676,7 @@ function renderSupplyFlat(L, T){
     const terms=`${fmt(termsData.cashPct,0)}% نقدي`+(termsData.installments?` + ${termsData.installments}×${termsData.periodDays}ي`:"");
     const rowAttr=sk?` class="so-row${soKey(L[idx-1])!==sk?" so-start":""}${soKey(L[idx+1])!==sk?" so-end":""}" data-so="${escapeAttr(sk)}" style="--so:hsl(${hue} 62% 42%);--so-bg:hsl(${hue} 70% 48% / .075)"`:"";
     return `<tr${rowAttr}>
-      <td data-label="البوليصة">${first?`<strong style="color:var(--gold-text)">${escapeHtml(s.policyNo)}</strong>`:""}</td>
+      <td data-label="البوليصة">${first?`<strong style="color:var(--gold-text)">${escapeHtml(s.policyNo)}</strong>${L[idx].unposted?` <span class="chip warn">غير مُرحّلة</span>`:""}`:""}</td>
       <td data-label="التاريخ">${showOrderData?escapeHtml(displayDate):""}</td><td data-label="أمر البيع">${showOrderData?escapeHtml(displayOrderNo||"—"):""}</td><td data-label="المورد">${showOrderData?escapeHtml(displaySupplier):""}</td><td data-label="العميل">${showOrderData?escapeHtml(displayCustomer):""}</td><td data-label="الشركة">${showOrderData?escapeHtml(displayCompany):""}</td><td data-label="الموقع">${showOrderData?escapeHtml(displaySite):""}</td>
       <td data-label="المصنع">${escapeHtml(itemFactory(s,it))}</td>
       <td data-label="القطر">${escapeHtml(it.diameter)}</td><td data-label="النوع">${escapeHtml(it.type)}</td>
