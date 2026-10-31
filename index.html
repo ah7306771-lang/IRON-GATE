@@ -2096,7 +2096,18 @@ function loadState(){
     return JSON.parse(JSON.stringify(defaults));
   }
 }
-const LOCAL_ONLY_KEYS = ["shipments","policies","installments","receipts","payments","saleOrders","soNextNum","orderTerms","quotes","qtNextNum","treasuryEntries","partyOpening"];
+// أوامر البيع مصدرها الوحيد Supabase؛ لا تُكتب في localStorage.
+const LOCAL_ONLY_KEYS = ["shipments","policies","installments","receipts","payments","soNextNum","orderTerms","quotes","qtNextNum","treasuryEntries","partyOpening"];
+function clearLocalSaleOrderCache(){
+  try{
+    const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return;
+    const cached=JSON.parse(raw);
+    if(cached && Object.prototype.hasOwnProperty.call(cached,"saleOrders")){
+      delete cached.saleOrders;
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(cached));
+    }
+  }catch(e){ console.warn("تعذر إزالة نسخة أوامر البيع القديمة من تخزين المتصفح:",e); }
+}
 function saveState(){
   try{ securityMigrate(state); }catch(e){}
   // البيانات الأساسية والإعدادات والمستخدمين والسجل في Supabase، والباقي مؤقتًا في المتصفح لحد المرحلة 2
@@ -2327,7 +2338,7 @@ const SHIP_ITEM_SPEC = [["factory","factory","t"],["diameter","diameter","t"],["
   ["tax","tax","n"],["discount","discount","n"],["total","total","n"],["notes","notes","t"]];
 // sale_orders schema الفعلي: الحقول الإضافية تحفظ داخل data JSONB ولا تُرسل كأعمدة غير موجودة.
 const SO_SPEC = [["orderNo","order_no","t"],["date","so_date","d"],["customer","customer","t"],["supplier","supplier","t"],
-  ["closed","closed","b"],["quoteId","quote_id","t"],["address","address","t"]];
+  ["closed","closed","b"],["closedAt","closed_at","z"],["closeReason","close_reason","t"],["quoteId","quote_id","t"],["address","address","t"]];
 const SO_ITEM_SPEC = [["id","item_id","t"],["diameter","diameter","t"],["qty","qty","n"],["spec","spec","t"],["type","type","t"],["notes","notes","t"]];
 const DOC_GROUPS = { ship:{ t:"shipments", it:"shipment_items", fk:"shipment_id" }, so:{ t:"sale_orders", it:"sale_order_items", fk:"sale_order_id" } };
 let docSnaps = {}, docMeta = new Set(), counterSnap = "", docsReady = false;
@@ -2369,8 +2380,8 @@ function packShipment(rec,posted){
 }
 function packSO(rec){
   const row={id:String(rec.id),order_no:String(rec.orderNo||""),so_date:rec.date||null,customer:rec.customer||null,supplier:rec.supplier||null,
-    closed:!!rec.closed,quote_id:rec.quoteId||null,address:rec.address||null,
-    data:Object.fromEntries(Object.entries(rec).filter(([k])=>!['id','items','orderNo','date','customer','supplier','closed','quoteId','address'].includes(k))),
+    closed:!!rec.closed,closed_at:rec.closedAt||null,close_reason:rec.closeReason||null,quote_id:rec.quoteId||null,address:rec.address||null,
+    data:Object.fromEntries(Object.entries(rec).filter(([k])=>!['id','items','orderNo','date','customer','supplier','closed','closedAt','closeReason','quoteId','address'].includes(k))),
     updated_at:new Date().toISOString()};
   const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SO_ITEM_SPEC); r.sale_order_id=row.id; r.line_no=i+1; return r; });
   return { row, items };
@@ -2378,7 +2389,9 @@ function packSO(rec){
 function unpackSO(row){
   const data=row.data&&typeof row.data==='object'?row.data:{};
   return Object.assign({},data,{id:String(row.id),orderNo:row.order_no||data.orderNo||'',date:row.so_date||data.date||'',
-    customer:row.customer??data.customer??'',supplier:row.supplier??data.supplier??'',closed:!!row.closed,quoteId:row.quote_id||data.quoteId||'',address:row.address??data.address??''});
+    customer:row.customer??data.customer??'',supplier:row.supplier??data.supplier??'',closed:!!row.closed,
+    closedAt:row.closed_at||data.closedAt||null,closeReason:row.close_reason??data.closeReason??'',
+    quoteId:row.quote_id||data.quoteId||'',address:row.address??data.address??''});
 }
 function docEntries(g){
   if(g==="ship") return [...(state.policies||[]).map(r=>[r,false]), ...(state.shipments||[]).map(r=>[r,true])];
@@ -2475,15 +2488,27 @@ async function fetchAllRows(table, orderCols){
   return out;
 }
 function groupBy(rows,fk){ const m=new Map(); rows.forEach(r=>{ if(!m.has(r[fk])) m.set(r[fk],[]); m.get(r[fk]).push(r); }); return m; }
+async function verifySaleOrderClosureSchema(){
+  // لا نعتمد حالة الإقفال إلا بعد التأكد أن أعمدتها موجودة فعليًا في Supabase.
+  const probe=await sb.from("sale_orders").select("id,closed,closed_at,close_reason").limit(1);
+  if(probe.error){
+    const msg=String(probe.error.message||probe.error);
+    if(/closed|closed_at|close_reason/i.test(msg) && /(column|schema cache|does not exist|could not find)/i.test(msg)){
+      throw new Error("أعمدة إقفال أوامر البيع غير مكتملة في قاعدة البيانات. شغّل ملف SQL المرفق مرة واحدة من Supabase SQL Editor ثم أعد تحميل النظام. التفاصيل: "+msg);
+    }
+    throw probe.error;
+  }
+}
 async function loadDocs(){
   docsReady=false;
-  // احتفظ بأوامر البيع المحلية قبل تحميل السيرفر؛ قد تكون هناك أوامر قديمة لم تُرفع بعد.
+  // نحتفظ مؤقتًا بأي أوامر قديمة من نسخة المتصفح في الذاكرة فقط لترحيلها إلى Supabase؛ لا نعيد حفظها محليًا.
   const localSaleOrders=(state.saleOrders||[]).map(r=>JSON.parse(JSON.stringify(r)));
   try{
     const [hs,his,ss,sis,cs] = await Promise.all([
       fetchAllRows("shipments",["id"]), fetchAllRows("shipment_items",["shipment_id","line_no"]),
       fetchAllRows("sale_orders",["id"]), fetchAllRows("sale_order_items",["sale_order_id","line_no"]),
       fetchAllRows("app_counters",["name"]) ]);
+    await verifySaleOrderClosureSchema();
     docMeta = new Set(cs.filter(r=>String(r.name).startsWith("migrated:")).map(r=>String(r.name).slice(9)));
     docSnaps = {};
     // لو لسه ماتنقلتش للجداول الجديدة: جرّب النسخة القديمة (app_docs) قبل بيانات المتصفح
@@ -2513,6 +2538,8 @@ async function loadDocs(){
       state.saleOrders=[...serverSaleOrders,...localOnly];
       // اجعل لقطة المزامنة تعكس صفوف السيرفر فقط حتى تُرفع الأوامر المحلية الناقصة تلقائياً.
       docSnaps.so=new Map(serverSaleOrders.map(o=>[String(o.id),JSON.stringify(o)]));
+      // إذا كانت كل الأوامر موجودة على السيرفر، احذف أي نسخة محلية قديمة متبقية.
+      if(!localOnly.length) clearLocalSaleOrderCache();
     }else{
       if(legacy && (legacy.saleOrders||[]).length) state.saleOrders=legacy.saleOrders.map(r=>r.data);
       else state.saleOrders=localSaleOrders;
@@ -2528,7 +2555,9 @@ async function loadDocs(){
     counterSnap = c ? String(serverN) : "";
     docsReady = true;
   }catch(e){
-    toast("تعذر تحميل البوالص وأوامر البيع من السيرفر — شغّال محليًا مؤقتًا ("+(e.message||e)+")","err");
+    docsReady=false;
+    state.saleOrders=[]; // لا نعرض أوامر محلية كأنها بيانات مؤكدة من قاعدة البيانات.
+    toast("تعذر تحميل أوامر البيع والبوالص من قاعدة البيانات. تم إيقاف الاستدعاء والإقفال حتى يعود اتصال Supabase. ("+(e.message||e)+")","err");
   }
 }
 async function syncDocs(){
@@ -2552,6 +2581,8 @@ async function syncDocs(){
     }
     docSnaps[g]=d.cur;
   }
+  // أوامر البيع تُحفظ في sale_orders فقط. إزالة النسخة القديمة من المتصفح بعد نجاح المزامنة.
+  clearLocalSaleOrderCache();
   const cn=counterNow();
   if(cn!==counterSnap){
     const r=await sb.from("app_counters").upsert({ name:"soNextNum", value:Number(cn) },{ onConflict:"name" }); if(r.error) throw r.error;
@@ -4802,16 +4833,54 @@ function soComputeRemaining(so, excludeId){
   return { planned, used, remaining, totalPlanned, totalUsed, totalRemaining, linkedCount: linked.length };
 }
 
+async function persistSaleOrderClosure(so, nextClosed, reason=""){
+  if(!docsReady) throw new Error("أوامر البيع لم تُحمّل من قاعدة البيانات؛ أعد الاتصال وحاول مرة أخرى.");
+  if(!so || !so.id) throw new Error("رقم سجل أمر البيع غير صالح.");
+  // تأكد أن السجل موجود في Supabase قبل تحديث الحالة، وارفع أي أمر جديد لم يزامَن بعد.
+  let found=await sb.from("sale_orders").select("id").eq("id",String(so.id)).maybeSingle();
+  if(found.error) throw found.error;
+  if(!found.data){
+    await syncDocs();
+    found=await sb.from("sale_orders").select("id").eq("id",String(so.id)).maybeSingle();
+    if(found.error) throw found.error;
+  }
+  if(!found.data) throw new Error("أمر البيع غير موجود في جدول sale_orders. لم يتم تسجيل الإقفال.");
+  const stamp=nextClosed?new Date().toISOString():null;
+  const payload={closed:!!nextClosed,closed_at:stamp,close_reason:nextClosed?String(reason||""):null,updated_at:new Date().toISOString()};
+  const saved=await sb.from("sale_orders").update(payload).eq("id",String(so.id)).select("id,closed,closed_at,close_reason").maybeSingle();
+  if(saved.error) throw saved.error;
+  if(!saved.data) throw new Error("قاعدة البيانات لم تؤكد تحديث حالة أمر البيع؛ لم يتم اعتبار العملية ناجحة.");
+  so.closed=!!saved.data.closed;
+  so.closedAt=saved.data.closed_at||null;
+  so.closeReason=saved.data.close_reason||"";
+  if(typeof soLoadedId!=="undefined" && soLoadedId===so.id && typeof soDraft!=="undefined" && soDraft) soDraft=JSON.parse(JSON.stringify(so));
+  docSnaps.so=docDiff("so").cur;
+  clearLocalSaleOrderCache();
+  return saved.data;
+}
+
 async function bulkCloseSaleOrdersThroughDate(){
   const cutoff="2026-10-28";
+  if(!docsReady){toast("لا يمكن الإقفال: تعذر تحميل أوامر البيع من قاعدة البيانات.","err");return;}
   const eligible=(state.saleOrders||[]).filter(so=>!so.closed&&String(so.date||"").slice(0,10)<=cutoff);
   if(!eligible.length){toast("لا توجد أوامر بيع مفتوحة بتاريخ 28-10-2026 أو قبله","ok");return;}
-  if(!await askConfirm(`سيتم إقفال ${eligible.length} أمر بيع بتاريخ 28-10-2026 أو قبله. ستظل الأوامر محفوظة ويمكن إعادة فتحها. هل تريد الاستمرار؟`)) return;
-  const stamp=new Date().toISOString();
-  eligible.forEach(so=>{so.closed=true;so.closedAt=stamp;so.closeReason="إقفال جماعي حتى 28-10-2026";});
-  saveState(); toast(`تم إقفال ${eligible.length} أمر بيع حتى 28-10-2026`,"ok"); closeModal(); openSOPicker();
+  if(!await askConfirm(`سيتم إقفال ${eligible.length} أمر بيع بتاريخ 28-10-2026 أو قبله من قاعدة البيانات. ستظل الأوامر محفوظة ويمكن إعادة فتحها. هل تريد الاستمرار؟`)) return;
+  try{
+    await syncDocs(); // ارفع الأوامر غير المزامنة قبل تنفيذ التحديث الجماعي.
+    const stamp=new Date().toISOString(), ids=eligible.map(so=>String(so.id));
+    const result=await sb.from("sale_orders").update({closed:true,closed_at:stamp,close_reason:"إقفال جماعي حتى 28-10-2026",updated_at:stamp}).in("id",ids).select("id,closed,closed_at,close_reason");
+    if(result.error) throw result.error;
+    const changed=new Map((result.data||[]).map(r=>[String(r.id),r]));
+    if(changed.size!==eligible.length) throw new Error(`قاعدة البيانات أكدت إقفال ${changed.size} من أصل ${eligible.length} أمر فقط. راجع صلاحيات الجدول وحالة الاتصال.`);
+    eligible.forEach(so=>{const row=changed.get(String(so.id));so.closed=!!row.closed;so.closedAt=row.closed_at||null;so.closeReason=row.close_reason||"";});
+    docSnaps.so=docDiff("so").cur; clearLocalSaleOrderCache();
+    toast(`تم تأكيد إقفال ${eligible.length} أمر بيع في قاعدة البيانات حتى 28-10-2026`,"ok"); closeModal(); openSOPicker();
+  }catch(e){
+    toast("فشل الإقفال في قاعدة البيانات، ولم يتم اعتماد العملية: "+(e.message||e),"err");
+  }
 }
 function openSOPicker(){
+  if(!docsReady){toast("لا يمكن استدعاء أوامر البيع قبل تحميلها من قاعدة البيانات.","err");return;}
   const open = (state.saleOrders||[]).filter(so=>!so.closed);
   if(open.length===0){ toast("لا يوجد أوامر بيع مفتوحة. اذهب لشاشة 'أمر بيع' لإنشاء واحد","ok"); return; }
   const list = open.map(so=>{
@@ -4852,6 +4921,7 @@ function openSOPicker(){
 }
 
 async function pickSO(id){
+  if(!docsReady){toast("لا يمكن استدعاء أمر بيع دون اتصال مؤكد بقاعدة البيانات.","err");return;}
   const so = state.saleOrders.find(x=>x.id===id); if(!so) return;
   if(!draft) draft = newDraft();
   const hasData = draft.customer||draft.supplier||draft.items.some(it=>it.diameter||it.supplyQty||it.actualWeight);
@@ -4912,8 +4982,10 @@ async function shipmentToggleOrderClosed(){
   const so=(state.saleOrders||[]).find(x=>x.id===draft?.saleOrderId); if(!so) return;
   const next=!so.closed;
   if(!await askConfirm(next?`إقفال أمر البيع ${so.orderNo}؟ لن يظهر ضمن أوامر البيع المتاحة للاستدعاء.`:`إعادة فتح أمر البيع ${so.orderNo}؟`)) return;
-  so.closed=next; so.closedAt=next?new Date().toISOString():null; so.closeReason=next?"إقفال من شاشة البوليصة":"";
-  saveState(); toast(next?"تم إقفال أمر البيع":"تمت إعادة فتح أمر البيع","ok"); go("shipments");
+  try{
+    await persistSaleOrderClosure(so,next,next?"إقفال من شاشة البوليصة":"");
+    toast(next?"تم تأكيد إقفال أمر البيع في قاعدة البيانات":"تم تأكيد إعادة فتح أمر البيع في قاعدة البيانات","ok"); go("shipments");
+  }catch(e){toast("لم يتم تحديث حالة أمر البيع في قاعدة البيانات: "+(e.message||e),"err");}
 }
 function openPostedOrderSupply(){
   const no=String(lastPostedOrderNoForSupply||draft?.saleOrderNo||"").trim(); if(!no){toast("لا يوجد أمر بيع مرتبط بآخر ترحيل","err");return;}
@@ -6864,6 +6936,7 @@ function soStatus(msg,isErr){
   if(msg && !isErr) setTimeout(()=>{ if(el.textContent===msg) el.textContent=""; }, 3500);
 }
 function soSave(){
+  if(!docsReady){ soStatus("لا يمكن حفظ أمر البيع: قاعدة البيانات غير متاحة. لم يتم الحفظ محليًا.",true); return; }
   if(soVirtualMode){
     const err=soTermsCheck(); if(err){ soStatus(err,true); return; }
     if(!soDraft._termsEdited||termsBlank(soDraft.terms)){ soStatus("عدّل شروط السداد أولًا قبل الحفظ.",true); return; }
@@ -6907,17 +6980,21 @@ async function soClose(){
     : `إقفال الأمر؟ لن يظهر في استدعاء البوالص الجديدة.`;
   if(!await askConfirm(msg)) return;
   const reason = await askPrompt("سبب الإقفال (اختياري):", "") || "";
-  so.closed = true; so.closedAt = new Date().toISOString(); so.closeReason = reason;
-  soDraft = JSON.parse(JSON.stringify(so));
-  saveState(); go("saleOrder"); toast("تم إقفال الأمر","ok");
+  try{
+    await persistSaleOrderClosure(so,true,reason);
+    soDraft = JSON.parse(JSON.stringify(so));
+    go("saleOrder"); toast("تم تأكيد إقفال الأمر في قاعدة البيانات","ok");
+  }catch(e){toast("لم يتم إقفال الأمر في قاعدة البيانات: "+(e.message||e),"err");}
 }
 async function soReopen(){
   if(!soLoadedId) return;
   const so = state.saleOrders.find(x=>x.id===soLoadedId); if(!so) return;
   if(!await askConfirm("إعادة فتح الأمر؟ سيعود للظهور في استدعاء البوالص.")) return;
-  so.closed = false; so.closedAt = null; so.closeReason = "";
-  soDraft = JSON.parse(JSON.stringify(so));
-  saveState(); go("saleOrder"); toast("تم إعادة الفتح","ok");
+  try{
+    await persistSaleOrderClosure(so,false,"");
+    soDraft = JSON.parse(JSON.stringify(so));
+    go("saleOrder"); toast("تم تأكيد إعادة فتح الأمر في قاعدة البيانات","ok");
+  }catch(e){toast("لم يتم إعادة فتح الأمر في قاعدة البيانات: "+(e.message||e),"err");}
 }
 
 // لوحة البوالص المربوطة بأمر البيع + المتبقي
