@@ -5015,7 +5015,7 @@ function viewShipments(){
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   ${pendingPanel()}
-  <div class="card" style="margin-top:16px"><div class="head"><h3>بيانات الأمر</h3></div><div class="body">
+  <div class="card ig-pol-head" style="margin-top:16px"><div class="head"><h3>بيانات الأمر</h3></div><div class="body">
     <div class="fgrid">
       ${F("🔑 رقم أمر البيع (أساسي)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div>`)}
       ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
@@ -5025,13 +5025,17 @@ function viewShipments(){
       ${F("الشركة",`<input class="inp" ${ro} list="dlCompany" value="${escapeAttr(d.company)}" oninput="setF('company',this.value)" placeholder="اسم الشركة"><datalist id="dlCompany">${polyHist("company")}</datalist>`)}
       ${F("الموقع",`<input class="inp" ${ro} list="dlSite" value="${escapeAttr(d.site)}" oninput="setF('site',this.value)" placeholder="موقع التوريد / المشروع"><datalist id="dlSite">${polyHist("site")}</datalist>`)}
     </div>
+    <div class="ig-notes-top">
+      <label for="f_notes_top">📝 ملاحظات عامة</label>
+      <input class="inp" id="f_notes_top" ${ro} value="${escapeAttr(d.notes||"")}" oninput="setF('notes',this.value)" placeholder="سطر ملاحظة قصير (اختياري)">
+    </div>
   </div></div>
 
   <details class="card ig-disclosure" style="margin-top:16px;border-color:var(--gold)"><summary class="head"><h3>أصناف أمر البيع والكميات</h3><span class="count" id="soFullTag"></span></summary>
     <div class="body" id="soFullBox"></div>
   </details>
 
-  <div class="card" style="margin-top:16px"><div class="head"><h3>الأصناف</h3>
+  <div class="card" style="margin-top:16px"><div class="head"><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3>
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
     <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items">
       <thead><tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>حالة التعتيق</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th>الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th>سعر البيع شامل الضريبة</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr></thead>
@@ -5040,8 +5044,7 @@ function viewShipments(){
     <p style="padding:8px 16px 12px;color:var(--text-dim);font-size:12px">الحساب بيتم على <strong style="color:var(--gold-text)">الوزن الفعلي</strong>، وكمية التوريد للمقارنة والتسجيل فقط. اضغط أيقونة الملاحظة <span style="color:var(--gold-text)">📝</span> على السطر لإضافة ملاحظة.</p>
   </div>
 
-  <div class="card" style="margin-top:16px"><div class="body">
-    <div class="fld"><label>ملاحظات عامة</label><textarea class="inp" rows="2" ${ro} oninput="setF('notes',this.value)">${escapeHtml(d.notes)}</textarea></div>
+  <div class="card ig-totals-card" style="margin-top:16px"><div class="head"><h3>الإجماليات</h3></div><div class="body">
     <div class="sumbox" id="sumBox"></div>
   </div></div>
 
@@ -5055,19 +5058,17 @@ function viewShipments(){
     <p style="margin-top:10px;color:var(--text-dim);font-size:12px">أسعار الشراء والبيع المدخلة شاملة الضريبة. يتم استخراج الضريبة من سعر البيع دون إضافتها مرة أخرى، ويُخصم 1% من البيع قبل الضريبة للعملاء المحددين فقط من إعدادات العملاء.</p>
   </div></details>
 
-  <div class="card" style="margin-top:16px"><div class="head"><h3>شروط السداد <span style="color:var(--text-dim);font-weight:400;font-size:12px">— على مستوى أمر البيع: تنطبق على كل بوالصه، وآخر حفظ هو المعتمد</span></h3></div><div class="body">
-    <div class="fgrid">
+  <div class="card ig-pay-card" style="margin-top:16px;border-color:var(--gold)"><div class="head"><h3>شروط السداد والاستحقاقات <span style="color:var(--text-dim);font-weight:400;font-size:12px">— على مستوى أمر البيع</span></h3><span class="count" id="paySchedTag"></span></div><div class="body">
+    <div class="ig-terms-grid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct??0}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
       ${F("عدد الأقساط",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.installments}" id="t_installments" oninput="setT('installments',this.value)">`)}
       ${F("فترة القسط (يوم)",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.periodDays}" id="t_periodDays" oninput="setT('periodDays',this.value)">`)}
     </div>
-    <p id="termsLockNote" style="margin-top:10px;font-size:12px;color:var(--text-dim)"></p>
-    <p id="termsBox" style="margin-top:12px;color:var(--text-dim);font-size:13px"></p>
-  </div></div>
-
-  <div class="card" style="margin-top:16px;border-color:var(--gold)"><div class="head"><h3>السدادات والنسب وتواريخ الاستحقاق (على أمر البيع)</h3><span class="count" id="paySchedTag"></span></div>
-    <div class="body" id="paySchedBox"></div>
-  </div>`;
+    <p id="termsLockNote" style="margin:8px 0 0;font-size:12px;color:var(--text-dim)"></p>
+    <p id="termsBox" style="margin:6px 0 0;color:var(--text-dim);font-size:13px"></p>
+    <div class="ig-pay-divider"></div>
+    <div id="paySchedBox"></div>
+  </div></div>`;
 }
 // اقتراحات من القيم المدخلة قبل كده في البوالص (محفوظة ومرحّلة)
 function polyHist(k){ return [...new Set([...state.policies,...state.shipments].map(r=>(r[k]||"").trim()).filter(Boolean))].map(v=>`<option value="${escapeAttr(v)}">`).join(""); }
@@ -5636,7 +5637,7 @@ function missingList(d){
   const m=[], add=(label,line,key)=>{ let e=m.find(x=>x.key===key); if(!e){e={label,key,lines:[]};m.push(e);} if(line) e.lines.push(line); };
   d.items.forEach((it,i)=>{ if(!rowUsed(it)) return;
     if(!(+it.actualWeight>0)) add("الوزن الفعلي",i+1,"actualWeight");
-    if(!(+it.buyPrice>0)) add("سعر الشراء",i+1,"buyPrice");
+    // سعر الشراء اختياري — لو فاضي يترحّل بصفر
     if(!(+it.sellPrice>0)) add("سعر البيع",i+1,"sellPrice"); });
   // شروط السداد اختيارية عند حفظ/ترحيل البوليصة؛ تُراجع وتُستكمل لاحقًا من أمر البيع.
   return m;
@@ -5675,14 +5676,15 @@ function buildRecord(strict){
     if(!it.diameter||!it.type) return err("اختر القطر والنوع لكل صنف");
     if(!(+it.supplyQty>0)) return err("اكتب كمية التوريد (أكبر من صفر)");
     if(has(it.actualWeight)&&!(+it.actualWeight>0)) return err("الوزن الفعلي لازم يكون أكبر من صفر");
-    if((has(it.buyPrice)&&!(+it.buyPrice>0))||(has(it.sellPrice)&&!(+it.sellPrice>0))) return err("الأسعار لازم تكون أكبر من صفر");
+    if(has(it.sellPrice)&&!(+it.sellPrice>0)) return err("سعر البيع لازم يكون أكبر من صفر");
+    if(has(it.buyPrice)&&+it.buyPrice<0) return err("سعر الشراء لا يمكن أن يكون أقل من صفر");
   }
   if(strict){ const m=missingList(d); if(m.length){ showMissing(m); return null; } }
   const opts = draftCalcOpts();
   const items=rows.map(it=>{
     const c=calcItem(it,opts);
     return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
-      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:num(it.buyPrice),sellPrice:num(it.sellPrice),
+      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:num(it.sellPrice),
       tax:c.tax,discount:c.discount,total:c.total,notes:(it.notes||"").trim()};
   });
   const t=draftTotals();
@@ -10435,6 +10437,38 @@ window.go=function(page){
 };
 })();
 </script>
+<style id="ig-shipments-polish">
+/* === تنسيق محترف لشاشة البوليصة === */
+.ig-notes-top{display:flex;align-items:center;gap:10px;margin-top:14px;padding:9px 12px;border:1px dashed var(--line);border-radius:10px;background:var(--bg-2)}
+.ig-notes-top label{margin:0;font-size:12px;font-weight:700;color:var(--text-dim);white-space:nowrap}
+.ig-notes-top .inp{flex:1;min-height:36px;font-size:13px;padding:6px 10px;background:transparent;border:0;box-shadow:none}
+.ig-notes-top .inp:focus{outline:1px solid var(--gold);border-radius:7px}
+@media(max-width:700px){.ig-notes-top{flex-direction:column;align-items:stretch;gap:4px;padding:8px 10px}.ig-notes-top .inp{min-height:40px}}
+
+/* بطاقة الإجماليات: عنوان أوضح + أرقام متناسقة */
+.ig-totals-card>.head{background:linear-gradient(90deg,rgba(212,160,23,.08),transparent);border-bottom:1px solid var(--line)}
+.ig-totals-card>.head h3{color:var(--gold-text)}
+.ig-totals-card .sumbox{margin-top:4px}
+.ig-totals-card .sumbox div{background:#fffdf7;border-color:#eadfca}
+.ig-totals-card .sumbox .grand{background:linear-gradient(180deg,#fff8e4,#fff2cc);border-color:#d4a017}
+.ig-totals-card .sumbox strong{font-variant-numeric:tabular-nums;letter-spacing:.3px}
+
+/* بطاقة الشروط + جدول الاستحقاقات في مكان واحد */
+.ig-pay-card>.head{background:linear-gradient(90deg,rgba(212,160,23,.08),transparent)}
+.ig-terms-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:700px){.ig-terms-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:420px){.ig-terms-grid{grid-template-columns:1fr}}
+.ig-pay-divider{height:1px;background:linear-gradient(90deg,transparent,var(--line),transparent);margin:14px 0 10px}
+
+/* سطر "الاجراءات" (الزرار + الحقول) داخل الشروط يبقى متوازن */
+#content:has(#paySchedBox) .ig-pay-card .fld{margin:0}
+#content:has(#paySchedBox) .ig-pay-card .fld label{font-size:12px;color:var(--text-dim);font-weight:700;margin-bottom:4px}
+#content:has(#paySchedBox) .ig-pay-card #paySchedBox table{font-variant-numeric:tabular-nums}
+#content:has(#paySchedBox) .ig-pay-card #paySchedBox th{background:#fffaf0;color:var(--gold-text);font-weight:800}
+
+/* بطاقة بيانات الأمر: عنوان أهدأ */
+.ig-pol-head>.head h3{display:flex;align-items:center;gap:6px}
+</style>
 <style id="ig-v8-style">
 /* ================= v8: مؤشر المزامنة + هياكل التحميل + حالات فاضية + نسخ احتياطي ================= */
 .ig-sync{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#dbe3f3;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;max-width:230px}
