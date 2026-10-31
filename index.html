@@ -1964,7 +1964,6 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
       <nav id="nav" aria-label="القائمة الرئيسية"></nav>
       <div class="sidebar-foot">
         <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)">
-        <button onclick="logout()" style="color:var(--danger)" title="تسجيل خروج" aria-label="تسجيل خروج"><span class="sf-i" aria-hidden="true">⏻</span><span class="sf-t">تسجيل خروج</span></button>
       </div>
     </aside>
     <main>
@@ -1975,7 +1974,6 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
         <span class="crumb" id="pageCrumb"></span>
         <div class="spacer"></div>
         <button type="button" class="ig-sync saved" id="igSync" style="display:none" onclick="igSyncClick()" aria-live="polite"><span class="d" aria-hidden="true"></span><span class="t">تم الحفظ ✓</span></button>
-        <button type="button" class="tb-search" onclick="openCmdk()" aria-label="بحث سريع">🔍 <span>بحث سريع</span><kbd>Ctrl K</kbd></button>
         <button type="button" class="tb-new" id="tbNew" style="display:none" onclick="tbOpen('new',this,event)" aria-label="إنشاء جديد" aria-haspopup="menu"><b>+</b><span>جديد</span></button>
         <div class="user"></div>
       </div>
@@ -2784,6 +2782,7 @@ const SCREENS = [
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post"], prices:true },
   { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete"], prices:true },
   { id:"salesReport", label:"تقرير المبيعات", icon:"📊", acts:["print"], prices:true },
+  { id:"managementReports", label:"تقارير الإدارة والرقابة", icon:"📈", acts:["print"], prices:true },
   { id:"orderReport", label:"تقرير أوامر البيع التفصيلي", icon:"🗂", acts:["print"], prices:true },
   { id:"salesInstallments", label:"الأقساط", icon:"💳", acts:["print"] },
   { id:"clientStatement", label:"كشف حساب عميل", icon:"📒", acts:["print"], prices:true },
@@ -2933,6 +2932,7 @@ function canView(page){
   if(page==="users") return isAdmin();
   // دفتر الشيكات قراءة مشتقة من التحصيلات؛ يستخدم نفس صلاحية مشاهدة التحصيلات حتى للمستخدمين الحاليين.
   if(page==="chequeRegister") return can("receipts","view");
+  if(page==="overdueSummary") return can("salesInstallments","view");
   if(!SCREENS.some(s=>s.id===page)) return isAdmin();   // شاشات "قريبًا" للأدمن بس
   return can(page,"view");
 }
@@ -3120,8 +3120,10 @@ const navGroups = [
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
     { sep:"التقارير والمتابعة" },
     { id:"salesReport", icon:"📊", label:"تقرير المبيعات" },
+    { id:"managementReports", icon:"📈", label:"تقارير الإدارة والرقابة" },
     { id:"orderReport", icon:"🗂", label:"تقرير أوامر البيع التفصيلي" },
     { id:"salesInstallments", icon:"💳", label:"الأقساط", badge:"late" },
+    { id:"overdueSummary", icon:"📉", label:"إجمالي المتأخرات" },
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
     { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" }
   ]},
@@ -3236,9 +3238,11 @@ function go(page){
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
     supply:["بيانات التوريد","كل البوالص والأصناف"],
-    salesReport:["تقرير المبيعات","تقرير تفصيلي للمبيعات مع فلاتر وتصدير PDF وExcel"],
+    salesReport:["تقرير المبيعات","تقرير احترافي مجمّع حسب أمر البيع — بدون عرض البوالص"],
+    managementReports:["تقارير الإدارة والرقابة","موقف العملاء والموردين وربحية أوامر البيع وأعمار الديون"],
     orderReport:["تقرير أوامر البيع التفصيلي","كل أمر بيع وتحته بوالصه وشروط السداد والأقساط والمسدد والمتبقي"],
     salesInstallments:["الأقساط","متابعة أقساط العملاء من بيانات التوريد والتحصيلات"],
+    overdueSummary:["إجمالي المتأخرات","إجمالي المبالغ المستحقة والمتأخرة لكل عميل"],
     clientStatement:["كشف حساب عميل","حركة العميل والرصيد الافتتاحي والرصيد الجاري"],
     purchaseReport:["تقرير المشتريات","تقرير تفصيلي للمشتريات مع فلاتر وتصدير PDF وExcel"],
     supplierStatement:["كشف حساب مورد","حركة المورد والرصيد الافتتاحي والرصيد الجاري"],
@@ -3267,7 +3271,9 @@ function go(page){
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
   else if(page==="orderReport"){ c.innerHTML = viewOrderReport(); renderOrderReport(); }
   else if(page==="salesInstallments"){ c.innerHTML = viewSalesInstallments(); renderSalesInstallments(); }
+  else if(page==="overdueSummary"){ c.innerHTML=viewOverdueSummary(); renderOverdueSummary(); }
   else if(page==="salesReport"||page==="purchaseReport"){ c.innerHTML = viewTradeReport(page); renderTradeReport(); }
+  else if(page==="managementReports"){ c.innerHTML=viewManagementReports(); renderManagementReports(); }
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
@@ -3379,7 +3385,6 @@ function viewCustodyLedger(){
         <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>وارد</th><th>منصرف</th><th>الرصيد</th><th class="custody-no-print">إجراءات</th></tr></thead><tbody>
         ${(()=>{let run=0;return rows.map(r=>{run+=(r.entry_type==="in"?1:-1)*(+r.amount||0);const locked=a.lock_date&&String(r.entry_date)<=a.lock_date;return `<tr><td dir="ltr">${custodyEsc(r.entry_date)}</td><td>${custodyEsc(r.description)}</td><td>${custodyEsc(r.project||"—")}</td><td style="color:var(--ok)">${r.entry_type==="in"?custodyMoney(r.amount):"—"}</td><td style="color:var(--danger)">${r.entry_type==="out"?custodyMoney(r.amount):"—"}</td><td><b>${custodyMoney(run)}</b></td><td class="custody-no-print"><div class="td-actions">${canEdit&&!locked?`<button data-ce-edit="${custodyEsc(r.id)}">تعديل</button>`:""}${canDel&&!locked?`<button class="del" data-ce-del="${custodyEsc(r.id)}">حذف</button>`:""}</div></td></tr>`;}).join("");})()||'<tr><td colspan="7" style="text-align:center">لا توجد حركات مسجلة</td></tr>'}
         </tbody></table></div>
-        ${custodyCan("close")?`<div class="custody-form-grid custody-no-print" style="margin-top:16px"><div class="custody-field"><label>تقفيل العهدة حتى تاريخ</label><input class="inp" type="date" id="caLockDate" value="${custodyEsc(a.lock_date||"")}"></div><div class="custody-field" style="justify-content:end"><button class="btn ghost" id="caSaveLock">حفظ التقفيل</button></div></div>`:""}
       </div></section>`:`<div class="empty"><div class="ic">💼</div><h3>اختر عهدة لعرض الخزنة</h3><p>ابدأ بإضافة عهدة جديدة أو اختر كود عهدة من القائمة.</p></div>`}
   </div>`;
 }
@@ -3403,14 +3408,6 @@ function bindCustodyLedger(){
     const r=await sb.from(CUSTODY_TABLES.entries).insert({account_id:a.id,entry_type:type,entry_date:date,amount,description,project,created_by:custodyUserName()}).select().single();
     if(r.error){custodyStatus("ceStatus",r.error.message,true);save.disabled=false;return;}
     custodyCache.entries.push(r.data);audit("حركة عهدة",a.code+" / "+type+" / "+amount);go("custodyLedger");toast("تم تسجيل الحركة","ok");
-  };
-  const lock=document.getElementById("caSaveLock");
-  if(lock)lock.onclick=async()=>{
-    const a=custodyAccount(custodyCache.selected),date=document.getElementById("caLockDate").value||null;
-    if(date&&a.lock_date&&date<a.lock_date){toast("لا يمكن إرجاع تاريخ التقفيل للخلف؛ فك التقفيل أولاً","err");return;}
-    const r=await sb.from(CUSTODY_TABLES.accounts).update({lock_date:date,updated_at:new Date().toISOString()}).eq("id",a.id);
-    if(r.error){toast("تعذر حفظ التقفيل: "+r.error.message,"err");return;}
-    a.lock_date=date;audit("تقفيل عهدة",a.code+" حتى "+(date||"فك التقفيل"));go("custodyLedger");toast(date?"تم تقفيل العهدة":"تم فك تقفيل العهدة","ok");
   };
   document.querySelectorAll("[data-ce-del]").forEach(b=>b.onclick=async()=>{
     const r=custodyCache.entries.find(x=>String(x.id)===b.dataset.ceDel),a=custodyAccount(r?.account_id);if(!r||!a)return;
@@ -3440,6 +3437,7 @@ function viewCustodyReport(){
     <div class="custody-field"><label>كود العهدة</label><select class="inp" id="crAccount"><option value="*">كل العهد</option>${custodyCache.accounts.map(a=>`<option value="${custodyEsc(a.id)}">${custodyEsc(a.code)} — ${custodyEsc(a.owner_name)}</option>`).join("")}</select></div>
     <div class="custody-field"><label>المشروع</label><input class="inp" id="crProject" placeholder="كل المشاريع"></div>
   </div><div class="custody-actions custody-no-print" style="margin-top:12px"><button class="btn" id="crRun">عرض التقرير</button><button class="btn ghost" id="crPrint">🖨 طباعة / PDF</button><button class="btn ghost" id="crExcel">📊 تصدير Excel</button></div><div id="crStatus" class="custody-status"></div></div></section>
+  ${custodyCan("close")?`<section class="card custody-no-print"><div class="head"><h3>🔒 تقفيل خزنة العهدة</h3><span class="spacer"></span><span class="custody-muted">إدارة التقفيل من شاشة تقرير العهد</span></div><div class="body"><div class="custody-form-grid"><div class="custody-field"><label>العهدة المطلوب تقفيلها</label><select class="inp" id="crLockAccount"><option value="">اختر عهدة</option>${custodyCache.accounts.filter(a=>a.is_active!==false).map(a=>`<option value="${custodyEsc(a.id)}">${custodyEsc(a.code)} — ${custodyEsc(a.owner_name)}</option>`).join("")}</select></div><div class="custody-field"><label>تقفيل الخزنة حتى تاريخ</label><input class="inp" type="date" id="crLockDate"></div><div class="custody-field" style="justify-content:end"><button class="btn ghost" id="crSaveLock">حفظ التقفيل</button></div></div><div class="custody-muted" style="margin-top:8px">يمكن فك التقفيل بمسح التاريخ ثم الضغط على حفظ التقفيل.</div></div></section>`:""}
   <div id="custodyReportResult" class="custody-wrap"></div>`;
 }
 function custodyReportHtml(){
@@ -3451,13 +3449,29 @@ function custodyReportHtml(){
     const visible=rows.filter(r=>!p||(r.project||"").trim()===p);
     visible.forEach(r=>{const sg=r.entry_type==="in"?1:-1,v=+r.amount||0;if(f&&r.entry_date<f)op+=sg*v;});
     run=op;const body=visible.filter(r=>(!f||r.entry_date>=f)&&(!t||r.entry_date<=t)).map(r=>{const v=+r.amount||0,inn=r.entry_type==="in";run+=(inn?1:-1)*v;if(inn)ins+=v;else outs+=v;return `<tr><td>${custodyEsc(r.entry_date)}</td><td>${custodyEsc(r.description)}</td><td>${custodyEsc(r.project||"—")}</td><td>${inn?custodyMoney(v):"—"}</td><td>${!inn?custodyMoney(v):"—"}</td><td>${custodyMoney(run)}</td></tr>`;}).join("");
-    return `<section class="card custody-report-card"><div class="head"><h3>كشف حساب العهدة — ${custodyEsc(a.code)}</h3><span class="spacer"></span><b>${custodyEsc(a.owner_name)}</b></div><div class="body"><div class="custody-kpis"><div class="custody-kpi"><small>رصيد أول المدة</small><b>${custodyMoney(op)}</b></div><div class="custody-kpi"><small>إجمالي الوارد</small><b style="color:var(--ok)">${custodyMoney(ins)}</b></div><div class="custody-kpi"><small>إجمالي المنصرف</small><b style="color:var(--danger)">${custodyMoney(outs)}</b></div><div class="custody-kpi"><small>الرصيد النهائي</small><b>${custodyMoney(run)}</b></div></div><p class="custody-muted" style="margin:8px 0">الكود: ${custodyEsc(a.code)} · صاحب العهدة: ${custodyEsc(a.owner_name)} · الفترة: ${f||"البداية"} إلى ${t||"اليوم"}${p?" · المشروع: "+custodyEsc(p):""}</p><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody>${body||'<tr><td colspan="6" style="text-align:center">لا توجد حركات في الفترة</td></tr>'}</tbody></table></div></div></section>`;
+    return `<section class="card custody-report-card"><div class="head"><h3>كشف حساب العهدة — ${custodyEsc(a.code)}</h3><span class="spacer"></span><span class="count">${visible.filter(r=>(!f||r.entry_date>=f)&&(!t||r.entry_date<=t)).length} حركة مطابقة</span><b>${custodyEsc(a.owner_name)}</b></div><div class="body"><div class="custody-kpis"><div class="custody-kpi"><small>رصيد أول المدة</small><b>${custodyMoney(op)}</b></div><div class="custody-kpi"><small>إجمالي الوارد</small><b style="color:var(--ok)">${custodyMoney(ins)}</b></div><div class="custody-kpi"><small>إجمالي المنصرف</small><b style="color:var(--danger)">${custodyMoney(outs)}</b></div><div class="custody-kpi"><small>الرصيد النهائي</small><b>${custodyMoney(run)}</b></div></div><p class="custody-muted" style="margin:8px 0">الكود: ${custodyEsc(a.code)} · صاحب العهدة: ${custodyEsc(a.owner_name)} · الفترة: ${f||"البداية"} إلى ${t||"اليوم"}${p?" · المشروع: "+custodyEsc(p):""}</p><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>المشروع</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody>${body||'<tr><td colspan="6" style="text-align:center">لا توجد حركات في الفترة</td></tr>'}</tbody></table></div></div></section>`;
   });
 }
 function bindCustodyReport(){
   const run=()=>{const h=custodyReportHtml();document.getElementById("custodyReportResult").innerHTML=h.join("")||'<div class="empty">لا توجد عهد مسجلة</div>';};
   document.getElementById("crRun").onclick=run;
   document.getElementById("crRefresh").onclick=async()=>{try{await custodyLoad();go("custodyReport");}catch(e){custodyStatus("crStatus",e.message,true);}};
+  const lockAccount=document.getElementById("crLockAccount"),lockDate=document.getElementById("crLockDate"),saveLock=document.getElementById("crSaveLock");
+  if(lockAccount&&lockDate&&saveLock){
+    lockAccount.onchange=()=>{const a=custodyAccount(lockAccount.value);lockDate.value=a?.lock_date||"";};
+    saveLock.onclick=async()=>{
+      const a=custodyAccount(lockAccount.value),date=lockDate.value||null;
+      if(!a){toast("اختر العهدة المطلوب تقفيلها أولاً","err");return;}
+      if(date&&a.lock_date&&date<a.lock_date){toast("لا يمكن إرجاع تاريخ التقفيل للخلف؛ فك التقفيل أولاً","err");return;}
+      saveLock.disabled=true;
+      const r=await sb.from(CUSTODY_TABLES.accounts).update({lock_date:date,updated_at:new Date().toISOString()}).eq("id",a.id);
+      saveLock.disabled=false;
+      if(r.error){toast("تعذر حفظ التقفيل: "+r.error.message,"err");return;}
+      a.lock_date=date;audit("تقفيل عهدة",a.code+" حتى "+(date||"فك التقفيل"));
+      toast(date?"تم تقفيل العهدة":"تم فك تقفيل العهدة","ok");
+      go("custodyReport");
+    };
+  }
   document.getElementById("crPrint").onclick=()=>{if(!can("custodyReport","print")){toast("ليس لديك صلاحية طباعة تقرير العهد","err");return;}run();window.print();};
   document.getElementById("crExcel").onclick=()=>{
     if(!can("custodyReport","print")){toast("ليس لديك صلاحية تصدير تقرير العهد","err");return;}
@@ -3499,6 +3513,33 @@ const DASH_PERIODS=[
 function dxSetPeriod(k){ dashPeriod=k; try{ localStorage.setItem("irongate_dash_period",k); }catch(e){} dxRerender(); }
 function dxRerender(){ if(currentPage!=="dashboard") return; const c=document.getElementById("content"); if(c) c.innerHTML=viewDashboard(); }
 function dxRefresh(){ try{ navBadges(true); renderNav(); }catch(e){} dxRerender(); toast("تم تحديث الرئيسية","ok"); }
+async function dxLoadCustodyAlerts(){
+  try{ await custodyLoad(); dxRerender(); }catch(e){ toast("تعذر تحميل بيانات العهد", "err"); }
+}
+function viewManagementReports(){
+ return `<div class="trade-report" dir="rtl"><div class="page-head"><div><h2>📈 تقارير الإدارة والرقابة</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">مؤشرات مجمعة من بيانات التوريد والخزينة وخطة الأقساط المسجلة</div></div><div class="spacer"></div><button class="btn ghost" onclick="window.print()">🖨 طباعة التقرير</button></div><div class="card" style="margin-bottom:12px"><div class="body" style="font-size:12px;color:var(--text-dim)">الأرقام تعتمد على الحركات المسجلة. المتبقي = إجمالي الحركة − التحصيل/السداد المسجل. لا يتم احتساب حدود ائتمان غير معرفة، ولا يتم تقدير تكلفة أو ربح متوقع عند غياب بيانات التكلفة/التسعير المعتمدة.</div></div><div id="managementReportsResults"></div></div>`;
+}
+function renderManagementReports(){
+ if(currentPage!=="managementReports")return; const el=document.getElementById('managementReportsResults'); if(!el)return;
+ const cur=state.settings.currency||'ج.م', money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), arr=k=>Array.isArray(state[k])?state[k]:[];
+ const shipments=arr('shipments'), entries=arr('treasuryEntries');
+ const customers=new Map(), suppliers=new Map(), orders=new Map();
+ shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it), c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),o=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');
+  if(c){let x=customers.get(c)||{sales:0,supply:0};x.sales+=+a.total||0;x.supply+=+it.actualWeight||0;customers.set(c,x)}
+  if(v){let x=suppliers.get(v)||{purchase:0};x.purchase+=+a.buyTotal||0;suppliers.set(v,x)}
+  let z=orders.get(o)||{sale:0,cost:0,customer:c,weight:0};z.sale+=+a.total||0;z.cost+=+a.buyTotal||0;z.weight+=+it.actualWeight||0;orders.set(o,z);
+ }));
+ const collected=new Map(),paid=new Map(); entries.forEach(e=>{if(e.status==='guarantee'||e.status==='returned')return;const amt=+e.amount||0;if(e.direction==='in'&&(!(e.method==='bank')||e.status==='collected'))collected.set(String(e.customer||''),(collected.get(String(e.customer||''))||0)+amt);if(e.direction==='out'&&(!(e.method==='bank')||e.status==='collected'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+amt)});
+ const inst=(()=>{try{return salesInstallmentBaseRows()}catch(e){return []}})(), lateBy=new Map(); inst.filter(x=>x.status==='متأخر'&&x.remaining>0).forEach(x=>lateBy.set(x.customer,(lateBy.get(x.customer)||0)+x.remaining));
+ const rows=(map,fn)=>[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ar')).map(([n,x])=>fn(n,x));
+ const table=(heads,body)=>`<div class="tbl-wrap" style="margin:8px 0 20px"><table class="trade-report-table" style="min-width:760px;width:100%"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody></table></div>`;
+ const clientRows=rows(customers,(n,x)=>{const coll=collected.get(n)||0,rem=x.sales-coll;return `<tr><td>${escapeHtml(n)}</td><td>${money(x.sales)}</td><td>${money(x.supply)}</td><td>${money(coll)}</td><td>${money(rem)}</td><td>${money(lateBy.get(n)||0)}</td></tr>`}).join('');
+ const supplierRows=rows(suppliers,(n,x)=>{const p=paid.get(n)||0,rem=x.purchase-p;return `<tr><td>${escapeHtml(n)}</td><td>${money(x.purchase)}</td><td>${money(p)}</td><td>${money(rem)}</td><td>${money(entries.filter(e=>e.direction==='out'&&String(e.supplier||'')===n&&e.method==='bank'&&e.status!=='collected'&&e.status!=='returned').reduce((a,e)=>a+(+e.amount||0),0))}</td></tr>`}).join('');
+ const profitRows=rows(orders,(n,x)=>`<tr><td>${escapeHtml(n)}</td><td>${escapeHtml(x.customer||'—')}</td><td>${money(x.sale)}</td><td>${money(x.cost)}</td><td><b>${money(x.sale-x.cost)}</b></td><td>${x.weight?money((x.sale-x.cost)/x.weight):'—'}</td></tr>`).join('');
+ const today=new Date();today.setHours(0,0,0,0);const buckets=[['1–30 يومًا',1,30],['31–60 يومًا',31,60],['61–90 يومًا',61,90],['أكثر من 90 يومًا',91,Infinity]];const age=buckets.map(([label,min,max])=>{const rs=inst.filter(x=>x.remaining>0&&x.due&&x.status==='متأخر'&&x.days>=min&&x.days<=max);return `<tr><td>${label}</td><td>${rs.length}</td><td>${money(rs.reduce((a,x)=>a+x.remaining,0))}</td></tr>`}).join('');
+ el.innerHTML=`<section class="card"><div class="head"><h3>👥 موقف كل عميل</h3><span class="count">بيع وتوريد وتحصيل ومتأخرات</span></div><div class="body">${table(['العميل','إجمالي أوامر البيع/التوريد ('+cur+')','الكمية الموردة (طن)','التحصيل ('+cur+')','المتبقي ('+cur+')','الأقساط المتأخرة ('+cur+')'],clientRows)}</div></section><section class="card"><div class="head"><h3>🏭 موقف كل مورد</h3><span class="count">مشتريات ومدفوعات وشيكات</span></div><div class="body">${table(['المورد','إجمالي المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي ('+cur+')','شيكات مستحقة/تحت التحصيل ('+cur+')'],supplierRows)}</div></section><section class="card"><div class="head"><h3>📊 ربحية أوامر البيع</h3><span class="count">هامش فعلي على التوريد المسجل</span></div><div class="body"><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">الربح هنا = صافي قيمة البيع المحسوبة في بيانات التوريد − تكلفة الشراء الفعلية (الوزن الفعلي × سعر الشراء). لا تتوفر في النموذج الحالي قيمة مستقلة موثوقة للربح المتوقع.</div>${table(['أمر البيع','العميل','قيمة البيع ('+cur+')','تكلفة الشراء ('+cur+')','الربح المحسوب ('+cur+')','هامش الربح/طن ('+cur+')'],profitRows)}</div></section><section class="card"><div class="head"><h3>⏳ تقرير أعمار الديون</h3><span class="count">من تاريخ الاستحقاق حتى اليوم</span></div><div class="body">${table(['مدة التأخير','عدد الأقساط','إجمالي المتأخر ('+cur+')'],age)}</div></section>`;
+}
+
 function viewDashboard(){
   const arr = key => Array.isArray(state[key]) ? state[key] : [];
   const cur = (state.settings&&state.settings.currency)||"ج.م";
@@ -3553,11 +3594,13 @@ function viewDashboard(){
 
   // --- recent activity
   const recent=[];
-  arr("shipments").forEach(x=>recent.push({d:x.date||"",t:"بوليصة",ic:"▣",c:"green",a:x.customer||x.supplier||"—",b:"بوليصة "+(x.policyNo||"—")}));
-  arr("saleOrders").forEach(x=>recent.push({d:x.date||"",t:"أمر بيع",ic:"▤",c:"blue",a:x.customer||"—",b:"أمر بيع "+(x.orderNo||"")}));
-  arr("treasuryEntries").forEach(x=>recent.push({d:x.date||"",t:x.direction==="in"?"تحصيل":"دفعة",ic:x.direction==="in"?"↓":"↑",c:x.direction==="in"?"gold":"red",a:x.customer||x.supplier||"—",b:(canMoney?money(x.amount)+" "+cur:"")}));
+  const recentQty=items=>(items||[]).reduce((n,it)=>n+(+(it.supplyQty??it.qty??it.quantity??0)||0),0);
+  const recentAmount=x=>{const direct=+(x.totals&&x.totals.grandTotal)||+(x.total||0);if(direct)return direct;return (x.items||[]).reduce((n,it)=>n+(+(it.total??it.grandTotal??it.amount??0)||0),0);};
+  arr("shipments").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({d:x.date||"",t:"توريد",ic:"▣",c:"green",a:x.customer||x.supplier||"—",b:`${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
+  arr("saleOrders").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({d:x.date||"",t:"أمر بيع",ic:"▤",c:"blue",a:x.customer||"—",b:`${x.orderNo?`أمر بيع ${x.orderNo} · `:""}${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
+  arr("treasuryEntries").forEach(x=>recent.push({d:x.date||"",t:x.direction==="in"?"تحصيل":"دفعة",ic:x.direction==="in"?"↓":"↑",c:x.direction==="in"?"gold":"red",a:x.customer||x.supplier||"—",b:(canMoney?`القيمة: ${money(x.amount)} ${cur}`:"")}));
   recent.sort((a,b)=>String(b.d).localeCompare(String(a.d)));
-  const recentRows=recent.slice(0,7).map(r=>`<li><span class="dx-ico ${r.c}">${r.ic}</span><div class="dx-li-main"><b>${escapeHtml(r.a)}</b><small>${escapeHtml(r.t)} · ${escapeHtml(r.b)}</small></div><span class="dx-li-date">${escapeHtml(r.d||"—")}</span></li>`).join("")||`<li class="dx-empty">لا توجد حركات مسجلة بعد</li>`;
+  const recentRows=recent.slice(0,7).map(r=>`<li><span class="dx-ico ${r.c}">${r.ic}</span><div class="dx-li-main"><b>${escapeHtml(r.a)}</b><small><strong>${escapeHtml(r.t)}</strong>${r.b?` · ${escapeHtml(r.b)}`:""}</small></div><span class="dx-li-date">${escapeHtml(r.d||"—")}</span></li>`).join("")||`<li class="dx-empty">لا توجد حركات مسجلة بعد</li>`;
 
   // --- chart (inline SVG, grouped bars)
   const mob=window.innerWidth<=640, W=mob?Math.max(290,window.innerWidth-62):560,H=mob?190:210,pl=mob?34:44,pb=26,pt=10,pr=6, iw=W-pl-pr, ih=H-pt-pb;
@@ -3583,9 +3626,14 @@ function viewDashboard(){
   // --- شيكات تحتاج متابعة (لم تُحصَّل: مستحقة خلال 7 أيام أو فات ميعادها)
   const chqRows=(()=>{ try{ return chequeRegisterAll().map(e=>({e,d:chequeDays(e)})).filter(x=>x.d!==null&&x.d<=7).sort((a,b)=>a.d-b.d); }catch(_){ return []; } })();
   const chqLate=chqRows.filter(x=>x.d<0).length;
+  const chqFollowTotal=chqRows.reduce((sum,x)=>sum+(Number(x.e.amount)||0),0);
   const chqList=chqRows.slice(0,8).map(({e,d})=>{ const txt=d<0?`فات بـ ${-d} يوم`:(d===0?"مستحق اليوم":`باقي ${d} يوم`);
     return `<tr><td><b>${escapeHtml(e.customer||"—")}</b><small>${escapeHtml(chequeStatusLabel(e))} · ${escapeHtml(String(e.refNo||e.no||"—"))}${e.bankDrawn?" · "+escapeHtml(e.bankDrawn):""}</small></td><td class="num">${money(e.amount)}</td><td>${escapeHtml(e.dueDate||"")}<small><span class="dx-pill ${d<0?'red':'amber'}">${txt}</span></small></td></tr>`; }).join("");
-  const acts=[["saleOrder","▤","أمر بيع"],["receipts","↓","تحصيل جديد"],["supply","▦","بيانات التوريد"],["master","♙","العملاء والموردون"]];
+  // العهد ذات الرصيد غير الصفري تحتاج مراجعة/تسوية؛ لا يتم تعديل أي حركة محاسبية هنا.
+  const custodyAllowed=safe(()=>canView("custodyLedger")||canView("custodyReport"),false);
+  const custodyOpenRows=custodyCache.loaded?custodyCache.accounts.filter(a=>a.is_active!==false).map(a=>({a,b:custodyAccountBalance(a.id)})).filter(x=>Math.abs(x.b)>.004).sort((a,b)=>Math.abs(b.b)-Math.abs(a.b)):[];
+  const custodyOpenTotal=custodyOpenRows.reduce((n,x)=>n+x.b,0);
+  const custodyAlertRows=custodyOpenRows.slice(0,6).map(x=>`<tr><td><b>${escapeHtml(x.a.owner_name||"—")}</b><small>${escapeHtml(x.a.code||"")}</small></td><td class="num">${money(x.b)}</td><td><span class="dx-pill ${x.b<0?'red':'amber'}">${x.b<0?'رصيد بالسالب':'تحتاج تسوية'}</span></td></tr>`).join("");
 
   return `
   <section class="dx" dir="rtl">
@@ -3595,7 +3643,6 @@ function viewDashboard(){
         <h1>${greet}${uName?`، <em>${escapeHtml(uName)}</em>`:""}</h1>
         <p>ملخص سريع لأداء IRON GATE SUPPLIES — المبيعات والتحصيلات والمستحقات في مكان واحد.</p>
       </div>
-      <div class="dx-actions">${acts.map(([g,i,l])=>`<button onclick="go('${g}')"><span>${i}</span>${l}</button>`).join("")}</div>
     </header>
 
     <div class="dx-bar">
@@ -3604,7 +3651,18 @@ function viewDashboard(){
     </div>
 
     <div class="dx-kpis">${moneyKpis}</div>
-    ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>`:""}
+    ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
+    <div class="dx-followup-summaries">
+      <button type="button" class="dx-followup-card late" onclick="go('salesInstallments')">
+        <span class="dx-followup-icon">◷</span><span class="dx-followup-content"><b>أقساط متأخرة تحتاج متابعة</b><strong>${money(lateTotal)} <small>${cur}</small></strong><small>${late.length} قسط متأخر · ${lateTop.length?`أطول تأخير ${lateTop[0].days} يوم`:'لا توجد متأخرات'}</small></span><span class="dx-followup-arrow">←</span>
+      </button>
+      <button type="button" class="dx-followup-card cheques" onclick="go('chequeRegister')">
+        <span class="dx-followup-icon">▤</span><span class="dx-followup-content"><b>شيكات تحتاج متابعة</b><strong>${money(chqFollowTotal)} <small>${cur}</small></strong><small>${chqRows.length} شيك · ${chqLate} فات ميعاده</small></span><span class="dx-followup-arrow">←</span>
+      </button>
+      ${custodyAllowed?`<button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
+        <span class="dx-followup-icon">💼</span><span class="dx-followup-content"><b>عهد تحتاج تسوية</b><strong>${custodyCache.loaded?custodyOpenRows.length:"تحميل"} <small>${custodyCache.loaded?"عهدة":"بيانات العهد"}</small></strong><small>${custodyCache.loaded?`صافي الأرصدة ${money(custodyOpenTotal)} ${cur}`:"اضغط لتحميل ومراجعة أرصدة العهد"}</small></span><span class="dx-followup-arrow">←</span>
+      </button>`:""}
+    </div>`:""}
 
     <div class="dx-grid2">
       <div class="dx-card">
@@ -3641,6 +3699,11 @@ function viewDashboard(){
       <div class="dx-card-h"><div><h3>شيكات تحتاج متابعة</h3><small>${chqRows.length?`${chqRows.length} شيك لم يُحصَّل بعد · ${chqLate} فات ميعاده`:"مستحقة خلال 7 أيام أو فات ميعادها ولم تُحصَّل"}</small></div><button class="dx-link" onclick="go('chequeRegister')">عرض الكل ←</button></div>
       ${!canMoney?`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`:chqList?`<table class="dx-tbl"><thead><tr><th>العميل / الشيك</th><th>المبلغ (${cur})</th><th>الاستحقاق</th></tr></thead><tbody>${chqList}</tbody></table>${chqRows.length>8?`<div class="dx-empty" style="padding:10px">و ${chqRows.length-8} شيك آخر — اضغط «عرض الكل»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد شيكات مستحقة أو متأخرة</div>`}
     </div>
+    ${custodyAllowed?`<div class="dx-card dx-chq" style="margin-top:14px">
+      <div class="dx-card-h"><div><h3>عهد لم تتم تسويتها</h3><small>${custodyCache.loaded?`${custodyOpenRows.length} عهدة برصيد غير صفري`:"بيانات العهد لم تُحمّل بعد"}</small></div><button class="dx-link" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">${custodyCache.loaded?"عرض تقرير العهد ←":"تحميل البيانات ↻"}</button></div>
+      ${!custodyCache.loaded?`<div class="dx-empty">اضغط «تحميل البيانات» لعرض العهد التي ما زالت لها أرصدة.</div>`:custodyAlertRows?`<table class="dx-tbl"><thead><tr><th>صاحب العهدة / الكود</th><th>الرصيد (${cur})</th><th>المتابعة</th></tr></thead><tbody>${custodyAlertRows}</tbody></table>${custodyOpenRows.length>6?`<div class="dx-empty" style="padding:10px">و ${custodyOpenRows.length-6} عهدة أخرى — اضغط «عرض تقرير العهد»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد أرصدة عهد معلقة</div>`}
+    </div>`:""}
+    <div class="dx-note" style="margin-top:12px">حد الائتمان للعملاء: لا توجد حاليًا خانة حد ائتماني مسجلة في بيانات العملاء، لذلك لم يتم إصدار تنبيهات تجاوز غير موثوقة. يلزم إضافة حد لكل عميل قبل تفعيل هذا التنبيه.</div>
   </section>`;
 }
 
@@ -3654,33 +3717,85 @@ function viewTradeReport(kind){
       <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="tradeReportFilters['${kind}'].to=this.value;renderTradeReport()"></div>
       <div class="fld"><label>العميل</label>${select('customer',partyNames(state.customers),'كل العملاء')}</div>
       <div class="fld"><label>المورد</label>${select('supplier',partyNames(state.suppliers),'كل الموردين')}</div>
-      <div class="fld"><label>بحث عام</label><input class="inp" placeholder="رقم البوليصة / أمر البيع / الصنف / الموقع" value="${escapeAttr(f.q)}" oninput="tradeReportFilters['${kind}'].q=this.value;renderTradeReport()"></div>
+      <div class="fld"><label>بحث عام</label><input class="inp" placeholder="رقم أمر البيع / العميل / المورد" value="${escapeAttr(f.q)}" oninput="tradeReportFilters['${kind}'].q=this.value;renderTradeReport()"></div>
+      <div class="fld trade-quick-dates"><label>فترة سريعة</label><div class="trade-quick-row"><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','today')">اليوم</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','7d')">آخر 7 أيام</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','month')">هذا الشهر</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','all')">كل الفترة</button></div></div>
       <div class="fld" style="justify-content:end"><label>&nbsp;</label><button type="button" class="btn ghost" onclick="fpClear('${kind}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button></div>
     </div></div></div><div id="tradeReportResults"></div></div>`;
 }
 function tradeReportRows(kind){
-  const f=tradeReportFilters[kind], sales=kind==="salesReport", q=(f.q||'').trim().toLowerCase(), out=[];
-  (state.shipments||[]).forEach(s=>{
-    if(f.from&&(!s.date||s.date<f.from))return; if(f.to&&(!s.date||s.date>f.to))return;
-    if(f.customer&&s.customer!==f.customer)return; if(f.supplier&&s.supplier!==f.supplier)return;
-    if(q&&![s.policyNo,s.saleOrderNo,s.customer,s.supplier,s.company,s.site,s.notes].some(v=>String(v||'').toLowerCase().includes(q)))return;
-    (s.items||[]).forEach(it=>{
-      const a=supplyAmounts(s,it); const val=sales?a.total:a.buyTotal;
-      out.push({date:s.date||'',policy:s.policyNo||'',order:s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'',customer:s.customer||'',supplier:s.supplier||'',company:s.company||'',site:s.site||'',factory:itemFactory(s,it)||'',diameter:it.diameter||'',type:it.type||'',qty:+it.supplyQty||0,weight:+it.actualWeight||0,buy:+a.buyTotal||0,subtotal:+a.subtotal||0,tax:+a.tax||0,discount:+a.discount||0,net:+a.total||0});
+  const f=tradeReportFilters[kind], q=(f.q||'').trim().toLowerCase(), out=[];
+  if(kind==='salesReport'){
+    (state.saleOrders||[]).forEach(so=>{
+      const order=String(so.orderNo||'');
+      const docs=[...(state.shipments||[]),...(state.policies||[])].filter(d=>d.saleOrderId===so.id || (order&&soKey(d.saleOrderNo)===soKey(order)));
+      const customer=so.customer||(docs[0]&&docs[0].customer)||'', supplier=so.supplier||(docs[0]&&docs[0].supplier)||'';
+      const date=so.date||(docs.map(d=>d.date||'').sort().pop()||'');
+      if(f.from&&(!date||date<f.from))return; if(f.to&&(!date||date>f.to))return;
+      if(f.customer&&customer!==f.customer)return; if(f.supplier&&supplier!==f.supplier)return;
+      if(q&&![order,customer,supplier,so.address,so.notes].some(v=>String(v||'').toLowerCase().includes(q)))return;
+      const qty=(so.items||[]).reduce((a,it)=>a+(parseFloat(String(it.qty||0).replace(',','.'))||0),0);
+      const totals={weight:0,subtotal:0,tax:0,discount:0,net:0};
+      docs.forEach(d=>(d.items||[]).forEach(it=>{const a=supplyAmounts(d,it);totals.weight+=(+it.actualWeight||0);totals.subtotal+=(+a.subtotal||0);totals.tax+=(+a.tax||0);totals.discount+=(+a.discount||0);totals.net+=(+a.total||0);}));
+      out.push({date,policy:'',order,customer,supplier,company:'',site:'',factory:'',diameter:'',type:'',qty,weight:totals.weight,...totals,docCount:docs.length,status:so.closed?'مقفول':'مفتوح'});
     });
-  });
-  return out.sort((a,b)=>b.date.localeCompare(a.date)||String(b.policy).localeCompare(String(a.policy),'ar',{numeric:true}));
+  }else{
+    (state.shipments||[]).forEach(s=>{
+      if(f.from&&(!s.date||s.date<f.from))return; if(f.to&&(!s.date||s.date>f.to))return;
+      if(f.customer&&s.customer!==f.customer)return; if(f.supplier&&s.supplier!==f.supplier)return;
+      if(q&&![s.policyNo,s.saleOrderNo,s.customer,s.supplier,s.company,s.site,s.notes].some(v=>String(v||'').toLowerCase().includes(q)))return;
+      (s.items||[]).forEach(it=>{const a=supplyAmounts(s,it);out.push({date:s.date||'',policy:s.policyNo||'',order:s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'',customer:s.customer||'',supplier:s.supplier||'',company:s.company||'',site:s.site||'',factory:itemFactory(s,it)||'',diameter:it.diameter||'',type:it.type||'',qty:+it.supplyQty||0,weight:+it.actualWeight||0,buy:+a.buyTotal||0,subtotal:+a.subtotal||0,tax:+a.tax||0,discount:+a.discount||0,net:+a.total||0});});
+    });
+  }
+  return out.sort((a,b)=>b.date.localeCompare(a.date)||String(b.order).localeCompare(String(a.order),'ar',{numeric:true}));
 }
+function tradeReportQuickRange(kind,range){
+  const f=tradeReportFilters[kind], now=new Date(), iso=d=>{const x=new Date(d.getTime()-d.getTimezoneOffset()*60000);return x.toISOString().slice(0,10);};
+  const start=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  if(range==='today'){f.from=iso(start);f.to=iso(start);}
+  else if(range==='7d'){const d=new Date(start);d.setDate(d.getDate()-6);f.from=iso(d);f.to=iso(start);}
+  else if(range==='month'){f.from=iso(new Date(now.getFullYear(),now.getMonth(),1));f.to=iso(start);}
+  else {f.from='';f.to='';}
+  renderTradeReport();
+}
+function tradeReportOpenRow(kind,index){
+  const r=tradeReportRows(kind)[index]; if(!r)return;
+  const sales=kind==='salesReport', cur=state.settings.currency||'جنيه', money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fields=sales?[['تاريخ أمر البيع',r.date],['رقم أمر البيع',r.order],['العميل',r.customer],['المورد',r.supplier],['حالة الأمر',r.status],['عدد المستندات المرتبطة',r.docCount],['الكمية المطلوبة (طن)',r.qty.toFixed(3)],['الوزن المورد فعليًا (طن)',r.weight.toFixed(3)],['قبل الضريبة',money(r.subtotal)+' '+cur],['الضريبة',money(r.tax)+' '+cur],['الخصم',money(r.discount)+' '+cur],['صافي المبيعات',money(r.net)+' '+cur]]:[['التاريخ',r.date],['رقم البوليصة',r.policy],['أمر البيع',r.order],['العميل',r.customer],['المورد',r.supplier],['الشركة',r.company],['الموقع',r.site],['المصنع',r.factory],['القطر',r.diameter],['النوع',r.type],['كمية التوريد (طن)',r.qty.toFixed(3)],['الوزن الفعلي (طن)',r.weight.toFixed(3)],['سعر الشراء',money(r.weight?r.buy/r.weight:0)+' '+cur],['إجمالي الشراء',money(r.buy)+' '+cur]];
+  openModal('تفاصيل سجل التقرير',`<div class="trade-row-details">${fields.map(([k,v])=>`<div><span>${escapeHtml(k)}</span><b>${escapeHtml(String(v??'—'))}</b></div>`).join('')}</div>`,null);
+}
+let salesAnalyticsPeriod="month";
+function renderSalesAnalytics(rows){
+ const cur=state.settings.currency||"جنيه", money=n=>(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}), sum=(a,k)=>a.reduce((v,x)=>v+(+x[k]||0),0);
+ const now=new Date();now.setHours(23,59,59,999);const days=salesAnalyticsPeriod==="day"?1:salesAnalyticsPeriod==="week"?7:30;const from=new Date(now);from.setDate(from.getDate()-days+1);from.setHours(0,0,0,0);const prevTo=new Date(from-1),prevFrom=new Date(prevTo);prevFrom.setDate(prevFrom.getDate()-days+1);prevFrom.setHours(0,0,0,0);const inP=(r,a,b)=>r.date&&new Date(r.date+"T12:00:00")>=a&&new Date(r.date+"T12:00:00")<=b;const a=rows.filter(r=>inP(r,from,now)),b=rows.filter(r=>inP(r,prevFrom,prevTo));
+ const cust=new Map();rows.forEach(r=>{let x=cust.get(r.customer)||{v:0,w:0,n:0};x.v+=+r.net||0;x.w+=+r.weight||0;x.n++;cust.set(r.customer||"غير محدد",x)});
+ const collected=new Map();(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&e.status!=="guarantee"&&e.status!=="returned"&&(e.method!=="bank"||e.status==="collected")).forEach(e=>collected.set(e.customer,(collected.get(e.customer)||0)+(+e.amount||0)));
+ const customers=[...cust].sort((x,y)=>y[1].v-x[1].v).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.v)}</td><td>${x.w.toFixed(3)}</td><td>${money(collected.get(n)||0)}</td><td>${money(x.v-(collected.get(n)||0))}</td><td>${x.n}</td></tr>`).join("");
+ const products=new Map();(state.shipments||[]).forEach(sh=>{const f=tradeReportFilters.salesReport||{};if(f.from&&sh.date<f.from||f.to&&sh.date>f.to||f.customer&&sh.customer!==f.customer||f.supplier&&sh.supplier!==f.supplier)return;(sh.items||[]).forEach(it=>{const n=[it.type||it.item||it.name||"صنف غير محدد",it.diameter?"قطر "+it.diameter:""] .filter(Boolean).join(" - ");let x=products.get(n)||{q:0,w:0,v:0};const z=supplyAmounts(sh,it);x.q+=+it.supplyQty||0;x.w+=+it.actualWeight||0;x.v+=+z.total||0;products.set(n,x)})});
+ const productRows=[...products].sort((x,y)=>y[1].w-x[1].w).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${x.q.toFixed(3)}</td><td>${x.w.toFixed(3)}</td><td>${money(x.v)}</td><td>${x.w?money(x.v/x.w):"—"}</td></tr>`).join("");
+ const opens=rows.filter(r=>r.status!=="مقفول"&&r.qty-r.weight>0.001).map(r=>`<tr><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.date)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td><td>${Math.max(0,r.qty-r.weight).toFixed(3)}</td><td>${r.date?Math.max(0,Math.floor((Date.now()-new Date(r.date+"T00:00:00"))/86400000)):"—"}</td></tr>`).join("");
+ const sec=(title,heads,body)=>`<section class="card" style="margin-top:14px"><div class="head"><h3>${title}</h3></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="width:100%;min-width:760px"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${body||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody></table></div></div></section>`;
+ const change=(x,y)=>y?((x-y)/Math.abs(y)*100).toFixed(1)+"%":x?"جديد":"—";
+ return `<div class="sales-analytics" dir="rtl"><div class="page-head" style="margin-top:20px"><h2>📊 تحليلات المبيعات</h2><div class="spacer"></div><button class="btn ghost sm" onclick="salesAnalyticsPeriod='day';renderTradeReport()">يومي</button><button class="btn ghost sm" onclick="salesAnalyticsPeriod='week';renderTradeReport()">أسبوعي</button><button class="btn ghost sm" onclick="salesAnalyticsPeriod='month';renderTradeReport()">شهري</button></div><section class="card"><div class="head"><h3>مقارنة الفترة الحالية بالسابقة</h3></div><div class="body"><div class="kpis compact">${[["قيمة المبيعات",sum(a,"net"),sum(b,"net")],["الكمية الموردة (طن)",sum(a,"weight"),sum(b,"weight")],["عدد أوامر البيع",a.length,b.length]].map(([l,x,y])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${l.includes("قيمة")?money(x):x}</div><div class="sub">السابق: ${l.includes("قيمة")?money(y):y} · التغير ${change(x,y)}</div></div>`).join("")}</div></div></section>${sec("🏆 مبيعات كل عميل",["العميل","المبيعات ("+cur+")","الكمية (طن)","التحصيل المسجل ("+cur+")","المتبقي التقديري ("+cur+")","عدد الأوامر"],customers)}${sec("📦 مبيعات الأصناف والمقاسات",["الصنف / المقاس","الكمية","الوزن (طن)","قيمة البيع ("+cur+")","متوسط سعر الطن"],productRows)}${sec("🚧 أوامر البيع المفتوحة والمتأخرة",["أمر البيع","العميل","التاريخ","المطلوب (طن)","المورد فعليًا (طن)","المتبقي (طن)","عمر الأمر (يوم)"],opens)}</div>`;
+}
+
 function renderTradeReport(){
   const kind=currentPage; if(!['salesReport','purchaseReport'].includes(kind))return;
   const el=document.getElementById('tradeReportResults'); if(!el)return;
   const sales=kind==='salesReport', rows=tradeReportRows(kind), sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0), cur=state.settings.currency||'جنيه';
-  const cards=sales?[["عدد الأصناف",rows.length],["كمية التوريد (طن)",sum('qty').toFixed(3)],["الوزن الفعلي (طن)",sum('weight').toFixed(3)],["قبل الضريبة",sum('subtotal')],["ضريبة القيمة المضافة",sum('tax')],["الخصومات",sum('discount')],["صافي المبيعات",sum('net')]]:[["عدد الأصناف",rows.length],["كمية التوريد (طن)",sum('qty').toFixed(3)],["الوزن الفعلي (طن)",sum('weight').toFixed(3)],["إجمالي المشتريات",sum('buy')]];
   const money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const head=['التاريخ','رقم البوليصة','أمر البيع','العميل','المورد','الشركة','الموقع','المصنع','القطر','النوع','كمية التوريد (طن)','الوزن الفعلي (طن)',...(sales?['قبل الضريبة','الضريبة','الخصم','صافي البيع']:['سعر الشراء','إجمالي الشراء'])];
-  const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td>${sales?`<td class="num">${money(r.subtotal)}</td><td class="num">${money(r.tax)}</td><td class="num">${money(r.discount)}</td><td class="num"><b>${money(r.net)}</b></td>`:`<td class="num">${money(r.weight? r.buy/r.weight:0)}</td><td class="num"><b>${money(r.buy)}</b></td>`}</tr>`).join('');
-  const totalCells=`<td colspan="10">الإجمالي</td><td class="num">${sum('qty').toFixed(3)}</td><td class="num">${sum('weight').toFixed(3)}</td>${sales?`<td class="num">${money(sum('subtotal'))}</td><td class="num">${money(sum('tax'))}</td><td class="num">${money(sum('discount'))}</td><td class="num">${money(sum('net'))}</td>`:`<td></td><td class="num">${money(sum('buy'))}</td>`}`;
-  el.innerHTML=`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div><div class="card"><div class="head"><h3>تفاصيل ${sales?'المبيعات':'المشتريات'}</h3><span class="count">${rows.length} صنف · مرتبة بالتاريخ من الأحدث للأقدم</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة للفلاتر المحددة</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${totalCells}</tr></tfoot>`:''}</table></div></div></div>`;
+  if(sales){
+    const cards=[['عدد أوامر البيع',rows.length],['إجمالي الكمية المطلوبة',sum('qty').toFixed(3)],['الوزن المورد فعليًا',sum('weight').toFixed(3)],['قيمة البيع قبل الضريبة',sum('subtotal')],['الضريبة',sum('tax')],['الخصومات',sum('discount')],['صافي المبيعات',sum('net')]];
+    const head=['التاريخ','رقم أمر البيع','العميل','المورد','الكمية المطلوبة (طن)','الوزن المورد (طن)','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','الحالة'];
+    const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" aria-label="عرض تفاصيل أمر البيع" onclick="tradeReportOpenRow('${kind}',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tradeReportOpenRow('${kind}',${i})}"><td>${escapeHtml(r.date||'—')}</td><td><b>${escapeHtml(r.order||'—')}</b></td><td>${escapeHtml(r.customer||'—')}</td><td>${escapeHtml(r.supplier||'—')}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.subtotal)}</td><td class="num">${money(r.tax)}</td><td class="num">${money(r.discount)}</td><td class="num"><b>${money(r.net)}</b></td><td><span class="chip ${r.status==='مقفول'?'ok':'warn'}">${r.status}</span></td></tr>`).join('');
+    const total=`<td colspan="4">إجمالي النتائج المفلترة</td><td class="num">${sum('qty').toFixed(3)}</td><td class="num">${sum('weight').toFixed(3)}</td><td class="num">${money(sum('subtotal'))}</td><td class="num">${money(sum('tax'))}</td><td class="num">${money(sum('discount'))}</td><td class="num">${money(sum('net'))}</td><td></td>`;
+    el.innerHTML=`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد أوامر البيع'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد أوامر البيع'?'أمر بيع':cur)}</div></div>`).join('')}</div><div class="card"><div class="head"><h3>ملخص المبيعات حسب أمر البيع</h3><span class="count">${rows.length} أمر بيع مطابق للفلاتر · بدون تفاصيل البوالص</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="min-width:1050px"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد أوامر بيع مطابقة للفلاتر</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${total}</tr></tfoot>`:''}</table></div></div></div>`;
+    el.innerHTML += renderSalesAnalytics(rows);
+    return;
+  }
+  const cards=[['عدد الأصناف',rows.length],['كمية التوريد (طن)',sum('qty').toFixed(3)],['الوزن الفعلي (طن)',sum('weight').toFixed(3)],['إجمالي المشتريات',sum('buy')]];
+  const head=['التاريخ','رقم البوليصة','أمر البيع','العميل','المورد','الشركة','الموقع','المصنع','القطر','النوع','كمية التوريد (طن)','الوزن الفعلي (طن)','سعر الشراء','إجمالي الشراء'];
+  const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" onclick="tradeReportOpenRow('${kind}',${i})"><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.weight?r.buy/r.weight:0)}</td><td class="num"><b>${money(r.buy)}</b></td></tr>`).join('');
+  el.innerHTML=`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div><div class="card"><div class="head"><h3>تفاصيل المشتريات</h3><span class="count">نتائج الفلتر: ${rows.length} صنف</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة</div></td></tr>`}</tbody></table></div></div></div>`;
 }
 function openReportPreview(html,title){
   const w=window.open('','_blank');
@@ -3699,7 +3814,7 @@ function openReportPreview(html,title){
   }
   <\/script>`;
   let out=html.replace(/<body([^>]*)>/i,'<body$1>'+toolbar).replace('</head>','<style>.report-preview-toolbar{position:sticky}@media print{.report-preview-toolbar{display:none!important}body{padding-top:0!important}}</style></head>');
-  out=out.replace('</body>',shareScript+'</body>');
+
   w.document.open();w.document.write(out);w.document.close();
 }
 
@@ -3794,26 +3909,21 @@ function orderReportExport(format){
   const css="body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}h3{background:#263449;color:#fff;padding:7px 10px;margin:18px 0 0;font-size:14px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#e2e8f0}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}tfoot td{font-weight:bold;background:#f1f5f9}.num{direction:ltr;white-space:nowrap}.ordmeta{text-align:right;font-size:12px}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}h3,tr{break-inside:avoid}}";
   const f=orderReportFilters, rng=(f.from||f.to)?` · الفترة: ${f.from||"—"} إلى ${f.to||"—"}`:"";
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>${css}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p style="text-align:center;color:#64748b">${data.length} أمر${rng}</p>`
-    +data.map(g=>`<h3>أمر بيع رقم ${escapeHtml(g.no)}</h3>${orderReportBlock(g,SS)}`).join("")+`</body></html>`;
+    +data.map(g=>`<h3>أمر بيع رقم ${escapeHtml(g.no)}</h3>${orderReportBlock(g,SS)}`).join("")+`<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
   if(format==="excel"){
     igSaveXlsx(html,"تقرير_أوامر_البيع_"+new Date().toISOString().slice(0,10)); toast("تم تجهيز ملف Excel المنسق","ok");
   } else openReportPreview(html,title);
 }
 
 function tradeReportExport(kind,format){
-  const rows=tradeReportRows(kind), sales=kind==='salesReport', title=sales?'تقرير المبيعات':'تقرير المشتريات';
+  const rows=tradeReportRows(kind), sales=kind==='salesReport', title=sales?'تقرير المبيعات حسب أوامر البيع':'تقرير المشتريات';
   if(!rows.length){toast('لا توجد بيانات مطابقة للتصدير','err');return;}
-  const head=['التاريخ','رقم البوليصة','أمر البيع','العميل','المورد','الشركة','الموقع','المصنع','القطر','النوع','كمية التوريد (طن)','الوزن الفعلي (طن)',...(sales?['قبل الضريبة','ضريبة القيمة المضافة','الخصم','صافي المبيعات']:['سعر الشراء','إجمالي المشتريات'])];
+  const head=sales?['تاريخ الأمر','رقم أمر البيع','العميل','المورد','الكمية المطلوبة (طن)','الوزن المورد (طن)','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','الحالة']:['التاريخ','رقم البوليصة','أمر البيع','العميل','المورد','الشركة','الموقع','المصنع','القطر','النوع','كمية التوريد (طن)','الوزن الفعلي (طن)','سعر الشراء','إجمالي الشراء'];
   const n=v=>Number(v||0).toFixed(2);
-  const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td>${sales?`<td>${n(r.subtotal)}</td><td>${n(r.tax)}</td><td>${n(r.discount)}</td><td>${n(r.net)}</td>`:`<td>${n(r.weight?r.buy/r.weight:0)}</td><td>${n(r.buy)}</td>`}</tr>`).join('');
-  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}.num{direction:ltr;white-space:nowrap}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>تاريخ استخراج التقرير: ${new Date().toLocaleDateString('en-GB')} · عدد السجلات: ${rows.length}</p><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></body></html>`;
-  if(format==='excel'){
-    igSaveXlsx(html,(sales?'تقرير_المبيعات_':'تقرير_المشتريات_')+new Date().toISOString().slice(0,10));toast('تم تجهيز ملف Excel المنسق','ok');
-  }else{
-    openReportPreview(html,title);
-  }
+  const body=rows.map(r=>sales?`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td><td>${n(r.subtotal)}</td><td>${n(r.tax)}</td><td>${n(r.discount)}</td><td>${n(r.net)}</td><td>${r.status}</td></tr>`:`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td><td>${n(r.weight?r.buy/r.weight:0)}</td><td>${n(r.buy)}</td></tr>`).join('');
+  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>تاريخ استخراج التقرير: ${new Date().toLocaleDateString('en-GB')} · عدد السجلات: ${rows.length} · تقرير المبيعات مجمّع حسب أمر البيع ولا يعرض البوالص</p><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+  if(format==='excel'){igSaveXlsx(html,(sales?'تقرير_المبيعات_حسب_أمر_البيع_':'تقرير_المشتريات_')+new Date().toISOString().slice(0,10));toast('تم تجهيز ملف Excel المنسق','ok');}else openReportPreview(html,title);
 }
-
 
 
 // ========== ميزان مراجعة العملاء والموردين ==========
@@ -3983,7 +4093,7 @@ function tbDocHtml(kind){
   <table class="meta"><tr><td class="l">من تاريخ :</td><td class="v">${escapeHtml(f.from||'—')}</td><td class="l">إلى تاريخ :</td><td class="v">${escapeHtml(f.to||'—')}</td><td class="l">${f.hideZero?'بدون الأرصدة الصفرية':'مع الأرصدة الصفرية'}</td></tr></table>
   <table class="diff"><tr><td class="t">${tbDiffLabel(data.tot)}</td><td class="v">${tbMoney(Math.abs(data.tot.diff))}</td><td class="b">الفرق</td></tr></table>
   ${tbTableHtml(kind,data,{})}
-  <div class="foot">العملة: ${escapeHtml(cur)} · عدد ${customer?'العملاء':'الموردين'}: ${data.rows.length} · تاريخ الطباعة: ${new Date().toLocaleDateString('en-GB')}</div></body></html>`;
+  <div class="foot">العملة: ${escapeHtml(cur)} · عدد ${customer?'العملاء':'الموردين'}: ${data.rows.length} · تاريخ الطباعة: ${new Date().toLocaleDateString('en-GB')}</div><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
 }
 function tbExport(kind,format){
   const data=tbCompute(kind), customer=kind==='clientTB', title=customer?'ميزان مراجعة العملاء':'ميزان مراجعة الموردين';
@@ -4096,7 +4206,7 @@ function openPartyStatementQueue(reports,title){
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
   const safeReports=JSON.stringify(reports).replace(/</g,'\\u003c');
   w.document.open();
-  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#e8edf3}.toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#172337;color:#fff;box-shadow:0 2px 10px #0002}.toolbar strong{flex:1}.toolbar button{border:0;border-radius:7px;padding:9px 13px;font-weight:bold;cursor:pointer}.print{background:#d9ad3b;color:#172337}.nav{background:#fff;color:#172337}.close{background:transparent;color:#fff;border:1px solid #ffffff66!important}#counter{font-size:12px;color:#e8c968}iframe{display:block;width:100%;height:calc(100vh - 54px);border:0;background:white}</style></head><body><div class="toolbar"><strong>${title}</strong><span id="counter"></span><button id="previousReportBtn" class="nav" onclick="move(-1)">السابق</button><button class="print" onclick="printCurrent()">🖨 طباعة هذا الكشف</button><button class="nav" onclick="shareCurrent()">↗ مشاركة</button><button id="nextReportBtn" class="nav" onclick="move(1)">الكشف التالي ⟵</button><button class="close" onclick="window.close()">إغلاق</button></div><iframe id="report"></iframe><script>const reports=${safeReports};let index=0;const frame=document.getElementById('report');function show(){frame.srcdoc=reports[index];document.getElementById('counter').textContent='الكشف '+(index+1)+' من '+reports.length;document.getElementById('previousReportBtn').disabled=index===0;document.getElementById('nextReportBtn').disabled=index===reports.length-1;document.getElementById('nextReportBtn').textContent=index===reports.length-1?'انتهت الكشوف ✓':'الكشف التالي ⟵';}function move(step){if(index+step<0||index+step>=reports.length){if(step>0&&index===reports.length-1)alert('تم الوصول إلى آخر كشف.');return;}index+=step;show();}function printCurrent(){frame.contentWindow.focus();frame.contentWindow.print();}async function shareCurrent(){const d=frame.contentDocument;const text=(d&&d.body?d.body.innerText:'').slice(0,12000);try{if(navigator.share){await navigator.share({title:d.title||'كشف حساب',text});return;}await navigator.clipboard.writeText(text);alert('تم نسخ محتوى الكشف للمشاركة.');}catch(e){alert('تعذرت المشاركة المباشرة؛ يمكنك نسخ محتوى الكشف أو طباعته PDF.');}}show();<\/script></body></html>`);
+  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#e8edf3}.toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#172337;color:#fff;box-shadow:0 2px 10px #0002}.toolbar strong{flex:1}.toolbar button{border:0;border-radius:7px;padding:9px 13px;font-weight:bold;cursor:pointer}.print{background:#d9ad3b;color:#172337}.nav{background:#fff;color:#172337}.close{background:transparent;color:#fff;border:1px solid #ffffff66!important}#counter{font-size:12px;color:#e8c968}iframe{display:block;width:100%;height:calc(100vh - 54px);border:0;background:white}</style></head><body><div class="toolbar"><strong>${title}</strong><span id="counter"></span><button id="previousReportBtn" class="nav" onclick="move(-1)">السابق</button><button class="print" onclick="printCurrent()">🖨 طباعة هذا الكشف</button><button class="nav" onclick="shareCurrent()">↗ مشاركة</button><button id="nextReportBtn" class="nav" onclick="move(1)">الكشف التالي ⟵</button><button class="close" onclick="window.close()">إغلاق</button></div><iframe id="report"></iframe><script>const reports=${safeReports};let index=0;const frame=document.getElementById('report');function show(){frame.srcdoc=reports[index];document.getElementById('counter').textContent='الكشف '+(index+1)+' من '+reports.length;document.getElementById('previousReportBtn').disabled=index===0;document.getElementById('nextReportBtn').disabled=index===reports.length-1;document.getElementById('nextReportBtn').textContent=index===reports.length-1?'انتهت الكشوف ✓':'الكشف التالي ⟵';}function move(step){if(index+step<0||index+step>=reports.length){if(step>0&&index===reports.length-1)alert('تم الوصول إلى آخر كشف.');return;}index+=step;show();}function printCurrent(){frame.contentWindow.focus();frame.contentWindow.print();}async function shareCurrent(){const d=frame.contentDocument;const text=(d&&d.body?d.body.innerText:'').slice(0,12000);try{if(navigator.share){await navigator.share({title:d.title||'كشف حساب',text});return;}await navigator.clipboard.writeText(text);alert('تم نسخ محتوى الكشف للمشاركة.');}catch(e){alert('تعذرت المشاركة المباشرة؛ يمكنك نسخ محتوى الكشف أو طباعته PDF.');}}show();<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
   w.document.close();
 }
 function partyStatementHtmlFor(kind,partyName,allParties){
@@ -4105,7 +4215,7 @@ function partyStatementHtmlFor(kind,partyName,allParties){
   rows.forEach(r=>{running+=customer?(r.debit-r.credit):(r.credit-r.debit);r.balance=running;});
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), cur=state.settings.currency||'ج.م', inclusive=rows.reduce((a,r)=>a+(+r.inclusiveTotal||0),0);
   const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td>${escapeHtml(r.desc)}</td><td>${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td>${money(r.debit)}</td><td>${money(r.credit)}</td><td>${money(r.balance)}</td></tr>`).join('');
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title} - ${escapeHtml(partyName)}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px;text-align:center}h1{text-align:center;color:#9a7410;font-size:22px}.master{margin:12px auto;padding:12px;border:1px solid #e8d7ad;background:#fffaf0;border-radius:9px;font-size:17px;font-weight:bold;text-align:center}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;text-align:center}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center;vertical-align:middle}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><div class="master">${customer?'العميل':'المورد'}: ${escapeHtml(partyName)}</div><p>نوع العرض: ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${escapeHtml(f.from||'بداية غير محددة')} إلى ${escapeHtml(f.to||'نهاية غير محددة')} · رصيد أول المدة: ${money(opening)} ${cur}</p><p>يشمل المبيعات/المشتريات من بيانات التوريد، والتحصيلات/المدفوعات من شاشة الخزينة</p><table><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||'<tr><td colspan="7">لا توجد حركات مطابقة للفترة</td></tr>'}</tbody><tfoot><tr><td colspan="3">الإجمالي والرصيد الختامي</td><td>${money(inclusive)}</td><td>${money(rows.reduce((a,r)=>a+r.debit,0))}</td><td>${money(rows.reduce((a,r)=>a+r.credit,0))}</td><td>${money(running)}</td></tr></tfoot></table></body></html>`;
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title} - ${escapeHtml(partyName)}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px;text-align:center}h1{text-align:center;color:#9a7410;font-size:22px}.master{margin:12px auto;padding:12px;border:1px solid #e8d7ad;background:#fffaf0;border-radius:9px;font-size:17px;font-weight:bold;text-align:center}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;text-align:center}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center;vertical-align:middle}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><div class="master">${customer?'العميل':'المورد'}: ${escapeHtml(partyName)}</div><p>نوع العرض: ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${escapeHtml(f.from||'بداية غير محددة')} إلى ${escapeHtml(f.to||'نهاية غير محددة')} · رصيد أول المدة: ${money(opening)} ${cur}</p><p>يشمل المبيعات/المشتريات من بيانات التوريد، والتحصيلات/المدفوعات من شاشة الخزينة</p><table><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||'<tr><td colspan="7">لا توجد حركات مطابقة للفترة</td></tr>'}</tbody><tfoot><tr><td colspan="3">الإجمالي والرصيد الختامي</td><td>${money(inclusive)}</td><td>${money(rows.reduce((a,r)=>a+r.debit,0))}</td><td>${money(rows.reduce((a,r)=>a+r.credit,0))}</td><td>${money(running)}</td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
 }
 
 function partyStatementExport(kind,format){
@@ -4115,8 +4225,8 @@ function partyStatementExport(kind,format){
   if(parties.length>1){
     const reports=parties.map(p=>partyStatementHtmlFor(kind,p,parties));
     if(format==='excel'){
-      const combined=reports.map((h,i)=>`<div style="page-break-after:always">${h.slice(h.indexOf('<body>')+6,h.indexOf('</body>'))}</div>`).join('');
-      const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Tahoma,Arial;text-align:center}table{border-collapse:collapse;width:100%}td,th{text-align:center;border:1px solid #bbb;padding:6px}</style></head><body>${combined}</body></html>`;
+      const combined=reports.map((h,i)=>`<div style="page-break-after:always">${h.slice(h.indexOf('<body>')+6,h.indexOf('<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body>'))}</div>`).join('');
+      const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Tahoma,Arial;text-align:center}table{border-collapse:collapse;width:100%}td,th{text-align:center;border:1px solid #bbb;padding:6px}</style></head><body>${combined}<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
       igSaveXlsx(html,(customer?'كشف_حساب_عملاء_':'كشف_حساب_موردين_')+new Date().toISOString().slice(0,10));toast('تم تجهيز كشوف منفصلة لكل طرف','ok');
     } else openPartyStatementQueue(reports,title+' — معاينة متتابعة');
     return;
@@ -6465,7 +6575,7 @@ const SUP_REPORT_CSS=`body{font-family:Cairo,Tahoma,Arial,sans-serif;direction:r
 function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
-  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" dir="rtl"><head><meta charset="UTF-8"><style>${SUP_REPORT_CSS}</style></head><body>${supReportHtml(C,true)}</body></html>`;
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" dir="rtl"><head><meta charset="UTF-8"><style>${SUP_REPORT_CSS}</style></head><body>${supReportHtml(C,true)}<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
   igSaveXlsx(html,"بيانات_التوريد_"+new Date().toISOString().slice(0,10));
   toast("تم تصدير الملف","ok");
 }
@@ -6481,7 +6591,7 @@ function supExportPdf(){
   window.addEventListener('beforeprint',function(){ fit(1040); });
   window.addEventListener('afterprint',screenFit);
 })();
-<\/script></body></html>`;
+<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
   openReportPreview(html,'تقرير بيانات التوريد');
 }
 
@@ -8264,7 +8374,7 @@ function txExportHtml(direction){
   }).join("");
   const style=`body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:16px}h1{text-align:center;color:#9a7410;font-size:22px;margin:0 0 4px}p{text-align:center;color:#475569;margin:3px 0;font-size:12px}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}td.nm{font-weight:800}td.n{direction:ltr;white-space:nowrap;font-weight:800}td.nt{text-align:right;max-width:200px}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}thead{display:table-header-group}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}}`;
   return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>${style}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>الفلتر: ${escapeHtml(txFilterSummary(direction))}</p><p>الترتيب: ${escapeHtml(sortName)} (${txSort.dir==="desc"?"تنازلي":"تصاعدي"}) · عدد السجلات: ${rows.length} · تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")}</p>
-  <table><thead><tr><th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th><th class="num">القيمة (${escapeHtml(cur)})</th><th>تاريخ الاستحقاق</th><th>الخزنة / البنك</th><th>البنك المسحوب عليه</th><th>الحالة</th><th>التنبيه</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td class="n">${fmt(total)}</td><td colspan="6"></td></tr></tfoot></table></body></html>`;
+  <table><thead><tr><th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th><th class="num">القيمة (${escapeHtml(cur)})</th><th>تاريخ الاستحقاق</th><th>الخزنة / البنك</th><th>البنك المسحوب عليه</th><th>الحالة</th><th>التنبيه</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td class="n">${fmt(total)}</td><td colspan="6"></td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
 }
 function txExport(direction,format){
   const rows=txFilteredSorted(direction), isIn=direction==="in", title=isIn?"التحصيلات":"المدفوعات";
@@ -8419,7 +8529,9 @@ function renderChequeRegister(){
   const tableEl=document.getElementById("chequeRegisterTable"), statsEl=document.getElementById("chequeRegisterStats");
   if(!tableEl || !statsEl) return;
   chequeRefreshChips();
-  const all=chequeRegisterAll(), rows=chequeRegisterFiltered(), cur=state.settings.currency||"ج.م";
+  const all=chequeRegisterAll(), cur=state.settings.currency||"ج.م";
+  let rows=chequeRegisterFiltered(); const sk=window.crSortKey||"dueDate", sd=window.crSortDir||"asc";
+  rows.sort((a,b)=>{let x=a[sk]??"",y=b[sk]??"";if(sk==="amount"){x=+x||0;y=+y||0;}else{x=String(x).toLocaleLowerCase("ar");y=String(y).toLocaleLowerCase("ar");}return (x<y?-1:x>y?1:0)*(sd==="asc"?1:-1);});
   const receivable=all.filter(e=>e.status==="receivable"), pending=all.filter(e=>["pending","deposited"].includes(e.status));
   const overdue=all.filter(e=>chequeDueInfo(e).kind==="overdue");
   const sum=a=>a.reduce((n,e)=>n+(+e.amount||0),0);
@@ -8441,7 +8553,7 @@ function renderChequeRegister(){
       <td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td>
       <td>${e.status==="receivable"?'<span class="chip warn">أوراق قبض</span>':'<span class="chip warn">شيكات تحت التحصيل</span>'}</td>
       <td><span class="cr-due ${due.cls}">${escapeHtml(due.text)}</span></td>
-      <td class="cr-notes">${escapeHtml(e.notes||"—")}</td>
+      <td class="cr-notes">${escapeHtml(e.notes||"—")}</td><td><button class="btn ghost sm" onclick="txEdit('${e.id}','in')" title="تعديل الشيك">✎ تعديل</button></td>
     </tr>`;
   }).join("");
   const shownTotal=sum(rows);
@@ -8455,17 +8567,46 @@ function renderChequeRegister(){
       <span class="cr-due ${due.cls}">${escapeHtml(due.text)}</span>${e.notes?`<div class="crc-notes">${escapeHtml(e.notes)}</div>`:""}</div>`;
   }).join("");
   tableEl.innerHTML=`<div class="cr-resultline"><span>عدد الشيكات المعروضة: <strong>${rows.length}</strong></span><span>إجمالي المعروض: <strong>${fmt(shownTotal)} ${escapeHtml(cur)}</strong></span></div>
-    <div class="tbl-wrap cr-table-wrap"><table class="cr-table"><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>تاريخ الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك / الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق والمدة المتبقية</th><th>ملاحظات</th></tr></thead>
-    <tbody>${body||'<tr><td colspan="11"><div class="empty" style="padding:34px"><div class="ic">🏦</div><h3>لا توجد شيكات مطابقة</h3><p>الشيكات محملة تلقائيًا من شاشة التحصيلات حسب الحالة المختارة.</p></div></td></tr>'}</tbody>
-    <tfoot><tr><td colspan="4">إجمالي الشيكات المعروضة</td><td class="num">${fmt(shownTotal)}</td><td colspan="6">${rows.length} شيك</td></tr></tfoot></table></div>
+    <div class="cr-report-tools"><button class="btn ghost sm" onclick="openChequeReportView()">▤ عرض الكشف</button><button class="btn ghost sm" onclick="exportChequeRegisterExcel()">⬇ Excel</button><button class="btn ghost sm" onclick="exportChequeRegisterPDF()">⬇ PDF</button><button class="btn ghost sm" onclick="printChequeRegister()">🖨 طباعة</button></div><div class="tbl-wrap cr-table-wrap"><table class="cr-table"><thead><tr><th>${crSortHead("no","م")}</th><th>${crSortHead("date","تاريخ الشيك")}</th><th>${crSortHead("customer","العميل")}</th><th>${crSortHead("refNo","رقم الشيك")}</th><th>${crSortHead("amount",`القيمة (${escapeHtml(cur)})`)}</th><th>${crSortHead("dueDate","تاريخ الاستحقاق")}</th><th>${crSortHead("bankDrawn","البنك المسحوب عليه")}</th><th>${crSortHead("treasury","البنك / الخزينة")}</th><th>${crSortHead("status","الموقف")}</th><th>تنبيه الاستحقاق والمدة المتبقية</th><th>ملاحظات</th><th>إجراء</th></tr></thead>
+    <tbody>${body||'<tr><td colspan="12"><div class="empty" style="padding:34px"><div class="ic">🏦</div><h3>لا توجد شيكات مطابقة</h3><p>الشيكات محملة تلقائيًا من شاشة التحصيلات حسب الحالة المختارة.</p></div></td></tr>'}</tbody>
+    <tfoot><tr><td colspan="4">إجمالي الشيكات المعروضة</td><td class="num">${fmt(shownTotal)}</td><td colspan="7">${rows.length} شيك</td></tr></tfoot></table></div>
     <div class="cr-cards">${cards||'<div class="empty" style="padding:24px"><h3>لا توجد شيكات مطابقة</h3></div>'}</div>`;
 }
+function crSortHead(key,label){const active=window.crSortKey===key;return `<button class="cr-sort" onclick="crSortBy('${key}')">${label}${active?(window.crSortDir==="asc"?" ▲":" ▼"):" ↕"}</button>`;}
+function crSortBy(key){if(window.crSortKey===key)window.crSortDir=window.crSortDir==="asc"?"desc":"asc";else{window.crSortKey=key;window.crSortDir="asc";}renderChequeRegister();}
+function chequeReportHTML(){const rows=chequeRegisterFiltered(),cur=state.settings.currency||"ج.م",heads=["م","تاريخ الشيك","العميل","رقم الشيك","القيمة","الاستحقاق","البنك المسحوب عليه","البنك/الخزينة","الموقف","تنبيه الاستحقاق","ملاحظات"];const body=rows.map(e=>{const d=chequeDueInfo(e);return `<tr><td>${escapeHtml(e.no||"—")}</td><td>${escapeHtml(e.date||"—")}</td><td>${escapeHtml(e.customer||"—")}</td><td>${escapeHtml(e.refNo||"—")}</td><td>${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(chequeStatusLabel(e))}</td><td>${escapeHtml(d.text)}</td><td>${escapeHtml(e.notes||"—")}</td></tr>`}).join("");return `<h3>أوراق القبض وشيكات تحت التحصيل</h3><p>عدد السجلات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)}</p><div class="tbl-wrap"><table class="cr-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${body||'<tr><td colspan="11">لا توجد بيانات مطابقة</td></tr>'}</tbody></table></div>`;}
+function openChequeReportView(){openModal("عرض كشف أوراق القبض والشيكات",`<div class="cr-preview-actions"><button class="btn sm" onclick="printChequeRegister()">🖨 طباعة</button><button class="btn ghost sm" onclick="exportChequeRegisterExcel()">⬇ Excel</button><button class="btn ghost sm" onclick="exportChequeRegisterPDF()">⬇ PDF</button><button class="btn ghost sm" onclick="crZoom(-1)">−</button><b id="crZoomLabel">100%</b><button class="btn ghost sm" onclick="crZoom(1)">+</button></div><div id="crPreview" class="cr-preview">${chequeReportHTML()}</div>`,{wide:true});}
+function exportChequeRegisterExcel(){
+  const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Tahoma,Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #b8c5d6;padding:7px;text-align:center;white-space:nowrap}th{background:#fce4d6;font-weight:bold}tfoot{font-weight:bold;background:#edf2f8}</style></head><body>${chequeReportHTML()}</body></html>`;
+  if(typeof window.igSaveXlsx==="function") window.igSaveXlsx(html,"أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10));
+  else { downloadChequeRegister(); toast("تم التصدير بصيغة CSV لعدم توفر مولد Excel","err"); return; }
+  toast("تم تجهيز ملف Excel","ok");
+}
+async function exportChequeRegisterPDF(){
+  const rows=chequeRegisterFiltered(); if(!rows.length){toast("لا توجد بيانات للتصدير","err");return;}
+  if(!window.html2canvas||!window.jspdf?.jsPDF){printChequeRegister();toast("تعذر إنشاء PDF مباشر؛ اختر حفظ كـ PDF من نافذة الطباعة","err");return;}
+  const host=document.createElement("div");host.dir="rtl";host.style.cssText="position:fixed;left:-20000px;top:0;width:1500px;background:#fff;padding:24px;color:#172033;font-family:Tahoma,Arial;z-index:-1";
+  host.innerHTML=`<h2 style="text-align:center">أوراق القبض وشيكات تحت التحصيل</h2><p style="text-align:center">عدد السجلات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(state.settings.currency||"ج.م")} — ${new Date().toLocaleDateString("en-GB")}</p>${chequeReportHTML()}`;
+  document.body.appendChild(host);
+  try{
+    const canvas=await html2canvas(host,{scale:2,backgroundColor:"#ffffff",useCORS:true,windowWidth:1600});
+    const {jsPDF}=window.jspdf; const pdf=new jsPDF("l","mm","a4");
+    const pageW=277,pageH=190,imgW=pageW,imgH=canvas.height*imgW/canvas.width;
+    const pageCanvas=document.createElement("canvas"),ctx=pageCanvas.getContext("2d");pageCanvas.width=canvas.width;pageCanvas.height=Math.floor(canvas.width*pageH/pageW);
+    let y=0,first=true;
+    while(y<canvas.height){ctx.clearRect(0,0,pageCanvas.width,pageCanvas.height);ctx.drawImage(canvas,0,y,canvas.width,Math.min(pageCanvas.height,canvas.height-y),0,0,canvas.width,Math.min(pageCanvas.height,canvas.height-y));const h=Math.min(pageH,(canvas.height-y)*pageW/canvas.width);if(!first)pdf.addPage();pdf.addImage(pageCanvas.toDataURL("image/jpeg",.92),"JPEG",10,10,pageW,h);first=false;y+=pageCanvas.height;}
+    pdf.save("أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10)+".pdf");toast("تم تحميل ملف PDF","ok");
+  }catch(e){console.error(e);toast("تعذر إنشاء PDF؛ يمكنك استخدام الطباعة ثم حفظ كـ PDF","err");printChequeRegister();}
+  finally{host.remove();}
+}
+function crZoom(d){window.crZoomLevel=Math.max(.7,Math.min(1.6,(window.crZoomLevel||1)+d*.1));const p=document.getElementById("crPreview"),l=document.getElementById("crZoomLabel");if(p)p.style.zoom=window.crZoomLevel;if(l)l.textContent=Math.round(window.crZoomLevel*100)+"%";}
+function downloadChequeRegister(){const rows=chequeRegisterFiltered(),head=["م","تاريخ الشيك","العميل","رقم الشيك","القيمة","الاستحقاق","البنك المسحوب عليه","البنك/الخزينة","الموقف","تنبيه الاستحقاق","ملاحظات"],data=rows.map(e=>[e.no,e.date,e.customer,e.refNo,e.amount,e.dueDate,e.bankDrawn?treasuryLabel(e.bankDrawn):"",e.treasury?treasuryLabel(e.treasury):"",chequeStatusLabel(e),chequeDueInfo(e).text,e.notes]);const csv="\ufeff"+[head,...data].map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a"),u=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.href=u;a.download="cheques_report.csv";a.click();URL.revokeObjectURL(u);}
 function printChequeRegister(){
   const rows=chequeRegisterFiltered(), cur=state.settings.currency||"ج.م";
   const w=window.open("","_blank"); if(!w){toast("المتصفح منع فتح نافذة الطباعة","err");return;}
   const body=rows.map(e=>{const due=chequeDueInfo(e);return `<tr><td>${escapeHtml(String(e.no||"—"))}</td><td>${escapeHtml(e.date||"—")}</td><td>${escapeHtml(e.customer||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td>${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(chequeStatusLabel(e))}</td><td>${escapeHtml(due.text)}</td><td>${escapeHtml(e.notes||"—")}</td></tr>`;}).join("");
   w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>أوراق القبض وشيكات تحت التحصيل</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:14px;color:#1f2937}h2{text-align:center;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #94a3b8;padding:6px;text-align:center}th{background:#fce4d6}@page{size:A4 landscape;margin:8mm}tr{break-inside:avoid}
-</style></head><body><h2>أوراق القبض وشيكات تحت التحصيل</h2><p>عدد الشيكات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)} — تاريخ الطباعة: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك/الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`);
+</style></head><body><h2>أوراق القبض وشيكات تحت التحصيل</h2><p>عدد الشيكات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)} — تاريخ الطباعة: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك/الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
   w.document.close();
 }
 function sumChequeAmounts(rows){ return rows.reduce((n,e)=>n+(+e.amount||0),0); }
@@ -8954,6 +9095,18 @@ function renderSalesInstallments(){
   const tcls=us.hidePays?"sales-inst-table si-no-pays":"sales-inst-table";
   el.innerHTML=`<div class="sales-inst-table-card"><div class="sales-inst-table-head"><h3>تفاصيل الأقساط</h3><span class="count">${rows.length} قسط مطابق للفلاتر · العملة ${escapeHtml(currency)} · الصف الأحمر الوردي = متأخر · متبقي أقل من ${SI_SMALL_BALANCE} على قسط متأخر يُعتبر مسدد</span></div><div class="sales-inst-table-wrap">${rows.length?`<table class="${tcls}"><thead><tr>${th}</tr></thead><tbody>${body}</tbody>${foot}</table>`:`<div class="sales-inst-empty">لا توجد أقساط مطابقة للفلاتر. تأكد من وجود شروط سداد مسجلة في بيانات التوريد.</div>`}</div></div>`;
 }
+
+// تقرير إجمالي المتأخرات مجمّع لكل عميل — يعتمد على نفس محرك الأقساط والتحصيلات.
+function overdueSummaryRows(){
+  const late=salesInstallmentBaseRows().filter(r=>r.status==="متأخر"&&r.remaining>0.004);
+  const map=new Map();
+  late.forEach(r=>{const k=r.customer||"بدون اسم";if(!map.has(k))map.set(k,{customer:k,amount:0,days:[],count:0,orders:new Set()});const x=map.get(k);x.amount+=r.remaining;x.days.push(+r.days||0);x.count++;x.orders.add(String(r.orderNo||""));});
+  return [...map.values()].map(x=>({customer:x.customer,amount:x.amount,avg:x.days.length?x.days.reduce((a,b)=>a+b,0)/x.days.length:0,count:x.count,orders:x.orders.size})).sort((a,b)=>b.amount-a.amount);
+}
+function viewOverdueSummary(){return `<section class="card overdue-summary-page"><div class="head"><div><h2 style="margin:0">📉 إجمالي المتأخرات المستحقة لكل عميل</h2><small>المبالغ المتبقية من الأقساط التي تجاوزت تاريخ الاستحقاق</small></div><div class="spacer"></div><button class="btn ghost" onclick="overdueSummaryExport('pdf')">🖨 طباعة / PDF</button><button class="btn" onclick="overdueSummaryExport('excel')">⬇ Excel</button></div><div class="body"><div class="qs-installment-filters"><label>بحث عن عميل<input id="osSearch" type="search" placeholder="اسم العميل" oninput="renderOverdueSummary()"></label><label>ترتيب حسب<select id="osSort" onchange="renderOverdueSummary()"><option value="amount">أعلى مبلغ</option><option value="avg">متوسط التأخير</option><option value="customer">اسم العميل</option></select></label></div><div id="osSummary" class="qs-installment-summary"></div><div class="tbl-wrap"><table class="tbl" id="overdueSummaryTable"><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط المتأخرة</th><th>عدد أوامر البيع</th></tr></thead><tbody id="osBody"></tbody></table></div><div id="osCount" style="margin-top:8px;color:var(--text-dim);font-size:12px"></div></div></section>`;}
+function renderOverdueSummary(){if(currentPage!=="overdueSummary")return;const q=(document.getElementById("osSearch")?.value||"").trim().toLowerCase(),sort=document.getElementById("osSort")?.value||"amount";let rows=overdueSummaryRows().filter(x=>x.customer.toLowerCase().includes(q));rows.sort((a,b)=>sort==="customer"?a.customer.localeCompare(b.customer,"ar"):b[sort]-a[sort]);const money=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const total=rows.reduce((a,x)=>a+x.amount,0),avg=rows.length?rows.reduce((a,x)=>a+x.avg,0)/rows.length:0;const cur=state.settings.currency||"ج.م";const sm=document.getElementById("osSummary");if(sm)sm.innerHTML=`<span><b>الإجمالي العام للنتائج</b><strong>${money(total)} ${escapeHtml(cur)}</strong></span><span><b>عدد العملاء</b><strong>${rows.length}</strong></span><span><b>متوسط التأخير العام</b><strong>${avg.toFixed(1)} يوم</strong></span>`;const body=document.getElementById("osBody");if(body)body.innerHTML=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td style="color:#b91c1c;font-weight:800">${money(x.amount)}</td><td>${x.avg.toFixed(1)} يوم</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("")||'<tr><td colspan="5" style="text-align:center">لا توجد متأخرات مطابقة</td></tr>';const count=document.getElementById("osCount");if(count)count.textContent=`عدد العملاء بعد البحث: ${rows.length} · العملة: ${cur}`;}
+function overdueSummaryExport(format){const rows=overdueSummaryRows(),cur=state.settings.currency||"ج.م",m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const body=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td>${m(x.amount)}</td><td>${x.avg.toFixed(1)}</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إجمالي المتأخرات</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63}p{text-align:center}table{width:100%;border-collapse:collapse}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:9px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>إجمالي المتأخرات المستحقة لكل عميل</h1><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط</th><th>عدد أوامر البيع</th></tr></thead><tbody>${body}</tbody></table></html>`;if(format==="excel")igSaveXlsx(html,"إجمالي_المتأخرات_"+new Date().toISOString().slice(0,10));else openReportPreview(html,"إجمالي المتأخرات");}
+
 function salesInstallmentsExport(format){
   const rows=salesInstallmentFilteredRows(); if(!rows.length){toast("لا توجد أقساط مطابقة للتصدير","err");return;}
   const title="سجل الأقساط والمستحقات";
@@ -8963,7 +9116,7 @@ function salesInstallmentsExport(format){
   const cols=siColumns(rows).filter(c=>c.pay===undefined&&c.k!=="diff"); // الطباعة والتصدير تنتهي عند عمود الحالة
   const body=rows.map(r=>{ const bg=r.status==="متأخر"?"#fde2e7":r.status==="مسدد"?"#e9f8ee":r.status==="مستحق اليوم"?"#fff4d6":""; return `<tr${bg?` style="background:${bg}"`:""}>${cols.map(c=>`<td>${escapeHtml(siCell(r,c))}</td>`).join("")}</tr>`; }).join("");
   const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6">الإجمالي</td>`:i<6?"":`<td>${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#000;padding:18px}h1{text-align:center;color:#000;font-size:22px}p{text-align:center;color:#000;font-size:12px}table{width:100%;border-collapse:collapse;font-size:10px}th{background:#e2e8f0;color:#000}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center;white-space:nowrap}tfoot td{font-weight:bold;background:#e2e8f0}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>${escapeHtml(filters)}<br>تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")} · عدد الأقساط: ${rows.length} · العملة: ${escapeHtml(cur)}</p><table><thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></body></html>`;
+  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#000;padding:18px}h1{text-align:center;color:#000;font-size:22px}p{text-align:center;color:#000;font-size:12px}table{width:100%;border-collapse:collapse;font-size:10px}th{background:#e2e8f0;color:#000}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center;white-space:nowrap}tfoot td{font-weight:bold;background:#e2e8f0}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>${escapeHtml(filters)}<br>تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")} · عدد الأقساط: ${rows.length} · العملة: ${escapeHtml(cur)}</p><table><thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
   if(format==="excel"){
     igSaveXlsx(html,"سجل_الأقساط_"+new Date().toISOString().slice(0,10));toast("تم تجهيز ملف Excel للأقساط","ok");
   }else openReportPreview(html,title);
@@ -9871,7 +10024,7 @@ function openMyPassword(first){
   function qsiPdfHtml2(){
     var rows=qsiFiltered(), S=qsiSums(rows);
     var tr=rows.map(function(r){ var bg=r.kind==="late"?"#fde0e6":r.kind==="near"?"#fff4d6":""; return '<tr'+(bg?' style="background:'+bg+'"':"")+'><td>'+esc(r.orderNo||"—")+'</td><td>'+esc(r.customer)+'</td><td>'+dmy(r.date)+'</td><td>'+dmy(r.due)+'</td><td>'+n2(r.total)+'</td><td>'+n2(r.amount)+'</td><td>'+esc(r.label)+'</td><td>'+n2(r.paid)+'</td><td>'+n2(r.remaining)+'</td><td>'+n2(r.lateRemaining)+'</td><td>'+(r.kind==="late"&&r.days?esc(arDays(r.days)):"")+'</td><td>'+esc(qsiStatusText(r))+'</td></tr>'; }).join("");
-    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الأقساط والمستحقات</title><style>i.yy{font-style:normal}body{font-family:Tahoma,Arial,sans-serif;padding:14px}h1{text-align:center;font-size:18px}p{text-align:center;color:#555;font-size:12px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #444;padding:4px;text-align:center;white-space:nowrap}th{background:#eee}tfoot td{font-weight:bold;background:#f4f4f4}@media print{@page{size:A4 landscape;margin:8mm}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><h1>الأقساط والمستحقات — IRON GATE SUPPLIES</h1><p>'+today()+' · متأخر: '+n2(S.late)+' · مستحق/قريب: '+n2(S.near)+' · إجمالي المتبقي: '+n2(S.rem)+' · عدد الأقساط: '+rows.length+'</p><table><thead><tr><th>أمر البيع</th><th>العميل</th><th>تاريخ الفاتورة</th><th>تاريخ الاستحقاق</th><th>إجمالي الفاتورة</th><th>قيمة القسط</th><th>القسط</th><th>المسدد</th><th>المتبقي</th><th>المتبقي المتأخر</th><th>مدة التأخير</th><th>الحالة</th></tr></thead><tbody>'+tr+'</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td>'+n2(S.amount)+'</td><td></td><td>'+n2(S.paid)+'</td><td>'+n2(S.rem)+'</td><td>'+n2(S.lateRem)+'</td><td colspan="2"></td></tr></tfoot></table></body></html>';
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الأقساط والمستحقات</title><style>i.yy{font-style:normal}body{font-family:Tahoma,Arial,sans-serif;padding:14px}h1{text-align:center;font-size:18px}p{text-align:center;color:#555;font-size:12px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #444;padding:4px;text-align:center;white-space:nowrap}th{background:#eee}tfoot td{font-weight:bold;background:#f4f4f4}@media print{@page{size:A4 landscape;margin:8mm}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><h1>الأقساط والمستحقات — IRON GATE SUPPLIES</h1><p>'+today()+' · متأخر: '+n2(S.late)+' · مستحق/قريب: '+n2(S.near)+' · إجمالي المتبقي: '+n2(S.rem)+' · عدد الأقساط: '+rows.length+'</p><table><thead><tr><th>أمر البيع</th><th>العميل</th><th>تاريخ الفاتورة</th><th>تاريخ الاستحقاق</th><th>إجمالي الفاتورة</th><th>قيمة القسط</th><th>القسط</th><th>المسدد</th><th>المتبقي</th><th>المتبقي المتأخر</th><th>مدة التأخير</th><th>الحالة</th></tr></thead><tbody>'+tr+'</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td>'+n2(S.amount)+'</td><td></td><td>'+n2(S.paid)+'</td><td>'+n2(S.rem)+'</td><td>'+n2(S.lateRem)+'</td><td colspan="2"></td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>';
   }
   function openR(id){
     var cfg=REPORTS[id]; if(!cfg) return;
@@ -9973,7 +10126,7 @@ if('serviceWorker' in navigator){
 <script>
 // ===== الشريط العلوي: "+ جديد" وقائمة المستخدم (بتفتح على مستوى الصفحة، وعلى الموبايل Bottom Sheet) =====
 function tbQuickItems(){
-  const L=[["📝","أمر بيع","saleOrder","soNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
+  const L=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
   return L.filter(x=>{ try{ return can(x[2],"add"); }catch(e){ return false; } });
 }
 function renderQuickNew(){ const b=document.getElementById("tbNew"); if(b) b.style.display=tbQuickItems().length?"":"none"; }
@@ -11340,5 +11493,269 @@ input,select,textarea{max-width:100%;box-sizing:border-box}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
 </style>
+
+<style id="ig-installments-report-unified">
+/* توحيد شكل تقارير الخزينة والشيكات والمشتريات مع تقرير الأقساط */
+#content .sales-inst-table,
+#content table[data-rs-key^="treasury-"],
+#content .cr-table,
+#content .trade-report-table,
+#content #txCheckSummary table{
+  border-collapse:separate!important;border-spacing:0!important;font-family:inherit!important;
+  font-size:12px!important;font-weight:600;color:#172033;background:#fff;
+}
+#content .sales-inst-table thead th,
+#content table[data-rs-key^="treasury-"] thead th,
+#content .cr-table thead th,
+#content .trade-report-table thead th,
+#content #txCheckSummary table thead th{
+  position:sticky;top:0;z-index:3;background:#e9edf3!important;color:#111!important;
+  border-bottom:2px solid var(--gold)!important;text-shadow:none!important;
+  padding:10px 9px!important;font-family:inherit!important;font-size:12px!important;
+  font-weight:800!important;text-align:center!important;white-space:nowrap;
+}
+#content .sales-inst-table tbody td,
+#content table[data-rs-key^="treasury-"] tbody td,
+#content .cr-table tbody td,
+#content .trade-report-table tbody td,
+#content #txCheckSummary table tbody td{
+  padding:9px 9px!important;border-bottom:1px solid #e4e8ef!important;
+  font-family:inherit!important;font-size:12px!important;font-weight:600!important;
+  color:#172033!important;text-align:center!important;vertical-align:middle;
+}
+#content table[data-rs-key^="treasury-"] tbody tr:nth-child(even),
+#content .cr-table tbody tr:nth-child(even),
+#content .trade-report-table tbody tr:nth-child(even),
+#content #txCheckSummary table tbody tr:nth-child(even){background:#f7f9fc!important}
+#content table[data-rs-key^="treasury-"] tfoot td,
+#content .cr-table tfoot td,
+#content .trade-report-table tfoot td,
+#content #txCheckSummary table tfoot td{
+  background:#e9edf3!important;color:#111!important;border-top:2px solid var(--gold)!important;
+  font-weight:800!important;text-align:center!important;padding:10px 9px!important;
+}
+#content .cr-table thead th:first-child,#content .cr-table tbody td:first-child{position:sticky;right:0}
+#content .cr-table thead th:first-child{z-index:5}
+#content .cr-table tbody td:first-child{z-index:1}
+#content .trade-report .card .head,#content .cr-resultline{font-family:inherit}
+#content .trade-report .card .head h3,#content .cr-resultline strong,#content #txCheckSummary .head h3{font-weight:800;color:#172033}
+#content .trade-report-table{min-width:1120px!important}
+#content .cr-table{min-width:1120px!important}
+#content table[data-rs-key^="treasury-"]{min-width:1120px}
+@media(max-width:700px){
+ #content .trade-report .tbl-wrap,#content .cheque-register .tbl-wrap,#content .cheque-register .cr-table-wrap,
+ #content .cheque-register .cr-table-wrap,#content .tbl-wrap:has(>table[data-rs-key^="treasury-"]),
+ #content #txCheckSummary .tbl-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch;max-width:100%;border-radius:10px}
+ #content .trade-report-table,#content .cr-table,#content table[data-rs-key^="treasury-"]{font-size:11px!important;min-width:1050px!important}
+ #content .trade-report-table th,#content .cr-table th,#content table[data-rs-key^="treasury-"] th,
+ #content .trade-report-table td,#content .cr-table td,#content table[data-rs-key^="treasury-"] td{font-size:11px!important;padding:8px 7px!important}
+}
+@media print{
+ #content .sales-inst-table thead th,#content table[data-rs-key^="treasury-"] thead th,#content .cr-table thead th,#content .trade-report-table thead th{background:#e9edf3!important;color:#111!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+
+
+<style id="ig-dashboard-followup-summary">
+.dx-followup-summaries{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 18px}
+.dx-followup-card{display:flex;align-items:center;gap:12px;min-width:0;padding:15px 16px;border:1px solid #e5d6d0;border-radius:14px;background:linear-gradient(135deg,#fff,#fff8f5);text-align:right;color:var(--text);font:inherit;cursor:pointer;box-shadow:0 3px 12px rgba(20,30,50,.045);transition:.16s}
+.dx-followup-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(20,30,50,.09)}
+.dx-followup-card .dx-followup-icon{display:grid;place-items:center;flex:0 0 42px;height:42px;border-radius:12px;background:#fde8e8;color:#a32936;font-size:22px;font-weight:800}
+.dx-followup-card.cheques{border-color:#eadfbf;background:linear-gradient(135deg,#fff,#fffdf4)}
+.dx-followup-card.cheques .dx-followup-icon{background:#fff1c9;color:#87600b}
+.dx-followup-content{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.dx-followup-content>b{font-size:12px;color:var(--dx-mut,#64748b)}
+.dx-followup-content>strong{font-size:clamp(19px,2vw,25px);line-height:1.25;font-weight:900;font-variant-numeric:tabular-nums;color:var(--text)}
+.dx-followup-content>strong small{font-size:11px;font-weight:700}
+.dx-followup-content>small{font-size:11px;color:var(--dx-mut,#64748b)}
+.dx-followup-arrow{font-size:20px;color:#8a929e}
+@media(max-width:640px){.dx-followup-summaries{grid-template-columns:1fr;gap:8px}.dx-followup-card{padding:12px}.dx-followup-card .dx-followup-icon{flex-basis:38px;height:38px}}
+</style>
+<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style>
+<style id="ig-mobile-entry-workflow-v1">
+/* Mobile-first data entry improvements. Desktop layout is intentionally untouched. */
+@media (max-width: 760px){
+  :root{--ig-mobile-control-h:46px}
+  html,body{max-width:100%;overflow-x:hidden}
+  input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea,.inp{
+    min-height:var(--ig-mobile-control-h);font-size:16px!important;line-height:1.4;
+    padding:11px 12px!important;border-radius:11px!important;box-sizing:border-box;max-width:100%;
+    touch-action:manipulation
+  }
+  textarea{min-height:88px;resize:vertical}
+  input[type=checkbox],input[type=radio]{width:20px;height:20px;min-width:20px;accent-color:#c99516}
+  label{line-height:1.55;display:inline-block;max-width:100%}
+  .custody-form-grid,.custody-account-grid,.order-info-grid,.fgrid,.dx-grid,.dx-grid2,
+  .statement-filter-grid,.form-grid,.form-row,.fields-grid,.grid-2,.grid-3{
+    grid-template-columns:minmax(0,1fr)!important;gap:10px!important
+  }
+  .custody-field,.fld,.field,.form-group,.form-field{min-width:0!important;width:100%;}
+  .custody-field label,.fld label,.field label,.form-group label,.form-field label{
+    display:block;margin:0 0 5px;font-size:12px;font-weight:750
+  }
+  .modal,.modal-content,.modal-dialog,.modal-card,[role=dialog]{
+    max-width:calc(100vw - 16px)!important;width:calc(100vw - 16px)!important;
+    max-height:calc(100dvh - 16px)!important;overflow:auto;overscroll-behavior:contain
+  }
+  .modal-body,.modal-content,.modal-card{padding:12px!important}
+  .modal-footer,.form-actions,.modal-actions{display:flex;flex-wrap:wrap;gap:8px!important}
+  .modal-footer button,.form-actions button,.modal-actions button{min-height:44px;flex:1 1 130px}
+  button,.btn,[role=button]{min-height:42px;touch-action:manipulation}
+  .btn-sm,button.btn-sm{min-height:38px;padding:8px 11px!important}
+  .table-wrap,.table-responsive,.overflow-x-auto{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .form-section,.card,.panel{min-width:0;max-width:100%}
+  .inp:focus,input:focus,select:focus,textarea:focus{outline:2px solid rgba(201,149,22,.28);outline-offset:1px}
+  input[type=date],input[type=datetime-local],input[type=time]{width:100%;min-width:0}
+}
+@media(max-width:420px){
+  .modal,.modal-content,.modal-dialog,.modal-card,[role=dialog]{width:calc(100vw - 10px)!important;max-width:calc(100vw - 10px)!important}
+  .modal-body,.modal-content,.modal-card{padding:9px!important}
+  .btn,button{font-size:13px}
+}
+</style>
+
+<script id="ig-mobile-input-hints-v1">
+(()=>{
+  try{
+    document.querySelectorAll('input[type="number"]').forEach(el=>{if(!el.hasAttribute('inputmode'))el.setAttribute('inputmode','decimal');});
+    document.querySelectorAll('input[type="tel"]').forEach(el=>{if(!el.hasAttribute('inputmode'))el.setAttribute('inputmode','tel');});
+    document.querySelectorAll('input[type="search"]').forEach(el=>{if(!el.hasAttribute('enterkeyhint'))el.setAttribute('enterkeyhint','search');});
+  }catch(e){console.warn('Mobile input hints:',e);}
+})();
+</script>
+<script id="ig-management-suite-v2">
+
+// تقارير الإدارة العليا: مشتقة من الحركات المسجلة فقط
+let igMgmtFilter={from:'',to:'',q:''};
+function igMgmtDate(v){return String(v||'').slice(0,10)}
+function igMgmtInRange(v){const d=igMgmtDate(v);return (!igMgmtFilter.from||d>=igMgmtFilter.from)&&(!igMgmtFilter.to||d<=igMgmtFilter.to)}
+function igMgmtExport(title,tableId,mode){const t=document.getElementById(tableId);if(!t)return;const clone=t.cloneNode(true);clone.querySelectorAll('[data-no-export],button').forEach(n=>n.remove());const stamp=new Date().toLocaleDateString('en-GB');const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:18px;color:#172b4d}h1{text-align:center;font-size:20px;margin:0 0 12px}.meta{font-size:12px;margin:0 0 14px;color:#475569}table{width:100%;border-collapse:collapse;font-size:11px}thead{display:table-header-group}th{background:#203b63!important;color:#fff!important}td,th{border:1px solid #cbd5e1;padding:7px;text-align:center}tfoot{font-weight:bold;background:#e8eef6}tr{break-inside:avoid}@media print{@page{size:A4 landscape;margin:10mm}}</style></head><body><h1>${escapeHtml(title)} — IRON GATE SUPPLIES</h1><p class="meta">الفترة: ${escapeHtml(igMgmtFilter.from||'كل الفترات')} إلى ${escapeHtml(igMgmtFilter.to||'حتى الآن')} · تاريخ الاستخراج: ${stamp}</p>${clone.outerHTML}</body></html>`;if(mode==='excel'){if(typeof igSaveXlsx==='function')igSaveXlsx(html,title.replaceAll(' ','_')+'_'+new Date().toISOString().slice(0,10));else toast('تصدير Excel غير متاح حاليًا','err')}else openReportPreview(html,title)}
+function renderManagementReports(){
+ if(currentPage!=="managementReports")return;const el=document.getElementById('managementReportsResults');if(!el)return;
+ const cur=state.settings.currency||'ج.م',money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),arr=k=>Array.isArray(state[k])?state[k]:[];
+ const shipments=arr('shipments').filter(s=>igMgmtInRange(s.date||s.shipDate)),entries=arr('treasuryEntries').filter(e=>igMgmtInRange(e.date));
+ const q=igMgmtFilter.q.trim().toLocaleLowerCase('ar');const matches=n=>!q||String(n||'').toLocaleLowerCase('ar').includes(q);
+ const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0;
+ shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;
+ if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
+ const order=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');let o=orders.get(order)||{sale:0,cost:0,qty:0,customer:c};o.sale+=sale;o.cost+=cost;o.qty+=qty;orders.set(order,o);
+ }));
+ const coll=new Map();entries.forEach(e=>{if(e.direction==='in'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'))coll.set(String(e.customer||''),(coll.get(String(e.customer||''))||0)+(+e.amount||0))});
+ const paid=new Map();entries.forEach(e=>{if(e.direction==='out'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+(+e.amount||0))});
+ const inst=(()=>{try{return salesInstallmentBaseRows()}catch(e){return []}})().filter(x=>igMgmtInRange(x.due));
+ const table=(id,heads,rows,foot='')=>`<div class="tbl-wrap"><table id="${id}" class="trade-report-table" style="width:100%;min-width:720px"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات مطابقة</td></tr>`}</tbody>${foot?`<tfoot>${foot}</tfoot>`:''}</table></div>`;
+ const tools=id=>`<div class="ig-mgmt-tools"><button class="btn sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','print')">🖨 طباعة / PDF</button><button class="btn ghost sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','excel')">📊 Excel</button></div>`;
+ const clientRows=clientFiltered.sort((a,b)=>(b[1].sale-b[1].cost)-(a[1].sale-a[1].cost)).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.sale)}</td><td>${money(x.qty)}</td><td>${money(coll.get(n)||0)}</td><td>${money(x.sale-(coll.get(n)||0))}</td><td>${money(x.sale-x.cost)}</td></tr>`).join('');
+ const vendorRows=vendorFiltered.sort((a,b)=>b[1].buy-a[1].buy).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.buy)}</td><td>${money(paid.get(n)||0)}</td><td>${money(x.buy-(paid.get(n)||0))}</td><td>${money(x.qty)}</td><td>${x.qty?money(x.buy/x.qty):'—'}</td></tr>`).join('');
+ const chequeSource=arr('treasuryEntries').filter(e=>e.method==='bank'&&igMgmtInRange(e.dueDate||e.date)&&matches(e.customer||e.supplier));
+ const chequeRows=chequeSource.map(e=>`<tr><td>${escapeHtml(e.no||'—')}</td><td>${escapeHtml(e.customer||e.supplier||'—')}</td><td>${escapeHtml(e.dueDate||'—')}</td><td>${money(e.amount)}</td><td>${escapeHtml(({receivable:'مستحق',pending:'تحت التحصيل',deposited:'مودع',collected:'محصّل',returned:'مرتجع'})[e.status]||e.status||'—')}</td></tr>`).join('');
+ const clientFiltered=[...clients].filter(([n])=>matches(n));const vendorFiltered=[...vendors].filter(([n])=>matches(n));
+ const cTotals=clientFiltered.reduce((a,[n,x])=>{a.sale+=x.sale;a.qty+=x.qty;a.collected+=coll.get(n)||0;a.balance+=x.sale-(coll.get(n)||0);a.margin+=x.sale-x.cost;return a},{sale:0,qty:0,collected:0,balance:0,margin:0});
+ const vTotals=vendorFiltered.reduce((a,[n,x])=>{a.buy+=x.buy;a.paid+=paid.get(n)||0;a.balance+=x.buy-(paid.get(n)||0);a.qty+=x.qty;return a},{buy:0,paid:0,balance:0,qty:0});
+ const chTotals=chequeSource.reduce((a,e)=>{a.count++;a.amount+=+e.amount||0;const st=String(e.status||'').toLowerCase();if(st==='collected')a.collected+=+e.amount||0;else if(st==='returned')a.returned+=+e.amount||0;else a.open+=+e.amount||0;return a},{count:0,amount:0,collected:0,returned:0,open:0});
+ const late=inst.filter(x=>x.status==='متأخر'&&x.remaining>0);const overdue=late.reduce((a,x)=>a+(+x.remaining||0),0);const ordersOpen=arr('saleOrders').filter(o=>!['مكتمل','مغلق','closed','completed'].includes(String(o.status||'').toLowerCase())).length;
+ const supplierTimingNote='لا يوجد تاريخ استحقاق/موعد توريد مخطط موحد في البيانات الحالية؛ لذلك لا تُعرض نسبة الالتزام بالمواعيد حتى لا تكون تقديرية.';
+ const vendorMetrics=`<p class="ig-mgmt-note">${supplierTimingNote} متوسط سعر الشراء محسوب من تكلفة التوريد المسجلة ÷ الوزن الفعلي.</p>`;
+ el.innerHTML=`<section class="card"><div class="head"><h3>📌 فلاتر تقارير الإدارة</h3></div><div class="body"><div class="ig-mgmt-filter"><label>من تاريخ <input class="inp" type="date" value="${igMgmtFilter.from}" onchange="igMgmtFilter.from=this.value;renderManagementReports()"></label><label>إلى تاريخ <input class="inp" type="date" value="${igMgmtFilter.to}" onchange="igMgmtFilter.to=this.value;renderManagementReports()"></label><label>بحث عميل / مورد <input class="inp" value="${escapeAttr(igMgmtFilter.q)}" placeholder="اكتب الاسم" oninput="igMgmtFilter.q=this.value;renderManagementReports()"></label><button class="btn ghost sm" onclick="igMgmtFilter={from:'',to:'',q:''};renderManagementReports()">مسح الفلاتر</button></div></div></section>
+ <section class="card"><div class="head"><h3>📊 لوحة مؤشرات الأداء KPI</h3><span class="count">حسب الفترة المحددة</span></div><div class="body"><div class="kpis"><div class="kpi"><div class="lbl">قيمة المبيعات</div><div class="val">${money(totalSales)} ${cur}</div></div><div class="kpi"><div class="lbl">تكلفة الشراء</div><div class="val">${money(totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">هامش الربح المسجل</div><div class="val">${money(totalSales-totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">الكمية الموردة</div><div class="val">${money(totalQty)} طن</div></div><div class="kpi"><div class="lbl">التحصيلات المسجلة</div><div class="val">${money([...coll.values()].reduce((a,b)=>a+b,0))} ${cur}</div></div><div class="kpi"><div class="lbl">الأقساط المتأخرة</div><div class="val">${money(overdue)} ${cur}</div></div><div class="kpi"><div class="lbl">أوامر البيع المفتوحة</div><div class="val">${ordersOpen}</div></div></div><p class="ig-mgmt-note">مؤشر الربح هنا فرق قيمة البيع وتكلفة الشراء للتوريدات المسجلة فقط؛ لا يشمل المصروفات العامة أو العهد، ولا يمثل صافي الربح المحاسبي.</p></div></section>
+ <section class="card"><div class="head"><h3>🏆 أفضل وأسوأ العملاء</h3><span class="count">ترتيب من الأعلى إلى الأقل حسب فرق البيع والشراء المسجل (ليس صافي ربح)</span></div><div class="body">${tools('igMgmtClients')}${table('igMgmtClients',['العميل','المبيعات ('+cur+')','الكمية (طن)','التحصيل ('+cur+')','المتبقي التقديري ('+cur+')','فرق البيع والشراء ('+cur+')'],clientRows,`<tr><th>الإجمالي</th><th>${money(cTotals.sale)}</th><th>${money(cTotals.qty)}</th><th>${money(cTotals.collected)}</th><th>${money(cTotals.balance)}</th><th>${money(cTotals.margin)}</th></tr>`)}</div></section>
+ <section class="card"><div class="head"><h3>🏭 أداء الموردين</h3><span class="count">الأسعار والكميات والمدفوعات</span></div><div class="body">${vendorMetrics}${tools('igMgmtVendors')}${table('igMgmtVendors',['المورد','قيمة المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي التقديري ('+cur+')','الكمية الموردة (طن)','متوسط سعر الطن ('+cur+')'],vendorRows,`<tr><th>الإجمالي</th><th>${money(vTotals.buy)}</th><th>${money(vTotals.paid)}</th><th>${money(vTotals.balance)}</th><th>${money(vTotals.qty)}</th><th>${vTotals.qty?money(vTotals.buy/vTotals.qty):'—'}</th></tr>`)}</div></section>
+ <section class="card"><div class="head"><h3>🧾 تقرير الشيكات</h3><span class="count">مستحق ومحصل ومرتجع وتواريخ الاستحقاق</span></div><div class="body">${tools('igMgmtCheques')}${table('igMgmtCheques',['رقم الشيك','العميل / المورد','تاريخ الاستحقاق','القيمة ('+cur+')','الحالة'],chequeRows,`<tr><th>الإجمالي (${chTotals.count} شيك)</th><th></th><th></th><th>${money(chTotals.amount)}</th><th>محصل: ${money(chTotals.collected)} · مرتجع: ${money(chTotals.returned)} · غير محصل/قيد المتابعة: ${money(chTotals.open)}</th></tr>`)}</div></section>`;
+}
+
+</script>
+
+
+<style id="ig-mobile-entry-workflow-v2">
+/* Focused mobile workflow for the main transaction forms; desktop remains unchanged. */
+@media(max-width:760px){
+  /* Sales order and quotation line items become readable touch cards. */
+  .so-item-row,.qt-item-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important;padding:12px!important;margin:9px 0!important;border-radius:13px!important;align-items:end!important}
+  .so-item-row .srn,.qt-item-row .srn{grid-column:1/-1;justify-self:start;background:rgba(201,149,22,.13);border-radius:8px;padding:4px 10px;font-size:13px}
+  .so-item-row .mini,.qt-item-row .mini{grid-column:auto!important;min-width:0!important}
+  .so-item-row .mini label,.qt-item-row .mini label{font-size:11px!important;line-height:1.4;min-height:16px}
+  .so-item-row .mini .inp,.qt-item-row .mini .inp{width:100%;min-width:0;font-size:16px!important}
+  .so-item-row .mini.spec,.so-item-row .mini.type,.qt-item-row .mini.nt{grid-column:1/-1!important}
+  .so-item-row .rm-btn,.qt-item-row .rm-btn{grid-column:1/-1;width:100%!important;height:40px!important;border-radius:9px!important;background:rgba(220,38,38,.06)!important}
+  .so-actions{position:sticky;bottom:env(safe-area-inset-bottom,0);z-index:30;background:var(--bg,#fff);padding:10px 0 calc(10px + env(safe-area-inset-bottom,0));border-top:1px solid var(--line);box-shadow:0 -5px 18px rgba(15,23,42,.08)}
+  .so-actions .btn{min-height:48px;flex:1 1 100%!important}
+  .page-head{gap:7px!important;align-items:center;flex-wrap:wrap}
+  .page-head>.btn{min-height:42px}
+  .ig-pol-head .fgrid{grid-template-columns:minmax(0,1fr)!important}
+  #itemsBody .item-row,#itemsBody .ship-item-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important;padding:12px!important;margin:9px 0!important;border:1px solid var(--line)!important;border-radius:12px!important;background:var(--bg-2)!important}
+  #itemsBody .item-row>* ,#itemsBody .ship-item-row>*{min-width:0!important;max-width:100%}
+  #itemsBody input,#itemsBody select{width:100%;min-width:0}
+  .tx-form,.tx-edit-form,.tx-entry-form{grid-template-columns:minmax(0,1fr)!important}
+  .tx-form .fld,.tx-edit-form .fld,.tx-entry-form .fld{width:100%;min-width:0}
+  .so-total-row{position:sticky;bottom:68px;z-index:10;padding:11px!important;font-size:13px!important;box-shadow:0 3px 12px rgba(15,23,42,.08)}
+}
+@media(max-width:420px){
+  .so-item-row,.qt-item-row{grid-template-columns:minmax(0,1fr)!important}
+  .so-item-row .mini.spec,.so-item-row .mini.type,.qt-item-row .mini.nt{grid-column:1!important}
+  .so-actions .btn{flex-basis:100%!important}
+}
+</style>
+<script id="ig-mobile-entry-workflow-v2-js">
+(()=>{
+  const applyHints=root=>{
+    if(!root||!root.querySelectorAll)return;
+    root.querySelectorAll('input,textarea').forEach(el=>{
+      if(el.disabled||el.readOnly)return;
+      const type=(el.type||'').toLowerCase();
+      if(type==='number'){
+        if(!el.hasAttribute('inputmode'))el.setAttribute('inputmode','decimal');
+        if(!el.hasAttribute('enterkeyhint'))el.setAttribute('enterkeyhint','next');
+      }
+      if(type==='tel'&&!el.hasAttribute('inputmode'))el.setAttribute('inputmode','tel');
+      if(type==='search'&&!el.hasAttribute('enterkeyhint'))el.setAttribute('enterkeyhint','search');
+      const label=(el.closest('.fld,.mini,.field,.form-group')?.querySelector('label')?.textContent||el.getAttribute('aria-label')||el.placeholder||'').trim();
+      if(type==='text'&&!el.hasAttribute('inputmode')&&/(كمية|وزن|سعر|قيمة|مبلغ|خصم|ضريبة|نسبة|طن|عدد|هاتف|تليفون)/.test(label)){
+        el.setAttribute('inputmode',/(هاتف|تليفون)/.test(label)?'tel':'decimal');
+        if(!el.hasAttribute('enterkeyhint'))el.setAttribute('enterkeyhint','next');
+      }
+    });
+  };
+  const boot=()=>{
+    applyHints(document);
+    if(window.MutationObserver){
+      const target=document.getElementById('content')||document.body;
+      new MutationObserver(records=>records.forEach(r=>r.addedNodes.forEach(n=>{if(n.nodeType===1)applyHints(n)}))).observe(target,{childList:true,subtree:true});
+    }
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
+})();
+</script>
+
+
+
+<style id="ig-dashboard-recent-polish">
+.dx-list>li{gap:12px;padding:12px 14px;min-height:66px}.dx-list .dx-li-main{min-width:0;flex:1}.dx-list .dx-li-main>b{display:block;font-size:13px;font-weight:800;line-height:1.5}.dx-list .dx-li-main>small{display:block;margin-top:4px;font-size:11px;line-height:1.65;color:#64748b;white-space:normal;overflow-wrap:anywhere}.dx-list .dx-li-main>small strong{color:#334155;font-weight:800}.dx-list .dx-li-date{white-space:nowrap;font-size:10px;color:#64748b;align-self:center}.dx-list .dx-ico{flex:0 0 34px}
+@media(max-width:640px){.dx-list>li{gap:8px;padding:10px 8px}.dx-list .dx-li-date{font-size:9px}.dx-list .dx-li-main>small{font-size:10px}}
+
+/* تحسينات المرحلة ب: ثبات رؤوس الجداول والتفاصيل على الأجهزة الصغيرة */
+.content .tbl-wrap,.trade-report .tbl-wrap{overflow:auto;overscroll-behavior:contain;max-width:100%;}
+.content .tbl-wrap thead th,.trade-report .tbl-wrap thead th{position:sticky;top:0;z-index:4;}
+.trade-report-table tfoot{position:sticky;bottom:0;z-index:2;}
+.trade-quick-row{display:flex;flex-wrap:wrap;gap:5px}.trade-quick-row .btn{padding:6px 9px;min-height:32px}
+.trade-detail-row{cursor:pointer}.trade-detail-row:focus{outline:2px solid var(--gold);outline-offset:-2px}.trade-detail-row:hover{background:var(--gold-soft)!important}
+.trade-row-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;max-height:65vh;overflow:auto}.trade-row-details>div{display:flex;flex-direction:column;gap:4px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg-2)}.trade-row-details span{font-size:11px;color:var(--text-dim)}.trade-row-details b{font-size:13px;overflow-wrap:anywhere}
+@media(max-width:700px){.trade-report-table{min-width:950px}.trade-report-table th:nth-child(6),.trade-report-table td:nth-child(6),.trade-report-table th:nth-child(7),.trade-report-table td:nth-child(7),.trade-report-table th:nth-child(8),.trade-report-table td:nth-child(8),.trade-report-table th:nth-child(9),.trade-report-table td:nth-child(9){display:none}.trade-quick-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.trade-quick-row .btn{width:100%}.trade-row-details{grid-template-columns:1fr}}
+
+/* ===== المرحلة ب — توحيد تثبيت رؤوس جداول التقارير ===== */
+#content .tbl-wrap:not(.no-sticky) table:not(.print-document-table) thead th,
+#content .table-wrap:not(.no-sticky) table:not(.print-document-table) thead th{
+  position:sticky;top:0;z-index:5;
+}
+#content .tbl-wrap:not(.no-sticky) table:not(.print-document-table) thead,
+#content .table-wrap:not(.no-sticky) table:not(.print-document-table) thead{position:relative;z-index:4}
+@media print{
+  #content .tbl-wrap:not(.no-sticky),#content .table-wrap:not(.no-sticky){overflow:visible!important;max-height:none!important}
+  #content .tbl-wrap:not(.no-sticky) table thead th,#content .table-wrap:not(.no-sticky) table thead th{position:static!important}
+}
+@media(max-width:700px){
+  #content .tbl-wrap,#content .table-wrap{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+}
+</style>
+
 </body>
 </html>
