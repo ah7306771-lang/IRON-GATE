@@ -8481,7 +8481,10 @@ const txStatuses = [
   { v:"returned",      label:"مرتد",               color:"danger" },
   { v:"guarantee",     label:"شيك ضمان",           color:"warn" }
 ];
-function txMethodLabel(v){ const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—"; }
+function txMethodLabel(v){
+  if(v==="transfer_supplier") return "🔄 تحويل لمورد";
+  const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—";
+}
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
 
 let txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:"", to:"" };
@@ -9051,9 +9054,13 @@ function txEdit(id, direction){
 }
 async function txDel(id, direction){
   const e = state.treasuryEntries.find(x=>x.id===id); if(!e) return;
-  if(!await askConfirm(`حذف السجل رقم ${e.no} (${fmt(e.amount)} ${state.settings.currency})؟`)) return;
-  state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
-  saveState(); renderTreasury(direction); toast("تم الحذف","ok");
+  const linked = e.linkedTxId ? state.treasuryEntries.find(x=>x.id===e.linkedTxId) : null;
+  const extra = linked ? `\n\n⚠️ هذا السجل مرتبط بـ ${linked.direction==="in"?"تحصيل":"دفعة"} رقم ${linked.no} بقيمة ${fmt(linked.amount)}. سيتم حذفها أيضاً.` : "";
+  if(!await askConfirm(`حذف السجل رقم ${e.no} (${fmt(e.amount)} ${state.settings.currency})؟${extra}`)) return;
+  const toDelete = new Set([id]); if(linked) toDelete.add(linked.id);
+  state.treasuryEntries = state.treasuryEntries.filter(x=>!toDelete.has(x.id));
+  saveState(); renderTreasury(direction);
+  toast(linked?`تم الحذف وتم حذف السجل المرتبط #${linked.no}`:"تم الحذف","ok");
 }
 
 function openTxForm(direction, existing){
@@ -9074,15 +9081,23 @@ function openTxForm(direction, existing){
     bankDrawn: "",
     status: "cash",
     notes: "",
-    allocations: []
+    allocations: [],
+    targetSupplier: "",
+    linkedTxId: ""
   };
   if(draft.method==="cash" || draft.method==="transfer") draft.status=draft.method;
   txEditingId = existing ? existing.id : null;
 
   const bankOptions = (state.banks||[]).map(b=>`<option value="${escapeAttr(b.code)}" ${draft.treasury===b.code?'selected':''}>${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("");
   const safeOptions = (state.safes||[]).map(s=>`<option value="${escapeAttr(s.code)}" ${draft.treasury===s.code?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join("");
+  // قائمة طرق التحصيل/الدفع — في التحصيلات فقط فيه "تحويل لمورد"
+  const methodsForDir = isIn ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods;
+  // قائمة الموردين لحقل "تحويل لمورد"
+  const supplierOptionsHtml = (partyNames(state.suppliers)||[]).map(n=>`<option value="${escapeAttr(n)}" ${draft.targetSupplier===n?'selected':''}>${escapeHtml(n)}</option>`).join("");
+  const linkedNote = draft.linkedTxId ? `<div style="background:rgba(230,179,37,.12);border:1px solid var(--gold);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--gold-text,#7a5c0b)">🔗 هذه الحركة مرتبطة بدفعة أخرى تم إنشاؤها تلقائيًا (ID: ${escapeHtml(draft.linkedTxId)}). عند التعديل أو الحذف يُنصح بمراجعة الدفعة المرتبطة.</div>` : "";
 
   openModal(`${existing?'تعديل':'إضافة'} ${isIn?'تحصيل':'دفعة'}${existing?' رقم '+existing.no:''}`, `
+    ${linkedNote}
     <div class="tx-head-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding-bottom:8px;border-bottom:1px solid var(--line)">
       <div class="fld" style="margin-bottom:0"><label style="font-size:11px">م</label>
         <input class="inp" type="number" id="tx_no" value="${draft.no}" readonly style="opacity:.7;padding:8px 10px;font-size:13px">
@@ -9090,44 +9105,23 @@ function openTxForm(direction, existing){
       <div class="fld" style="margin-bottom:0"><label style="font-size:11px">التاريخ *</label>
         <input class="inp" type="date" id="tx_date" value="${draft.date}" style="padding:8px 10px;font-size:13px">
       </div>
-      <div class="fld" style="margin-bottom:0;grid-column:span 2"><label style="font-size:11px">${partyLabel} *</label>
+      <div class="fld" style="margin-bottom:0;grid-column:span 2"><label style="font-size:11px">${partyLabel} * <span style="color:var(--text-dim);font-weight:400">(أول خطوة)</span></label>
         <select class="inp" id="tx_party" onchange="txRenderSettlementDetails()" style="padding:8px 10px;font-size:13px">
           <option value="">اختر ${partyLabel}</option>
           ${partyList.map(n=>`<option value="${escapeAttr(n)}" ${draft[partyField]===n?'selected':''}>${escapeHtml(n)}</option>`).join("")}
         </select>
       </div>
     </div>
-    ${isIn?`<div class="fld" style="margin-top:12px"><label>طريقة السداد</label>
-      <select class="inp" id="tx_allocationType" onchange="txOnAllocTypeChange()">
-        <option value="">اختر طريقة السداد</option>
-        <option value="invoice_deduction" ${draft.allocationType==='invoice_deduction'?'selected':''}>تنازلي فاتورة</option>
-        <option value="invoice_assistance" ${draft.allocationType==='invoice_assistance'?'selected':''}>مساعدة فاتورة</option>
-        <option value="credit_amount" ${draft.allocationType==='credit_amount'?'selected':''}>مبلغ دائن</option>
-      </select>
+    <!-- (2) القيمة بعد العميل مباشرة -->
+    <div class="fld" style="margin-top:12px"><label>القيمة * <span style="color:var(--text-dim);font-weight:400">(الخطوة الثانية)</span></label>
+      <input class="inp num" type="number" min="0" step="0.01" id="tx_amount" value="${escapeAttr(draft.amount||"")}" placeholder="0.00" style="font-size:16px;font-weight:700;padding:10px 12px" oninput="txMirrorAmount(this.value);txPreviewAutoAllocations()">
     </div>
-    <div id="txSettlementTabs" class="tx-settle-tabs" role="tablist">
-      ${canTab("receipts","form")?`<button type="button" class="btn ghost sm on" role="tab" aria-selected="true" data-tab="form" onclick="txShowSettlementTab('form')">بيانات التحصيل</button>`:""}
-      ${canTab("receipts","details")?`<button type="button" class="btn ghost sm" role="tab" aria-selected="false" data-tab="details" id="txDetailsTabBtn" onclick="txShowSettlementTab('details')">تفاصيل السداد</button>`:""}
-    </div>
-    <div id="txSettlementDetails" style="display:none;margin-bottom:14px">
-      <div style="font-weight:800;color:var(--gold-text);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
-      <div id="txSettlementSummary" class="tx-settle-sum">
-        <label style="display:flex;align-items:center;gap:6px">قيمة التحصيل
-          <input class="inp num" id="tx_amountMirror" type="number" min="0" step="0.01" placeholder="0.00" style="width:150px;padding:6px 10px" oninput="txMirrorAmount(this.value)"></label>
-        <span>الموزَّع: <b class="num" id="txSumAlloc">0.00</b></span>
-        <span>غير موزَّع: <b class="num" id="txSumLeft">0.00</b></span>
-      </div>
-      <div class="tbl-wrap"><table id="txSettlementTable" style="white-space:nowrap;min-width:100%"><thead><tr><th>اختيار</th><th>أمر البيع</th><th>نوع السداد</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="10">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
-    </div><div id="txMainForm">
-    `:''}
-    <div class="tx-form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <!-- (3) باقي الحقول -->
+    <div class="tx-form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
       <div class="fld"><label>نوع ${isIn?"التحصيل":"الدفع"} *</label>
         <select class="inp" id="tx_method" onchange="txToggleFields();txSetDefaultStatus()">
-          ${txMethods.map(m=>`<option value="${m.v}" ${draft.method===m.v?'selected':''}>${m.ico} ${m.label}</option>`).join("")}
+          ${methodsForDir.map(m=>`<option value="${m.v}" ${draft.method===m.v?'selected':''}>${m.ico} ${m.label}</option>`).join("")}
         </select>
-      </div>
-      <div class="fld"><label>القيمة *</label>
-        <input class="inp num" type="number" min="0" step="0.01" id="tx_amount" value="${escapeAttr(draft.amount||"")}" placeholder="0.00" oninput="txPreviewAutoAllocations()">
       </div>
       <div class="fld" id="tx_treasuryCashWrap"><label>الخزينة *</label>
         <select class="inp" id="tx_treasury">
@@ -9141,6 +9135,12 @@ function openTxForm(direction, existing){
           ${bankOptions}
         </select>
       </div>
+      ${isIn?`<div class="fld" id="tx_supplierTargetWrap" style="display:none;grid-column:span 2"><label>المورد المحوَّل إليه * <span style="color:var(--text-dim);font-weight:400">(سيُنشأ تلقائيًا دفعة لهذا المورد بنفس المبلغ)</span></label>
+        <select class="inp" id="tx_supplierTarget">
+          <option value="">— اختر المورد —</option>
+          ${supplierOptionsHtml}
+        </select>
+      </div>`:""}
       <div class="fld" id="tx_refNoWrap"><label id="tx_refNoLabel">رقم الشيك</label>
         <input class="inp" id="tx_refNo" value="${escapeAttr(draft.refNo||"")}" placeholder="123456" style="direction:ltr;text-align:right">
       </div>
@@ -9164,13 +9164,40 @@ function openTxForm(direction, existing){
         <textarea class="inp" id="tx_notes" rows="2" placeholder="...">${escapeHtml(draft.notes||"")}</textarea>
       </div>
     </div>
-    </div>
+    <!-- (4) طريقة السداد (التخصيص على الفواتير) آخر خطوة -->
+    ${isIn?`<div style="margin-top:16px;padding-top:12px;border-top:2px dashed var(--line)">
+      <div class="fld"><label style="font-weight:800;color:var(--gold-text)">طريقة السداد (الخطوة الأخيرة — توزيع المبلغ على الفواتير)</label>
+        <select class="inp" id="tx_allocationType" onchange="txOnAllocTypeChange()">
+          <option value="">— اختر طريقة السداد —</option>
+          <option value="invoice_deduction" ${draft.allocationType==='invoice_deduction'?'selected':''}>تنازلي فاتورة (تلقائي من الأقدم)</option>
+          <option value="invoice_assistance" ${draft.allocationType==='invoice_assistance'?'selected':''}>مساعدة فاتورة (يدوي)</option>
+          <option value="credit_amount" ${draft.allocationType==='credit_amount'?'selected':''}>مبلغ دائن (بدون توزيع الآن)</option>
+        </select>
+      </div>
+      <div id="txSettlementTabs" class="tx-settle-tabs" role="tablist" style="margin-top:10px">
+        ${canTab("receipts","form")?`<button type="button" class="btn ghost sm on" role="tab" aria-selected="true" data-tab="form" onclick="txShowSettlementTab('form')">بيانات التحصيل</button>`:""}
+        ${canTab("receipts","details")?`<button type="button" class="btn ghost sm" role="tab" aria-selected="false" data-tab="details" id="txDetailsTabBtn" onclick="txShowSettlementTab('details')">تفاصيل السداد</button>`:""}
+      </div>
+      <div id="txSettlementDetails" style="display:none;margin-bottom:14px">
+        <div style="font-weight:800;color:var(--gold-text);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
+        <div id="txSettlementSummary" class="tx-settle-sum">
+          <label style="display:flex;align-items:center;gap:6px">قيمة التحصيل
+            <input class="inp num" id="tx_amountMirror" type="number" min="0" step="0.01" placeholder="0.00" style="width:150px;padding:6px 10px" oninput="txMirrorAmount(this.value)"></label>
+          <span>الموزَّع: <b class="num" id="txSumAlloc">0.00</b></span>
+          <span>غير موزَّع: <b class="num" id="txSumLeft">0.00</b></span>
+        </div>
+        <div class="tbl-wrap"><table id="txSettlementTable" style="white-space:nowrap;min-width:100%"><thead><tr><th>اختيار</th><th>أمر البيع</th><th>نوع السداد</th><th>تاريخ الفاتورة</th><th>إجمالي الفاتورة</th><th>تاريخ استحقاق القسط</th><th>قيمة القسط</th><th>المسدد من القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead><tbody id="txSettlementRows"><tr><td colspan="10">اختر العميل وطريقة السداد لعرض الفواتير.</td></tr></tbody></table></div>
+      </div>
+    </div>`:''}
   `, ()=>{
     const method = document.getElementById("tx_method").value;
-    const treasuryVal = method === "cash" 
-      ? document.getElementById("tx_treasury").value 
-      : document.getElementById("tx_bank").value;
-    
+    const isTransferSupplier = method==="transfer_supplier";
+    const treasuryVal = isTransferSupplier ? ""
+      : (method === "cash"
+        ? document.getElementById("tx_treasury").value
+        : document.getElementById("tx_bank").value);
+    const targetSupplierVal = isIn && isTransferSupplier ? (document.getElementById("tx_supplierTarget")?.value||"").trim() : "";
+
     const d = {
       ...draft,
       date: document.getElementById("tx_date").value,
@@ -9181,24 +9208,68 @@ function openTxForm(direction, existing){
       dueDate: document.getElementById("tx_dueDate").value,
       treasury: treasuryVal,
       bankDrawn: method!=="bank" ? "" : (document.getElementById("tx_bankDrawnSel").value==="__other" ? document.getElementById("tx_bankDrawnOther").value.trim() : document.getElementById("tx_bankDrawnSel").value),
-      status: method==="cash" ? "cash" : method==="transfer" ? "transfer" : document.getElementById("tx_status").value,
+      status: method==="cash" ? "cash" : (method==="transfer"||isTransferSupplier) ? "transfer" : document.getElementById("tx_status").value,
       notes: document.getElementById("tx_notes").value.trim(),
       allocationType: isIn ? (document.getElementById("tx_allocationType")?.value||"") : "",
       allocations: isIn ? txBuildAllocations(document.getElementById("tx_allocationType")?.value||"", +document.getElementById("tx_amount").value||0) : (draft.allocations||[]),
-      wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned"))
+      wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned")),
+      targetSupplier: targetSupplierVal
     };
     if(!d.date){ toast("التاريخ مطلوب","err"); return false; }
     if(!d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); return false; }
     if(!d.amount || d.amount<=0){ toast("القيمة لازم تكون أكبر من صفر","err"); return false; }
-    if(!d.treasury){ toast(method==="cash"?"الخزينة مطلوبة":"البنك مطلوب","err"); return false; }
+    if(isTransferSupplier){
+      if(!targetSupplierVal){ toast("اختر المورد المحوَّل إليه","err"); return false; }
+    } else if(!d.treasury){ toast(method==="cash"?"الخزينة مطلوبة":"البنك مطلوب","err"); return false; }
+
     if(existing){
       const i = state.treasuryEntries.findIndex(x=>x.id===existing.id);
       if(i>=0) state.treasuryEntries[i] = d;
+      // لو كان مرتبط بدفعة سابقة، حدّث قيمتها وتاريخها أيضاً
+      if(d.linkedTxId){
+        const li = state.treasuryEntries.findIndex(x=>x.id===d.linkedTxId);
+        if(li>=0){
+          state.treasuryEntries[li].amount = d.amount;
+          state.treasuryEntries[li].date = d.date;
+          state.treasuryEntries[li].refNo = d.refNo;
+          state.treasuryEntries[li].notes = `تحويل تلقائي من تحصيل #${d.no} — ${d[partyField]||""}` + (d.notes?` — ${d.notes}`:"");
+          if(isTransferSupplier) state.treasuryEntries[li].supplier = targetSupplierVal;
+        }
+      }
     } else {
       state.treasuryEntries.push(d);
+      // إنشاء دفعة مزدوجة تلقائياً عند التحويل لمورد
+      if(isIn && isTransferSupplier && targetSupplierVal){
+        const payment = {
+          id: "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),
+          direction: "out",
+          no: nextTxNo("out"),
+          date: d.date,
+          supplier: targetSupplierVal,
+          method: "transfer",
+          refNo: d.refNo,
+          amount: d.amount,
+          dueDate: "",
+          treasury: "",
+          bankDrawn: "",
+          status: "transfer",
+          notes: `تحويل تلقائي من تحصيل #${d.no} — العميل: ${d.customer||""}`,
+          allocations: [],
+          allocationType: "invoice_deduction",
+          targetSupplier: "",
+          linkedTxId: d.id
+        };
+        state.treasuryEntries.push(payment);
+        // اربط التحصيل بالدفعة
+        d.linkedTxId = payment.id;
+        const si = state.treasuryEntries.findIndex(x=>x.id===d.id);
+        if(si>=0) state.treasuryEntries[si] = d;
+        audit("tx_add",`إنشاء دفعة تلقائية #${payment.no} للمورد "${targetSupplierVal}" مرتبطة بتحصيل #${d.no} بقيمة ${fmt(d.amount)}`);
+      }
     }
     saveState(); renderTreasury(direction);
-    toast(existing?"تم التعديل":"تمت الإضافة","ok");
+    const msg = (!existing && isTransferSupplier) ? `تمت الإضافة · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"تم التعديل":"تمت الإضافة");
+    toast(msg,"ok");
     return true;
   });
   setTimeout(()=>{ txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); document.getElementById("tx_party")?.focus(); }, 50);
@@ -10041,8 +10112,8 @@ function txSetDefaultStatus(){
   const method=document.getElementById("tx_method")?.value||"cash";
   const status=document.getElementById("tx_status"); if(!status) return;
   // النقدي والتحويل حالتهما ثابتة تلقائيًا، والشيك يحتفظ بدورة حالاته المستقلة.
-  if(method==="cash" || method==="transfer"){
-    status.value=method;
+  if(method==="cash" || method==="transfer" || method==="transfer_supplier"){
+    status.value = method==="cash" ? "cash" : "transfer";
     status.disabled=true;
     status.title="الحالة تتحدد تلقائيًا حسب طريقة السداد";
   }else{
@@ -10053,19 +10124,21 @@ function txSetDefaultStatus(){
 }
 function txToggleFields(){
   const method = document.getElementById("tx_method")?.value || "cash";
-  const isCash=method==="cash", isCheck=method==="bank", isTransfer=method==="transfer";
+  const isCash=method==="cash", isCheck=method==="bank", isTransfer=method==="transfer", isTS=method==="transfer_supplier";
   const treasuryCashWrap = document.getElementById("tx_treasuryCashWrap");
   const treasuryBankWrap = document.getElementById("tx_treasuryBankWrap");
+  const supplierTargetWrap = document.getElementById("tx_supplierTargetWrap");
   const refNoWrap = document.getElementById("tx_refNoWrap");
   const dueWrap = document.getElementById("tx_dueWrap");
   const bankWrap = document.getElementById("tx_bankWrap");
   const refLabel = document.getElementById("tx_refNoLabel");
-  if(treasuryCashWrap) treasuryCashWrap.style.display=isCash?"":"none";
-  if(treasuryBankWrap) treasuryBankWrap.style.display=isCash?"none":"";
-  if(refNoWrap) refNoWrap.style.display=isCheck||isTransfer?"":"none";
+  if(treasuryCashWrap) treasuryCashWrap.style.display=(isCash && !isTS)?"":"none";
+  if(treasuryBankWrap) treasuryBankWrap.style.display=(!isCash && !isTS)?"":"none";
+  if(supplierTargetWrap) supplierTargetWrap.style.display=isTS?"":"none";
+  if(refNoWrap) refNoWrap.style.display=(isCheck||isTransfer||isTS)?"":"none";
   if(dueWrap) dueWrap.style.display=isCheck?"":"none";
   if(bankWrap) bankWrap.style.display=isCheck?"":"none";
-  if(refLabel) refLabel.textContent=isTransfer?"رقم مرجع التحويل": "رقم الشيك";
+  if(refLabel) refLabel.textContent=isTS?"رقم مرجع التحويل للمورد":(isTransfer?"رقم مرجع التحويل":"رقم الشيك");
 }
 
 // ---------- utils ----------
