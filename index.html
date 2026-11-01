@@ -400,6 +400,20 @@ tfoot td{background:var(--bg-3);font-weight:700;color:var(--gold-text);border-to
 .tx-filters .inp.tx-f-q{flex:2 1 0;min-width:140px}
 .tx-filters .inp[type=date]{flex:1 1 0;min-width:118px}
 .tx-filters .btn{flex:0 0 auto;padding:7px 12px}
+/* Multi-select dropdown (Excel-like) */
+.ms-dd{flex:1 1 0;min-width:120px;position:relative}
+.ms-dd > summary{list-style:none;cursor:pointer;padding:7px 8px;font-size:12px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:6px;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms-dd > summary::-webkit-details-marker{display:none}
+.ms-dd[open] > summary{border-color:var(--gold)}
+.ms-dd .ms-arrow{color:var(--text-dim);font-size:10px}
+.ms-dd .ms-badge{background:var(--gold);color:#000;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:4px}
+.ms-dd .ms-panel{position:absolute;top:calc(100% + 4px);right:0;left:0;z-index:60;background:var(--card,#fff);border:1px solid var(--gold);border-radius:8px;padding:6px;min-width:220px;max-width:360px;max-height:360px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.ms-dd .ms-head{display:flex;gap:4px;padding:4px 2px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.ms-dd .ms-head .btn{padding:3px 8px;font-size:11px}
+.ms-dd .ms-search{width:100%;background:var(--bg,#f7f7f7);border:1px solid var(--line);color:var(--text);padding:4px 8px;font-size:12px;border-radius:4px;margin-bottom:4px}
+.ms-dd .ms-item{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:4px;color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap}
+.ms-dd .ms-item:hover{background:var(--gold-soft,rgba(230,179,37,.1))}
+.ms-dd .ms-item input{accent-color:var(--gold);width:14px;height:14px}
 .tx-ftoggle{display:flex;align-items:center;gap:10px;margin-bottom:6px}
 .tx-ftoggle .tx-fsum{font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .filters.sup-filters{display:flex;flex-wrap:nowrap;gap:6px;align-items:center;overflow-x:auto;padding-bottom:2px}
@@ -8470,7 +8484,56 @@ const txStatuses = [
 function txMethodLabel(v){ const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—"; }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
 
-let txFilter = { q:"", method:"", status:"", treasury:"", party:"", from:"", to:"" };
+let txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:"", to:"" };
+// توحيد قيمة الفلتر إلى مصفوفة — للتوافق مع الحفظ القديم (نصّي)
+function txNormFilterArr(v){
+  if(Array.isArray(v)) return v.filter(x=>x!=null && x!=="");
+  if(v==null || v==="") return [];
+  return [String(v)];
+}
+function txFilterNormalizeAll(){
+  ["method","status","treasury","party"].forEach(k=>{ txFilter[k] = txNormFilterArr(txFilter[k]); });
+}
+function txMatchMulti(selected, val){
+  const arr = txNormFilterArr(selected);
+  return arr.length===0 || arr.includes(String(val||""));
+}
+function txMsToggle(key, val, on, direction){
+  const arr = txNormFilterArr(txFilter[key]).slice();
+  const i = arr.indexOf(val);
+  if(on && i<0) arr.push(val);
+  if(!on && i>=0) arr.splice(i,1);
+  txFilter[key] = arr;
+  renderTreasury(direction);
+}
+function txMsSelectAll(key, direction, allValues){
+  txFilter[key] = allValues.slice();
+  renderTreasury(direction);
+}
+function txMsClear(key, direction){
+  txFilter[key] = [];
+  renderTreasury(direction);
+}
+function txMsBuild(key, placeholder, options, direction){
+  const sel = new Set(txNormFilterArr(txFilter[key]));
+  let summary;
+  if(sel.size===0) summary = placeholder;
+  else if(sel.size===1){
+    const v=[...sel][0]; const o=options.find(x=>String(x.v)===String(v));
+    summary = o ? (o.label) : v;
+  } else summary = `<span class="ms-badge">${sel.size}</span> محدد`;
+  const allJson = JSON.stringify(options.map(o=>String(o.v))).replace(/"/g,'&quot;');
+  const items = options.map(o=>`<label class="ms-item" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeAttr(String(o.v))}" ${sel.has(String(o.v))?"checked":""} onchange="txMsToggle('${key}',this.value,this.checked,'${direction}')"> ${o.ico?o.ico+' ':''}${escapeHtml(o.label)}</label>`).join("");
+  return `<details class="ms-dd" ontoggle="event.stopPropagation()"><summary>${summary}<span class="ms-arrow">▾</span></summary>
+    <div class="ms-panel" onclick="event.stopPropagation()">
+      <div class="ms-head">
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsSelectAll('${key}','${direction}',${allJson})">تحديد الكل</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsClear('${key}','${direction}')">مسح</button>
+      </div>
+      ${items}
+    </div>
+  </details>`;
+}
 let txEditingId = null; // لو بنعدّل سجل
 // حفظ الفلتر والترتيب لكل شاشة (تحصيلات / مدفوعات) — يفضلوا زي ما هما عند الخروج والدخول
 const TX_VIEW_KEY = "ig_tx_view_v1";
@@ -8501,7 +8564,8 @@ function txRestoreView(direction){
   if(txCurDir===direction) return;   // نفس الشاشة: الحالة الحالية في الذاكرة (يشمل زر "مسح")
   if(txCurDir) txViewSave(txCurDir);   // احفظ حالة الشاشة اللي خارجين منها
   const saved = st[direction];
-  txFilter = { q:"", method:"", status:"", treasury:"", party:"", from:"", to:"", ...(saved&&saved.filter||{}) };
+  txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:"", to:"", ...(saved&&saved.filter||{}) };
+  txFilterNormalizeAll();
   txSort = (saved&&saved.sort&&saved.sort.key) ? { key:saved.sort.key, dir:saved.sort.dir==="desc"?"desc":"asc" } : { key:"date", dir:"asc" };
   txCurDir = direction;
 }
@@ -8577,22 +8641,10 @@ function viewTreasury(direction){
   </div>
   <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
     <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
-    <select class="inp" onchange="txFilter.method=this.value;renderTreasury('${direction}')">
-      <option value="">كل الأنواع</option>
-      ${txMethods.map(m=>`<option value="${m.v}" ${txFilter.method===m.v?'selected':''}>${m.ico} ${m.label}</option>`).join("")}
-    </select>
-    <select class="inp" onchange="txFilter.status=this.value;renderTreasury('${direction}')">
-      <option value="">كل الحالات</option>
-      ${txStatuses.map(s=>`<option value="${s.v}" ${txFilter.status===s.v?'selected':''}>${s.label}</option>`).join("")}
-    </select>
-    <select class="inp" onchange="txFilter.party=this.value;renderTreasury('${direction}')">
-      <option value="">كل ${isIn?'العملاء':'الموردين'}</option>
-      ${partyList.map(n=>`<option value="${escapeAttr(n)}" ${txFilter.party===n?'selected':''}>${escapeHtml(n)}</option>`).join("")}
-    </select>
-    <select class="inp" onchange="txFilter.treasury=this.value;renderTreasury('${direction}')">
-      <option value="">كل الخزائن/البنوك</option>
-      ${treasuryAll().map(t=>`<option value="${escapeAttr(t.code)}" ${txFilter.treasury===t.code?'selected':''}>${t.kind==="bank"?"🏦":"🗄"} ${escapeHtml(t.code)} — ${escapeHtml(t.name)}</option>`).join("")}
-    </select>
+    ${txMsBuild("method","كل الأنواع", txMethods.map(m=>({v:m.v,label:m.label,ico:m.ico})), direction)}
+    ${txMsBuild("status","كل الحالات", txStatuses.map(s=>({v:s.v,label:s.label})), direction)}
+    ${txMsBuild("party", "كل "+(isIn?'العملاء':'الموردين'), partyList.map(n=>({v:n,label:n})), direction)}
+    ${txMsBuild("treasury","كل الخزائن/البنوك", treasuryAll().map(t=>({v:t.code,label:`${t.code} — ${t.name}`,ico:t.kind==="bank"?"🏦":"🗄"})), direction)}
     <input class="inp" type="date" title="من تاريخ" value="${escapeAttr(txFilter.from||'')}" onchange="txFilter.from=this.value;renderTreasury('${direction}')">
     <input class="inp" type="date" title="إلى تاريخ" value="${escapeAttr(txFilter.to||'')}" onchange="txFilter.to=this.value;renderTreasury('${direction}')">
     <button type="button" class="btn ghost" onclick="fpClear('${isIn?'receipts':'payments'}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
@@ -8651,10 +8703,10 @@ function txFilteredSorted(direction){
   const partyField = direction==="in" ? "customer" : "supplier";
   const q = (txFilter.q||"").trim().toLowerCase();
   const rows = treasuryList(direction).filter(e=>{
-    if(txFilter.method && e.method!==txFilter.method) return false;
-    if(txFilter.status && e.status!==txFilter.status) return false;
-    if(txFilter.treasury && e.treasury!==txFilter.treasury) return false;
-    if(txFilter.party && e[partyField]!==txFilter.party) return false;
+    if(!txMatchMulti(txFilter.method, e.method)) return false;
+    if(!txMatchMulti(txFilter.status, e.status)) return false;
+    if(!txMatchMulti(txFilter.treasury, e.treasury)) return false;
+    if(!txMatchMulti(txFilter.party, e[partyField])) return false;
     if(txFilter.from && String(e.date||"")<txFilter.from) return false;
     if(txFilter.to && String(e.date||"")>txFilter.to) return false;
     if(q){
@@ -8688,11 +8740,18 @@ function txMarkSort(){
 }
 function txFilterSummary(direction){
   const isIn=direction==="in", out=[];
+  const labMethod=v=>(txMethods.find(m=>m.v===v)||{}).label||v;
+  const labStatus=v=>(txStatuses.find(s=>s.v===v)||{}).label||v;
+  const multiLabel=(arr,one,many,fn)=>{
+    const a=txNormFilterArr(arr); if(!a.length) return "";
+    if(a.length===1) return one+": "+fn(a[0]);
+    return many+": ("+a.length+")";
+  };
   if(txFilter.q) out.push("بحث: "+txFilter.q);
-  if(txFilter.method) out.push("النوع: "+((txMethods.find(m=>m.v===txFilter.method)||{}).label||txFilter.method));
-  if(txFilter.status) out.push("الحالة: "+((txStatuses.find(s=>s.v===txFilter.status)||{}).label||txFilter.status));
-  if(txFilter.party) out.push((isIn?"العميل: ":"المورد: ")+txFilter.party);
-  if(txFilter.treasury) out.push("الخزنة/البنك: "+treasuryLabel(txFilter.treasury));
+  const m = multiLabel(txFilter.method,"النوع","الأنواع",labMethod); if(m) out.push(m);
+  const s = multiLabel(txFilter.status,"الحالة","الحالات",labStatus); if(s) out.push(s);
+  const p = multiLabel(txFilter.party, isIn?"العميل":"المورد", isIn?"العملاء":"الموردين", v=>v); if(p) out.push(p);
+  const t = multiLabel(txFilter.treasury,"الخزنة/البنك","الخزائن/البنوك", v=>treasuryLabel(v)); if(t) out.push(t);
   if(txFilter.from) out.push("من تاريخ: "+txFilter.from);
   if(txFilter.to) out.push("إلى تاريخ: "+txFilter.to);
   return out.length?out.join(" · "):"بدون فلاتر (كل السجلات)";
@@ -11050,7 +11109,7 @@ window.addEventListener("pagehide",fpSave);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") fpSave(); });
 window.fpClear=function(page){
   if(page==="receipts"||page==="payments"){
-    txFilter={q:"",method:"",status:"",treasury:"",party:"",from:"",to:""};
+    txFilter={q:"",method:[],status:[],treasury:[],party:[],from:"",to:""};
     try{ txViewSave(page==="receipts"?"in":"out"); }catch(e){}
   } else if(page==="clientTB"||page==="supplierTB"){
     Object.assign(tbFilters[page],{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true});
