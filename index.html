@@ -813,6 +813,10 @@ table.qs-table tr.qs-due-row td.qsi-st{color:#9f1239}
 .perm-table td.pm-price label{display:inline-flex;gap:5px;align-items:center;cursor:pointer;color:var(--warn);font-size:12px;font-weight:700}
 .perm-table input[type=checkbox]{width:17px;height:17px;accent-color:var(--gold);cursor:pointer}
 .perm-table input[type=checkbox]:disabled{opacity:.35;cursor:not-allowed}
+.perm-table tr.pm-tabs-row td{background:rgba(230,179,37,.06);padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:normal}
+.perm-table td.pm-tabs-cell{display:flex;flex-wrap:wrap;gap:4px}
+.pm-tab-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:var(--card);border:1px solid var(--line);border-radius:12px;font-size:11.5px;color:var(--text);cursor:pointer;white-space:nowrap}
+.pm-tab-chip input{width:14px;height:14px}
 .pm-sys{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;cursor:pointer}
 .pm-sys small{color:var(--text-dim)}
 .pm-locked #pmWrap,.pm-locked .pm-sys{opacity:.35;pointer-events:none}
@@ -2839,13 +2843,24 @@ function srvUsersBlocked(){ toast("إدارة المستخدمين لسه ما �
 // الشاشات اللي ليها صلاحيات. prices:true = فيها أسعار شراء/بيع ممكن تتخفى على مستوى المستخدم.
 const SCREENS = [
   { id:"dashboard", label:"لوحة التحكم",       icon:"⬢",  acts:[] },
-  { id:"master",    label:"البيانات الأساسية", icon:"◉",  acts:["add","edit","delete"] },
+  { id:"master",    label:"البيانات الأساسية", icon:"◉",  acts:["add","edit","delete"], tabs:[
+    {id:"customers",label:"العملاء"},{id:"suppliers",label:"الموردين"},
+    {id:"diameters",label:"الأقطار"},{id:"types",label:"الأنواع"},
+    {id:"factories",label:"المصانع"},{id:"quoteDescs",label:"أوصاف عرض السعر"},
+    {id:"cementTypes",label:"أنواع الاسمنت"},{id:"statuses",label:"حالات التعتيق"},
+    {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"}
+  ]},
   { id:"settings",  label:"الإعدادات العامة",  icon:"⚙",  acts:["edit"] },
   { id:"quote",     label:"عرض السعر",         icon:"💲", acts:["add","edit","delete","print"] },
   { id:"quoteList", label:"سجل عروض السعر",    icon:"📑", acts:["edit","delete"] },
   { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
-  { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post"], prices:true },
-  { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete"], prices:true },
+  { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post","print"], prices:true },
+  { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete","print"], prices:true, tabs:[
+    {id:"flat",label:"العرض العادي"},
+    {id:"customer",label:"مبالغ العملاء"},
+    {id:"supplier",label:"مبالغ الموردين"},
+    {id:"grouped",label:"تجميع حسب أمر البيع"}
+  ]},
   { id:"salesReport", label:"تقرير المبيعات", icon:"📊", acts:["print"], prices:true },
   { id:"managementReports", label:"تقارير الإدارة والرقابة", icon:"📈", acts:["print"], prices:true },
   { id:"orderReport", label:"تقرير أوامر البيع التفصيلي", icon:"🗂", acts:["print"], prices:true },
@@ -2855,9 +2870,16 @@ const SCREENS = [
   { id:"supplierStatement", label:"كشف حساب مورد", icon:"📒", acts:["print"], prices:true },
   { id:"clientTB", label:"ميزان مراجعة العملاء", icon:"⚖", acts:["edit","print"], prices:true },
   { id:"supplierTB", label:"ميزان مراجعة الموردين", icon:"⚖", acts:["edit","print"], prices:true },
-  { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete"] },
-  { id:"settlement",label:"تسوية فواتير العملاء",icon:"⚖",acts:["edit"] },
-  { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete"] },
+  { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete","print"], tabs:[
+    {id:"form",label:"بيانات التحصيل"},
+    {id:"details",label:"تفاصيل السداد (التخصيص على الأقساط)"}
+  ]},
+  { id:"settlement",label:"تسوية فواتير العملاء",icon:"⚖",acts:["edit","delete","print"], tabs:[
+    {id:"auto",label:"تسكين آلي"},
+    {id:"assistance",label:"تسكين مساعدة (يدوي)"},
+    {id:"unallocate",label:"فك التسكين"}
+  ]},
+  { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete","print"] },
   { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
   { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] }
 ];
@@ -2869,6 +2891,7 @@ function permsBlank(on){
   SCREENS.forEach(s=>{
     p.screens[s.id] = { view:!!on };
     s.acts.forEach(a=>{ p.screens[s.id][a] = !!on; });
+    if(s.tabs){ p.screens[s.id].tabs = {}; s.tabs.forEach(t=>{ p.screens[s.id].tabs[t.id] = !!on; }); }
     if(s.prices) p.hide[s.id] = { buy:false, sell:false };
   });
   return p;
@@ -2907,6 +2930,11 @@ function normalizePerms(p){
     const o = p.screens[s.id] = p.screens[s.id]||{};
     o.view = o.view===true;
     s.acts.forEach(a=>{ o[a] = o.view && o[a]===true; });
+    if(s.tabs){
+      const t = o.tabs = o.tabs||{};
+      // تبويبات افتراضيًا مسموحة لو الشاشة مسموحة (للرجوع للخلف مع المستخدمين الحاليين)
+      s.tabs.forEach(x=>{ t[x.id] = o.view && (t[x.id]!==false); });
+    }
     if(s.prices){ const h = p.hide[s.id] = p.hide[s.id]||{}; h.buy = h.buy===true; h.sell = h.sell===true; }
   });
   p.sys.backup = p.sys.backup===true;
@@ -2993,6 +3021,20 @@ function can(scr, act){
   if(u.role==="admin") return true;
   const s=u.perms&&u.perms.screens&&u.perms.screens[scr]; if(!s||!s.view) return false;
   return (!act||act==="view") ? true : s[act]===true;
+}
+// صلاحية تبويب داخل شاشة (مثال: canTab("master","customers"))
+function canTab(scr, tabId){
+  const u=curU(); if(!u || u.active===false) return false;
+  if(u.role==="admin") return true;
+  const s=u.perms&&u.perms.screens&&u.perms.screens[scr]; if(!s||!s.view) return false;
+  if(!s.tabs) return true; // الشاشة ما عندهاش تبويبات معرَّفة
+  return s.tabs[tabId]!==false;
+}
+// أول تبويب مسموح به للمستخدم في شاشة
+function firstAllowedTab(scr){
+  const sdef = SCREENS.find(s=>s.id===scr); if(!sdef||!sdef.tabs) return null;
+  for(const t of sdef.tabs){ if(canTab(scr,t.id)) return t.id; }
+  return null;
 }
 function canView(page){
   if(page==="users") return isAdmin();
@@ -4334,11 +4376,15 @@ const isSafeKey = k => k==="safes";
 
 function viewMaster(){
   migrateState(state);
-  const tabs = masterTabs.map(t => `
+  // تطبيق صلاحيات التبويبات: المستخدم يشوف فقط التبويبات المسموحة
+  const allowed = masterTabs.filter(t=>canTab("master",t.id));
+  if(!allowed.length){ return `<div class="empty" style="padding:30px"><p>ليس لديك صلاحية لعرض أي تبويب داخل البيانات الأساسية.</p></div>`; }
+  if(!allowed.find(t=>t.id===currentTab)) currentTab = allowed[0].id;
+  const tabs = allowed.map(t => `
     <button class="${currentTab===t.id?'active':''}" onclick="currentTab='${t.id}';go('master')">${t.label}</button>
   `).join("");
 
-  const tab = masterTabs.find(t=>t.id===currentTab) || masterTabs[0];
+  const tab = allowed.find(t=>t.id===currentTab) || allowed[0];
   const items = state[tab.key] || [];
   const isParty = isPartyKey(tab.key);
   const isTreasury = isTreasuryKey(tab.key);
@@ -6140,10 +6186,10 @@ function viewSupply(){
     <button class="btn ghost sm" onclick="supExportPdf()">🖨 PDF / طباعة</button>
     <button class="btn" onclick="newPolicy()">＋ بوليصة جديدة</button></div>
   <div class="supply-tabs" role="tablist" aria-label="طرق عرض بيانات التوريد">
-    <button type="button" role="tab" aria-selected="${!supBreak&&!supFilter.grouped}" class="supply-tab ${!supBreak&&!supFilter.grouped?'active':''}" onclick="supShowFlat()">▤ العرض العادي</button>
-    <button type="button" role="tab" aria-selected="${supBreak==='customer'}" class="supply-tab ${supBreak==='customer'?'active':''}" onclick="supToggleBreak('customer')">♙ مبالغ العملاء</button>
-    <button type="button" role="tab" aria-selected="${supBreak==='supplier'}" class="supply-tab ${supBreak==='supplier'?'active':''}" onclick="supToggleBreak('supplier')">▦ مبالغ الموردين</button>
-    <button type="button" role="tab" aria-selected="${supFilter.grouped&&!supBreak}" class="supply-tab ${supFilter.grouped&&!supBreak?'active':''}" onclick="supSetView(true)">▧ تجميع حسب أمر البيع</button>
+    ${canTab("supply","flat")?`<button type="button" role="tab" aria-selected="${!supBreak&&!supFilter.grouped}" class="supply-tab ${!supBreak&&!supFilter.grouped?'active':''}" onclick="supShowFlat()">▤ العرض العادي</button>`:""}
+    ${canTab("supply","customer")?`<button type="button" role="tab" aria-selected="${supBreak==='customer'}" class="supply-tab ${supBreak==='customer'?'active':''}" onclick="supToggleBreak('customer')">♙ مبالغ العملاء</button>`:""}
+    ${canTab("supply","supplier")?`<button type="button" role="tab" aria-selected="${supBreak==='supplier'}" class="supply-tab ${supBreak==='supplier'?'active':''}" onclick="supToggleBreak('supplier')">▦ مبالغ الموردين</button>`:""}
+    ${canTab("supply","grouped")?`<button type="button" role="tab" aria-selected="${supFilter.grouped&&!supBreak}" class="supply-tab ${supFilter.grouped&&!supBreak?'active':''}" onclick="supSetView(true)">▧ تجميع حسب أمر البيع</button>`:""}
   </div>
   <div id="supOrderChip"></div>
   <div class="sup-sum-bar ${supFiltOpen?'':'closed'}" id="supFiltBar" onclick="supToggleFilt()"><span class="arr">▾</span> 🔍 البحث والفلاتر<span id="supFiltBadge" class="chip warn" style="display:none"></span><span class="hint">اضغط للإخفاء / الإظهار</span></div>
@@ -8965,8 +9011,8 @@ function openTxForm(direction, existing){
       </select>
     </div>
     <div id="txSettlementTabs" class="tx-settle-tabs" role="tablist">
-      <button type="button" class="btn ghost sm on" role="tab" aria-selected="true" data-tab="form" onclick="txShowSettlementTab('form')">بيانات التحصيل</button>
-      <button type="button" class="btn ghost sm" role="tab" aria-selected="false" data-tab="details" id="txDetailsTabBtn" onclick="txShowSettlementTab('details')">تفاصيل السداد</button>
+      ${canTab("receipts","form")?`<button type="button" class="btn ghost sm on" role="tab" aria-selected="true" data-tab="form" onclick="txShowSettlementTab('form')">بيانات التحصيل</button>`:""}
+      ${canTab("receipts","details")?`<button type="button" class="btn ghost sm" role="tab" aria-selected="false" data-tab="details" id="txDetailsTabBtn" onclick="txShowSettlementTab('details')">تفاصيل السداد</button>`:""}
     </div>
     <div id="txSettlementDetails" style="display:none;margin-bottom:14px">
       <div style="font-weight:800;color:var(--gold-text);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
@@ -9267,8 +9313,8 @@ function viewSettlement(){
     <div class="spacer"></div>
     <button class="btn ghost" onclick="settlementSelectAll()">تحديد الكل</button>
     <button class="btn ghost" onclick="settlementClearSelection()">إلغاء التحديد</button>
-    <button class="btn" onclick="settlementRunAuto()" style="background:var(--gold)">⚡ تسكين آلي (تنازلي)</button>
-    <button class="btn" onclick="settlementRunAssistance()">✍️ تسكين مساعدة (يدوي)</button>
+    ${canTab("settlement","auto")?`<button class="btn" onclick="settlementRunAuto()" style="background:var(--gold)">⚡ تسكين آلي (تنازلي)</button>`:""}
+    ${canTab("settlement","assistance")?`<button class="btn" onclick="settlementRunAssistance()">✍️ تسكين مساعدة (يدوي)</button>`:""}
   </div>
   <div class="kpis compact" id="settleKpis"></div>
   <div id="settleView"></div>`;
@@ -9310,9 +9356,9 @@ function renderSettlement(){
       <td class="num" style="color:var(--gold)"><strong>${fmt(r.settle)}</strong></td>
       <td>
         <div class="td-actions">
-          <button onclick="settlementRunAutoFor('${escapeAttr(r.name)}')" title="تسكين آلي لهذا العميل">⚡</button>
-          <button onclick="settlementRunAssistanceFor('${escapeAttr(r.name)}')" title="تسكين مساعدة لهذا العميل">✍️</button>
-          <button class="del" ${canUnalloc?"":"disabled style=\"opacity:.4\""} onclick="settlementUnallocCustomer('${escapeAttr(r.name)}')" title="فك كل تسكينات هذا العميل">🔓 فك تسكين</button>
+          ${canTab("settlement","auto")?`<button onclick="settlementRunAutoFor('${escapeAttr(r.name)}')" title="تسكين آلي لهذا العميل">⚡</button>`:""}
+          ${canTab("settlement","assistance")?`<button onclick="settlementRunAssistanceFor('${escapeAttr(r.name)}')" title="تسكين مساعدة لهذا العميل">✍️</button>`:""}
+          ${canTab("settlement","unallocate")?`<button class="del" ${canUnalloc?"":"disabled style=\"opacity:.4\""} onclick="settlementUnallocCustomer('${escapeAttr(r.name)}')" title="فك كل تسكينات هذا العميل">🔓 فك تسكين</button>`:""}
         </div>
       </td>
     </tr>`;
@@ -10131,21 +10177,33 @@ function permMatrixHtml(p){
     const pr=s.prices
       ? ["buy","sell"].map(k=>`<td class="pm-price"><label><input type="checkbox" id="ph_${s.id}_${k}" ${p.hide[s.id][k]?"checked":""} ${!sv.view?"disabled":""}> إخفاء</label></td>`).join("")
       : '<td class="na">—</td><td class="na">—</td>';
-    return `<tr><td class="pm-name">${s.icon} ${s.label}</td>${cells}${pr}</tr>`;
+    let tr = `<tr><td class="pm-name">${s.icon} ${s.label}</td>${cells}${pr}</tr>`;
+    // صف فرعي للتبويبات داخل الشاشة
+    if(s.tabs && s.tabs.length){
+      const tv = (sv.tabs||{});
+      const tabCells = s.tabs.map(t=>
+        `<label class="pm-tab-chip"><input type="checkbox" id="pm_${s.id}_tab_${t.id}" ${tv[t.id]!==false?"checked":""} ${!sv.view?"disabled":""}> ${escapeHtml(t.label)}</label>`
+      ).join("");
+      tr += `<tr class="pm-tabs-row"><td class="pm-name" style="padding-right:30px;color:var(--text-dim);font-size:11px">↳ التبويبات</td><td colspan="${ACT_COLS.length+2}" class="pm-tabs-cell">${tabCells}</td></tr>`;
+    }
+    return tr;
   }).join("");
   return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function pmChange(scr,act){
   if(act!=="view") return;
   const on=document.getElementById(`pm_${scr}_view`).checked;
-  SCREENS.find(s=>s.id===scr).acts.forEach(a=>{ const c=document.getElementById(`pm_${scr}_${a}`); if(c){ c.disabled=!on; if(!on) c.checked=false; } });
+  const sdef = SCREENS.find(s=>s.id===scr);
+  sdef.acts.forEach(a=>{ const c=document.getElementById(`pm_${scr}_${a}`); if(c){ c.disabled=!on; if(!on) c.checked=false; } });
   ["buy","sell"].forEach(k=>{ const c=document.getElementById(`ph_${scr}_${k}`); if(c){ c.disabled=!on; if(!on) c.checked=false; } });
+  if(sdef.tabs){ sdef.tabs.forEach(t=>{ const c=document.getElementById(`pm_${scr}_tab_${t.id}`); if(c){ c.disabled=!on; if(!on) c.checked=false; else c.checked=true; } }); }
 }
 function readPermForm(){
   const p=permsBlank(false);
   SCREENS.forEach(s=>{
     const vw=!!document.getElementById(`pm_${s.id}_view`)?.checked; p.screens[s.id].view=vw;
     s.acts.forEach(a=>{ p.screens[s.id][a]=vw&&!!document.getElementById(`pm_${s.id}_${a}`)?.checked; });
+    if(s.tabs){ p.screens[s.id].tabs = p.screens[s.id].tabs||{}; s.tabs.forEach(t=>{ p.screens[s.id].tabs[t.id] = vw && !!document.getElementById(`pm_${s.id}_tab_${t.id}`)?.checked; }); }
     if(s.prices){ ["buy","sell"].forEach(k=>{ p.hide[s.id][k]=vw&&!!document.getElementById(`ph_${s.id}_${k}`)?.checked; }); }
   });
   p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
@@ -10165,9 +10223,17 @@ function pmRolePick(role){
 function pmBulk(kind){
   const p=readPermForm();
   SCREENS.forEach(s=>{
-    if(kind==="all"||kind==="none"){ const on=kind==="all"; p.screens[s.id].view=on; s.acts.forEach(a=>p.screens[s.id][a]=on); }
+    if(kind==="all"||kind==="none"){
+      const on=kind==="all";
+      p.screens[s.id].view=on;
+      s.acts.forEach(a=>p.screens[s.id][a]=on);
+      if(s.tabs){ p.screens[s.id].tabs = p.screens[s.id].tabs||{}; s.tabs.forEach(t=>{ p.screens[s.id].tabs[t.id]=on; }); }
+    }
     if(kind==="hide"||kind==="show"){ if(s.prices){ p.hide[s.id].buy=kind==="hide"; p.hide[s.id].sell=kind==="hide"; } }
-    if(kind==="view"){ p.screens[s.id].view=true; s.acts.forEach(a=>p.screens[s.id][a]=false); }
+    if(kind==="view"){
+      p.screens[s.id].view=true; s.acts.forEach(a=>p.screens[s.id][a]=false);
+      if(s.tabs){ p.screens[s.id].tabs = p.screens[s.id].tabs||{}; s.tabs.forEach(t=>{ p.screens[s.id].tabs[t.id]=true; }); }
+    }
   });
   if(kind==="all") p.sys.backup=true; if(kind==="none") p.sys.backup=false;
   pmRender(p); document.getElementById("uf_role").value="custom"; document.getElementById("uf_roleDesc").textContent=ROLE_PRESETS.custom.desc;
