@@ -405,7 +405,7 @@ tfoot td{background:var(--bg-3);font-weight:700;color:var(--gold-text);border-to
 .ms-dd > summary{list-style:none;cursor:pointer;padding:7px 8px;font-size:12px;background:var(--card,#fff);border:1px solid var(--line,#ddd);border-radius:6px;color:var(--text);display:flex;align-items:center;justify-content:space-between;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ms-dd > summary::-webkit-details-marker{display:none}
 .ms-dd[open] > summary{border-color:var(--gold)}
-.ms-dd .ms-arrow{color:var(--text-dim);font-size:10px}
+.ms-dd .ms-arrow{color:var(--text-dim);font-size:10px}.ms-dd .ms-sumtxt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-weight:700}
 .ms-dd .ms-badge{background:var(--gold);color:#000;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:800;margin-right:4px}
 .ms-dd .ms-panel{position:fixed;z-index:9999;background:var(--card,#fff);border:1px solid var(--gold);border-radius:8px;padding:6px;min-width:220px;max-width:360px;max-height:360px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 .ms-dd .ms-head{display:flex;gap:4px;padding:4px 2px;border-bottom:1px solid var(--line);margin-bottom:4px}
@@ -2163,6 +2163,20 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
 </div></div>
 
 <script>
+/* ---- افتراضي كل فلاتر التاريخ: من أول السنة الحالية (1/1) إلى آخرها (31/12) ---- */
+function igYearStart(){ return new Date().getFullYear()+"-01-01"; }
+function igYearEnd(){ return new Date().getFullYear()+"-12-31"; }
+const IG_YEAR_STAMP_KEY="ig_year_stamp_v1";
+let igStampYear=0; try{ igStampYear=+localStorage.getItem(IG_YEAR_STAMP_KEY)||0; localStorage.setItem(IG_YEAR_STAMP_KEY,String(new Date().getFullYear())); }catch(e){}
+// يكمّل أي تاريخ فاضي بحدود السنة، ولو الفلتر المحفوظ كان نطاق سنة قديمة اتحط تلقائياً يتحول لسنة النهاردة
+function igYearFix(o){
+  if(!o||typeof o!=="object"||!("from" in o)) return o;
+  const y=new Date().getFullYear();
+  if(igStampYear && igStampYear<y && o.from===igStampYear+"-01-01" && o.to===igStampYear+"-12-31"){ o.from=igYearStart(); o.to=igYearEnd(); }
+  if(!o.from) o.from=igYearStart();
+  if(!o.to) o.to=igYearEnd();
+  return o;
+}
 /* =========================================================
    IRON GATE SUPPLIES — Phase 1 (Step 3: Structure + Master Data)
    Storage: localStorage key "irongate_v1"
@@ -3553,7 +3567,7 @@ function bindCustodyLedger(){
 }
 async function custodyReload(){try{await custodyLoad();go(currentPage);toast("تم تحديث بيانات العهد","ok");}catch(e){toast("تعذر تحميل العهد: "+e.message,"err");}}
 function viewCustodyReport(){
-  const from=today().slice(0,8)+"01",to=today();
+  const from=igYearStart(),to=igYearEnd();
   return `<div class="page-head"><h2>🧾 تقرير العهد</h2><span class="spacer"></span><button class="btn ghost" id="crRefresh">↻ تحديث</button></div>
   <section class="card"><div class="head"><h3>فلاتر التقرير</h3></div><div class="body"><div class="custody-form-grid">
     <div class="custody-field"><label>من تاريخ</label><input class="inp" id="crFrom" type="date" value="${from}"></div>
@@ -3712,7 +3726,8 @@ function viewDashboard(){
   const dueTotal=dues.reduce((s,r)=>s+(+r.remaining||0),0);
   const late=dues.filter(r=>r.late), lateTotal=late.reduce((s,r)=>s+(+r.remaining||0),0);
   const lateTop=late.slice().sort((a,b)=>b.days-a.days).slice(0,6);
-  const next7=dues.filter(r=>!r.late&&r.due&&r.due<=soon).length;
+  const up7=dues.filter(r=>!r.late&&r.due&&r.due<=soon), next7=up7.length, next7Total=up7.reduce((s,r)=>s+(+r.remaining||0),0);
+  const laterRows=dues.filter(r=>!r.late&&!(r.due&&r.due<=soon)), laterTotal=laterRows.reduce((s,r)=>s+(+r.remaining||0),0);
   const delta=(c,p)=>p>0?Math.round((c-p)/p*100):null;
   const chip=(d)=>d===null?"":`<span class="dx-delta ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${Math.abs(d)}%</span>`;
 
@@ -3737,20 +3752,20 @@ function viewDashboard(){
     svg+=`<rect x="${cx-bw-1.5}" y="${pt+ih-h1}" width="${bw}" height="${Math.max(h1,0)}" rx="4" class="dx-b1"><title>مبيعات ${m.lbl}: ${money(m.sales)}</title></rect><rect x="${cx+1.5}" y="${pt+ih-h2}" width="${bw}" height="${Math.max(h2,0)}" rx="4" class="dx-b2"><title>تحصيل ${m.lbl}: ${money(m.coll)}</title></rect><text x="${cx}" y="${H-8}" class="dx-ax" text-anchor="middle">${m.lbl}</text>`; });
   svg+=`</svg>`;
 
-  const kpi=(cls,ic,lbl,val,sub,go_)=>`<button class="dx-kpi ${cls}" onclick="go('${go_}')"><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
-  const moneyKpis = canMoney ? `
-      ${kpi('k-gold','◈','مبيعات '+P.s,money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),'supply')}
-      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),'receipts')}
-      ${kpi('k-blue','▥','أقساط مستحقة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · '+next7+' خلال 7 أيام','salesInstallments')}
-      ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر','salesInstallments')}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chequeSoon+' يستحق خلال 7 أيام','chequeRegister')}` :
-    `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل','master')}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل','master')}`;
-
-  const lateList = lateTop.map(r=>`<tr><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
   // --- شيكات تحتاج متابعة (لم تُحصَّل: مستحقة خلال 7 أيام أو فات ميعادها)
   const chqRows=(()=>{ try{ return chequeRegisterAll().map(e=>({e,d:chequeDays(e)})).filter(x=>x.d!==null&&x.d<=7).sort((a,b)=>a.d-b.d); }catch(_){ return []; } })();
   const chqLate=chqRows.filter(x=>x.d<0).length;
   const chqFollowTotal=chqRows.reduce((sum,x)=>sum+(Number(x.e.amount)||0),0);
+  const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="go('${go_}')"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
+  const moneyKpis = canMoney ? `
+      ${kpi('k-gold','◈','مبيعات '+P.s,money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),'supply')}
+      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),'receipts')}
+      ${kpi('k-blue','▥','أقساط غير مسددة (متأخر + قادم)',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط = '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا','salesInstallments','مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
+      ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),'salesInstallments')}
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
+    `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل','master')}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل','master')}`;
+
+  const lateList = lateTop.map(r=>`<tr><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
   const chqList=chqRows.slice(0,8).map(({e,d})=>{ const txt=d<0?`فات بـ ${-d} يوم`:(d===0?"مستحق اليوم":`باقي ${d} يوم`);
     return `<tr><td><b>${escapeHtml(e.customer||"—")}</b><small>${escapeHtml(chequeStatusLabel(e))} · ${escapeHtml(String(e.refNo||e.no||"—"))}${e.bankDrawn?" · "+escapeHtml(e.bankDrawn):""}</small></td><td class="num">${money(e.amount)}</td><td>${escapeHtml(e.dueDate||"")}<small><span class="dx-pill ${d<0?'red':'amber'}">${txt}</span></small></td></tr>`; }).join("");
   // العهد ذات الرصيد غير الصفري تحتاج مراجعة/تسوية؛ لا يتم تعديل أي حركة محاسبية هنا.
@@ -3776,23 +3791,17 @@ function viewDashboard(){
 
     <div class="dx-kpis">${moneyKpis}</div>
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
-    <div class="dx-followup-summaries">
-      <button type="button" class="dx-followup-card late" onclick="go('salesInstallments')">
-        <span class="dx-followup-icon">◷</span><span class="dx-followup-content"><b>أقساط متأخرة تحتاج متابعة</b><strong>${money(lateTotal)} <small>${cur}</small></strong><small>${late.length} قسط متأخر · ${lateTop.length?`أطول تأخير ${lateTop[0].days} يوم`:'لا توجد متأخرات'}</small></span><span class="dx-followup-arrow">←</span>
-      </button>
-      <button type="button" class="dx-followup-card cheques" onclick="go('chequeRegister')">
-        <span class="dx-followup-icon">▤</span><span class="dx-followup-content"><b>شيكات تحتاج متابعة</b><strong>${money(chqFollowTotal)} <small>${cur}</small></strong><small>${chqRows.length} شيك · ${chqLate} فات ميعاده</small></span><span class="dx-followup-arrow">←</span>
-      </button>
-      ${custodyAllowed?`<button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
+    ${custodyAllowed?`<div class="dx-followup-summaries">
+      <button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
         <span class="dx-followup-icon">💼</span><span class="dx-followup-content"><b>عهد تحتاج تسوية</b><strong>${custodyCache.loaded?custodyOpenRows.length:"تحميل"} <small>${custodyCache.loaded?"عهدة":"بيانات العهد"}</small></strong><small>${custodyCache.loaded?`صافي الأرصدة ${money(custodyOpenTotal)} ${cur}`:"اضغط لتحميل ومراجعة أرصدة العهد"}</small></span><span class="dx-followup-arrow">←</span>
-      </button>`:""}
-    </div>`:""}
+      </button>
+    </div>`:""}`:""}
 
     <div class="dx-grid2">
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>المبيعات مقابل التحصيل</h3><small>${P.end===0?`آخر ${chartN} ${chartN>10?'شهر':'شهور'}`:`${chartN} شهور حتى ${months[months.length-1].lbl}`}</small></div><div class="dx-legend"><span><i class="l1"></i>مبيعات</span><span><i class="l2"></i>تحصيل</span></div></div>
         ${canMoney?svg:`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`}
-        ${canMoney?`<div class="dx-sum"><div><small>مبيعات (${P.l})</small><b>${money(salesMonth)} ${cur}</b></div><div><small>تحصيل (${P.l})</small><b>${money(collMonth)} ${cur}</b></div><div><small>نسبة التحصيل</small><b>${salesMonth>0?Math.round(collMonth/salesMonth*100):0}%</b></div></div>`:""}
+        ${canMoney?`<div class="dx-sum"><div><small>نسبة التحصيل (${P.l})</small><b>${salesMonth>0?Math.round(collMonth/salesMonth*100):0}%</b></div><div><small>${salesMonth>=collMonth?"مبيعات لم تُحصَّل بعد":"تحصيل زائد عن المبيعات"}</small><b>${money(Math.abs(salesMonth-collMonth))} ${cur}</b></div></div>`:""}
       </div>
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>آخر الحركات</h3><small>أحدث العمليات في النظام</small></div></div>
@@ -3831,18 +3840,31 @@ function viewDashboard(){
   </section>`;
 }
 
+/* حالة فتح/قفل الفلاتر والملخصات في تقرير المبيعات والمشتريات (محفوظة) */
+const TR_UI_KEY="ig_trade_ui_v1";
+let trUi={filt:true,kpi:true,ana:true};
+try{ Object.assign(trUi,JSON.parse(localStorage.getItem(TR_UI_KEY)||"{}")); }catch(e){}
+function trToggle(k){
+  trUi[k]=!trUi[k]; try{ localStorage.setItem(TR_UI_KEY,JSON.stringify(trUi)); }catch(e){}
+  const m={filt:["trFilters","trFiltBar"],kpi:["trKpis","trKpiBar"],ana:["trAna","trAnaBar"]}[k]; if(!m) return;
+  const box=document.getElementById(m[0]), bar=document.getElementById(m[1]);
+  if(box) box.style.display=trUi[k]?"":"none"; if(bar) bar.classList.toggle("closed",!trUi[k]);
+}
+function trBar(k,id,label){ return `<div class="sup-sum-bar ${trUi[k]?'':'closed'}" id="${id}" onclick="trToggle('${k}')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();trToggle('${k}')}"><span class="arr">▾</span> ${label}<span class="hint">اضغط للإخفاء / الإظهار</span></div>`; }
+function trFiltCount(f){ let n=0; if(String(f.q||"").trim())n++; if(f.customer)n++; if(f.supplier)n++; if(f.from&&f.from!==igYearStart())n++; if(f.to&&f.to!==igYearEnd())n++; return n; }
 function viewTradeReport(kind){
   const f=tradeReportFilters[kind], sales=kind==="salesReport", title=sales?"تقرير المبيعات":"تقرير المشتريات";
   const select=(key,list,label)=>`<select class="inp" onchange="tradeReportFilters['${kind}'].${key}=this.value;renderTradeReport()"><option value="">${label}</option>${list.map(v=>`<option value="${escapeAttr(v)}" ${f[key]===v?'selected':''}>${escapeHtml(v)}</option>`).join("")}</select>`;
   return `<div class="trade-report" dir="rtl">
     <div class="page-head"><div><h2>${sales?'📈':'🧾'} ${title}</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">تقرير تفصيلي قابل للتصفية والطباعة والتصدير</div></div><div class="spacer"></div><button class="btn ghost" onclick="tradeReportExport('${kind}','pdf')">🖨 عرض / حفظ PDF</button><button class="btn" onclick="tradeReportExport('${kind}','excel')">⬇ تحميل Excel منسق</button></div>
-    <div class="card" style="margin-bottom:14px"><div class="head"><h3>فلاتر التقرير</h3><span class="count">يمكن استخدام أكثر من فلتر في نفس الوقت</span></div><div class="body"><div class="fgrid statement-filter-grid">
-      <div class="fld statement-filter-field"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="tradeReportFilters['${kind}'].from=this.value;renderTradeReport()"></div>
-      <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="tradeReportFilters['${kind}'].to=this.value;renderTradeReport()"></div>
+    <div class="sup-sum-bar ${trUi.filt?'':'closed'}" id="trFiltBar" onclick="trToggle('filt')" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();trToggle('filt')}"><span class="arr">▾</span> 🔍 البحث والفلاتر<span id="trFiltBadge" class="chip warn" style="display:none"></span><span class="hint">اضغط للإخفاء / الإظهار</span></div>
+    <div class="card" id="trFilters" style="margin-bottom:14px;${trUi.filt?'':'display:none'}"><div class="head"><h3>فلاتر التقرير</h3><span class="count">يمكن استخدام أكثر من فلتر في نفس الوقت</span></div><div class="body"><div class="fgrid statement-filter-grid">
+      <div class="fld statement-filter-field"><label>من تاريخ</label><input class="inp" id="trFrom" type="date" value="${escapeAttr(f.from)}" onchange="tradeReportFilters['${kind}'].from=this.value;renderTradeReport()"></div>
+      <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" id="trTo" type="date" value="${escapeAttr(f.to)}" onchange="tradeReportFilters['${kind}'].to=this.value;renderTradeReport()"></div>
       <div class="fld"><label>العميل</label>${select('customer',partyNames(state.customers),'كل العملاء')}</div>
       <div class="fld"><label>المورد</label>${select('supplier',partyNames(state.suppliers),'كل الموردين')}</div>
       <div class="fld"><label>بحث عام</label><input class="inp" placeholder="رقم أمر البيع / العميل / المورد" value="${escapeAttr(f.q)}" oninput="tradeReportFilters['${kind}'].q=this.value;renderTradeReport()"></div>
-      <div class="fld trade-quick-dates"><label>فترة سريعة</label><div class="trade-quick-row"><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','today')">اليوم</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','7d')">آخر 7 أيام</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','month')">هذا الشهر</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','all')">كل الفترة</button></div></div>
+      <div class="fld trade-quick-dates"><label>فترة سريعة</label><div class="trade-quick-row"><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','today')">اليوم</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','7d')">آخر 7 أيام</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','month')">هذا الشهر</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','year')">هذه السنة</button><button type="button" class="btn ghost sm" onclick="tradeReportQuickRange('${kind}','all')">كل الفترة</button></div></div>
       <div class="fld" style="justify-content:end"><label>&nbsp;</label><button type="button" class="btn ghost" onclick="fpClear('${kind}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button></div>
     </div></div></div><div id="tradeReportResults"></div></div>`;
 }
@@ -3878,7 +3900,9 @@ function tradeReportQuickRange(kind,range){
   if(range==='today'){f.from=iso(start);f.to=iso(start);}
   else if(range==='7d'){const d=new Date(start);d.setDate(d.getDate()-6);f.from=iso(d);f.to=iso(start);}
   else if(range==='month'){f.from=iso(new Date(now.getFullYear(),now.getMonth(),1));f.to=iso(start);}
+  else if(range==='year'){f.from=igYearStart();f.to=igYearEnd();}
   else {f.from='';f.to='';}
+  const a=document.getElementById('trFrom'),b=document.getElementById('trTo'); if(a)a.value=f.from; if(b)b.value=f.to;
   renderTradeReport();
 }
 function tradeReportOpenRow(kind,index){
@@ -3905,6 +3929,8 @@ function renderSalesAnalytics(rows){
 function renderTradeReport(){
   const kind=currentPage; if(!['salesReport','purchaseReport'].includes(kind))return;
   const el=document.getElementById('tradeReportResults'); if(!el)return;
+  try{ const fb=document.getElementById('trFiltBadge'), n=trFiltCount(tradeReportFilters[kind]||{}); if(fb){ fb.textContent=n?`${n} فلتر مفعّل`:''; fb.style.display=n?'':'none'; } }catch(e){}
+  const trKpiWrap=h=>trBar('kpi','trKpiBar','📊 ملخص المبالغ')+`<div id="trKpis" style="${trUi.kpi?'':'display:none'}">${h}</div>`;
   const sales=kind==='salesReport', rows=tradeReportRows(kind), sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0), cur=state.settings.currency||'جنيه';
   const money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   if(sales){
@@ -3912,14 +3938,14 @@ function renderTradeReport(){
     const head=['التاريخ','رقم أمر البيع','العميل','المورد','الكمية المطلوبة (طن)','الوزن المورد (طن)','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','الحالة'];
     const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" aria-label="عرض تفاصيل أمر البيع" onclick="tradeReportOpenRow('${kind}',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tradeReportOpenRow('${kind}',${i})}"><td>${escapeHtml(r.date||'—')}</td><td><b>${escapeHtml(r.order||'—')}</b></td><td>${escapeHtml(r.customer||'—')}</td><td>${escapeHtml(r.supplier||'—')}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.subtotal)}</td><td class="num">${money(r.tax)}</td><td class="num">${money(r.discount)}</td><td class="num"><b>${money(r.net)}</b></td><td><span class="chip ${r.status==='مقفول'?'ok':'warn'}">${r.status}</span></td></tr>`).join('');
     const total=`<td colspan="4">إجمالي النتائج المفلترة</td><td class="num">${sum('qty').toFixed(3)}</td><td class="num">${sum('weight').toFixed(3)}</td><td class="num">${money(sum('subtotal'))}</td><td class="num">${money(sum('tax'))}</td><td class="num">${money(sum('discount'))}</td><td class="num">${money(sum('net'))}</td><td></td>`;
-    el.innerHTML=`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد أوامر البيع'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد أوامر البيع'?'أمر بيع':cur)}</div></div>`).join('')}</div><div class="card"><div class="head"><h3>ملخص المبيعات حسب أمر البيع</h3><span class="count">${rows.length} أمر بيع مطابق للفلاتر · بدون تفاصيل البوالص</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="min-width:1050px"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد أوامر بيع مطابقة للفلاتر</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${total}</tr></tfoot>`:''}</table></div></div></div>`;
-    el.innerHTML += renderSalesAnalytics(rows);
+    el.innerHTML=trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد أوامر البيع'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد أوامر البيع'?'أمر بيع':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>ملخص المبيعات حسب أمر البيع</h3><span class="count">${rows.length} أمر بيع مطابق للفلاتر · بدون تفاصيل البوالص</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="min-width:1050px"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد أوامر بيع مطابقة للفلاتر</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${total}</tr></tfoot>`:''}</table></div></div></div>`;
+    el.innerHTML += trBar('ana','trAnaBar','📈 التحليلات والملخصات التفصيلية')+`<div id="trAna" style="${trUi.ana?'':'display:none'}">${renderSalesAnalytics(rows)}</div>`;
     return;
   }
   const cards=[['عدد الأصناف',rows.length],['كمية التوريد (طن)',sum('qty').toFixed(3)],['الوزن الفعلي (طن)',sum('weight').toFixed(3)],['إجمالي المشتريات',sum('buy')]];
   const head=['التاريخ','رقم البوليصة','أمر البيع','العميل','المورد','الشركة','الموقع','المصنع','القطر','النوع','كمية التوريد (طن)','الوزن الفعلي (طن)','سعر الشراء','إجمالي الشراء'];
   const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" onclick="tradeReportOpenRow('${kind}',${i})"><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.weight?r.buy/r.weight:0)}</td><td class="num"><b>${money(r.buy)}</b></td></tr>`).join('');
-  el.innerHTML=`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div><div class="card"><div class="head"><h3>تفاصيل المشتريات</h3><span class="count">نتائج الفلتر: ${rows.length} صنف</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة</div></td></tr>`}</tbody></table></div></div></div>`;
+  el.innerHTML=trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>تفاصيل المشتريات</h3><span class="count">نتائج الفلتر: ${rows.length} صنف</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة</div></td></tr>`}</tbody></table></div></div></div>`;
 }
 function openReportPreview(html,title){
   const w=window.open('','_blank');
@@ -3944,7 +3970,7 @@ function openReportPreview(html,title){
 
 
 // ========== تقرير أوامر البيع التفصيلي (كل أمر وتحته بوالصه) ==========
-const orderReportFilters={from:"",to:"",customer:"",supplier:"",order:"",q:"",items:false,pay:true};
+const orderReportFilters={from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",order:"",q:"",items:false,pay:true};
 function orderReportData(){
   const f=orderReportFilters, q=(f.q||"").trim().toLowerCase(), map=new Map(), SOs=state.saleOrders||[];
   const grp=(key,no)=>{ if(!map.has(key)) map.set(key,{key,no,docs:[]}); return map.get(key); };
@@ -4060,7 +4086,7 @@ const tbMoney = v => Number(v||0).toLocaleString('en-US',{minimumFractionDigits:
 // حفظ إعدادات ميزان المراجعة محلياً لتظل بعد الخروج والدخول من نفس الجهاز والمتصفح
 const TB_UI_KEY='irongate_tb_ui_v1';
 let tbColumnWidths={clientTB:[22,13,13,13,13,13,13],supplierTB:[22,13,13,13,13,13,13]};
-(function tbLoadUi(){try{const x=JSON.parse(localStorage.getItem(TB_UI_KEY)||'{}');['clientTB','supplierTB'].forEach(k=>{if(x[k]){Object.assign(tbFilters[k],x[k].filters||{});if(Array.isArray(x[k].widths)&&x[k].widths.length===7)tbColumnWidths[k]=x[k].widths;}});}catch(e){}})();
+(function tbLoadUi(){try{const x=JSON.parse(localStorage.getItem(TB_UI_KEY)||'{}');['clientTB','supplierTB'].forEach(k=>{if(x[k]){Object.assign(tbFilters[k],x[k].filters||{});if(Array.isArray(x[k].widths)&&x[k].widths.length===7)tbColumnWidths[k]=x[k].widths;}igYearFix(tbFilters[k]);});}catch(e){}})();
 function tbSaveUi(){try{const x={};['clientTB','supplierTB'].forEach(k=>x[k]={filters:{from:tbFilters[k].from,to:tbFilters[k].to,partyFrom:tbFilters[k].partyFrom,partyTo:tbFilters[k].partyTo,hideZero:tbFilters[k].hideZero,filtersOpen:tbFilters[k].filtersOpen},widths:tbColumnWidths[k]});localStorage.setItem(TB_UI_KEY,JSON.stringify(x));}catch(e){}}
 function tbToggleFilters(kind){tbFilters[kind].filtersOpen=!tbFilters[kind].filtersOpen;tbSaveUi();const box=document.getElementById('tbFilterBody');if(box)box.style.display=tbFilters[kind].filtersOpen?'':'none';const b=document.getElementById('tbFilterToggle');if(b)b.textContent=tbFilters[kind].filtersOpen?'▲ إخفاء الفلاتر':'▼ إظهار الفلاتر';}
 function tbResizeStart(ev,kind,index){ev.preventDefault();ev.stopPropagation();const startX=ev.clientX, start=tbColumnWidths[kind][index], table=ev.target.closest('table');const total=table.getBoundingClientRect().width;const move=e=>{const delta=(startX-e.clientX)/total*100;const next=Math.max(index===0?14:7,Math.min(40,start+delta));tbColumnWidths[kind][index]=next;const cols=table.querySelectorAll('col');if(cols[index])cols[index].style.width=next+'%';};const up=()=>{document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);tbSaveUi();};document.addEventListener('pointermove',move);document.addEventListener('pointerup',up,{once:true});}
@@ -4230,8 +4256,8 @@ function tbExport(kind,format){
 
 // ========== كشوف حساب العملاء والموردين ==========
 const partyStatementFilters = {
-  clientStatement:{from:"",to:"",party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true},
-  supplierStatement:{from:"",to:"",party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true}
+  clientStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true},
+  supplierStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true}
 };
 function viewPartyStatement(kind){
   const customer=kind==='clientStatement', f=partyStatementFilters[kind], title=customer?'كشف حساب عميل':'كشف حساب مورد';
@@ -5112,7 +5138,7 @@ const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:""
 let draft=null, editingId=null, editingSrc="new", viewOnly=false, dirty=false;
 let lastPostedOrderNoForSupply="";
 // editingSrc: "new" = جديدة | "policies" = محفوظة لم تُرحَّل | "shipments" = مرحّلة لبيانات التوريد
-let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],from:"",to:"",grouped:false,order:""};
+let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],from:igYearStart(),to:igYearEnd(),grouped:false,order:""};
 let supBreak="";
 let supKpiOpen=true; try{ supKpiOpen = localStorage.getItem("supKpiOpen")!=="0"; }catch(e){}
 function supToggleKpi(){
@@ -5145,7 +5171,7 @@ function supFiltCount(){
   let n = 0;
   if(String(supFilter.q||"").trim()) n++;
   ["supplier","customer","factory","status"].forEach(k=>{ if(igMsNormArr(supFilter[k]).length) n++; });
-  if(supFilter.from) n++; if(supFilter.to) n++; if(supFilter.order) n++;
+  if(supFilter.from&&supFilter.from!==igYearStart()) n++; if(supFilter.to&&supFilter.to!==igYearEnd()) n++; if(supFilter.order) n++;
   return n;
 }
 const itemFactory=(s,it)=>it.factory||s.factory||"";
@@ -8123,8 +8149,8 @@ function soOpenSearch(){
       <div class="fld"><label>بحث برقم الأمر أو العميل أو المورد أو رقم البوليصة أو طريقة السداد</label>
         <input class="inp" id="soSearchInp" oninput="soSearchPage=1;soDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
       </div>
-      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" id="soSearchFrom" onchange="soSearchPage=1;soDoSearch()"></div>
-      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" id="soSearchTo" onchange="soSearchPage=1;soDoSearch()"></div>
+      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" id="soSearchFrom" value="${igYearStart()}" onchange="soSearchPage=1;soDoSearch()"></div>
+      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" id="soSearchTo" value="${igYearEnd()}" onchange="soSearchPage=1;soDoSearch()"></div>
       <div class="fld"><label>الحالة</label><select class="inp" id="soSearchStatus" onchange="soSearchPage=1;soDoSearch()"><option value="all">كل الحالات</option><option value="open">مفتوح</option><option value="closed">مقفل</option><option value="plan">خطط مستوردة فقط</option></select></div>
     </div>
     <div id="soSearchMeta" style="font-size:12px;color:var(--text-dim);margin:8px 0">عدد السجلات: ${list.length}</div>
@@ -8530,7 +8556,7 @@ function txMethodLabel(v){
 }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
 
-let txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:"", to:"" };
+let txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
 // توحيد قيمة الفلتر إلى مصفوفة — للتوافق مع الحفظ القديم (نصّي)
 function txNormFilterArr(v){
   if(Array.isArray(v)) return v.filter(x=>x!=null && x!=="");
@@ -8550,31 +8576,30 @@ function txMsToggle(key, val, on, direction){
   if(on && i<0) arr.push(val);
   if(!on && i>=0) arr.splice(i,1);
   txFilter[key] = arr;
+  txMsSync(key);
   renderTreasury(direction);
 }
 function txMsSelectAll(key, direction, allValues){
   txFilter[key] = allValues.slice();
+  txMsSync(key);
   renderTreasury(direction);
 }
 function txMsClear(key, direction){
   txFilter[key] = [];
+  txMsSync(key);
   renderTreasury(direction);
 }
 function txMsBuild(key, placeholder, options, direction){
-  const sel = new Set(txNormFilterArr(txFilter[key]));
-  let summary;
-  if(sel.size===0) summary = placeholder;
-  else if(sel.size===1){
-    const v=[...sel][0]; const o=options.find(x=>String(x.v)===String(v));
-    summary = o ? (o.label) : v;
-  } else summary = `<span class="ms-badge">${sel.size}</span> محدد`;
+  const sel = new Set(txNormFilterArr(txFilter[key]).map(String));
+  const one = sel.size===1 ? options.find(x=>String(x.v)===[...sel][0]) : null;
+  const summary = siMsSummaryHtml(sel, options.length, escapeHtml(placeholder), one?one.label:"");
   const allJson = JSON.stringify(options.map(o=>String(o.v))).replace(/"/g,'&quot;');
   const items = options.map(o=>`<label class="ms-item" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeAttr(String(o.v))}" ${sel.has(String(o.v))?"checked":""} onchange="txMsToggle('${key}',this.value,this.checked,'${direction}')"> ${o.ico?o.ico+' ':''}${escapeHtml(o.label)}</label>`).join("");
-  return `<details class="ms-dd" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()">${summary}<span class="ms-arrow">▾</span></summary>
+  return `<details class="ms-dd" data-ms="tx:${key}" data-ph="${escapeAttr(placeholder)}" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()"><span class="ms-sumtxt">${summary}</span><span class="ms-arrow">▾</span></summary>
     <div class="ms-panel" onclick="event.stopPropagation()">
       <div class="ms-head">
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsSelectAll('${key}','${direction}',${allJson})">تحديد الكل</button>
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsClear('${key}','${direction}')">مسح</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsSelectAll('${key}','${direction}',${allJson})">✓ تحديد الكل</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();txMsClear('${key}','${direction}')">✕ مسح</button>
       </div>
       ${items}
     </div>
@@ -8614,7 +8639,7 @@ document.addEventListener('click', function(e){
   document.querySelectorAll('.ms-dd[open]').forEach(d=>{ if(!d.contains(e.target)) d.open=false; });
 });
 // اقفل كمان لو حصل scroll أو resize علشان الموضع ما يتوهش
-window.addEventListener('scroll', function(){ document.querySelectorAll('.ms-dd[open]').forEach(d=>d.open=false); }, true);
+window.addEventListener('scroll', function(e){ if(e.target&&e.target.closest&&e.target.closest('.ms-panel'))return; document.querySelectorAll('.ms-dd[open]').forEach(d=>d.open=false); }, true);
 window.addEventListener('resize', function(){ document.querySelectorAll('.ms-dd[open]').forEach(d=>d.open=false); });
 
 // ========== Multi-select عام قابل لإعادة الاستخدام (شاشة بيانات التوريد والأقساط) ==========
@@ -8628,29 +8653,47 @@ function supMsToggle(key, val, on){
   if(!on && i>=0) arr.splice(i,1);
   supFilter[key] = arr;
   try{ supSaveUi(); }catch(e){}
+  supMsSync(key);
   renderSupply();
 }
-function supMsSelectAll(key, values){ supFilter[key]=values.slice(); try{supSaveUi();}catch(e){} renderSupply(); }
-function supMsClear(key){ supFilter[key]=[]; try{supSaveUi();}catch(e){} renderSupply(); }
+function supMsSelectAll(key, values){ supFilter[key]=values.slice(); try{supSaveUi();}catch(e){} supMsSync(key); renderSupply(); }
+function supMsClear(key){ supFilter[key]=[]; try{supSaveUi();}catch(e){} supMsSync(key); renderSupply(); }
 function supMsBuild(key, placeholder, options){
   const sel = new Set(igMsNormArr(supFilter[key]).map(String));
-  let summary;
-  if(sel.size===0) summary = placeholder;
-  else if(sel.size===1){ const v=[...sel][0]; const o=options.find(x=>String(x.v)===v); summary = o?o.label:v; }
-  else summary = `<span class="ms-badge">${sel.size}</span> محدد`;
+  const one = sel.size===1 ? options.find(x=>String(x.v)===[...sel][0]) : null;
+  const summary = siMsSummaryHtml(sel, options.length, escapeHtml(placeholder), one?one.label:"");
   const allJson = JSON.stringify(options.map(o=>String(o.v))).replace(/"/g,'&quot;');
   const items = options.map(o=>`<label class="ms-item" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeAttr(String(o.v))}" ${sel.has(String(o.v))?"checked":""} onchange="supMsToggle('${key}',this.value,this.checked)"> ${escapeHtml(o.label)}</label>`).join("");
-  return `<details class="ms-dd" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()">${summary}<span class="ms-arrow">▾</span></summary>
+  return `<details class="ms-dd" data-ms="sup:${key}" data-ph="${escapeAttr(placeholder)}" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()"><span class="ms-sumtxt">${summary}</span><span class="ms-arrow">▾</span></summary>
     <div class="ms-panel" onclick="event.stopPropagation()">
       <div class="ms-head">
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();supMsSelectAll('${key}',${allJson})">تحديد الكل</button>
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();supMsClear('${key}')">مسح</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();supMsSelectAll('${key}',${allJson})">✓ تحديد الكل</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();supMsClear('${key}')">✕ مسح</button>
       </div>
       ${items}
     </div>
   </details>`;
 }
 // الأقساط: multi-select
+function siMsSummaryHtml(sel, total, ph, oneLabel){
+  if(sel.size===0) return ph;
+  if(total>0 && sel.size>=total) return `<span class="ms-badge">${sel.size}</span> الكل`;
+  if(sel.size===1) return escapeHtml(oneLabel||[...sel][0]);
+  return `<span class="ms-badge">${sel.size}</span> محدد`;
+}
+// يحدّث علامات الاختيار وعنوان القائمة بدون إعادة بناء الصفحة (عشان القائمة تفضل مفتوحة وواضحة)
+function igMsSync(scope,key,selArr){
+  const det=document.querySelector('.ms-dd[data-ms="'+scope+':'+key+'"]'); if(!det) return;
+  const sel=new Set(igMsNormArr(selArr).map(String));
+  const cbs=[...det.querySelectorAll('.ms-item input[type=checkbox]')];
+  cbs.forEach(cb=>{ cb.checked=sel.has(cb.value); });
+  const one=cbs.find(cb=>sel.has(cb.value));
+  const t=det.querySelector(':scope > summary .ms-sumtxt');
+  if(t) t.innerHTML=siMsSummaryHtml(sel,cbs.length,det.getAttribute('data-ph')||'',one?one.parentElement.textContent.trim():"");
+}
+function siMsSync(key){ igMsSync('si',key,salesInstallmentFilters[key]); }
+function supMsSync(key){ igMsSync('sup',key,supFilter[key]); }
+function txMsSync(key){ igMsSync('tx',key,txFilter[key]); }
 function siMsToggle(key, val, on){
   const arr = igMsNormArr(salesInstallmentFilters[key]).map(String);
   const i = arr.indexOf(String(val));
@@ -8658,23 +8701,22 @@ function siMsToggle(key, val, on){
   if(!on && i>=0) arr.splice(i,1);
   salesInstallmentFilters[key] = arr;
   try{ siSavePrefs(); }catch(e){}
+  siMsSync(key);
   renderSalesInstallments();
 }
-function siMsSelectAll(key, values){ salesInstallmentFilters[key]=values.slice(); try{siSavePrefs();}catch(e){} renderSalesInstallments(); }
-function siMsClear(key){ salesInstallmentFilters[key]=[]; try{siSavePrefs();}catch(e){} renderSalesInstallments(); }
+function siMsSelectAll(key, values){ salesInstallmentFilters[key]=values.slice(); try{siSavePrefs();}catch(e){} siMsSync(key); renderSalesInstallments(); }
+function siMsClear(key){ salesInstallmentFilters[key]=[]; try{siSavePrefs();}catch(e){} siMsSync(key); renderSalesInstallments(); }
 function siMsBuild(key, placeholder, options){
   const sel = new Set(igMsNormArr(salesInstallmentFilters[key]).map(String));
-  let summary;
-  if(sel.size===0) summary = placeholder;
-  else if(sel.size===1){ const v=[...sel][0]; const o=options.find(x=>String(x.v)===v); summary = o?o.label:v; }
-  else summary = `<span class="ms-badge">${sel.size}</span> محدد`;
+  const one = sel.size===1 ? options.find(x=>String(x.v)===[...sel][0]) : null;
+  const summary = siMsSummaryHtml(sel, options.length, escapeHtml(placeholder), one?one.label:"");
   const allJson = JSON.stringify(options.map(o=>String(o.v))).replace(/"/g,'&quot;');
   const items = options.map(o=>`<label class="ms-item" onclick="event.stopPropagation()"><input type="checkbox" value="${escapeAttr(String(o.v))}" ${sel.has(String(o.v))?"checked":""} onchange="siMsToggle('${key}',this.value,this.checked)"> ${escapeHtml(o.label)}</label>`).join("");
-  return `<details class="ms-dd" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()">${summary}<span class="ms-arrow">▾</span></summary>
+  return `<details class="ms-dd" data-ms="si:${key}" data-ph="${escapeAttr(placeholder)}" ontoggle="txMsOnToggle(this,event)"><summary onclick="event.stopPropagation()"><span class="ms-sumtxt">${summary}</span><span class="ms-arrow">▾</span></summary>
     <div class="ms-panel" onclick="event.stopPropagation()">
       <div class="ms-head">
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();siMsSelectAll('${key}',${allJson})">تحديد الكل</button>
-        <button type="button" class="btn ghost sm" onclick="event.preventDefault();siMsClear('${key}')">مسح</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();siMsSelectAll('${key}',${allJson})">✓ تحديد الكل</button>
+        <button type="button" class="btn ghost sm" onclick="event.preventDefault();siMsClear('${key}')">✕ مسح</button>
       </div>
       ${items}
     </div>
@@ -8710,7 +8752,7 @@ function txRestoreView(direction){
   if(txCurDir===direction) return;   // نفس الشاشة: الحالة الحالية في الذاكرة (يشمل زر "مسح")
   if(txCurDir) txViewSave(txCurDir);   // احفظ حالة الشاشة اللي خارجين منها
   const saved = st[direction];
-  txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:"", to:"", ...(saved&&saved.filter||{}) };
+  txFilter = igYearFix({ q:"", method:[], status:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd(), ...(saved&&saved.filter||{}) });
   txFilterNormalizeAll();
   txSort = (saved&&saved.sort&&saved.sort.key) ? { key:saved.sort.key, dir:saved.sort.dir==="desc"?"desc":"asc" } : { key:"date", dir:"asc" };
   txCurDir = direction;
@@ -8980,9 +9022,9 @@ function renderIncomingCheckSummary(){
 // ================= دفتر أوراق القبض والشيكات تحت التحصيل =================
 // مصدر البيانات الوحيد هو التحصيلات؛ أي تعديل في السند ينعكس هنا تلقائيًا عند إعادة الرسم.
 const CHQ_FILTER_KEY="irongate_chq_filter";
-let chequeRegisterFilter=(()=>{ const d={status:"",q:"",from:"",to:"",due:""}; try{ return Object.assign(d,JSON.parse(localStorage.getItem(CHQ_FILTER_KEY)||"{}")); }catch(e){ return d; } })();
+let chequeRegisterFilter=(()=>{ const d={status:"",q:"",from:igYearStart(),to:igYearEnd(),due:""}; try{ return igYearFix(Object.assign(d,JSON.parse(localStorage.getItem(CHQ_FILTER_KEY)||"{}"))); }catch(e){ return d; } })();
 function chequeFilterSave(){ try{ localStorage.setItem(CHQ_FILTER_KEY,JSON.stringify(chequeRegisterFilter)); }catch(e){} }
-function chequeFilterClear(){ chequeRegisterFilter={status:"",q:"",from:"",to:"",due:""}; chequeFilterSave(); go("chequeRegister"); }
+function chequeFilterClear(){ chequeRegisterFilter={status:"",q:"",from:igYearStart(),to:igYearEnd(),due:""}; chequeFilterSave(); go("chequeRegister"); }
 function chequeFilterDrop(k){ chequeRegisterFilter[k]=""; chequeFilterSave(); go("chequeRegister"); }
 function chequeActiveChips(){
   const f=chequeRegisterFilter, L={status:{receivable:"أوراق قبض",pending:"شيكات تحت التحصيل"},due:{overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام"}};
@@ -9843,10 +9885,10 @@ async function settlementUnallocCustomer(customer){
 }
 
 // ========== شاشة متابعة الأقساط داخل المبيعات ==========
-const salesInstallmentFilters={from:"",to:"",customer:[],order:[],status:[],q:""};
+const salesInstallmentFilters={from:igYearStart(),to:igYearEnd(),customer:[],order:[],status:[],q:""};
 const salesInstallmentUI={sort:"due",dir:"asc",hideFilters:false,hideTotals:false,hidePays:(()=>{try{return window.matchMedia("(max-width:720px)").matches}catch(e){return false}})()};
 const SI_PREF_KEY="ig_salesInstallments_prefs_v1";
-(function(){ try{ const p=JSON.parse(localStorage.getItem(SI_PREF_KEY)||"{}"); Object.assign(salesInstallmentFilters,p.f||{}); Object.assign(salesInstallmentUI,p.ui||{}); }catch(e){} })();
+(function(){ try{ const p=JSON.parse(localStorage.getItem(SI_PREF_KEY)||"{}"); Object.assign(salesInstallmentFilters,p.f||{}); Object.assign(salesInstallmentUI,p.ui||{}); }catch(e){} igYearFix(salesInstallmentFilters); })();
 function siSavePrefs(){ try{ localStorage.setItem(SI_PREF_KEY,JSON.stringify({f:salesInstallmentFilters,ui:salesInstallmentUI})); }catch(e){} }
 function siToggle(which){
   const k=which==="filters"?"hideFilters":"hideTotals"; salesInstallmentUI[k]=!salesInstallmentUI[k]; siSavePrefs();
@@ -9863,7 +9905,7 @@ function siSort(key){
   const sel=document.getElementById("siSortSel"); if(sel) sel.value=u.sort;
   renderSalesInstallments();
 }
-function siResetFilters(){ Object.assign(salesInstallmentFilters,{from:"",to:"",customer:[],order:[],status:[],q:""}); salesInstallmentUI.sort="due"; salesInstallmentUI.dir="asc"; siSavePrefs(); go("salesInstallments"); }
+function siResetFilters(){ Object.assign(salesInstallmentFilters,{from:igYearStart(),to:igYearEnd(),customer:[],order:[],status:[],q:""}); salesInstallmentUI.sort="due"; salesInstallmentUI.dir="asc"; siSavePrefs(); go("salesInstallments"); }
 // قسط متأخر متبقي عليه أقل من الحد ده (قروش/كسور) يُعتبر مسدد ولا يظهر مع المتأخر
 const SI_SMALL_BALANCE=500;
 function salesInstallmentBaseRows(){
@@ -10072,17 +10114,18 @@ function salesInstallmentsExport(format){
     ${statsCard("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#fee2e2","#991b1b")}
   </div>`;
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
-    body{font-family:Tahoma,"Cairo",Arial,sans-serif;color:#111;padding:18px;background:#fff;margin:0}
+    body{font-family:Tahoma,"Cairo",Arial,sans-serif;color:#000;padding:10px;background:#fff;margin:0}
     .hdr{text-align:center;padding:14px 10px;border-bottom:3px solid #d4a017;margin-bottom:10px}
     .hdr h1{margin:0;font-size:22px;color:#111}
     .hdr .en{color:#d4a017;font-size:14px;letter-spacing:2px;margin-top:4px}
     .meta{text-align:center;color:#374151;font-size:11px;background:#f9fafb;padding:8px;border-radius:6px;margin-bottom:10px;border:1px solid #e5e7eb}
-    table{width:100%;border-collapse:collapse;font-size:10.5px;margin-top:8px}
-    thead th{background:#1a1a1a;color:#fff;padding:10px 8px;text-align:center;font-weight:700;font-size:11px;border:1px solid #1a1a1a}
-    tbody td{padding:7px 6px;text-align:center;border:1px solid #e5e7eb;color:#111}
-    tbody td.n{font-family:"Courier New",monospace;font-weight:600}
-    tfoot td{background:#d4a017;color:#111;font-weight:800;padding:9px 8px;border:1px solid #a67c0a;font-size:11.5px}
-    @media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    table{width:100%;border-collapse:collapse;font-size:14px;font-weight:800;margin-top:8px;table-layout:auto}
+    thead th{background:#1a1a1a;color:#fff;padding:8px 3px;text-align:center;font-weight:900;font-size:13px;line-height:1.35;border:1px solid #1a1a1a;white-space:normal}
+    tbody td{padding:6px 3px;text-align:center;border:1px solid #9ca3af;color:#000;font-weight:800;white-space:nowrap}
+    tbody td:nth-child(2){white-space:normal;min-width:80px;line-height:1.35}
+    tbody td.n{font-variant-numeric:tabular-nums;font-weight:900}
+    tfoot td{background:#d4a017;color:#000;font-weight:900;padding:8px 3px;border:1px solid #a67c0a;font-size:14px;white-space:nowrap}
+    @media print{@page{size:A4 landscape;margin:5mm}body{padding:0}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
   </style></head><body>
     <div class="hdr"><h1>${title}</h1><div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div></div>
     <div class="meta">${escapeHtml(filters)} · تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")} · عدد الأقساط: ${rows.length} · العملة: ${escapeHtml(cur)}</div>
@@ -11319,8 +11362,8 @@ document.addEventListener("DOMContentLoaded",()=>setTimeout(window.syncSidebarAr
 /* ---------- 3) حفظ الفلاتر + "مسح الكل" ---------- */
 if(typeof tradeReportFilters==="undefined"){
   window.tradeReportFilters={
-    salesReport:{from:"",to:"",customer:"",supplier:"",q:""},
-    purchaseReport:{from:"",to:"",customer:"",supplier:"",q:""}
+    salesReport:{from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",q:""},
+    purchaseReport:{from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",q:""}
   };
 }
 const FP_KEY="ig_filters_v2";
@@ -11333,12 +11376,12 @@ const OBJ={
   supplierStatement:()=>partyStatementFilters.supplierStatement,
   quoteList:()=>qlF
 };
-const trDef=()=>({from:"",to:"",customer:"",supplier:"",q:""});
-const stDef=()=>({from:"",to:"",party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true});
+const trDef=()=>({from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",q:""});
+const stDef=()=>({from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true});
 const DEF={
-  supply:()=>({q:"",supplier:"",customer:"",factory:"",status:"",from:"",to:"",grouped:!!supFilter.grouped}),
+  supply:()=>({q:"",supplier:"",customer:"",factory:"",status:"",from:igYearStart(),to:igYearEnd(),grouped:!!supFilter.grouped}),
   salesReport:trDef, purchaseReport:trDef,
-  orderReport:()=>({from:"",to:"",customer:"",supplier:"",order:"",q:"",items:false,pay:true}),
+  orderReport:()=>({from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",order:"",q:"",items:false,pay:true}),
   clientStatement:stDef, supplierStatement:stDef,
   quoteList:()=>({q:"",status:""})
 };
@@ -11360,6 +11403,7 @@ function fpSave(){
         if(f in o && typeof o[f]===typeof src[f] && Array.isArray(o[f])===Array.isArray(src[f])) o[f]=src[f];
       });
     });
+    PERSIST.forEach(k=>{ try{ igYearFix(OBJ[k]()); }catch(e){} });
   }catch(e){}
 })();
 let _fpT=null; const fpSoon=()=>{ clearTimeout(_fpT); _fpT=setTimeout(fpSave,200); };
@@ -11370,7 +11414,7 @@ window.addEventListener("pagehide",fpSave);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") fpSave(); });
 window.fpClear=function(page){
   if(page==="receipts"||page==="payments"){
-    txFilter={q:"",method:[],status:[],treasury:[],party:[],from:"",to:""};
+    txFilter={q:"",method:[],status:[],treasury:[],party:[],from:igYearStart(),to:igYearEnd()};
     try{ txViewSave(page==="receipts"?"in":"out"); }catch(e){}
   } else if(page==="clientTB"||page==="supplierTB"){
     Object.assign(tbFilters[page],{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true});
@@ -12638,7 +12682,7 @@ input,select,textarea{max-width:100%;box-sizing:border-box}
 <script id="ig-management-suite-v2">
 
 // تقارير الإدارة العليا: مشتقة من الحركات المسجلة فقط
-let igMgmtFilter={from:'',to:'',q:''};
+let igMgmtFilter={from:igYearStart(),to:igYearEnd(),q:''};
 function igMgmtDate(v){return String(v||'').slice(0,10)}
 function igMgmtInRange(v){const d=igMgmtDate(v);return (!igMgmtFilter.from||d>=igMgmtFilter.from)&&(!igMgmtFilter.to||d<=igMgmtFilter.to)}
 function igMgmtExport(title,tableId,mode){const t=document.getElementById(tableId);if(!t)return;const clone=t.cloneNode(true);clone.querySelectorAll('[data-no-export],button').forEach(n=>n.remove());const stamp=new Date().toLocaleDateString('en-GB');const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:18px;color:#172b4d}h1{text-align:center;font-size:20px;margin:0 0 12px}.meta{font-size:12px;margin:0 0 14px;color:#475569}table{width:100%;border-collapse:collapse;font-size:11px}thead{display:table-header-group}th{background:#203b63!important;color:#fff!important}td,th{border:1px solid #cbd5e1;padding:7px;text-align:center}tfoot{font-weight:bold;background:#e8eef6}tr{break-inside:avoid}@media print{@page{size:A4 landscape;margin:10mm}}</style></head><body><h1>${escapeHtml(title)} — IRON GATE SUPPLIES</h1><p class="meta">الفترة: ${escapeHtml(igMgmtFilter.from||'كل الفترات')} إلى ${escapeHtml(igMgmtFilter.to||'حتى الآن')} · تاريخ الاستخراج: ${stamp}</p>${clone.outerHTML}</body></html>`;if(mode==='excel'){if(typeof igSaveXlsx==='function')igSaveXlsx(html,title.replaceAll(' ','_')+'_'+new Date().toISOString().slice(0,10));else toast('تصدير Excel غير متاح حاليًا','err')}else openReportPreview(html,title)}
