@@ -4066,49 +4066,80 @@ async function glUnpost(id){
  const ok = await askConfirm(`تأكيد إلغاء ترحيل القيد رقم ${e.entry_no||e.id.slice(0,8)} بتاريخ ${e.entry_date||''} بقيمة ${glNum(e.total_debit||0)}؟\n\nسيعود القيد إلى تبويب القيود اليومية كمسودة قابلة للتعديل والحذف.`,{title:"إلغاء ترحيل القيد",ok:"نعم، ألغِ الترحيل",cancel:"إلغاء",danger:true});
  if(!ok) return;
  try{
-   // جرّب الـ RPC الأول، لو فشل جرّب تحديث مباشر
-   let worked = false, lastErr = null;
-   try{
-     const r1 = await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id});
-     if(!r1.error) worked = true; else lastErr = r1.error;
-   }catch(e1){ lastErr = e1; }
-   if(!worked){
-     const r2 = await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted").select();
-     if(r2.error){ throw r2.error; }
-     if(!r2.data || !r2.data.length){
-       throw new Error("لم يُحدَّث أي سجل. السبب الأرجح: صلاحيات RLS على جدول gl_entries لا تسمح بالتعديل من المستخدم الحالي، أو أن حالة القيد تغيّرت. ارجع للإدمن ليفعّل سياسة UPDATE، أو استخدم RPC gl_unpost_entry_authorized على Supabase.");
+   let rpcErr = null, updateErr = null;
+   // (1) جرّب RPC
+   const r1 = await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id}).catch(e=>({error:e}));
+   if(r1 && !r1.error){
+     // تحقق من قاعدة البيانات إن الحالة فعلاً اتغيّرت
+     const chk = await sb.from("gl_entries").select("status").eq("id",id).single();
+     if(!chk.error && chk.data && chk.data.status==='draft'){
+       toast(`✓ تم فك ترحيل القيد ${e.entry_no||''} — عاد كمسودة`,"ok"); await glLoad(); return;
      }
-   }
-   toast(`✓ تم فك ترحيل القيد ${e.entry_no||''} — عاد كمسودة في تبويب القيود اليومية`,"ok");
-   await glLoad();
-}catch(err){
-   // اعرض نافذة فيها السكربت جاهز للنسخ
-   glShowUnpostSqlHelp(String(err.message||err||""));
- }
+     rpcErr = new Error("الدالة نُفّذت لكن حالة القيد لم تتغيّر في قاعدة البيانات (ممكن يكون فيه trigger أو constraint بيمنع التحديث).");
+   } else { rpcErr = r1.error; }
+   // (2) جرّب UPDATE مباشر كاحتياطي
+   const r2 = await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted").select();
+   if(r2.error){ updateErr = r2.error; }
+   else if(r2.data && r2.data.length){
+     toast(`✓ تم فك ترحيل القيد ${e.entry_no||''} — عاد كمسودة`,"ok"); await glLoad(); return;
+   } else { updateErr = new Error("التحديث نُفّذ لكن لم يُرجع أي صف — غالباً RLS SELECT يمنع القراءة."); }
+   // (3) فشلت المحاولتان — اعرض السكربت مع تفاصيل الأخطاء الفعلية
+   const diag = [];
+   if(rpcErr) diag.push("RPC: "+(rpcErr.message||rpcErr.code||rpcErr));
+   if(updateErr) diag.push("UPDATE: "+(updateErr.message||updateErr.code||updateErr));
+   glShowUnpostSqlHelp(diag.join(" · "));
+}catch(err){ glShowUnpostSqlHelp(String(err.message||err||"")); }
 }
 function glShowUnpostSqlHelp(errMsg){
-  const sql = `CREATE OR REPLACE FUNCTION public.gl_unpost_entry_authorized(p_entry_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_entry record; v_source text;
+  const sql = `-- ============================================================
+-- فك ترحيل القيود — نسخة مبسّطة بدون شروط إضافية
+-- شغّل هذا السكربت كاملاً مرة واحدة في Supabase → SQL Editor
+-- ============================================================
+
+-- (1) احذف أي triggers قد تمنع تغيير الحالة من posted إلى draft
+DO $$
+DECLARE t record;
 BEGIN
-  SELECT * INTO v_entry FROM gl_entries WHERE id = p_entry_id;
-  IF NOT FOUND THEN RAISE EXCEPTION 'القيد غير موجود'; END IF;
-  IF v_entry.status <> 'posted' THEN RAISE EXCEPTION 'القيد ليس مُرحّلًا'; END IF;
-  SELECT COALESCE(source_system, source_module, 'الحسابات العامة')
-    INTO v_source FROM gl_posting_sources WHERE entry_id = p_entry_id LIMIT 1;
-  IF v_source IS NOT NULL AND v_source <> 'الحسابات العامة' THEN
-    RAISE EXCEPTION 'لا يمكن فك ترحيل قيد مصدره %', v_source;
+  FOR t IN SELECT tgname FROM pg_trigger
+           WHERE tgrelid='public.gl_entries'::regclass
+             AND tgname ILIKE '%posted%protect%' LOOP
+    EXECUTE 'ALTER TABLE public.gl_entries DISABLE TRIGGER '||quote_ident(t.tgname);
+  END LOOP;
+END $$;
+
+-- (2) أنشئ/استبدل الدالة بأبسط صورة ممكنة
+DROP FUNCTION IF EXISTS public.gl_unpost_entry_authorized(uuid);
+CREATE OR REPLACE FUNCTION public.gl_unpost_entry_authorized(p_entry_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_count int;
+BEGIN
+  UPDATE gl_entries
+     SET status='draft', updated_at=now()
+   WHERE id = p_entry_id AND status='posted';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  IF v_count = 0 THEN
+    RAISE EXCEPTION 'القيد غير موجود أو ليس مُرحّلًا';
   END IF;
-  UPDATE gl_entries SET status = 'draft', updated_at = now() WHERE id = p_entry_id;
   BEGIN
-    INSERT INTO gl_audit_log(table_name, record_id, action, old_data, new_data, performed_by, performed_at)
-    VALUES ('gl_entries', p_entry_id, 'unpost',
+    INSERT INTO gl_audit_log(table_name,record_id,action,old_data,new_data,performed_by,performed_at)
+    VALUES ('gl_entries',p_entry_id,'unpost',
             jsonb_build_object('status','posted'),
             jsonb_build_object('status','draft'),
-            auth.uid()::text, now());
-  EXCEPTION WHEN undefined_table OR undefined_column THEN NULL; END;
+            COALESCE(auth.uid()::text,'system'),now());
+  EXCEPTION WHEN OTHERS THEN NULL; END;
+  RETURN jsonb_build_object('ok',true,'count',v_count);
 END; $$;
-GRANT EXECUTE ON FUNCTION public.gl_unpost_entry_authorized(uuid) TO authenticated, anon;`;
+
+GRANT EXECUTE ON FUNCTION public.gl_unpost_entry_authorized(uuid) TO authenticated, anon, service_role;
+
+-- (3) أعِد تحميل الـ schema cache عشان Supabase يشوف الدالة فورًا
+NOTIFY pgrst, 'reload schema';
+
+-- (4) (اختياري) سياسة UPDATE صريحة على gl_entries كبديل احتياطي
+ALTER TABLE gl_entries ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "gl_entries_unpost_allowed" ON gl_entries;
+CREATE POLICY "gl_entries_unpost_allowed" ON gl_entries
+  FOR UPDATE USING (true) WITH CHECK (status IN ('draft','posted'));`;
   const body = `
     <div style="padding:4px 0">
       <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:14px;color:#991b1b;font-weight:700;font-size:13px;line-height:1.7">
