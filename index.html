@@ -3285,8 +3285,12 @@ const navGroups = [
     { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
     { id:"custodyReport", icon:"🧾", label:"تقرير العهد" }
   ]},
-  { id:"gl", icon:"⚖", label:"المحاسبة العامة", items:[
-    { id:"gl", icon:"📚", label:"الحسابات العامة" }
+  { id:"gl", icon:"⚖", label:"الحسابات العامة", items:[
+    { id:"gl", tab:"entries", icon:"📒", label:"القيود اليومية" },
+    { id:"gl", tab:"accounts", icon:"🌳", label:"دليل الحسابات" },
+    { id:"gl", tab:"centers", icon:"🎯", label:"مراكز التكلفة" },
+    { id:"gl", tab:"years", icon:"📅", label:"السنوات والفترات" },
+    { id:"gl", tab:"journals", icon:"📚", label:"اليوميات" }
   ]}
 ];
 
@@ -3350,7 +3354,7 @@ function renderNav(){
     const subs=g.items.map(it=>{
       if(it.sep) return `<div class="nav-sep">${it.sep}</div>`;
       const c=it.badge?(B[it.badge]||0):0;
-      return `<button class="navbtn ${currentPage===it.id?'active':''}" ${currentPage===it.id?'aria-current="page"':''} onclick="go('${it.id}')"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":"شيكات مستحقة أو متأخرة"}">${fmtN(c)}</span>`:""}</button>`;
+      return `<button class="navbtn ${currentPage===it.id&&(!it.tab||glState.tab===it.tab)?'active':''}" ${currentPage===it.id&&(!it.tab||glState.tab===it.tab)?'aria-current="page"':''} onclick="${it.tab?`glNavTab('${it.tab}')`:`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":"شيكات مستحقة أو متأخرة"}">${fmtN(c)}</span>`:""}</button>`;
     }).join("");
     return `
     <button class="navgroup ${activeCls} ${expanded?'open':''}" ${g.single?(isCurrentIn?'aria-current="page"':''):`aria-expanded="${expanded?'true':'false'}" aria-controls="sub-${g.id}"`} onclick="toggleNavGroup('${g.id}')" title="${escapeAttr(g.label)}" aria-label="${escapeAttr(g.label)}">
@@ -3447,14 +3451,16 @@ function go(page){
 // ================= المحاسبة العامة GL — واجهة تشغيل أولية =================
 let glSelectedAccountId=null;
 const GL_TABLES_V1=["gl_settings","gl_account_levels","gl_fiscal_years","gl_periods","gl_accounts","gl_cost_centers","gl_journals","gl_entries","gl_entry_lines","gl_posting_sources","gl_audit_log"];
-let glState={tab:"entries",loading:false,accounts:[],centers:[],years:[],periods:[],journals:[],entries:[],lines:[],settings:null,error:""};
+let glState={tab:"entries",home:true,loading:false,accounts:[],centers:[],years:[],periods:[],journals:[],entries:[],lines:[],settings:null,error:""};
 const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const glDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const glCan=a=>can("gl",a);
 const glTabs=[ ["entries","القيود اليومية"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"] ];
-function viewGL(){return `<section class="card" style="padding:18px;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0 0 5px">المحاسبة العامة</h2><div class="muted">دفتر أستاذ مستقل — المسودات لا تدخل التقارير إلا بعد الترحيل</div></div><button class="btn" onclick="glLoad()">تحديث البيانات</button></div><div class="muted" style="margin-top:8px">صلاحياتك: ${["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة الإعدادات",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط"}</div></section><section class="card" style="padding:14px"><div class="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${glTabs.map(([k,n])=>`<button class="tab ${glState.tab===k?'active':''}" onclick="glSetTab('${k}')">${n}</button>`).join("")}</div><div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'اضغط تحديث البيانات لعرض السجلات.'}</div></section>`;}
-function glSetTab(t){glState.tab=t;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
+function viewGL(){const title=glTabs.find(([k])=>k===glState.tab)?.[1]||"المحاسبة العامة";const cards=glTabs.map(([k,n],i)=>{const desc={entries:"إنشاء القيود ومراجعتها وترحيلها",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية"}[k];const ico={entries:"📒",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚"}[k];return `<button type="button" class="card" onclick="glSetTab('${k}')" style="text-align:right;padding:20px;cursor:pointer;border:1px solid var(--border);display:flex;gap:14px;align-items:center;min-height:104px;background:var(--surface)"><span style="font-size:30px;width:48px;height:48px;display:grid;place-items:center;border-radius:12px;background:var(--surface-2,rgba(100,116,139,.12))">${ico}</span><span style="flex:1"><b style="display:block;font-size:16px;margin-bottom:5px">${n}</b><small class="muted">${desc}</small></span><span style="font-size:22px;color:var(--text-dim)">‹</span></button>`;}).join("");return `<section class="card" style="padding:18px;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0 0 5px">${glState.home?'الحسابات العامة':title}</h2><div class="muted">دفتر أستاذ مستقل — المسودات لا تدخل التقارير إلا بعد الترحيل</div></div><div style="display:flex;gap:8px"><button class="btn" onclick="glLoad()">تحديث البيانات</button>${glState.home?'':`<button class="btn" onclick="glGoHome()">العودة للحسابات العامة</button>`}</div></div><div class="muted" style="margin-top:8px">صلاحياتك: ${["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة الإعدادات",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط"}</div></section>${glState.home?`<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">${cards}</section>`:`<section class="card" style="padding:16px"><div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'جاري تحميل السجلات…'}</div></section>`}`;}
+function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go("gl");return;}const c=document.getElementById("content");if(c){c.innerHTML=viewGL();glRender();}try{renderNav();}catch(e){}}
+function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
+function glGoHome(){glState.home=true;const c=document.getElementById("content");if(c&&currentPage==="gl")c.innerHTML=viewGL();}
 async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
 function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():glRenderEntries();}
 function glTable(head,rows){return `<div style="overflow:auto"><table class="table" style="width:100%"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${head.length}" class="muted">لا توجد بيانات</td></tr>`}</tbody></table></div>`;}
@@ -3464,7 +3470,7 @@ function glRenderAccounts(){
  const iconBtn=(ico,label,fn,disabled=false,danger=false)=>`<button type="button" class="btn sm ${danger?'danger':''}" title="${label}" aria-label="${label}" ${disabled?'disabled':''} onclick="${fn}"><span style="font-size:17px;line-height:1">${ico}</span><span>${label}</span></button>`;
  const renderNode=(a)=>{const kids=byParent.get(a.id)||[];const isSel=a.id===glSelectedAccountId;return `<li style="margin:4px 0"><div onclick="glSelectAccount('${a.id}')" style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid ${isSel?'var(--primary,#315b9b)':'var(--border)'};border-radius:10px;background:${isSel?'rgba(49,91,155,.10)':'var(--surface)'};margin-right:${Math.max(0,(a.level_no-1)*18)}px;cursor:pointer;box-shadow:${isSel?'0 0 0 1px rgba(49,91,155,.18)':'none'}"><span style="width:25px;text-align:center;color:var(--text-dim)">${kids.length?`<button class="btn sm" title="فتح/إغلاق" onclick="event.stopPropagation();glToggleAccountNode(this,'${a.id}')">${glCollapsedNodes.has(a.id)?'＋':'－'}</button>`:'<span>　</span>'}</span><span style="font-size:18px">${a.is_group?'📁':'📄'}</span><b dir="ltr" style="min-width:125px">${glEsc(a.account_code)}</b><span style="flex:1;font-weight:600">${glEsc(a.account_name)}</span><small class="muted">${a.is_group?'تجميعي':'تفصيلي'} · مستوى ${a.level_no}</small><small style="color:${a.is_active?'#16834a':'#b45309'}">${a.is_active?'نشط':'موقوف'}</small></div>${kids.length?`<ul class="gl-account-children" data-parent="${a.id}" style="list-style:none;padding-right:22px;margin:4px 0" ${glCollapsedNodes.has(a.id)?'hidden':''}>${kids.map(renderNode).join("")}</ul>`:""}</li>`;};
  const roots=(byParent.get("__root")||[]).sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),"en",{numeric:true}));
- const toolbar=glCan("manage")?`<div style="display:flex;gap:7px;flex-wrap:wrap;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;align-items:center"><div style="display:flex;gap:6px;flex-wrap:wrap">${iconBtn('＋','إضافة فرعي',"glAddChildAccount()",!selected||Number(selected.level_no)>=6)}${iconBtn('▣','إضافة رئيسي',"glAddRootAccount()")}${iconBtn('✎','تعديل',"glEditAccount('"+(selected?.id||"")+"')",!selected)}${iconBtn('⏸','إيقاف',"glDisableAccount('"+(selected?.id||"")+"')",!selected||!selected.is_active,true)}${iconBtn('⌕','بحث',"glSearchAccounts()")}${iconBtn('⌄','فتح الكل',"glExpandAllAccounts()")}${iconBtn('⌃','إغلاق الكل',"glCollapseAllAccounts()")}</div><span style="flex:1"></span><span class="muted" style="font-size:12px">${selected?`المحدد: ${glEsc(selected.account_code)} — ${glEsc(selected.account_name)}`:'حدد حسابًا من الشجرة أولاً'}</span></div>`:"";
+ const toolbar=glCan("manage")?`<div style="display:flex;gap:7px;flex-wrap:wrap;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;align-items:center"><div style="display:flex;gap:6px;flex-wrap:wrap">${iconBtn('＋','إضافة فرعي',"glShowAddAccountForm()",!selected||Number(selected.level_no)>=6)}${iconBtn('✎','تعديل',"glEditAccount('"+(selected?.id||"")+"')",!selected)}${iconBtn('🗑','حذف حساب',"glDeleteAccount('"+(selected?.id||"")+"')",!selected,true)}${iconBtn('⌕','بحث',"glSearchAccounts()")}${iconBtn('⌄','فتح الكل',"glExpandAllAccounts()")}${iconBtn('⌃','إغلاق الكل',"glCollapseAllAccounts()")}</div><span style="flex:1"></span><span class="muted" style="font-size:12px">${selected?`المحدد: ${glEsc(selected.account_code)} — ${glEsc(selected.account_name)}`:'حدد الحساب الأب أولاً'}</span></div>${glAccountAddMode&&selected?`<div class="card" style="padding:12px;margin:0 0 12px;border:1px solid var(--primary)"><label style="display:block;margin-bottom:7px;font-weight:700">اسم الحساب الجديد تحت: ${glEsc(selected.account_name)}</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="glNewAccountName" class="input" style="flex:1;min-width:220px" placeholder="اكتب اسم الحساب فقط" onkeydown="if(event.key==='Enter')glSaveQuickAccount()" autofocus><button class="btn primary" onclick="glSaveQuickAccount()">إضافة الحساب</button><button class="btn" onclick="glCancelQuickAccount()">إلغاء</button></div></div>`:""}`:"";
  return `${toolbar}<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 12px"><div><b>شجرة دليل الحسابات</b><div class="muted" style="font-size:12px">${glState.accounts.length} حساب · اختر الحساب ثم استخدم شريط الأدوات</div></div><span class="muted" style="font-size:12px">الأخضر: نشط · البرتقالي: موقوف</span></div><ul id="glAccountsTree" style="list-style:none;padding:0;margin:0">${roots.map(renderNode).join("")||'<li class="muted">لا توجد حسابات. شغّل سكربت استيراد الدليل أولاً.</li>'}</ul>`;
 }
 let glCollapsedNodes=new Set();
@@ -3486,13 +3492,21 @@ function glNextChildCode(parent){
  const siblings=glState.accounts.filter(x=>x.parent_id===parent.id);let n=0;for(const x of siblings){const diff=Number(x.account_code)-base;if(diff>0&&diff%step===0)n=Math.max(n,diff/step);}
  const code=base+(n+1)*step;if(!Number.isSafeInteger(code)||String(code).length>12)throw new Error('تعذر توليد كود فرعي جديد');return String(code).padStart(12,'0');
 }
-async function glAddChildAccount(){
- if(!glCan('manage'))return toast('لا تملك صلاحية إدارة دليل الحسابات','err');const parent=glState.accounts.find(x=>x.id===glSelectedAccountId);if(!parent)return toast('حدد الحساب الأب من الشجرة أولاً','err');if(Number(parent.level_no)>=6)return toast('هذا الحساب في آخر مستوى ولا يقبل حسابات فرعية','err');
+let glAccountAddMode=false;
+function glShowAddAccountForm(){if(!glCan('manage'))return toast('لا تملك صلاحية إدارة دليل الحسابات','err');const p=glState.accounts.find(x=>x.id===glSelectedAccountId);if(!p)return toast('حدد الحساب الأب أولاً','err');if(Number(p.level_no)>=6)return toast('هذا الحساب في آخر مستوى ولا يقبل حسابات فرعية','err');glAccountAddMode=true;glRender();setTimeout(()=>document.getElementById('glNewAccountName')?.focus(),30);}
+function glCancelQuickAccount(){glAccountAddMode=false;glRender();}
+async function glSaveQuickAccount(){
+ if(!glCan('manage'))return toast('لا تملك صلاحية إدارة دليل الحسابات','err');
+ const parent=glState.accounts.find(x=>x.id===glSelectedAccountId);if(!parent)return toast('حدد الحساب الأب أولاً','err');
+ const input=document.getElementById('glNewAccountName'),name=(input?.value||'').trim();if(!name){input?.focus();return;}
  let code;try{code=glNextChildCode(parent);}catch(e){return toast(e.message,'err');}
- const name=prompt('اسم الحساب الفرعي:');if(!name||!name.trim())return;const type=prompt('نوع الحساب: asset / liability / equity / revenue / expense',parent.account_type);if(!['asset','liability','equity','revenue','expense'].includes(type))return toast('نوع الحساب غير صحيح','err');const group=confirm('هل الحساب الجديد تجميعي؟ موافق = تجميعي، إلغاء = تفصيلي');
- try{await glInsert('gl_accounts',{account_code:code,account_name:name.trim(),account_type:type,normal_balance:['asset','expense'].includes(type)?'debit':'credit',level_no:Number(parent.level_no)+1,parent_id:parent.id,is_group:group,allow_posting:!group,is_active:true,is_system:false});if(!parent.is_group||parent.allow_posting){const r=await sb.from('gl_accounts').update({is_group:true,allow_posting:false,updated_at:new Date().toISOString()}).eq('id',parent.id);if(r.error)throw r.error;}toast('تم إضافة الحساب بالكود '+code,'ok');glSelectedAccountId=parent.id;glCollapsedNodes.delete(parent.id);await glLoad();}
- catch(e){toast('تعذر إضافة الحساب: '+(e.message||e),'err');}
+ try{
+  const created=await glInsert('gl_accounts',{account_code:code,account_name:name,account_type:parent.account_type,normal_balance:parent.normal_balance||(['asset','expense'].includes(parent.account_type)?'debit':'credit'),level_no:Number(parent.level_no)+1,parent_id:parent.id,is_group:false,allow_posting:true,is_active:true,is_system:false});
+  if(!parent.is_group||parent.allow_posting){const r=await sb.from('gl_accounts').update({is_group:true,allow_posting:false,updated_at:new Date().toISOString()}).eq('id',parent.id);if(r.error)throw r.error;}
+  glAccountAddMode=false;glSelectedAccountId=created.id;glCollapsedNodes.delete(parent.id);toast('تمت إضافة الحساب','ok');await glLoad();
+ }catch(e){toast('تعذر إضافة الحساب: '+(e.message||e),'err');}
 }
+async function glAddChildAccount(){return glShowAddAccountForm();}
 async function glAddRootAccount(){
  if(!glCan('manage'))return;const code=prompt('كود الحساب الرئيسي (12 رقمًا):');if(!code)return;if(!/^\d{12}$/.test(code.trim()))return toast('كود الحساب الرئيسي يجب أن يتكون من 12 رقمًا','err');const name=prompt('اسم الحساب الرئيسي:');if(!name||!name.trim())return;const type=prompt('نوع الحساب: asset / liability / equity / revenue / expense','asset');if(!['asset','liability','equity','revenue','expense'].includes(type))return toast('نوع الحساب غير صحيح','err');try{await glInsert('gl_accounts',{account_code:code.trim(),account_name:name.trim(),account_type:type,normal_balance:['asset','expense'].includes(type)?'debit':'credit',level_no:1,parent_id:null,is_group:true,allow_posting:false,is_active:true,is_system:false});toast('تم إضافة الحساب الرئيسي','ok');await glLoad();}catch(e){toast('تعذر إضافة الحساب: '+(e.message||e),'err');}
 }
@@ -3510,6 +3524,22 @@ async function glDisableAccount(id){
  if(!confirm("سيتم إيقاف الحساب دون حذف تاريخه أو التأثير على القيود السابقة. متابعة؟"))return;
  try{const r=await sb.from("gl_accounts").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",id);if(r.error)throw r.error;toast("تم إيقاف الحساب","ok");await glLoad();}
  catch(e){toast("تعذر إيقاف الحساب: "+(e.message||e),"err");}
+}
+async function glDeleteAccount(id){
+ if(!glCan("manage"))return toast("لا تملك صلاحية إدارة دليل الحسابات","err");
+ const a=glState.accounts.find(x=>x.id===id);if(!a)return;
+ const children=glState.accounts.filter(x=>x.parent_id===id);
+ if(children.length)return toast("لا يمكن حذف الحساب لأنه يحتوي على حسابات فرعية. احذف أو انقل الحسابات التابعة أولاً.","err");
+ try{
+  const usage=await sb.from("gl_entry_lines").select("id",{count:"exact",head:true}).eq("account_id",id);
+  if(usage.error)throw usage.error;
+  if((usage.count||0)>0)return toast("لا يمكن حذف الحساب لارتباطه بقيود محاسبية. احتفظ به أو أوقفه بدلاً من الحذف.","err");
+  if(!confirm(`تأكيد حذف الحساب ${a.account_code} — ${a.account_name} نهائيًا؟`))return;
+  const r=await sb.from("gl_accounts").delete().eq("id",id).select("id");
+  if(r.error)throw r.error;
+  if(!r.data||!r.data.length)throw new Error("لم يتم حذف الحساب؛ راجع صلاحيات المستخدم وسياسات قاعدة البيانات.");
+  glSelectedAccountId=null;toast("تم حذف الحساب","ok");await glLoad();
+ }catch(e){toast("تعذر حذف الحساب: "+(e.message||e),"err");}
 }
 async function glAddCenter(){if(!glCan("manage"))return;const code=prompt("كود مركز التكلفة:");if(!code)return;const name=prompt("اسم مركز التكلفة:");if(!name)return;const dim=Number(prompt("البُعد: 1 أو 2","1"));if(![1,2].includes(dim))return toast("البعد يجب أن يكون 1 أو 2","err");try{await glInsert("gl_cost_centers",{dimension_no:dim,center_code:code.trim(),center_name:name.trim(),level_no:1,is_group:false,is_active:true,status:"active"});toast("تم إضافة مركز التكلفة","ok");await glLoad();}catch(e){toast("تعذر إضافة المركز: "+(e.message||e),"err");}}
 async function glAddJournal(){if(!glCan("manage"))return;const code=prompt("كود اليومية:");if(!code)return;const name=prompt("اسم اليومية:");if(!name)return;try{await glInsert("gl_journals",{journal_code:code.trim(),journal_name:name.trim(),is_active:true});toast("تمت إضافة اليومية","ok");await glLoad();}catch(e){toast("تعذر إضافة اليومية: "+(e.message||e),"err");}}
