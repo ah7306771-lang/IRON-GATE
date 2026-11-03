@@ -3464,13 +3464,8 @@ const GL_INDICATORS_DEF = [
   {k:"revenue_root",   label:"حساب الإيرادات الرئيسي",       desc:"الأب الرئيسي لكل حسابات الإيرادات (المبيعات، إيرادات أخرى...)", icon:"💰", color:"#16a34a"},
   {k:"expense_root",   label:"حساب المصروفات الرئيسي",       desc:"الأب الرئيسي لكل حسابات المصروفات (مرتبات، إيجار، كهرباء...)",   icon:"💸", color:"#dc2626"},
   {k:"pnl_account",    label:"حساب الأرباح والخسائر",       desc:"يُستخدم عند الإقفال السنوي لتحويل صافي الدخل",                 icon:"⚖",  color:"#d97706"},
-  {k:"retained_earnings", label:"حساب الأرباح المحتجزة",     desc:"المكان اللي يتجمع فيه صافي الأرباح من سنوات سابقة",             icon:"🏦", color:"#1e40af"},
-  {k:"ar_root",        label:"حساب الذمم المدينة (العملاء)", desc:"الأب الرئيسي لحسابات العملاء الفرعية",                           icon:"🧑‍💼",color:"#0891b2"},
-  {k:"ap_root",        label:"حساب الذمم الدائنة (الموردين)",desc:"الأب الرئيسي لحسابات الموردين الفرعية",                          icon:"🏭", color:"#be185d"},
-  {k:"cash_root",      label:"حساب الخزائن النقدية",         desc:"الأب الرئيسي لكل الخزائن",                                        icon:"💵", color:"#059669"},
-  {k:"bank_root",      label:"حساب البنوك",                 desc:"الأب الرئيسي لكل حسابات البنوك",                                  icon:"🏦", color:"#1e40af"},
-  {k:"vat_output",     label:"ضريبة القيمة المضافة — مخرجات", desc:"ضريبة المبيعات المستحقة",                                        icon:"📊", color:"#8b5cf6"},
-  {k:"vat_input",      label:"ضريبة القيمة المضافة — مدخلات", desc:"ضريبة المشتريات القابلة للخصم",                                  icon:"📊", color:"#8b5cf6"}
+  {k:"trading_pnl",    label:"حساب الأرباح التجارية والصناعية", desc:"حساب واحد يُستخدم للمبيعات والمشتريات معًا لإظهار هامش الربح", icon:"📈", color:"#059669"},
+  {k:"vat_account",    label:"ضريبة القيمة المضافة",         desc:"حساب موحّد لضريبة القيمة المضافة — يُستخدم للمبيعات والمشتريات معًا", icon:"📊", color:"#8b5cf6"}
 ];
 function glLoadIndicators(){
   try{ return JSON.parse(localStorage.getItem(GL_IND_KEY)||"{}"); }catch(e){ return {}; }
@@ -3898,7 +3893,7 @@ function glOpenEntryForm(){
   <div class="gl-entry-field"><label>نوع / يومية القيد *</label><select id="glEntryJournal">${journalOpts}</select></div>
   <div class="gl-entry-field"><label>رقم المستند</label><input id="glEntryDocNo" placeholder="رقم المستند"></div>
   
-  <div class="gl-entry-field" style="grid-column:span 2"><label>البيان الرئيسي *</label><input id="glEntryDescription" placeholder="اكتب بيان القيد"></div>
+  <div class="gl-entry-field" style="grid-column:span 2"><label>البيان الرئيسي</label><input id="glEntryDescription" placeholder="اختياري — اكتب بيان القيد"></div>
   <div class="gl-entry-field"><label>العملة</label><input value="الجنيه المصري (EGP)" disabled></div>
  </div>
  <div class="gl-entry-table-wrap"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><b style="color:#92400e;font-size:14px">📝 تفاصيل القيد المحاسبي</b><button type="button" class="btn" onclick="glEntryAddRow()" style="background:#d4a017;color:#1a1a1a;font-weight:800">＋ إضافة سطر</button></div>
@@ -3922,15 +3917,17 @@ function glPrintEntryForm(){
 }
 async function glSaveEntryForm(){
  const dateEl=document.getElementById('glEntryDate');let date=String(dateEl?.value||dateEl?.getAttribute('value')||'').trim();if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){const fallback=String(dateEl?.defaultValue||'').trim();date=/^\d{4}-\d{2}-\d{2}$/.test(fallback)?fallback:glDate();if(dateEl)dateEl.value=date;}const docDate=date,desc=document.getElementById('glEntryDescription')?.value.trim(),journalId=document.getElementById('glEntryJournal')?.value,docNo=document.getElementById('glEntryDocNo')?.value.trim();
- if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!desc||!journalId)return toast('أدخل تاريخ القيد واليومية والبيان الرئيسي','err');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return toast('تاريخ القيد غير صالح — راجع حقل التاريخ','err');
+ if(!journalId)return toast('اختر يومية القيد','err');
  let freshYears,freshPeriods;try{const [yrRes,perRes]=await Promise.all([sb.from('gl_fiscal_years').select('*').eq('status','open').lte('start_date',date).gte('end_date',date),sb.from('gl_periods').select('*').eq('status','open').lte('start_date',date).gte('end_date',date)]);if(yrRes.error)throw yrRes.error;if(perRes.error)throw perRes.error;freshYears=yrRes.data||[];freshPeriods=perRes.data||[];}catch(err){return toast('تعذر التحقق من السنة والفترة: '+(err.message||err),'err');}
  const y=freshYears[0];if(!y)return toast('لا توجد سنة مالية مفتوحة تغطي تاريخ '+date,'err');const period=freshPeriods.find(x=>x.fiscal_year_id===y.id);if(!period)return toast('لا توجد فترة مفتوحة تغطي التاريخ داخل السنة المالية '+y.year_code,'err');
  const trs=[...document.querySelectorAll('#glEntryLinesBody tr.gl-e-main')],lines=[];let totalD=0,totalC=0;
- for(let i=0;i<trs.length;i++){const tr=trs[i],accountId=tr.querySelector('.gl-e-account').value,debit=Number(tr.querySelector('.gl-e-debit').value||0),credit=Number(tr.querySelector('.gl-e-credit').value||0);if(!accountId&&!debit&&!credit)continue;if(!accountId)return toast('اختر الحساب في السطر '+(i+1),'err');if(debit<0||credit<0||((debit>0)===(credit>0)))return toast('كل سطر يجب أن يحتوي مبلغًا في المدين أو الدائن فقط — السطر '+(i+1),'err');if(!glState.accounts.some(a=>a.id===accountId&&glIsPostingLeafAccount(a)))return toast('الحساب المختار ليس حسابًا نهائيًا نشطًا وقابلًا للترحيل','err');totalD+=Math.round(debit*100);totalC+=Math.round(credit*100);lines.push({line_no:lines.length+1,account_id:accountId,description:tr.querySelector('.gl-e-desc')?.value.trim()||null,debit,credit,cost_center_id:tr.querySelector('.gl-e-center').value||null});}
+ for(let i=0;i<trs.length;i++){const tr=trs[i],accountId=tr.querySelector('.gl-e-account').value,debit=Number(tr.querySelector('.gl-e-debit').value||0),credit=Number(tr.querySelector('.gl-e-credit').value||0);if(!accountId&&!debit&&!credit)continue;if(!accountId)return toast('اختر الحساب في السطر '+(i+1),'err');if(debit<0||credit<0||((debit>0)===(credit>0)))return toast('كل سطر يجب أن يحتوي مبلغًا في المدين أو الدائن فقط — السطر '+(i+1),'err');if(!glState.accounts.some(a=>a.id===accountId&&glIsPostingLeafAccount(a)))return toast('الحساب المختار ليس حسابًا نهائيًا نشطًا وقابلًا للترحيل','err');totalD+=Math.round(debit*100);totalC+=Math.round(credit*100);const lineDesc=tr.querySelector('.gl-e-desc')?.value.trim()||null;const ccId=tr.querySelector('.gl-e-center')?.value||null;const ccName=ccId?(glState.centers.find(c=>c.id===ccId)?.center_name||""):"";const combinedDesc=ccName?((lineDesc?lineDesc+" — ":"")+"[مركز: "+ccName+"]"):lineDesc;lines.push({line_no:lines.length+1,account_id:accountId,description:combinedDesc,debit,credit});}
  if(lines.length<2)return toast('القيد يحتاج سطرين على الأقل','err');if(lines.length>50)return toast('الحد الأقصى 50 سطرًا','err');if(totalD!==totalC)return toast('القيد غير متوازن: إجمالي المدين '+glNum(totalD/100)+' وإجمالي الدائن '+glNum(totalC/100),'err');
  const btn=document.querySelector('#modalBackdrop button[onclick="glSaveEntryForm()"]');if(btn){btn.disabled=true;btn.textContent='جارٍ الحفظ…';}
  // رقم المستند بيتخزن في البيان لأن عمود reference_no مش موجود في الـschema الحالي
- const finalDesc = docNo ? `${desc} — [مستند: ${docNo}]` : desc;
+ const baseDesc = desc || "قيد بدون بيان";
+ const finalDesc = docNo ? `${baseDesc} — [مستند: ${docNo}]` : baseDesc;
  let entry=null;try{entry=await glInsert('gl_entries',{journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:finalDesc,status:'draft',currency_code:'EGP',exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});const lr=await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;toast('✓ تم حفظ القيد كمسودة بنجاح','ok');closeModal();await glLoad();}catch(e){if(entry){const cleanup=await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft');if(cleanup.error)console.warn('GL draft cleanup failed',cleanup.error);}if(btn){btn.disabled=false;btn.textContent='حفظ كمسودة';}toast('تعذر حفظ القيد: '+(e.message||e),'err');}
 }
 async function glAddEntry(){glOpenEntryForm();}
