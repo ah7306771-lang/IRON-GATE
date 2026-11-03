@@ -4081,14 +4081,75 @@ async function glUnpost(id){
    }
    toast(`✓ تم فك ترحيل القيد ${e.entry_no||''} — عاد كمسودة في تبويب القيود اليومية`,"ok");
    await glLoad();
- }catch(err){
-   // رسالة احترافية لو فيه خطأ RLS أو صلاحية
-   const msg = String(err.message||err||"");
-   const friendly = /policy|rls|permission|row.?level/i.test(msg)
-     ? "تعذر فك الترحيل: صلاحيات قاعدة البيانات (RLS) لا تسمح بتعديل القيود المرحّلة. يحتاج الإدمن إلى إضافة سياسة UPDATE لحالة posted→draft على جدول gl_entries، أو إنشاء دالة gl_unpost_entry_authorized."
-     : "تعذر فك الترحيل: "+msg;
-   await askConfirm(friendly,{title:"⚠ فشل فك الترحيل",ok:"حسنًا",cancel:"إغلاق",danger:true});
+}catch(err){
+   // اعرض نافذة فيها السكربت جاهز للنسخ
+   glShowUnpostSqlHelp(String(err.message||err||""));
  }
+}
+function glShowUnpostSqlHelp(errMsg){
+  const sql = `CREATE OR REPLACE FUNCTION public.gl_unpost_entry_authorized(p_entry_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_entry record; v_source text;
+BEGIN
+  SELECT * INTO v_entry FROM gl_entries WHERE id = p_entry_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'القيد غير موجود'; END IF;
+  IF v_entry.status <> 'posted' THEN RAISE EXCEPTION 'القيد ليس مُرحّلًا'; END IF;
+  SELECT COALESCE(source_system, source_module, 'الحسابات العامة')
+    INTO v_source FROM gl_posting_sources WHERE entry_id = p_entry_id LIMIT 1;
+  IF v_source IS NOT NULL AND v_source <> 'الحسابات العامة' THEN
+    RAISE EXCEPTION 'لا يمكن فك ترحيل قيد مصدره %', v_source;
+  END IF;
+  UPDATE gl_entries SET status = 'draft', updated_at = now() WHERE id = p_entry_id;
+  BEGIN
+    INSERT INTO gl_audit_log(table_name, record_id, action, old_data, new_data, performed_by, performed_at)
+    VALUES ('gl_entries', p_entry_id, 'unpost',
+            jsonb_build_object('status','posted'),
+            jsonb_build_object('status','draft'),
+            auth.uid()::text, now());
+  EXCEPTION WHEN undefined_table OR undefined_column THEN NULL; END;
+END; $$;
+GRANT EXECUTE ON FUNCTION public.gl_unpost_entry_authorized(uuid) TO authenticated, anon;`;
+  const body = `
+    <div style="padding:4px 0">
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:14px;color:#991b1b;font-weight:700;font-size:13px;line-height:1.7">
+        ⚠ لم يتم فك الترحيل. السبب: Supabase بيرفض الـUPDATE بسبب RLS، أو دالة <code dir="ltr" style="background:#fff;padding:2px 6px;border-radius:4px">gl_unpost_entry_authorized</code> مش موجودة.
+        ${errMsg?`<div style="margin-top:8px;color:#6b7280;font-size:11px;font-weight:400">تفاصيل الخطأ: ${glEsc(errMsg)}</div>`:''}
+      </div>
+      <div style="background:#fffbea;border:1px solid #e8d7ad;border-radius:8px;padding:14px;margin-bottom:12px">
+        <b style="color:#92400e;font-size:14px">✅ الحل في 30 ثانية:</b>
+        <ol style="margin:10px 0 0;padding-right:22px;line-height:1.9;color:#1a1a1a;font-weight:600">
+          <li>افتح <b>Supabase</b> → <b>SQL Editor</b> → <b>New query</b></li>
+          <li>اضغط زرار <b>"📋 نسخ السكربت"</b> تحت ثم الصق في المحرر</li>
+          <li>اضغط <b>Run</b> في Supabase</li>
+          <li>ارجع هنا واضغط <b>"↶ إلغاء ترحيل"</b> تاني — هيشتغل فورًا</li>
+        </ol>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn primary" onclick="glCopyUnpostSql()" style="background:#d4a017;color:#1a1a1a;font-weight:800">📋 نسخ السكربت</button>
+        <button class="btn" onclick="window.open('https://supabase.com/dashboard/project/_/sql/new','_blank')">🔗 فتح Supabase SQL Editor</button>
+      </div>
+      <details style="margin-top:10px"><summary style="cursor:pointer;color:#92400e;font-weight:700;padding:6px 0">عرض السكربت الكامل</summary>
+      <pre id="glUnpostSqlBox" dir="ltr" style="background:#1a1a1a;color:#fef3c7;padding:14px;border-radius:8px;font-size:11px;line-height:1.6;overflow:auto;max-height:300px;margin-top:8px;white-space:pre-wrap;word-break:break-word">${glEsc(sql)}</pre>
+      </details>
+    </div>`;
+  window.__glUnpostSqlToCopy = sql;
+  openModal("⚠ خطوة إعداد لمرة واحدة — فك الترحيل", body, ()=>true);
+  const bd=document.getElementById('modalBackdrop'); if(bd){const foot=bd.querySelector('.mfoot');if(foot){foot.innerHTML=`<button class="btn" onclick="closeModal()">إغلاق</button>`;}}
+}
+function glCopyUnpostSql(){
+  const sql = window.__glUnpostSqlToCopy || "";
+  if(!sql) return toast("السكربت غير متاح","err");
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(sql).then(
+      ()=>toast("✓ تم نسخ السكربت — الصقه في Supabase SQL Editor","ok"),
+      ()=>_glCopyFallback(sql)
+    );
+  } else { _glCopyFallback(sql); }
+}
+function _glCopyFallback(sql){
+  const ta=document.createElement('textarea');ta.value=sql;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');toast("✓ تم نسخ السكربت","ok");}catch(e){toast("انسخ يدويًا من المربع الأسود","err");}
+  document.body.removeChild(ta);
 }
 async function glEditEntryOldPrompt_UNUSED(id){
  if(!glCan("edit"))return;
