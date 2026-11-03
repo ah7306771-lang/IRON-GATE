@@ -3449,7 +3449,7 @@ const GL_TABLES_V1=["gl_settings","gl_account_levels","gl_fiscal_years","gl_peri
 let glState={tab:"entries",loading:false,accounts:[],centers:[],years:[],periods:[],journals:[],entries:[],lines:[],settings:null,error:""};
 const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-const glDate=()=>new Date().toISOString().slice(0,10);
+const glDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const glCan=a=>can("gl",a);
 const glTabs=[ ["entries","القيود اليومية"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"] ];
 function viewGL(){return `<section class="card" style="padding:18px;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0 0 5px">المحاسبة العامة</h2><div class="muted">دفتر أستاذ مستقل — المسودات لا تدخل التقارير إلا بعد الترحيل</div></div><button class="btn" onclick="glLoad()">تحديث البيانات</button></div><div class="muted" style="margin-top:8px">صلاحياتك: ${["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة الإعدادات",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط"}</div></section><section class="card" style="padding:14px"><div class="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${glTabs.map(([k,n])=>`<button class="tab ${glState.tab===k?'active':''}" onclick="glSetTab('${k}')">${n}</button>`).join("")}</div><div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'اضغط تحديث البيانات لعرض السجلات.'}</div></section>`;}
@@ -3457,18 +3457,122 @@ function glSetTab(t){glState.tab=t;const c=document.getElementById("content");if
 async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
 function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():glRenderEntries();}
 function glTable(head,rows){return `<div style="overflow:auto"><table class="table" style="width:100%"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${head.length}" class="muted">لا توجد بيانات</td></tr>`}</tbody></table></div>`;}
-function glRenderAccounts(){const rows=glState.accounts.map(a=>`<tr><td dir="ltr">${glEsc(a.account_code)}</td><td>${glEsc(a.account_name)}</td><td>${glEsc(a.account_type)}</td><td>${a.level_no}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddAccount()">إضافة حساب</button>`:""}<p class="muted">عدد الحسابات: ${glState.accounts.length}. الحساب التجميعي لا يقبل الترحيل المباشر.</p>${glTable(["الكود","اسم الحساب","النوع","المستوى","التصنيف","الحالة"],rows)}`;}
+function glRenderAccounts(){
+ const byParent=new Map();glState.accounts.forEach(a=>{const k=a.parent_id||"__root";if(!byParent.has(k))byParent.set(k,[]);byParent.get(k).push(a);});
+ const renderNode=(a)=>{const kids=byParent.get(a.id)||[];const actions=glCan("manage")?`<span style="float:left;display:flex;gap:4px"><button class="btn sm" onclick="glEditAccount('${a.id}')">تعديل</button>${a.is_active?`<button class="btn sm danger" onclick="glDisableAccount('${a.id}')">إيقاف</button>`:""}</span>`:"";return `<li style="margin:5px 0"><div style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);margin-right:${Math.max(0,(a.level_no-1)*15)}px"><span style="display:inline-block;min-width:22px;color:var(--text-dim)">${kids.length?`<button class="btn sm" onclick="const n=this.parentElement.parentElement.nextElementSibling;n.hidden=!n.hidden;this.textContent=n.hidden?'＋':'－'">－</button>`:'　'}</span><b dir="ltr">${glEsc(a.account_code)}</b> — ${glEsc(a.account_name)} <small class="muted">(${a.is_group?'تجميعي':'تفصيلي'} · ${a.is_active?'نشط':'موقوف'} · مستوى ${a.level_no})</small>${actions}</div>${kids.length?`<ul style="list-style:none;padding-right:20px;margin:4px 0">${kids.map(renderNode).join("")}</ul>`:""}</li>`;};
+ const roots=byParent.get("__root")||[];return `${glCan("manage")?`<button class="btn primary" onclick="glAddAccount()">إضافة حساب</button>`:""}<p class="muted">عدد الحسابات: ${glState.accounts.length}. اضغط ＋ أو － لفتح وإغلاق الفروع. الحساب التجميعي لا يقبل الترحيل المباشر.</p><ul style="list-style:none;padding:0">${roots.map(renderNode).join("")||'<li class="muted">لا توجد حسابات. شغّل سكربت استيراد الدليل أولاً.</li>'}</ul>`;
+}
 function glRenderCenters(){const rows=glState.centers.map(a=>`<tr><td>${a.dimension_no}</td><td dir="ltr">${glEsc(a.center_code)}</td><td>${glEsc(a.center_name)}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddCenter()">إضافة مركز تكلفة</button>`:""}${glTable(["البُعد","الكود","الاسم","التصنيف","الحالة"],rows)}`;}
 function glRenderYears(){const yr=glState.years.map(y=>`<tr><td>${glEsc(y.year_code)}</td><td>${glEsc(y.year_name)}</td><td>${y.start_date}</td><td>${y.end_date}</td><td>${glEsc(y.status)}</td></tr>`).join("");const pr=glState.periods.map(p=>`<tr><td>${glEsc((glState.years.find(y=>y.id===p.fiscal_year_id)||{}).year_code||"")}</td><td>${p.period_no}</td><td>${glEsc(p.period_name)}</td><td>${p.start_date}</td><td>${p.end_date}</td><td>${glEsc(p.status)}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddYear()">إضافة سنة مالية</button> <button class="btn" onclick="glAddPeriod()">إضافة فترة</button>`:""}<h3>السنوات المالية</h3>${glTable(["الكود","الاسم","من","إلى","الحالة"],yr)}<h3 style="margin-top:18px">الفترات</h3>${glTable(["السنة","رقم","اسم الفترة","من","إلى","الحالة"],pr)}`;}
 function glRenderJournals(){const rows=glState.journals.map(j=>`<tr><td dir="ltr">${glEsc(j.journal_code)}</td><td>${glEsc(j.journal_name)}</td><td>${glEsc(j.description)}</td><td>${j.is_active?"نشطة":"موقوفة"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddJournal()">إضافة يومية</button>`:""}${glTable(["الكود","اسم اليومية","الوصف","الحالة"],rows)}`;}
-function glRenderEntries(){const rows=glState.entries.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);return `<tr><td dir="ltr">${glEsc(e.entry_no||e.id.slice(0,8))}</td><td>${e.entry_date}</td><td>${glEsc(e.description)}</td><td>${glEsc(e.status)}</td><td>${glNum(e.total_debit||ls.reduce((s,x)=>s+Number(x.debit||0),0))}</td><td>${glNum(e.total_credit||ls.reduce((s,x)=>s+Number(x.credit||0),0))}</td><td>${e.status==="draft"&&glCan("post")?`<button class="btn primary" onclick="glPost('${e.id}')">ترحيل</button>`:""}</td></tr>`;}).join("");return `${glCan("add")?`<button class="btn primary" onclick="glAddEntry()">قيد يومية جديد</button>`:""}<p class="muted">المسودات قابلة للتعديل؛ القيد المُرحّل لا يُعدّل ويُصحح بقيد عكسي.</p>${glTable(["رقم القيد","التاريخ","البيان","الحالة","مدين","دائن","إجراء"],rows)}`;}
+function glRenderEntries(){const rows=glState.entries.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);return `<tr><td dir="ltr">${glEsc(e.entry_no||e.id.slice(0,8))}</td><td>${e.entry_date}</td><td>${glEsc(e.description)}</td><td>${glEsc(e.status)}</td><td>${glNum(e.total_debit||ls.reduce((s,x)=>s+Number(x.debit||0),0))}</td><td>${glNum(e.total_credit||ls.reduce((s,x)=>s+Number(x.credit||0),0))}</td><td><button class="btn" onclick="glShowLines('${e.id}')">تفاصيل</button> ${((e.status==="draft"&&glCan("edit")&&glCan("add"))||(e.status==="posted"&&glCan("edit")&&glCan("post")))?`<button class="btn" onclick="glEditEntry('${e.id}')">${e.status==="posted"?"تعديل وإعادة ترحيل":"تعديل المسودة"}</button>`:""} ${e.status==="draft"&&glCan("post")?`<button class="btn primary" onclick="glPost('${e.id}')">ترحيل</button>`:""}</td></tr>`;}).join("");return `${glCan("add")?`<button class="btn primary" onclick="glAddEntry()">قيد يومية جديد</button>`:""}<p class="muted">يمكن إنشاء قيد من سطرين أو أكثر. لا يدخل القيد في التقارير إلا بعد الترحيل، والقيد المُرحّل لا يُعدّل.</p>${glTable(["رقم القيد","التاريخ","البيان","الحالة","مدين","دائن","إجراء"],rows)}<div id="glEntryDetails" style="margin-top:12px"></div>`;}
+function glShowLines(id){const e=glState.entries.find(x=>x.id===id);if(!e)return;const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);const rows=ls.map(l=>{const a=glState.accounts.find(x=>x.id===l.account_id)||{};return `<tr><td>${l.line_no}</td><td dir="ltr">${glEsc(a.account_code||"")}</td><td>${glEsc(a.account_name||"")}</td><td>${glEsc(l.description||"")}</td><td>${glNum(l.debit)}</td><td>${glNum(l.credit)}</td></tr>`}).join("");const el=document.getElementById("glEntryDetails");if(el)el.innerHTML=`<section class="card"><h3>تفاصيل القيد ${glEsc(e.entry_no||e.id.slice(0,8))}</h3>${glTable(["م","كود الحساب","اسم الحساب","البيان","مدين","دائن"],rows)}<div style="margin-top:10px"><button class="btn" onclick="glShowAudit('gl_entries','${e.id}')">سجل تعديلات القيد</button></div><div id="glAuditDetails"></div></section>`;}
+async function glShowAudit(tableName,recordId){const box=document.getElementById("glAuditDetails");if(!box)return;box.textContent="جاري تحميل سجل المراجعة…";try{const r=await sb.from("gl_audit_log").select("*").eq("table_name",tableName).eq("record_id",recordId).order("performed_at",{ascending:false});if(r.error)throw r.error;const rows=(r.data||[]).map(a=>`<tr><td>${glEsc(a.action)}</td><td>${glEsc(a.performed_by||"—")}</td><td>${glEsc(new Date(a.performed_at).toLocaleString("ar-EG"))}</td><td><details><summary>عرض الفرق</summary><pre style="white-space:pre-wrap;max-width:650px;direction:ltr;text-align:left">${glEsc(JSON.stringify({before:a.old_data,after:a.new_data},null,2))}</pre></details></td></tr>`).join("");box.innerHTML=`<h4>سجل المراجعة</h4>${glTable(["العملية","معرّف المستخدم","التوقيت","التفاصيل"],rows)}`;}catch(err){box.textContent="تعذر تحميل سجل المراجعة: "+(err.message||err);}}
 async function glInsert(table,obj){const r=await sb.from(table).insert(obj).select("*").single();if(r.error)throw r.error;return r.data;}
-async function glAddAccount(){if(!glCan("manage"))return toast("لا تملك صلاحية إدارة دليل الحسابات","err");const code=prompt("كود الحساب:");if(!code)return;const name=prompt("اسم الحساب:");if(!name)return;const type=prompt("نوع الحساب: asset / liability / equity / revenue / expense","asset");if(!["asset","liability","equity","revenue","expense"].includes(type))return toast("نوع الحساب غير صحيح","err");const level=Number(prompt("مستوى الحساب من 1 إلى 6","1"));if(!Number.isInteger(level)||level<1||level>6)return toast("مستوى الحساب غير صحيح","err");const group=confirm("هل الحساب تجميعي؟ اضغط موافق للتجميعي أو إلغاء للتفصيلي");const parent=level>1?prompt("أدخل UUID للحساب الأب:"):null;if(level>1&&!parent)return toast("الحساب الفرعي يحتاج الحساب الأب","err");try{await glInsert("gl_accounts",{account_code:code.trim(),account_name:name.trim(),account_type:type,normal_balance:["asset","expense"].includes(type)?"debit":"credit",level_no:level,parent_id:parent||null,is_group:group,allow_posting:!group,is_active:true});toast("تم إضافة الحساب","ok");await glLoad();}catch(e){toast("تعذر إضافة الحساب: "+(e.message||e),"err");}}
+async function glAddAccount(){
+ if(!glCan("manage"))return toast("لا تملك صلاحية إدارة دليل الحسابات","err");
+ const code=prompt("كود الحساب:");if(!code)return;const name=prompt("اسم الحساب:");if(!name)return;
+ const type=prompt("نوع الحساب: asset / liability / equity / revenue / expense","asset");if(!["asset","liability","equity","revenue","expense"].includes(type))return toast("نوع الحساب غير صحيح","err");
+ const parentCode=prompt("كود الحساب الأب (اتركه فارغًا للحساب الرئيسي):","");let parent=null,level=1;
+ if(parentCode&&parentCode.trim()){parent=glState.accounts.find(x=>x.account_code===parentCode.trim());if(!parent)return toast("كود الحساب الأب غير موجود","err");level=Number(parent.level_no)+1;if(level>6)return toast("تجاوزت الحد الأقصى لمستويات الحسابات","err");}
+ const group=confirm("هل الحساب تجميعي؟ موافق = تجميعي، إلغاء = تفصيلي");
+ try{await glInsert("gl_accounts",{account_code:code.trim(),account_name:name.trim(),account_type:type,normal_balance:["asset","expense"].includes(type)?"debit":"credit",level_no:level,parent_id:parent?.id||null,is_group:group,allow_posting:!group,is_active:true,is_system:false});if(parent){await sb.from("gl_accounts").update({is_group:true,allow_posting:false}).eq("id",parent.id);}toast("تم إضافة الحساب","ok");await glLoad();}
+ catch(e){toast("تعذر إضافة الحساب: "+(e.message||e),"err");}
+}
+async function glEditAccount(id){
+ if(!glCan("manage"))return;const a=glState.accounts.find(x=>x.id===id);if(!a)return;
+ const name=prompt("اسم الحساب:",a.account_name);if(name===null||!name.trim())return;
+ const type=prompt("نوع الحساب: asset / liability / equity / revenue / expense",a.account_type);if(!["asset","liability","equity","revenue","expense"].includes(type))return toast("نوع الحساب غير صحيح","err");
+ const code=prompt("كود الحساب:",a.account_code);if(code===null||!code.trim())return;
+ try{const r=await sb.from("gl_accounts").update({account_code:code.trim(),account_name:name.trim(),account_type:type,normal_balance:["asset","expense"].includes(type)?"debit":"credit",updated_at:new Date().toISOString()}).eq("id",id);if(r.error)throw r.error;toast("تم تعديل الحساب","ok");await glLoad();}
+ catch(e){toast("تعذر تعديل الحساب: "+(e.message||e),"err");}
+}
+async function glDisableAccount(id){
+ if(!glCan("manage"))return;const a=glState.accounts.find(x=>x.id===id);if(!a)return;
+ if(!confirm("سيتم إيقاف الحساب دون حذف تاريخه أو التأثير على القيود السابقة. متابعة؟"))return;
+ try{const r=await sb.from("gl_accounts").update({is_active:false,updated_at:new Date().toISOString()}).eq("id",id);if(r.error)throw r.error;toast("تم إيقاف الحساب","ok");await glLoad();}
+ catch(e){toast("تعذر إيقاف الحساب: "+(e.message||e),"err");}
+}
 async function glAddCenter(){if(!glCan("manage"))return;const code=prompt("كود مركز التكلفة:");if(!code)return;const name=prompt("اسم مركز التكلفة:");if(!name)return;const dim=Number(prompt("البُعد: 1 أو 2","1"));if(![1,2].includes(dim))return toast("البعد يجب أن يكون 1 أو 2","err");try{await glInsert("gl_cost_centers",{dimension_no:dim,center_code:code.trim(),center_name:name.trim(),level_no:1,is_group:false,is_active:true,status:"active"});toast("تم إضافة مركز التكلفة","ok");await glLoad();}catch(e){toast("تعذر إضافة المركز: "+(e.message||e),"err");}}
 async function glAddJournal(){if(!glCan("manage"))return;const code=prompt("كود اليومية:");if(!code)return;const name=prompt("اسم اليومية:");if(!name)return;try{await glInsert("gl_journals",{journal_code:code.trim(),journal_name:name.trim(),is_active:true});toast("تمت إضافة اليومية","ok");await glLoad();}catch(e){toast("تعذر إضافة اليومية: "+(e.message||e),"err");}}
 async function glAddYear(){if(!glCan("manage"))return;const code=prompt("كود السنة المالية:");if(!code)return;const name=prompt("اسم السنة المالية:");if(!name)return;const from=prompt("تاريخ البداية YYYY-MM-DD:",new Date().getFullYear()+"-01-01");const to=prompt("تاريخ النهاية YYYY-MM-DD:",new Date().getFullYear()+"-12-31");if(!from||!to||from>to)return toast("تواريخ السنة غير صحيحة","err");try{await glInsert("gl_fiscal_years",{year_code:code.trim(),year_name:name.trim(),start_date:from,end_date:to,status:"open"});toast("تم إنشاء السنة المالية","ok");await glLoad();}catch(e){toast("تعذر إنشاء السنة: "+(e.message||e),"err");}}
 async function glAddPeriod(){if(!glCan("manage"))return;const y=glState.years.find(x=>x.status==="open");if(!y)return toast("أنشئ سنة مالية مفتوحة أولاً","err");const no=Number(prompt("رقم الفترة من 1 إلى 13:","1"));if(!Number.isInteger(no)||no<1||no>13)return toast("رقم الفترة غير صحيح","err");const name=prompt("اسم الفترة:","الفترة "+no);if(!name)return;const from=prompt("تاريخ البداية YYYY-MM-DD:",y.start_date);const to=prompt("تاريخ النهاية YYYY-MM-DD:",y.end_date);if(!from||!to||from>to||from<y.start_date||to>y.end_date)return toast("تواريخ الفترة يجب أن تقع داخل السنة المالية","err");try{await glInsert("gl_periods",{fiscal_year_id:y.id,period_no:no,period_name:name,start_date:from,end_date:to,status:"open"});toast("تم إنشاء الفترة","ok");await glLoad();}catch(e){toast("تعذر إنشاء الفترة: "+(e.message||e),"err");}}
-async function glAddEntry(){if(!glCan("add"))return;const activeJ=glState.journals.filter(x=>x.is_active);const activeY=glState.years.filter(x=>x.status==="open");if(!activeJ.length||!activeY.length||!glState.accounts.some(x=>x.is_active&&!x.is_group&&x.allow_posting))return toast("يلزم إعداد يومية وسنة مالية وحسابات تفصيلية قابلة للترحيل أولاً","err");const date=prompt("تاريخ القيد YYYY-MM-DD:",glDate());if(!date)return;const y=activeY.find(x=>date>=x.start_date&&date<=x.end_date);if(!y)return toast("التاريخ خارج السنوات المالية المفتوحة","err");const ps=glState.periods.filter(x=>x.fiscal_year_id===y.id&&x.status==="open"&&date>=x.start_date&&date<=x.end_date);if(!ps.length)return toast("لا توجد فترة مفتوحة تغطي تاريخ القيد","err");const j=activeJ[0];const period=ps[0];const desc=prompt("بيان القيد:");if(!desc)return;const lines=[];for(let i=1;i<=2;i++){const ac=glState.accounts.filter(x=>x.is_active&&!x.is_group&&x.allow_posting);const code=prompt(`كود حساب السطر ${i}:\n`+ac.map(x=>x.account_code+" — "+x.account_name).join("\n"));if(!code)return;const account=ac.find(x=>x.account_code===code.trim());if(!account)return toast("كود الحساب غير موجود أو غير قابل للترحيل","err");const amount=Number(prompt("المبلغ:","0"));if(!Number.isFinite(amount)||amount<=0)return toast("المبلغ يجب أن يكون أكبر من صفر","err");const side=prompt("الجانب: D للمدين أو C للدائن",i===1?"D":"C");if(!["D","C","d","c"].includes(side||""))return toast("حدد D أو C","err");lines.push({line_no:i,account_id:account.id,debit:["D","d"].includes(side)?amount:0,credit:["C","c"].includes(side)?amount:0});}if(lines[0].debit+lines[1].debit!==lines[0].credit+lines[1].credit)return toast("القيد غير متوازن؛ لم يتم الحفظ","err");try{const entry=await glInsert("gl_entries",{journal_id:j.id,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:date,description:desc,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:lines.reduce((n,x)=>n+x.debit,0),total_credit:lines.reduce((n,x)=>n+x.credit,0)});const lr=await sb.from("gl_entry_lines").insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error){await sb.from("gl_entries").delete().eq("id",entry.id);throw lr.error;}toast("تم حفظ القيد كمسودة","ok");await glLoad();}catch(e){toast("تعذر حفظ القيد: "+(e.message||e),"err");}}
+function glIsPostingLeafAccount(a){
+ if(!a||!a.is_active||a.is_group||!a.allow_posting)return false;
+ return !glState.accounts.some(child=>child.is_active&&child.parent_id===a.id);
+}
+function glPostingLeafAccounts(){return glState.accounts.filter(glIsPostingLeafAccount).sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),"en",{numeric:true}));}
+async function glAddEntry(){
+ if(!glCan("add"))return toast("لا تملك صلاحية إضافة القيود","err");
+ const activeJ=glState.journals.filter(x=>x.is_active),activeY=glState.years.filter(x=>x.status==="open"),accounts=glPostingLeafAccounts();
+ if(!activeJ.length||!activeY.length||!accounts.length)return toast("يلزم إعداد يومية وسنة مالية وحسابات نهائية (آخر مستوى) قابلة للترحيل أولاً","err");
+ const dateRaw=prompt("تاريخ القيد YYYY-MM-DD:",glDate());if(!dateRaw)return;const date=String(dateRaw).trim();
+ if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(date))return toast("صيغة التاريخ غير صحيحة. استخدم YYYY-MM-DD","err");
+ let freshYears,freshPeriods;try{const [yrRes,perRes]=await Promise.all([sb.from("gl_fiscal_years").select("*").eq("status","open").lte("start_date",date).gte("end_date",date),sb.from("gl_periods").select("*").eq("status","open").lte("start_date",date).gte("end_date",date)]);if(yrRes.error)throw yrRes.error;if(perRes.error)throw perRes.error;freshYears=yrRes.data||[];freshPeriods=perRes.data||[];}catch(err){return toast("تعذر التحقق من السنة والفترة: "+(err.message||err),"err");}
+ const y=freshYears[0];if(!y)return toast("لا توجد سنة مالية مفتوحة تغطي تاريخ "+date,"err");
+ const ps=freshPeriods.filter(x=>x.fiscal_year_id===y.id);if(!ps.length)return toast("لا توجد فترة مفتوحة تغطي تاريخ "+date+" داخل السنة المالية "+y.year_code,"err");
+ let j=activeJ[0];if(activeJ.length>1){const choice=prompt("اختر كود اليومية:\n"+activeJ.map(x=>x.journal_code+" — "+x.journal_name).join("\n"),j.journal_code);if(!choice)return;j=activeJ.find(x=>x.journal_code===choice.trim());if(!j)return toast("كود اليومية غير صحيح","err");}
+ const desc=prompt("بيان القيد:");if(!desc)return;
+ const lines=[];let totalD=0,totalC=0;
+ for(let i=1;i<=50;i++){
+  const code=prompt(`كود حساب السطر ${i} (اتركه فارغًا لإنهاء الإدخال بعد سطرين على الأقل):\n`+accounts.map(x=>x.account_code+" — "+x.account_name).join("\n"));
+  if(!code){if(i<=2)return toast("القيد يحتاج سطرين على الأقل","err");break;}
+  const account=accounts.find(x=>x.account_code===code.trim());if(!account)return toast("الحساب غير موجود أو ليس حسابًا نهائيًا (آخر مستوى) قابلًا للترحيل","err");
+  const amount=Number(prompt(`مبلغ السطر ${i}:`,"0"));if(!Number.isFinite(amount)||amount<=0)return toast("المبلغ يجب أن يكون أكبر من صفر","err");
+  const side=prompt(`الجانب للسطر ${i}: D للمدين أو C للدائن`,i===1?"D":"C");if(!["D","C","d","c"].includes(side||""))return toast("حدد D أو C","err");
+  const debit=["D","d"].includes(side)?amount:0,credit=debit?0:amount;totalD+=Math.round(debit*100);totalC+=Math.round(credit*100);
+  lines.push({line_no:i,account_id:account.id,description:"",debit,credit});
+  if(i===50)toast("تم الوصول للحد الأقصى 50 سطرًا","info");
+ }
+ if(totalD!==totalC)return toast(`القيد غير متوازن: المدين ${glNum(totalD/100)} والدائن ${glNum(totalC/100)}. لم يتم الحفظ.`,"err");
+ let entry=null;
+ try{
+  entry=await glInsert("gl_entries",{journal_id:j.id,fiscal_year_id:y.id,period_id:ps[0].id,entry_date:date,document_date:date,description:desc.trim(),status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});
+  const lr=await sb.from("gl_entry_lines").insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;
+  toast("تم حفظ القيد كمسودة — راجع التفاصيل ثم رحّله","ok");await glLoad();
+ }catch(e){
+  if(entry){const cleanup=await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft");if(cleanup.error)console.warn("GL draft cleanup failed",cleanup.error);}
+  toast("تعذر حفظ القيد: "+(e.message||e),"err");
+ }
+}
+async function glEditEntry(id){
+ if(!glCan("edit"))return toast("لا تملك صلاحية تعديل القيود","err");
+ const e=glState.entries.find(x=>x.id===id);if(!e||!["draft","posted"].includes(e.status))return toast("الحالة الحالية لا تسمح بالتعديل","err");
+ const wasPosted=e.status==="posted";if(wasPosted&&!glCan("post"))return toast("تعديل القيد المُرحّل وإعادة ترحيله يحتاجان صلاحية الترحيل أيضًا","err");if(!wasPosted&&!glCan("add"))return toast("تعديل المسودة يحتاج صلاحية الإضافة","err");
+ const oldLines=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);
+ const journals=glState.journals.filter(x=>x.is_active),accounts=glPostingLeafAccounts();
+ const date=prompt("تاريخ القيد YYYY-MM-DD:",e.entry_date);if(!date)return;
+ const y=glState.years.find(x=>x.status==="open"&&date>=x.start_date&&date<=x.end_date);if(!y)return toast("التاريخ خارج السنوات المالية المفتوحة","err");
+ const periods=glState.periods.filter(x=>x.fiscal_year_id===y.id&&x.status==="open"&&date>=x.start_date&&date<=x.end_date);if(!periods.length)return toast("لا توجد فترة مفتوحة تغطي التاريخ","err");
+ let j=journals.find(x=>x.id===e.journal_id)||journals[0];
+ if(journals.length>1){const choice=prompt("كود اليومية:\n"+journals.map(x=>x.journal_code+" — "+x.journal_name).join("\n"),j.journal_code);if(!choice)return;j=journals.find(x=>x.journal_code===choice.trim());if(!j)return toast("كود اليومية غير صحيح","err");}
+ const desc=prompt("بيان القيد:",e.description||"");if(!desc)return;
+ const lines=[];let totalD=0,totalC=0;
+ for(let i=1;i<=50;i++){
+  const prev=oldLines[i-1],prevAccount=prev&&glState.accounts.find(a=>a.id===prev.account_id);
+  const code=prompt(`كود حساب السطر ${i} (اتركه فارغًا لإنهاء الإدخال بعد سطرين):\n`+accounts.map(x=>x.account_code+" — "+x.account_name).join("\n"),prevAccount?prevAccount.account_code:"");
+  if(!code){if(i<=2)return toast("القيد يحتاج سطرين على الأقل","err");break;}
+  const account=accounts.find(x=>x.account_code===code.trim());if(!account)return toast("الحساب غير موجود أو ليس حسابًا نهائيًا (آخر مستوى) قابلًا للترحيل","err");
+  const amount=Number(prompt(`مبلغ السطر ${i}:`,String(Number(prev&&(prev.debit||prev.credit))||0)));if(!Number.isFinite(amount)||amount<=0)return toast("المبلغ يجب أن يكون أكبر من صفر","err");
+  const oldSide=prev&&Number(prev.debit)>0?"D":"C",side=prompt(`الجانب للسطر ${i}: D للمدين أو C للدائن`,oldSide);if(!["D","C","d","c"].includes(side||""))return toast("حدد D أو C","err");
+  const debit=["D","d"].includes(side)?amount:0,credit=debit?0:amount;totalD+=Math.round(debit*100);totalC+=Math.round(credit*100);
+  lines.push({line_no:i,account_id:account.id,description:prev&&prev.description||"",debit,credit,old_id:prev&&prev.id});
+ }
+ if(totalD!==totalC)return toast(`القيد غير متوازن: المدين ${glNum(totalD/100)} والدائن ${glNum(totalC/100)}. لم يتم تعديل المسودة.`,"err");
+ if(!confirm(wasPosted?"سيتم تسجيل التعديلات في سجل التدقيق ثم إعادة ترحيل القيد فورًا. هل تريد المتابعة؟":"تأكيد حفظ تعديلات المسودة؟ لن يتم ترحيلها تلقائيًا."))return;
+ try{
+  if(wasPosted){
+   const payload=lines.map(l=>({account_id:l.account_id,description:l.description||null,debit:l.debit,credit:l.credit}));
+   const rr=await sb.rpc("gl_edit_and_repost_entry",{p_entry_id:id,p_entry_date:date,p_document_date:date,p_description:desc.trim(),p_journal_id:j.id,p_lines:payload});
+   if(rr.error)throw rr.error;toast("تم تعديل القيد وإعادة ترحيله، وتم حفظ سجل المراجعة","ok");await glLoad();glShowLines(id);return;
+  }
+  const hu=await sb.from("gl_entries").update({journal_id:j.id,fiscal_year_id:y.id,period_id:periods[0].id,entry_date:date,document_date:date,description:desc.trim(),total_debit:totalD/100,total_credit:totalC/100}).eq("id",id).eq("status","draft");if(hu.error)throw hu.error;
+  const keep=new Set(lines.filter(x=>x.old_id).map(x=>x.old_id));
+  for(const l of lines){const payload={line_no:l.line_no,account_id:l.account_id,description:l.description,debit:l.debit,credit:l.credit};let r=l.old_id?await sb.from("gl_entry_lines").update(payload).eq("id",l.old_id).eq("entry_id",id):await sb.from("gl_entry_lines").insert({...payload,entry_id:id});if(r.error)throw r.error;}
+  const remove=oldLines.filter(x=>!keep.has(x.id));if(remove.length){const dr=await sb.from("gl_entry_lines").delete().in("id",remove.map(x=>x.id)).eq("entry_id",id);if(dr.error)throw dr.error;}
+  toast("تم تحديث المسودة بنجاح — راجعها ثم رحّلها عند التأكد","ok");await glLoad();glShowLines(id);
+ }catch(err){toast("تعذر استكمال تعديل المسودة: "+(err.message||err)+". راجع تفاصيلها قبل إعادة المحاولة.","err");await glLoad();}
+}
 async function glPost(id){if(!glCan("post"))return toast("لا تملك صلاحية الترحيل","err");if(!confirm("تأكيد ترحيل القيد؟ بعد الترحيل لن يمكن تعديله."))return;try{const r=await sb.rpc("gl_post_entry_authorized",{p_entry_id:id});if(r.error)throw r.error;toast("تم ترحيل القيد بنجاح","ok");await glLoad();}catch(e){toast("فشل الترحيل: "+(e.message||e),"err");}}
 
 // ================= نظام العهد والخزن — بيانات مستقلة على Supabase =================
@@ -10042,8 +10146,13 @@ function openTxForm(direction, existing){
         audit("tx_add",`إنشاء دفعة تلقائية #${payment.no} للمورد "${targetSupplierVal}" مرتبطة بتحصيل #${d.no} بقيمة ${fmt(d.amount)}`);
       }
     }
-    saveState(); renderTreasury(direction);
-    const msg = (!existing && isTransferSupplier) ? `✓ تم الحفظ بنجاح · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"✓ تم الحفظ بنجاح — تم تعديل السجل":"✓ تم الحفظ بنجاح — تمت الإضافة");
+    saveState();
+    // حدّث نفس الشاشة التي بدأ منها المستخدم: التسويات أو التحصيلات/المدفوعات.
+    if(document.getElementById("adjView")) renderAdjustments(direction);
+    else renderTreasury(direction);
+    const msg = isAdj
+      ? "تم الحفظ بنجاح"
+      : ((!existing && isTransferSupplier) ? `✓ تم الحفظ بنجاح · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"✓ تم الحفظ بنجاح — تم تعديل السجل":"✓ تم الحفظ بنجاح — تمت الإضافة"));
     toast(msg,"ok");
     return true;
   });
@@ -10885,25 +10994,29 @@ function salesInstallmentsExport(format){
   }});
   Object.defineProperty(D,"loginLastPricesBtn",{configurable:true,enumerable:true,get(){
     try{
-      // Build the notice from the same shipment rows and supplyAmounts used by
-      // the "grouped by sales order" supply tab. One row per sales order.
+      // صف واحد لكل أمر بيع، مع عرض كل أسعار الشراء والبيع المختلفة
+      // الموجودة داخل الأمر، مع إزالة التكرار وفصل الأسعار بعلامة /.
       const groups=new Map();
       (state.shipments||[]).forEach(s=>{
         const orderNo=String(s.saleOrderNo||state.saleOrders.find(o=>String(o.id)===String(s.saleOrderId))?.orderNo||"").trim();
         if(!orderNo) return;
         const key=s.saleOrderId?"so:"+s.saleOrderId:"no:"+txOrderKey(orderNo);
-        if(!groups.has(key)) groups.set(key,{orderNo,customer:String(s.customer||state.saleOrders.find(o=>String(o.id)===String(s.saleOrderId))?.customer||"—").trim(),date:s.date||"",weight:0,buy:0,sell:0,method:"—"});
+        if(!groups.has(key)) groups.set(key,{orderNo,customer:String(s.customer||state.saleOrders.find(o=>String(o.id)===String(s.saleOrderId))?.customer||"—").trim(),date:s.date||"",weight:0,buy:0,sell:0,buyPrices:new Set(),sellPrices:new Set(),method:"—"});
         const g=groups.get(key);
         if(s.date&&(!g.date||s.date>g.date)) g.date=s.date;
         (s.items||[]).forEach(it=>{
           const a=supplyAmounts(s,it), w=+it.actualWeight||0;
+          const bp=Number(it.buyPrice), sp=Number(it.sellPrice);
           g.weight+=w; g.buy+=+a.buyTotal||0; g.sell+=+a.total||0;
+          if(Number.isFinite(bp)) g.buyPrices.add(bp);
+          if(Number.isFinite(sp)) g.sellPrices.add(sp);
         });
         const plan=supGroupedPaymentInfo([{s, it:(s.items||[])[0]||{}}],orderNo);
         g.method=plan?.method||plan?.label||s.terms?.method||g.method;
       });
+      const priceList=set=>[...set].sort((a,b)=>a-b).map(v=>fmt(v,2)).join(" / ")||"—";
       return [...groups.values()].sort((a,b)=>String(b.date).localeCompare(String(a.date))||String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true})).map(g=>[
-        g.orderNo,g.customer,fmt(g.weight,3),fmt(g.weight?g.buy/g.weight:0),fmt(g.weight?g.sell/g.weight:0),fmt(g.buy),fmt(g.sell),g.method||"—",g.date||""
+        g.orderNo,g.customer,fmt(g.weight,3),priceList(g.buyPrices),priceList(g.sellPrices),fmt(g.buy),fmt(g.sell),g.method||"—",g.date||""
       ]);
     }catch(e){return [];}
   }});
