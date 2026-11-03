@@ -2911,10 +2911,11 @@ const SCREENS = [
   ]},
   { id:"payments",  label:"المدفوعات",         icon:"↑",  acts:["add","edit","delete","print"] },
   { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
-  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] }
+  { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
+  { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage","print"] }
 ];
-const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", close:"إقفال/فتح", print:"طباعة/PDF" };
-const ACT_COLS = ["view","add","edit","delete","post","close","print"];
+const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", reverse:"عكس قيد", manage:"إدارة الإعدادات", close:"إقفال/فتح", print:"طباعة/PDF" };
+const ACT_COLS = ["view","add","edit","delete","post","reverse","manage","close","print"];
 
 function permsBlank(on){
   const p = { screens:{}, hide:{}, sys:{ backup:!!on } };
@@ -2937,7 +2938,7 @@ const ROLE_PRESETS = {
   accountant:{ label:"محاسب", desc:"الخزينة كاملة + مشاهدة التوريد والبوالص بكل الأسعار", build(){
     const p=permsBlank(false);
     ["dashboard","master","shipments","supply"].forEach(s=>permsGrant(p,s));
-    permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderReport",["print"]); permsGrant(p,"salesInstallments",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); return p; } },
+    permsGrant(p,"salesReport",["print"]); permsGrant(p,"orderReport",["print"]); permsGrant(p,"salesInstallments",["print"]); permsGrant(p,"clientStatement",["print"]); permsGrant(p,"purchaseReport",["print"]); permsGrant(p,"supplierStatement",["print"]); permsGrant(p,"clientTB",["edit","print"]); permsGrant(p,"supplierTB",["edit","print"]); permsGrant(p,"saleOrder",["print"]); permsGrant(p,"quote"); permsGrant(p,"quoteList"); permsGrant(p,"receipts",["*"]); permsGrant(p,"payments",["*"]); permsGrant(p,"gl",["add","edit"]); return p; } },
   sales:{ label:"مبيعات", desc:"أمر البيع كامل + إدخال البوالص — سعر الشراء مخفي", build(){
     const p=permsBlank(false);
     ["dashboard","master","supply"].forEach(s=>permsGrant(p,s));
@@ -3283,6 +3284,9 @@ const navGroups = [
   { id:"custody", icon:"💼", label:"نظام العهد", items:[
     { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
     { id:"custodyReport", icon:"🧾", label:"تقرير العهد" }
+  ]},
+  { id:"gl", icon:"⚖", label:"المحاسبة العامة", items:[
+    { id:"gl", icon:"📚", label:"الحسابات العامة" }
   ]}
 ];
 
@@ -3395,7 +3399,8 @@ function go(page){
     settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
     users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"],
     custodyLedger:["العهد والخزن","إدارة أكواد العهد وأصحابها وحركات الوارد والمنصرف"],
-    custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"]
+    custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"],
+    gl:["المحاسبة العامة","دليل الحسابات، مراكز التكلفة، السنوات والفترات، والقيود اليومية"]
   };
   const t = titles[page] || ["",""];
   document.getElementById("pageTitle").textContent = t[0];
@@ -3423,6 +3428,7 @@ function go(page){
   else if(page==="settlement"){ c.innerHTML = viewSettlement(); renderSettlement(); }
   else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
+  else if(page==="gl"){ c.innerHTML=viewGL(); glLoad(); }
   else if(page==="custodyLedger"||page==="custodyReport"){
     c.innerHTML='<div class="empty"><div class="ic">💼</div><h3>جاري تحميل بيانات العهد…</h3></div>';
     custodyLoad().then(()=>{
@@ -3437,6 +3443,33 @@ function go(page){
   else c.innerHTML = viewSoon();
 }
 
+
+// ================= المحاسبة العامة GL — واجهة تشغيل أولية =================
+const GL_TABLES_V1=["gl_settings","gl_account_levels","gl_fiscal_years","gl_periods","gl_accounts","gl_cost_centers","gl_journals","gl_entries","gl_entry_lines","gl_posting_sources","gl_audit_log"];
+let glState={tab:"entries",loading:false,accounts:[],centers:[],years:[],periods:[],journals:[],entries:[],lines:[],settings:null,error:""};
+const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const glDate=()=>new Date().toISOString().slice(0,10);
+const glCan=a=>can("gl",a);
+const glTabs=[ ["entries","القيود اليومية"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"] ];
+function viewGL(){return `<section class="card" style="padding:18px;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0 0 5px">المحاسبة العامة</h2><div class="muted">دفتر أستاذ مستقل — المسودات لا تدخل التقارير إلا بعد الترحيل</div></div><button class="btn" onclick="glLoad()">تحديث البيانات</button></div><div class="muted" style="margin-top:8px">صلاحياتك: ${["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة الإعدادات",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط"}</div></section><section class="card" style="padding:14px"><div class="tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${glTabs.map(([k,n])=>`<button class="tab ${glState.tab===k?'active':''}" onclick="glSetTab('${k}')">${n}</button>`).join("")}</div><div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'اضغط تحديث البيانات لعرض السجلات.'}</div></section>`;}
+function glSetTab(t){glState.tab=t;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
+async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
+function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():glRenderEntries();}
+function glTable(head,rows){return `<div style="overflow:auto"><table class="table" style="width:100%"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${head.length}" class="muted">لا توجد بيانات</td></tr>`}</tbody></table></div>`;}
+function glRenderAccounts(){const rows=glState.accounts.map(a=>`<tr><td dir="ltr">${glEsc(a.account_code)}</td><td>${glEsc(a.account_name)}</td><td>${glEsc(a.account_type)}</td><td>${a.level_no}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddAccount()">إضافة حساب</button>`:""}<p class="muted">عدد الحسابات: ${glState.accounts.length}. الحساب التجميعي لا يقبل الترحيل المباشر.</p>${glTable(["الكود","اسم الحساب","النوع","المستوى","التصنيف","الحالة"],rows)}`;}
+function glRenderCenters(){const rows=glState.centers.map(a=>`<tr><td>${a.dimension_no}</td><td dir="ltr">${glEsc(a.center_code)}</td><td>${glEsc(a.center_name)}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddCenter()">إضافة مركز تكلفة</button>`:""}${glTable(["البُعد","الكود","الاسم","التصنيف","الحالة"],rows)}`;}
+function glRenderYears(){const yr=glState.years.map(y=>`<tr><td>${glEsc(y.year_code)}</td><td>${glEsc(y.year_name)}</td><td>${y.start_date}</td><td>${y.end_date}</td><td>${glEsc(y.status)}</td></tr>`).join("");const pr=glState.periods.map(p=>`<tr><td>${glEsc((glState.years.find(y=>y.id===p.fiscal_year_id)||{}).year_code||"")}</td><td>${p.period_no}</td><td>${glEsc(p.period_name)}</td><td>${p.start_date}</td><td>${p.end_date}</td><td>${glEsc(p.status)}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddYear()">إضافة سنة مالية</button> <button class="btn" onclick="glAddPeriod()">إضافة فترة</button>`:""}<h3>السنوات المالية</h3>${glTable(["الكود","الاسم","من","إلى","الحالة"],yr)}<h3 style="margin-top:18px">الفترات</h3>${glTable(["السنة","رقم","اسم الفترة","من","إلى","الحالة"],pr)}`;}
+function glRenderJournals(){const rows=glState.journals.map(j=>`<tr><td dir="ltr">${glEsc(j.journal_code)}</td><td>${glEsc(j.journal_name)}</td><td>${glEsc(j.description)}</td><td>${j.is_active?"نشطة":"موقوفة"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddJournal()">إضافة يومية</button>`:""}${glTable(["الكود","اسم اليومية","الوصف","الحالة"],rows)}`;}
+function glRenderEntries(){const rows=glState.entries.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);return `<tr><td dir="ltr">${glEsc(e.entry_no||e.id.slice(0,8))}</td><td>${e.entry_date}</td><td>${glEsc(e.description)}</td><td>${glEsc(e.status)}</td><td>${glNum(e.total_debit||ls.reduce((s,x)=>s+Number(x.debit||0),0))}</td><td>${glNum(e.total_credit||ls.reduce((s,x)=>s+Number(x.credit||0),0))}</td><td>${e.status==="draft"&&glCan("post")?`<button class="btn primary" onclick="glPost('${e.id}')">ترحيل</button>`:""}</td></tr>`;}).join("");return `${glCan("add")?`<button class="btn primary" onclick="glAddEntry()">قيد يومية جديد</button>`:""}<p class="muted">المسودات قابلة للتعديل؛ القيد المُرحّل لا يُعدّل ويُصحح بقيد عكسي.</p>${glTable(["رقم القيد","التاريخ","البيان","الحالة","مدين","دائن","إجراء"],rows)}`;}
+async function glInsert(table,obj){const r=await sb.from(table).insert(obj).select("*").single();if(r.error)throw r.error;return r.data;}
+async function glAddAccount(){if(!glCan("manage"))return toast("لا تملك صلاحية إدارة دليل الحسابات","err");const code=prompt("كود الحساب:");if(!code)return;const name=prompt("اسم الحساب:");if(!name)return;const type=prompt("نوع الحساب: asset / liability / equity / revenue / expense","asset");if(!["asset","liability","equity","revenue","expense"].includes(type))return toast("نوع الحساب غير صحيح","err");const level=Number(prompt("مستوى الحساب من 1 إلى 6","1"));if(!Number.isInteger(level)||level<1||level>6)return toast("مستوى الحساب غير صحيح","err");const group=confirm("هل الحساب تجميعي؟ اضغط موافق للتجميعي أو إلغاء للتفصيلي");const parent=level>1?prompt("أدخل UUID للحساب الأب:"):null;if(level>1&&!parent)return toast("الحساب الفرعي يحتاج الحساب الأب","err");try{await glInsert("gl_accounts",{account_code:code.trim(),account_name:name.trim(),account_type:type,normal_balance:["asset","expense"].includes(type)?"debit":"credit",level_no:level,parent_id:parent||null,is_group:group,allow_posting:!group,is_active:true});toast("تم إضافة الحساب","ok");await glLoad();}catch(e){toast("تعذر إضافة الحساب: "+(e.message||e),"err");}}
+async function glAddCenter(){if(!glCan("manage"))return;const code=prompt("كود مركز التكلفة:");if(!code)return;const name=prompt("اسم مركز التكلفة:");if(!name)return;const dim=Number(prompt("البُعد: 1 أو 2","1"));if(![1,2].includes(dim))return toast("البعد يجب أن يكون 1 أو 2","err");try{await glInsert("gl_cost_centers",{dimension_no:dim,center_code:code.trim(),center_name:name.trim(),level_no:1,is_group:false,is_active:true,status:"active"});toast("تم إضافة مركز التكلفة","ok");await glLoad();}catch(e){toast("تعذر إضافة المركز: "+(e.message||e),"err");}}
+async function glAddJournal(){if(!glCan("manage"))return;const code=prompt("كود اليومية:");if(!code)return;const name=prompt("اسم اليومية:");if(!name)return;try{await glInsert("gl_journals",{journal_code:code.trim(),journal_name:name.trim(),is_active:true});toast("تمت إضافة اليومية","ok");await glLoad();}catch(e){toast("تعذر إضافة اليومية: "+(e.message||e),"err");}}
+async function glAddYear(){if(!glCan("manage"))return;const code=prompt("كود السنة المالية:");if(!code)return;const name=prompt("اسم السنة المالية:");if(!name)return;const from=prompt("تاريخ البداية YYYY-MM-DD:",new Date().getFullYear()+"-01-01");const to=prompt("تاريخ النهاية YYYY-MM-DD:",new Date().getFullYear()+"-12-31");if(!from||!to||from>to)return toast("تواريخ السنة غير صحيحة","err");try{await glInsert("gl_fiscal_years",{year_code:code.trim(),year_name:name.trim(),start_date:from,end_date:to,status:"open"});toast("تم إنشاء السنة المالية","ok");await glLoad();}catch(e){toast("تعذر إنشاء السنة: "+(e.message||e),"err");}}
+async function glAddPeriod(){if(!glCan("manage"))return;const y=glState.years.find(x=>x.status==="open");if(!y)return toast("أنشئ سنة مالية مفتوحة أولاً","err");const no=Number(prompt("رقم الفترة من 1 إلى 13:","1"));if(!Number.isInteger(no)||no<1||no>13)return toast("رقم الفترة غير صحيح","err");const name=prompt("اسم الفترة:","الفترة "+no);if(!name)return;const from=prompt("تاريخ البداية YYYY-MM-DD:",y.start_date);const to=prompt("تاريخ النهاية YYYY-MM-DD:",y.end_date);if(!from||!to||from>to||from<y.start_date||to>y.end_date)return toast("تواريخ الفترة يجب أن تقع داخل السنة المالية","err");try{await glInsert("gl_periods",{fiscal_year_id:y.id,period_no:no,period_name:name,start_date:from,end_date:to,status:"open"});toast("تم إنشاء الفترة","ok");await glLoad();}catch(e){toast("تعذر إنشاء الفترة: "+(e.message||e),"err");}}
+async function glAddEntry(){if(!glCan("add"))return;const activeJ=glState.journals.filter(x=>x.is_active);const activeY=glState.years.filter(x=>x.status==="open");if(!activeJ.length||!activeY.length||!glState.accounts.some(x=>x.is_active&&!x.is_group&&x.allow_posting))return toast("يلزم إعداد يومية وسنة مالية وحسابات تفصيلية قابلة للترحيل أولاً","err");const date=prompt("تاريخ القيد YYYY-MM-DD:",glDate());if(!date)return;const y=activeY.find(x=>date>=x.start_date&&date<=x.end_date);if(!y)return toast("التاريخ خارج السنوات المالية المفتوحة","err");const ps=glState.periods.filter(x=>x.fiscal_year_id===y.id&&x.status==="open"&&date>=x.start_date&&date<=x.end_date);if(!ps.length)return toast("لا توجد فترة مفتوحة تغطي تاريخ القيد","err");const j=activeJ[0];const period=ps[0];const desc=prompt("بيان القيد:");if(!desc)return;const lines=[];for(let i=1;i<=2;i++){const ac=glState.accounts.filter(x=>x.is_active&&!x.is_group&&x.allow_posting);const code=prompt(`كود حساب السطر ${i}:\n`+ac.map(x=>x.account_code+" — "+x.account_name).join("\n"));if(!code)return;const account=ac.find(x=>x.account_code===code.trim());if(!account)return toast("كود الحساب غير موجود أو غير قابل للترحيل","err");const amount=Number(prompt("المبلغ:","0"));if(!Number.isFinite(amount)||amount<=0)return toast("المبلغ يجب أن يكون أكبر من صفر","err");const side=prompt("الجانب: D للمدين أو C للدائن",i===1?"D":"C");if(!["D","C","d","c"].includes(side||""))return toast("حدد D أو C","err");lines.push({line_no:i,account_id:account.id,debit:["D","d"].includes(side)?amount:0,credit:["C","c"].includes(side)?amount:0});}if(lines[0].debit+lines[1].debit!==lines[0].credit+lines[1].credit)return toast("القيد غير متوازن؛ لم يتم الحفظ","err");try{const entry=await glInsert("gl_entries",{journal_id:j.id,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:date,description:desc,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:lines.reduce((n,x)=>n+x.debit,0),total_credit:lines.reduce((n,x)=>n+x.credit,0)});const lr=await sb.from("gl_entry_lines").insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error){await sb.from("gl_entries").delete().eq("id",entry.id);throw lr.error;}toast("تم حفظ القيد كمسودة","ok");await glLoad();}catch(e){toast("تعذر حفظ القيد: "+(e.message||e),"err");}}
+async function glPost(id){if(!glCan("post"))return toast("لا تملك صلاحية الترحيل","err");if(!confirm("تأكيد ترحيل القيد؟ بعد الترحيل لن يمكن تعديله."))return;try{const r=await sb.rpc("gl_post_entry_authorized",{p_entry_id:id});if(r.error)throw r.error;toast("تم ترحيل القيد بنجاح","ok");await glLoad();}catch(e){toast("فشل الترحيل: "+(e.message||e),"err");}}
 
 // ================= نظام العهد والخزن — بيانات مستقلة على Supabase =================
 // كل خزنة لها كود عهدة فريد وصاحب عهدة؛ لا نعتمد على اسم مستخدم/موظف كمفتاح.
@@ -5480,9 +5513,9 @@ function viewShipments(){
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   ${pendingPanel()}
-  <div class="card ig-pol-head" style="margin-top:16px"><div class="head"><h3>بيانات الأمر</h3></div><div class="body">
+  <div class="card ig-pol-head" style="margin-top:16px"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
     <div class="fgrid">
-      ${F("🔑 رقم أمر البيع (أساسي)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div>`)}
+      ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
       ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
       ${F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
@@ -5526,7 +5559,7 @@ function viewShipments(){
     <p style="margin-top:10px;color:var(--text-dim);font-size:12px">أسعار الشراء والبيع المدخلة شاملة الضريبة. يتم استخراج الضريبة من سعر البيع دون إضافتها مرة أخرى، ويُخصم 1% من البيع قبل الضريبة للعملاء المحددين فقط من إعدادات العملاء.</p>
   </div></details>
 
-  <div class="card ig-pay-card ig-terms-card" style="margin-top:16px"><div class="head"><div><h3>شروط السداد</h3><small class="ig-section-hint">الشروط المسجلة على أمر البيع</small></div></div><div class="body">
+  <div class="card ig-pay-card ig-terms-card" style="margin-top:16px"><div class="head"><div><h3>شروط السداد</h3><small class="ig-section-hint">اختيارية — ويمكن استكمالها لاحقًا</small></div></div><div class="body">
     <div class="ig-terms-grid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct??0}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
       ${F("عدد الأقساط",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.installments}" id="t_installments" oninput="setT('installments',this.value)">`)}
@@ -5861,7 +5894,7 @@ function soNoExists(no){ return soNoSet().has(soKey(no)); }
 function soNoSelectOptions(cur){
   const set=soNoSet(), c=String(cur||"").trim();
   const list=[...set.values()].sort((x,y)=>x.localeCompare(y,undefined,{numeric:true}));
-  let h='<option value="">— اختر أمر البيع —</option>';
+  let h='<option value="">بدون أمر بيع — إدخال مباشر</option>';
   if(c&&!set.has(soKey(c))) h+=`<option value="${escapeAttr(c)}" selected>${escapeHtml(c)} (غير مسجّل)</option>`;
   return h+list.map(v=>`<option value="${escapeAttr(v)}"${c&&soKey(v)===soKey(c)?" selected":""}>${escapeHtml(v)}</option>`).join("");
 }
@@ -5876,6 +5909,9 @@ function setSoNo(v){
     draft.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; draft.termsEdited=false;
     ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.value=draft.terms[k]==null?"":draft.terms[k]; });
     if(Array.isArray(ot.paymentSchedule)) draft.paySchedule={orderNo:draft.saleOrderNo,rows:JSON.parse(JSON.stringify(ot.paymentSchedule))};
+  } else if(!draft.saleOrderNo){
+    draft.terms={cashPct:0,installments:0,periodDays:0}; draft.paySchedule=null; draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
+    ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.value=0; });
   }
   refreshTotals();
 }
@@ -5896,7 +5932,7 @@ function renderSoFullCard(t){
   const box=document.getElementById("soFullBox"), tag=document.getElementById("soFullTag"); if(!box) return;
   t=t||draftTotals();
   const no=String(draft.saleOrderNo||"").trim();
-  if(!no){ if(tag) tag.textContent=""; box.innerHTML='<p style="color:var(--warn);font-size:13px">اكتب أو اختر رقم أمر البيع — هو المفتاح الأساسي للبوليصة وعليه السداد.</p>'; return; }
+  if(!no){ if(tag) tag.textContent="إدخال مباشر"; box.innerHTML='<p style="color:var(--text-dim);font-size:13px">البوليصة غير مرتبطة بأمر بيع. أدخل الأصناف والكميات والأسعار مباشرة، ويمكن ربطها بأمر بيع لاحقًا عند الحاجة. شروط السداد هنا اختيارية.</p>'; return; }
   if(tag) tag.textContent="أمر بيع "+no;
   const key=soKey(no), so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===key)||null, imp=supImportedPaymentPlan(no);
   if(!so){
@@ -5989,7 +6025,7 @@ function renderPolicyPaySchedule(t){
   if(!showSell("shipments")){ const c=box.closest(".card"); if(c) c.style.display="none"; return; }
   const r=policyPaySchedule(t);
   if(tag) tag.textContent=r.rows.length?r.source:"";
-  if(!r.rows.length){ box.innerHTML='<p style="color:var(--warn);font-size:13px">لا توجد شروط سداد لعرض الاستحقاقات — حدّد شروط السداد (على أمر البيع) أو اختر أمر بيع له خطة سداد.</p>'; return; }
+  if(!r.rows.length){ box.innerHTML=`<p style="color:var(--text-dim);font-size:13px">${draft.saleOrderNo?"لا توجد شروط سداد مسجلة لأمر البيع المختار.":"لا يوجد أمر بيع مرتبط؛ جدول الاستحقاقات اختياري ويمكن استكماله لاحقًا."}</p>`; return; }
   const base=+r.total||r.rows.reduce((a,x)=>a+(+x.amount||0),0), sum=r.rows.reduce((a,x)=>a+(+x.amount||0),0), diff=r2(sum-base);
   const pct=v=>base>0?fmt(v/base*100,2)+"%":"—", ro=viewOnly?"disabled":"";
   box.innerHTML=`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:10px">
@@ -6134,9 +6170,8 @@ function buildRecord(strict){
   const err=m=>{toast(m,"err");return null;};
   if(!p) return err("اكتب رقم البوليصة");
   if(allRecords().some(({r})=>String(r.policyNo)===p&&r.id!==editingId)) return err("رقم البوليصة مكرر");
-  if(!String(d.saleOrderNo||"").trim()){ document.getElementById("f_soNo")?.classList.add("bad"); return err("رقم أمر البيع مطلوب — هو المفتاح الأساسي للبوليصة"); }
-  if(!soNoExists(d.saleOrderNo)){ document.getElementById("f_soNo")?.classList.add("bad"); return err("رقم أمر البيع غير مسجّل — اختره من القائمة أو أنشئ أمرًا جديدًا"); }
-  { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; }
+  if(String(d.saleOrderNo||"").trim()&&!soNoExists(d.saleOrderNo)){ document.getElementById("f_soNo")?.classList.add("bad"); return err("أمر البيع المختار غير موجود — امسح الاختيار لإدخال البوليصة بدون أمر بيع"); }
+  { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; if(!so) d.saleOrderNo=""; }
   if(!d.date) return err("اختر التاريخ");
   if(!d.supplier||!d.customer) return err("اختر المورد والعميل");
   const blank=termsBlank(d.terms);
