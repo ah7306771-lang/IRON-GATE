@@ -3556,8 +3556,8 @@ function viewGL(){
        </section>`
   }`;
 }
-function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go("gl");return;}const c=document.getElementById("content");if(c){c.innerHTML=viewGL();glRender();if(t==="entries"&&glCan("add"))setTimeout(()=>{if(glState.tab==="entries"&&!document.getElementById("modalBackdrop"))glOpenEntryForm();},80);}try{renderNav();}catch(e){}}
-function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();if(t==="entries"&&glCan("add"))setTimeout(()=>{if(glState.tab==="entries"&&!document.getElementById("modalBackdrop"))glOpenEntryForm();},80);}}
+function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go("gl");return;}const c=document.getElementById("content");if(c){c.innerHTML=viewGL();glRender();}try{renderNav();}catch(e){}}
+function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
 function glGoHome(){glState.home=true;const c=document.getElementById("content");if(c&&currentPage==="gl")c.innerHTML=viewGL();}
 async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];const sr=await sb.from("gl_posting_sources").select("*");glState.sources=sr.error?[]:(sr.data||[]);glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
 function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():glRenderEntries();}
@@ -3733,11 +3733,24 @@ function glSearchAccounts(){const q=prompt('ابحث بكود الحساب أو 
 function glRenderCenters(){const rows=glState.centers.map(a=>`<tr><td>${a.dimension_no}</td><td dir="ltr">${glEsc(a.center_code)}</td><td>${glEsc(a.center_name)}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddCenter()">إضافة مركز تكلفة</button>`:""}${glTable(["البُعد","الكود","الاسم","التصنيف","الحالة"],rows)}`;}
 function glRenderYears(){const yr=glState.years.map(y=>`<tr><td>${glEsc(y.year_code)}</td><td>${glEsc(y.year_name)}</td><td>${y.start_date}</td><td>${y.end_date}</td><td>${glEsc(y.status)}</td></tr>`).join("");const pr=glState.periods.map(p=>`<tr><td>${glEsc((glState.years.find(y=>y.id===p.fiscal_year_id)||{}).year_code||"")}</td><td>${p.period_no}</td><td>${glEsc(p.period_name)}</td><td>${p.start_date}</td><td>${p.end_date}</td><td>${glEsc(p.status)}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddYear()">إضافة سنة مالية</button> <button class="btn" onclick="glAddPeriod()">إضافة فترة</button>`:""}<h3>السنوات المالية</h3>${glTable(["الكود","الاسم","من","إلى","الحالة"],yr)}<h3 style="margin-top:18px">الفترات</h3>${glTable(["السنة","رقم","اسم الفترة","من","إلى","الحالة"],pr)}`;}
 function glRenderJournals(){const rows=glState.journals.map(j=>`<tr><td dir="ltr">${glEsc(j.journal_code)}</td><td>${glEsc(j.journal_name)}</td><td>${glEsc(j.description)}</td><td>${j.is_active?"نشطة":"موقوفة"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddJournal()">إضافة يومية</button>`:""}${glTable(["الكود","اسم اليومية","الوصف","الحالة"],rows)}`;}
+// توليد رقم قيد شهري: MMNNNN (مثلاً نوفمبر = 110001, 110002, ...)
+function glNextMonthlyEntryNo(date){
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : glDate();
+  const mm = d.slice(5,7); // "11"
+  const prefix = String(parseInt(mm,10)); // "11" without leading zero so 110001
+  const list = (glState.entries||[]).filter(e=>{
+    const en=String(e.entry_no||"");
+    return en.startsWith(prefix) && en.length===(prefix.length+4) && /^\d+$/.test(en);
+  }).map(e=>parseInt(String(e.entry_no).slice(prefix.length),10)).filter(n=>!isNaN(n));
+  const nextSeq = (list.length?Math.max(...list):0)+1;
+  return prefix + String(nextSeq).padStart(4,"0");
+}
 function glRenderEntries(){
- const ordered=[...glState.entries].sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));
- if(!glSelectedEntryId&&ordered.length)glSelectedEntryId=ordered[ordered.length-1].id;
+ const drafts=glState.entries.filter(e=>e.status==='draft');
+ const ordered=[...drafts].sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));
+ if((!glSelectedEntryId||!ordered.find(e=>e.id===glSelectedEntryId))&&ordered.length)glSelectedEntryId=ordered[ordered.length-1].id;
  const selected=ordered.find(e=>e.id===glSelectedEntryId)||null;
- const rows=ordered.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);const active=e.id===glSelectedEntryId;return `<tr style="${active?'background:rgba(218,170,45,.12)':''}" onclick="glSelectEntryRecord('${e.id}')"><td dir="ltr">${glEsc(e.entry_no||e.id.slice(0,8))}</td><td>${e.entry_date}</td><td>${glEsc(e.description)}</td><td>${glEsc(e.status)}</td><td>${glNum(e.total_debit||ls.reduce((s,x)=>s+Number(x.debit||0),0))}</td><td>${glNum(e.total_credit||ls.reduce((s,x)=>s+Number(x.credit||0),0))}</td><td><button class="btn sm" onclick="event.stopPropagation();glSelectEntryRecord('${e.id}')">عرض</button> ${((e.status==="draft"&&glCan("edit")&&glCan("add"))||(e.status==="posted"&&glCan("edit")&&glCan("post")))?`<button class="btn sm" onclick="event.stopPropagation();glEditEntry('${e.id}')">${e.status==="posted"?"تعديل وإعادة ترحيل":"تعديل المسودة"}</button>`:""} ${e.status==="draft"&&glCan("post")?`<button class="btn primary sm" onclick="event.stopPropagation();glPost('${e.id}')">ترحيل</button>`:""}</td></tr>`;}).join("");
+ const rows=ordered.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);const active=e.id===glSelectedEntryId;return `<tr style="${active?'background:rgba(212,160,23,.12)':''}" onclick="glSelectEntryRecord('${e.id}')"><td dir="ltr"><b>${glEsc(e.entry_no||e.id.slice(0,8))}</b></td><td>${e.entry_date}</td><td>${glEsc(e.description)}</td><td><span style="padding:3px 10px;background:#fef3c7;color:#92400e;border-radius:10px;font-size:11px;font-weight:800">مسودة</span></td><td>${glNum(e.total_debit||ls.reduce((s,x)=>s+Number(x.debit||0),0))}</td><td>${glNum(e.total_credit||ls.reduce((s,x)=>s+Number(x.credit||0),0))}</td><td><button class="btn sm" onclick="event.stopPropagation();glViewEntry('${e.id}')" title="عرض فقط">👁 عرض</button> ${glCan("edit")?`<button class="btn sm" onclick="event.stopPropagation();glEditEntry('${e.id}')" title="تعديل المسودة">✎ تعديل</button>`:""} ${glCan("post")?`<button class="btn primary sm" onclick="event.stopPropagation();glPost('${e.id}')" title="ترحيل القيد">▶ ترحيل</button>`:""} ${glCan("edit")?`<button class="btn sm" onclick="event.stopPropagation();glDeleteDraftEntry('${e.id}')" title="حذف المسودة نهائيًا" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca">🗑 حذف</button>`:""}</td></tr>`;}).join("")||`<tr><td colspan="7" style="padding:30px;text-align:center;color:#9ca3af">لا توجد قيود مسودة. القيود المرحّلة تظهر في تبويب "القيود المُرحّلة".</td></tr>`;
  return `<div class="gl-entry-record-toolbar" style="box-shadow:0 3px 12px rgba(16,43,82,.06);display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)">
  ${glCan("add")?`<button class="btn primary" onclick="glAddEntry()">＋ سجل جديد</button>`:""}
  <div class="gl-record-search" style="display:flex;gap:5px;align-items:center;min-width:min(100%,250px);flex:1"><input id="glEntryQuickSearch" class="input" style="min-width:150px;max-width:260px" type="search" placeholder="بحث برقم القيد أو البيان…" onkeydown="if(event.key==='Enter')glEntrySearchRecord(this.value)"><button class="btn" onclick="glEntrySearchRecord(document.getElementById('glEntryQuickSearch')?.value)">⌕ بحث</button></div>
@@ -3752,7 +3765,20 @@ function glEntryMoveRecord(delta){const list=[...glState.entries].sort((a,b)=>St
 function glEntrySearchRecord(raw){const q=String(raw??document.getElementById('glEntryQuickSearch')?.value??'').trim();if(!q)return toast('اكتب رقم القيد أو جزءًا من البيان للبحث','err');const v=q.toLowerCase();const list=[...glState.entries].sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));const e=list.find(x=>String(x.entry_no||'').toLowerCase().includes(v)||String(x.description||'').toLowerCase().includes(v));if(!e)return toast('لا يوجد قيد مطابق','err');glSelectEntryRecord(e.id);const box=document.getElementById('glEntryQuickSearch');if(box)box.value=q;}
 if(!window.__glEntryHotkeysInstalled){window.__glEntryHotkeysInstalled=true;document.addEventListener('keydown',function(ev){if(currentPage!=='gl'||glState.tab!=='entries')return;const tag=(ev.target&&ev.target.tagName||'').toLowerCase(),typing=['input','textarea','select'].includes(tag)||ev.target?.isContentEditable;if(ev.ctrlKey&&ev.key.toLowerCase()==='n'){if(typing)return;ev.preventDefault();glAddEntry();}else if(ev.ctrlKey&&ev.key.toLowerCase()==='f'){if(typing)return;ev.preventDefault();document.getElementById('glEntryQuickSearch')?.focus();}else if(ev.altKey&&ev.key==='ArrowLeft'){ev.preventDefault();glEntryMoveRecord(-1);}else if(ev.altKey&&ev.key==='ArrowRight'){ev.preventDefault();glEntryMoveRecord(1);}});}
 
-async function glDeleteSelectedEntry(){const e=glState.entries.find(x=>x.id===glSelectedEntryId);if(!e)return toast('اختر القيد أولاً','err');if(e.status!=='draft')return toast('الحذف متاح للمسودات فقط؛ لا يمكن حذف قيد مُرحّل','err');if(!glCan('edit'))return toast('لا تملك صلاحية حذف القيد','err');if(!confirm('تأكيد حذف المسودة رقم '+(e.entry_no||e.id.slice(0,8))+'؟ لا يمكن التراجع عن الحذف.'))return;try{const lr=await sb.from('gl_entry_lines').delete().eq('entry_id',e.id);if(lr.error)throw lr.error;const er=await sb.from('gl_entries').delete().eq('id',e.id).eq('status','draft');if(er.error)throw er.error;glSelectedEntryId=null;toast('تم حذف القيد بنجاح','ok');await glLoad();}catch(err){toast('تعذر حذف القيد: '+(err.message||err),'err');}}
+async function glDeleteDraftEntry(id){
+  if(!glCan('edit'))return toast('لا تملك صلاحية حذف القيد','err');
+  const e=glState.entries.find(x=>x.id===id);if(!e)return toast('القيد غير موجود','err');
+  if(e.status!=='draft')return toast('الحذف متاح للمسودات فقط؛ لا يمكن حذف قيد مُرحّل','err');
+  const totalD=Number(e.total_debit)||0;
+  if(!confirm('تأكيد حذف المسودة رقم '+(e.entry_no||e.id.slice(0,8))+' بقيمة '+glNum(totalD)+'؟\nلا يمكن التراجع عن الحذف.'))return;
+  try{
+    const lr=await sb.from('gl_entry_lines').delete().eq('entry_id',e.id);if(lr.error)throw lr.error;
+    const er=await sb.from('gl_entries').delete().eq('id',e.id).eq('status','draft');if(er.error)throw er.error;
+    if(glSelectedEntryId===id) glSelectedEntryId=null;
+    toast('✓ تم حذف المسودة','ok');await glLoad();
+  }catch(err){toast('تعذر حذف القيد: '+(err.message||err),'err');}
+}
+async function glDeleteSelectedEntry(){ if(!glSelectedEntryId) return toast('اختر القيد أولاً','err'); return glDeleteDraftEntry(glSelectedEntryId); }
 
 function glSourceForEntry(e){return glState.sources.filter(x=>String(x.entry_id||x.gl_entry_id||'')===String(e.id));}
 function glSourceSystem(e){const src=glSourceForEntry(e);const keys=['source_system','source_module','system_name','module_name','source_name','module','source_type','origin','system'];for(const x of src){for(const k of keys){if(x[k]&&String(x[k]).trim())return String(x[k]);}}return e.source_system||e.source_module||e.source_name||e.source_type||'الحسابات العامة';}
@@ -3767,7 +3793,22 @@ function glRenderPostedEntries(){
  <button class="btn" type="button" onclick="glClearPostedFilters()">مسح الفلاتر</button></div>
  <div id="glPostedTable">${glPostedRows(posted)}</div><div id="glPostedDetails" style="margin-top:12px"></div>`;
 }
-function glPostedRows(list){const rows=list.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);const total=Number(e.total_debit)||ls.reduce((s,x)=>s+Number(x.debit||0),0);const sys=glSourceSystem(e);return `<tr><td dir="ltr">${glEsc(e.entry_no||e.id.slice(0,8))}</td><td>${glEsc(e.entry_date||'')}</td><td>${glEsc(e.description||'')}</td><td>${glNum(total)}</td><td>${glEsc(sys)}</td><td style="text-align:center"><button class="btn sm" title="عرض تفاصيل القيد" aria-label="عرض تفاصيل القيد" onclick="glShowPostedDetails('${e.id}')">🔍</button></td></tr>`;}).join('');return glTable(['رقم القيد','التاريخ','البيان','قيمة القيد','النظام المُرحِّل','التفاصيل'],rows);}
+function glPostedRows(list){const rows=list.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);const total=Number(e.total_debit)||ls.reduce((s,x)=>s+Number(x.debit||0),0);const sys=glSourceSystem(e);const canUnpost = sys==='الحسابات العامة' && glCan('post');return `<tr><td dir="ltr"><b>${glEsc(e.entry_no||e.id.slice(0,8))}</b></td><td>${glEsc(e.entry_date||'')}</td><td>${glEsc(e.description||'')}</td><td>${glNum(total)}</td><td><span style="padding:3px 10px;background:#dcfce7;color:#166534;border-radius:10px;font-size:11px;font-weight:800">${glEsc(sys)}</span></td><td style="text-align:center;white-space:nowrap"><button class="btn sm" title="عرض كامل تفاصيل القيد" onclick="glViewEntry('${e.id}')">👁 عرض</button> <button class="btn sm" title="طباعة القيد" onclick="glPrintPostedEntry('${e.id}')">🖨 طباعة</button> ${canUnpost?`<button class="btn sm danger" title="إلغاء ترحيل القيد وإرجاعه كمسودة" onclick="glUnpost('${e.id}')" style="background:#fee2e2;color:#991b1b;border-color:#fecaca">↶ إلغاء ترحيل</button>`:''}</td></tr>`;}).join('');return glTable(['رقم القيد','التاريخ','البيان','قيمة القيد','النظام المُرحِّل','إجراءات'],rows);}
+function glPrintPostedEntry(id){
+  const e=glState.entries.find(x=>x.id===id);if(!e)return toast('القيد غير موجود','err');
+  const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);
+  const fmt=n=>Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const parseLineDesc=(raw)=>{let s=String(raw||"");let cc="";const m=s.match(/\s*—\s*\[مركز:\s*([^\]]+)\]\s*$/)||s.match(/^\[مركز:\s*([^\]]+)\]\s*$/);if(m){cc=m[1].trim();s=s.replace(m[0],"").trim();}return {desc:s,centerName:cc};};
+  const parseHeaderDesc=(raw)=>{let s=String(raw||"");let docNo="";const m=s.match(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/);if(m){docNo=m[1].trim();s=s.replace(m[0],"").trim();}if(s==="قيد بدون بيان")s="";return {desc:s,docNo};};
+  const hdr=parseHeaderDesc(e.description);
+  const j=glState.journals.find(x=>x.id===e.journal_id);
+  const totalD=ls.reduce((s,l)=>s+Number(l.debit||0),0),totalC=ls.reduce((s,l)=>s+Number(l.credit||0),0);
+  const lines=ls.map((l,i)=>{const a=glState.accounts.find(x=>x.id===l.account_id)||{};const pd=parseLineDesc(l.description);return `<tr><td class="center">${i+1}</td><td class="code" dir="ltr">${esc(a.account_code||'')}</td><td>${esc(a.account_name||'')}</td><td>${esc(pd.desc)}</td><td>${esc(pd.centerName)}</td><td class="money">${l.debit?fmt(l.debit):'—'}</td><td class="money">${l.credit?fmt(l.credit):'—'}</td></tr>`;}).join('');
+  const w=window.open('','_blank','width=1100,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
+  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>قيد محاسبي ${esc(e.entry_no||'')}</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a;margin:0;font-size:12px}.head{text-align:center;border-bottom:3px solid #d4a017;padding:0 0 12px;margin-bottom:14px}.head h1{font-size:21px;margin:0 0 5px;color:#92400e}.head h2{font-size:15px;margin:0;font-weight:600}.status{display:inline-block;margin-top:9px;padding:6px 18px;border:1px solid #166534;border-radius:20px;color:#166534;background:#dcfce7;font-weight:bold}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}.field{border:1px solid #e5d7b1;border-radius:6px;padding:8px;min-height:47px;background:#fffbea}.field b{display:block;color:#92400e;font-size:10px;margin-bottom:5px}.field span{font-weight:bold}.desc{grid-column:span 2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#1a1a1a;color:#fef3c7;padding:9px 6px;border:1px solid #1a1a1a}td{padding:8px 6px;border:1px solid #e5d7b1;vertical-align:middle}tbody tr:nth-child(even){background:#fffbea}.center{text-align:center}.code{font-weight:bold;text-align:center;color:#92400e}.money{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}tfoot td{background:#fef3c7;font-weight:bold;border-top:2px solid #d4a017}.signs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:42px;text-align:center}.sign{padding-top:8px;border-top:1px solid #92400e;font-weight:bold}.foot{margin-top:18px;text-align:center;color:#92400e;font-size:10px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><header class="head"><h1>IRON GATE SUPPLIES</h1><h2>قيد محاسبي مُرحّل</h2><div class="status">✓ مُرحّل · ${esc(glSourceSystem(e))}</div></header><section class="meta"><div class="field"><b>رقم القيد</b><span dir="ltr">${esc(e.entry_no||'')}</span></div><div class="field"><b>تاريخ القيد</b><span>${esc(e.entry_date||'')}</span></div><div class="field"><b>نوع / يومية القيد</b><span>${esc(j?(j.journal_code+' — '+j.journal_name):'')}</span></div><div class="field"><b>رقم المستند</b><span>${esc(hdr.docNo||'—')}</span></div><div class="field desc"><b>البيان الرئيسي</b><span>${esc(hdr.desc||'—')}</span></div><div class="field"><b>العملة</b><span>الجنيه المصري (EGP)</span></div></section><table><thead><tr><th style="width:4%">م</th><th style="width:14%">رقم الحساب</th><th style="width:21%">اسم الحساب</th><th style="width:21%">بيان السطر</th><th style="width:13%">مركز التكلفة</th><th style="width:13%">مدين</th><th style="width:13%">دائن</th></tr></thead><tbody>${lines}</tbody><tfoot><tr><td colspan="5" class="center">الإجمالي</td><td class="money">${fmt(totalD)}</td><td class="money">${fmt(totalC)}</td></tr></tfoot></table><section class="signs"><div class="sign">إعداد</div><div class="sign">مراجعة</div><div class="sign">اعتماد</div></section><div class="foot">IRON GATE SUPPLIES — طُبع بتاريخ ${esc(new Date().toLocaleDateString('ar-EG'))}</div><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`;
+  w.document.open();w.document.write(html);w.document.close();w.focus();
+}
 function glApplyPostedFilters(){const from=document.getElementById('glPostedFrom')?.value||'',to=document.getElementById('glPostedTo')?.value||'',sys=document.getElementById('glPostedSystem')?.value||'',q=(document.getElementById('glPostedSearch')?.value||'').trim().toLowerCase();let list=glState.entries.filter(e=>e.status==='posted');list=list.filter(e=>(!from||String(e.entry_date)>=from)&&(!to||String(e.entry_date)<=to)&&(!sys||glSourceSystem(e)===sys)&&(!q||String(e.entry_no||'').toLowerCase().includes(q)||String(e.description||'').toLowerCase().includes(q)));const box=document.getElementById('glPostedTable');if(box)box.innerHTML=glPostedRows(list);}
 function glClearPostedFilters(){['glPostedFrom','glPostedTo','glPostedSystem','glPostedSearch'].forEach(id=>{const x=document.getElementById(id);if(x)x.value='';});glApplyPostedFilters();}
 function glShowPostedDetails(id){const e=glState.entries.find(x=>x.id===id);if(!e)return;const box=document.getElementById('glPostedDetails');if(!box)return;const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);const rows=ls.map(l=>{const a=glState.accounts.find(x=>x.id===l.account_id)||{};return `<tr><td>${l.line_no}</td><td dir="ltr">${glEsc(a.account_code||'')}</td><td>${glEsc(a.account_name||'')}</td><td>${glEsc(l.description||'')}</td><td>${glNum(l.debit)}</td><td>${glNum(l.credit)}</td></tr>`;}).join('');box.innerHTML=`<section class="card" style="padding:14px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><h3 style="margin:0">تفاصيل القيد ${glEsc(e.entry_no||e.id.slice(0,8))}</h3><button class="btn sm" onclick="document.getElementById('glPostedDetails').innerHTML=''">إغلاق</button></div><p>التاريخ: ${glEsc(e.entry_date||'')} · النظام المُرحِّل: <b>${glEsc(glSourceSystem(e))}</b></p>${glTable(['م','رقم الحساب','اسم الحساب','البيان','مدين','دائن'],rows)}</section>`;}
@@ -3859,11 +3900,40 @@ function glEntryCreditChanged(el){const row=el.closest('tr');if(Number(el.value)
 function glEntryRemoveRow(btn){btn.closest('tr')?.remove();glRenumberEntryRows();glRecalcEntryTotals();}
 function glRenumberEntryRows(){document.querySelectorAll('#glEntryLinesBody tr.gl-e-main').forEach((tr,i)=>tr.querySelector('td').textContent=i+1);}
 function glRecalcEntryTotals(){let d=0,c=0;document.querySelectorAll('#glEntryLinesBody tr.gl-e-main').forEach(tr=>{d+=Number(tr.querySelector('.gl-e-debit').value||0);c+=Number(tr.querySelector('.gl-e-credit').value||0)});const de=document.getElementById('glEntryTotalDebit'),ce=document.getElementById('glEntryTotalCredit'),diff=document.getElementById('glEntryDifference');if(de)de.textContent=glNum(d);if(ce)ce.textContent=glNum(c);if(diff){const x=Math.round((d-c)*100)/100;diff.textContent=glNum(Math.abs(x));diff.style.color=Math.abs(x)<0.01?'#15803d':'#b91c1c';}const st=document.getElementById('glEntryBalanceState');if(st){const ok=Math.abs(d-c)<0.01&&d>0;st.textContent=ok?'القيد متوازن':'القيد غير متوازن';st.style.color=ok?'#15803d':'#b91c1c';}}
-function glOpenEntryForm(){
- if(!glCan('add'))return toast('لا تملك صلاحية إضافة القيود','err');
+let glEntryFormMode="new"; // "new" | "edit" | "view"
+let glEntryEditingId=null;
+function glOpenEntryForm(opts){
+ const mode = (opts&&opts.mode)||"new"; // "new" | "edit" | "view"
+ const existingId = opts&&opts.id || null;
+ glEntryFormMode = mode;
+ glEntryEditingId = existingId;
+ if(mode==="new" && !glCan('add'))return toast('لا تملك صلاحية إضافة القيود','err');
+ if(mode==="edit" && !glCan('edit'))return toast('لا تملك صلاحية تعديل القيود','err');
+ const existing = existingId ? glState.entries.find(e=>e.id===existingId) : null;
+ if(existingId && !existing) return toast('القيد غير موجود','err');
+ const existingLines = existing ? glState.lines.filter(l=>l.entry_id===existing.id).sort((a,b)=>a.line_no-b.line_no) : [];
+ const readonly = mode==="view";
  const activeJ=glState.journals.filter(x=>x.is_active),activeY=glState.years.filter(x=>x.status==='open'),accounts=glPostingLeafAccounts();
  if(!activeJ.length||!activeY.length||!accounts.length)return toast('يلزم إعداد يومية وسنة مالية وحسابات نهائية (آخر مستوى) قابلة للترحيل أولاً','err');
- const journalOpts=activeJ.map(j=>`<option value="${j.id}">${glEsc(j.journal_code)} — ${glEsc(j.journal_name)}</option>`).join('');
+ const selJ = existing ? existing.journal_id : null;
+ const journalOpts=activeJ.map(j=>`<option value="${j.id}" ${selJ===j.id?'selected':''}>${glEsc(j.journal_code)} — ${glEsc(j.journal_name)}</option>`).join('');
+ // استخلاص مركز التكلفة ورقم المستند من البيان لو كان مخزّن بالصيغة المركبة
+ const parseLineDesc = (raw) => {
+   let s = String(raw||"");
+   let cc = "";
+   const m = s.match(/\s*—\s*\[مركز:\s*([^\]]+)\]\s*$/) || s.match(/^\[مركز:\s*([^\]]+)\]\s*$/);
+   if(m){ cc = m[1].trim(); s = s.replace(m[0],"").trim(); }
+   return {desc:s, centerName:cc};
+ };
+ const parseHeaderDesc = (raw) => {
+   let s = String(raw||"");
+   let docNo = "";
+   const m = s.match(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/);
+   if(m){ docNo = m[1].trim(); s = s.replace(m[0],"").trim(); }
+   if(s==="قيد بدون بيان") s = "";
+   return {desc:s, docNo};
+ };
+ const hdr = existing ? parseHeaderDesc(existing.description) : {desc:"",docNo:""};
  const body=`<style>
  /* ====== Gold Theme (موحّد مع باقي النظام) ====== */
  #modalBackdrop{z-index:10000}#modalBackdrop .modal{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;max-width:none!important;max-height:100dvh!important;margin:0!important;border-radius:0!important;display:flex!important;flex-direction:column!important}#modalBackdrop .mhead{flex:0 0 auto;background:linear-gradient(180deg,#1a1a1a,#2a2a2a);color:#fef3c7;border-bottom:3px solid #d4a017}#modalBackdrop .mbody{flex:1 1 auto;overflow:auto!important;padding:clamp(10px,1.5vw,22px);background:#faf7ef;color:#1a1a1a}
@@ -3886,22 +3956,50 @@ function glOpenEntryForm(){
  @media(max-width:850px){.gl-entry-summary{grid-template-columns:1fr}}@media(max-width:520px){.gl-entry-grid{grid-template-columns:1fr}.gl-entry-total{min-width:calc(50% - 12px);flex:1}.gl-e-account-box{grid-template-columns:1fr 1fr}}
  @media(max-width:850px){.gl-entry-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}}@media(max-width:520px){.gl-entry-grid{grid-template-columns:1fr}.gl-entry-actions-top .btn{flex:1;min-width:95px}}
  </style>
- <div class="gl-entry-actions gl-entry-actions-top" style="display:flex;justify-content:flex-start;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 0;background:transparent"><button type="button" class="btn" onclick="glPrintEntryForm()">🖨 طباعة القيد</button><button type="button" class="btn primary" onclick="glSaveEntryForm()">حفظ كمسودة</button><button type="button" class="btn" onclick="closeModal()">إلغاء</button></div>
+ <div class="gl-entry-actions gl-entry-actions-top" style="display:flex;justify-content:flex-start;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 0;background:transparent">
+   <button type="button" class="btn" onclick="glPrintEntryForm()">🖨 طباعة القيد</button>
+   ${readonly?'':`<button type="button" class="btn primary" onclick="glSaveEntryForm()">${mode==='edit'?'✓ حفظ التعديلات':'حفظ كمسودة'}</button>`}
+   <button type="button" class="btn" onclick="closeModal()">${readonly?'إغلاق':'إلغاء'}</button>
+   ${readonly?`<span style="padding:6px 14px;background:#dbeafe;color:#1e40af;border-radius:20px;font-weight:800;font-size:12px">👁 عرض فقط</span>`:''}
+   ${mode==='edit'?`<span style="padding:6px 14px;background:#fef3c7;color:#92400e;border-radius:20px;font-weight:800;font-size:12px">✎ وضع التعديل — القيد ${glEsc(existing.entry_no||existing.id.slice(0,8))}</span>`:''}
+ </div>
  <div class="gl-entry-grid">
-  <div class="gl-entry-field"><label>رقم القيد</label><input value="يُنشأ تلقائيًا عند الحفظ" disabled></div>
-  <div class="gl-entry-field"><label>تاريخ القيد *</label><input id="glEntryDate" type="date" value="${glDate()}"></div>
-  <div class="gl-entry-field"><label>نوع / يومية القيد *</label><select id="glEntryJournal">${journalOpts}</select></div>
-  <div class="gl-entry-field"><label>رقم المستند</label><input id="glEntryDocNo" placeholder="رقم المستند"></div>
-  
-  <div class="gl-entry-field" style="grid-column:span 2"><label>البيان الرئيسي</label><input id="glEntryDescription" placeholder="اختياري — اكتب بيان القيد"></div>
+  <div class="gl-entry-field"><label>رقم القيد</label><input value="${existing?glEsc(existing.entry_no||''):'يُنشأ تلقائيًا عند الحفظ'}" disabled></div>
+  <div class="gl-entry-field"><label>تاريخ القيد *</label><input id="glEntryDate" type="date" value="${existing?glEsc(existing.entry_date||glDate()):glDate()}" ${readonly?'disabled':''}></div>
+  <div class="gl-entry-field"><label>نوع / يومية القيد *</label><select id="glEntryJournal" ${readonly?'disabled':''}>${journalOpts}</select></div>
+  <div class="gl-entry-field"><label>رقم المستند</label><input id="glEntryDocNo" placeholder="رقم المستند" value="${glEsc(hdr.docNo)}" ${readonly?'disabled':''}></div>
+  <div class="gl-entry-field" style="grid-column:span 2"><label>البيان الرئيسي</label><input id="glEntryDescription" placeholder="اختياري — اكتب بيان القيد" value="${glEsc(hdr.desc)}" ${readonly?'disabled':''}></div>
   <div class="gl-entry-field"><label>العملة</label><input value="الجنيه المصري (EGP)" disabled></div>
  </div>
- <div class="gl-entry-table-wrap"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><b style="color:#92400e;font-size:14px">📝 تفاصيل القيد المحاسبي</b><button type="button" class="btn" onclick="glEntryAddRow()" style="background:#d4a017;color:#1a1a1a;font-weight:800">＋ إضافة سطر</button></div>
- <table class="gl-entry-table"><thead><tr><th>م</th><th>كود واسم الحساب *</th><th>مدين</th><th>دائن</th><th>مركز التكلفة</th><th>بيان السطر</th><th>إجراء</th></tr></thead><tbody id="glEntryLinesBody"></tbody></table>
- <div class="gl-entry-summary"><div class="gl-entry-line-desc gl-entry-field"><label>ملاحظات / بيان إضافي</label><textarea id="glEntryNotes" placeholder="ملاحظات إضافية"></textarea></div><div class="gl-entry-totals"><div class="gl-entry-total"><b>إجمالي المدين</b><strong id="glEntryTotalDebit">0.00</strong></div><div class="gl-entry-total"><b>إجمالي الدائن</b><strong id="glEntryTotalCredit">0.00</strong></div><div class="gl-entry-total"><b>الفرق</b><strong id="glEntryDifference">0.00</strong></div><div class="gl-entry-total"><b>حالة القيد</b><strong id="glEntryBalanceState">القيد غير متوازن</strong></div></div></div></div>
- <div class="muted" style="margin-top:8px">المصدر: يدوي</div>
+ <div class="gl-entry-table-wrap"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><b style="color:#92400e;font-size:14px">📝 تفاصيل القيد المحاسبي</b>${readonly?'':`<button type="button" class="btn" onclick="glEntryAddRow()" style="background:#d4a017;color:#1a1a1a;font-weight:800">＋ إضافة سطر</button>`}</div>
+ <table class="gl-entry-table"><thead><tr><th>م</th><th>كود واسم الحساب *</th><th>مدين</th><th>دائن</th><th>مركز التكلفة</th><th>بيان السطر</th>${readonly?'':'<th>إجراء</th>'}</tr></thead><tbody id="glEntryLinesBody"></tbody></table>
+ <div class="gl-entry-summary"><div class="gl-entry-line-desc gl-entry-field"><label>ملاحظات / بيان إضافي</label><textarea id="glEntryNotes" placeholder="ملاحظات إضافية" ${readonly?'disabled':''}></textarea></div><div class="gl-entry-totals"><div class="gl-entry-total"><b>إجمالي المدين</b><strong id="glEntryTotalDebit">0.00</strong></div><div class="gl-entry-total"><b>إجمالي الدائن</b><strong id="glEntryTotalCredit">0.00</strong></div><div class="gl-entry-total"><b>الفرق</b><strong id="glEntryDifference">0.00</strong></div><div class="gl-entry-total"><b>حالة القيد</b><strong id="glEntryBalanceState">القيد غير متوازن</strong></div></div></div></div>
+ <div class="muted" style="margin-top:8px">المصدر: ${existing?glEsc(glSourceSystem(existing)):'يدوي'}</div>
  </div>`;
- openModal('إدخال قيد محاسبي',body,()=>false);const bd=document.getElementById('modalBackdrop');if(bd){const foot=bd.querySelector('.mfoot');if(foot)foot.style.display='none';}glEntryDraftRows=0;for(let i=0;i<7;i++)glEntryAddRow();
+ const titleTxt = mode==='view' ? `عرض القيد ${glEsc(existing.entry_no||existing.id.slice(0,8))}` : (mode==='edit' ? `تعديل القيد ${glEsc(existing.entry_no||existing.id.slice(0,8))}` : 'إدخال قيد محاسبي جديد');
+ openModal(titleTxt,body,()=>false);const bd=document.getElementById('modalBackdrop');if(bd){const foot=bd.querySelector('.mfoot');if(foot)foot.style.display='none';}
+ glEntryDraftRows=0;
+ if(existingLines.length){
+   existingLines.forEach(l=>{
+     const parsed = parseLineDesc(l.description);
+     const centerObj = parsed.centerName ? glState.centers.find(c=>String(c.center_name||'').trim()===parsed.centerName) : null;
+     glEntryAddRow({account_id:l.account_id, debit:l.debit, credit:l.credit, description:parsed.desc, cost_center_id: centerObj?centerObj.id:""});
+   });
+   // أضف 3 أسطر فارغة لو مش عرض
+   if(!readonly){ for(let i=0;i<3;i++) glEntryAddRow(); }
+ } else {
+   for(let i=0;i<7;i++)glEntryAddRow();
+ }
+ if(readonly){
+   // قفل كل inputs و selects داخل جسم الجدول
+   setTimeout(()=>{
+     document.querySelectorAll('#glEntryLinesBody input, #glEntryLinesBody select, #glEntryLinesBody button').forEach(el=>{
+       if(el.tagName==='BUTTON') el.style.display='none';
+       else { el.disabled=true; el.style.background='#f9fafb'; el.style.cursor='not-allowed'; }
+     });
+   },30);
+ }
+ if(existing && existing.notes){ const n=document.getElementById('glEntryNotes'); if(n) n.value=existing.notes; }
 }
 function glPrintEntryForm(){
  const val=id=>String(document.getElementById(id)?.value||'').trim(),date=val('glEntryDate'),journal=document.getElementById('glEntryJournal'),journalText=journal?.selectedOptions?.[0]?.text||'',desc=val('glEntryDescription'),docNo=val('glEntryDocNo'),notes=val('glEntryNotes');
@@ -3928,11 +4026,56 @@ async function glSaveEntryForm(){
  // رقم المستند بيتخزن في البيان لأن عمود reference_no مش موجود في الـschema الحالي
  const baseDesc = desc || "قيد بدون بيان";
  const finalDesc = docNo ? `${baseDesc} — [مستند: ${docNo}]` : baseDesc;
- let entry=null;try{entry=await glInsert('gl_entries',{journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:finalDesc,status:'draft',currency_code:'EGP',exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});const lr=await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;toast('✓ تم حفظ القيد كمسودة بنجاح','ok');closeModal();await glLoad();}catch(e){if(entry){const cleanup=await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft');if(cleanup.error)console.warn('GL draft cleanup failed',cleanup.error);}if(btn){btn.disabled=false;btn.textContent='حفظ كمسودة';}toast('تعذر حفظ القيد: '+(e.message||e),'err');}
+ // EDIT MODE: update existing draft
+ if(glEntryFormMode==='edit' && glEntryEditingId){
+   const editId = glEntryEditingId;
+   try{
+     const hu = await sb.from('gl_entries').update({journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:finalDesc,total_debit:totalD/100,total_credit:totalC/100,updated_at:new Date().toISOString()}).eq('id',editId).eq('status','draft');
+     if(hu.error) throw hu.error;
+     // Replace all lines (simpler and safer than diff)
+     const dl = await sb.from('gl_entry_lines').delete().eq('entry_id',editId);
+     if(dl.error) throw dl.error;
+     const il = await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:editId})));
+     if(il.error) throw il.error;
+     toast('✓ تم حفظ تعديلات القيد','ok'); closeModal(); await glLoad();
+   }catch(err){
+     if(btn){btn.disabled=false;btn.textContent='✓ حفظ التعديلات';}
+     toast('تعذر حفظ التعديلات: '+(err.message||err),'err');
+   }
+   return;
+ }
+ const monthlyNo = glNextMonthlyEntryNo(date);
+ let entry=null;try{entry=await glInsert('gl_entries',{entry_no:monthlyNo,journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:finalDesc,status:'draft',currency_code:'EGP',exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});const lr=await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;toast('✓ تم حفظ القيد كمسودة برقم '+monthlyNo,'ok');closeModal();await glLoad();}catch(e){if(entry){const cleanup=await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft');if(cleanup.error)console.warn('GL draft cleanup failed',cleanup.error);}if(btn){btn.disabled=false;btn.textContent='حفظ كمسودة';}toast('تعذر حفظ القيد: '+(e.message||e),'err');}
 }
-async function glAddEntry(){glOpenEntryForm();}
+async function glAddEntry(){glOpenEntryForm({mode:"new"});}
+function glViewEntry(id){glOpenEntryForm({mode:"view",id});}
 async function glEditEntry(id){
  if(!glCan("edit"))return toast("لا تملك صلاحية تعديل القيود","err");
+ const e=glState.entries.find(x=>x.id===id);if(!e)return toast("القيد غير موجود","err");
+ if(e.status!=='draft')return toast("التعديل متاح للمسودات فقط — القيد المُرحّل يحتاج فك ترحيل أولاً","err");
+ glOpenEntryForm({mode:"edit",id});
+}
+async function glUnpost(id){
+ if(!glCan("post"))return toast("لا تملك صلاحية إلغاء الترحيل","err");
+ const e=glState.entries.find(x=>x.id===id);if(!e)return;
+ if(e.status!=='posted')return toast("القيد غير مُرحّل","err");
+ const sys = glSourceSystem(e);
+ if(sys!=='الحسابات العامة')return toast("إلغاء الترحيل متاح فقط للقيود المرحّلة من الحسابات العامة. القيود المرحّلة من "+sys+" يجب التعامل معها من مصدرها.","err");
+ if(!confirm("تأكيد إلغاء ترحيل القيد "+(e.entry_no||e.id.slice(0,8))+"؟ سيعود إلى تبويب القيود اليومية كمسودة قابلة للتعديل."))return;
+ try{
+   // Try RPC first (if exists), fallback to direct update
+   let r = await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id});
+   if(r.error){
+     // fallback: direct update to draft
+     r = await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted");
+     if(r.error)throw r.error;
+   }
+   toast("تم فك ترحيل القيد — عاد كمسودة في تبويب القيود اليومية","ok");
+   await glLoad();
+ }catch(err){toast("تعذر فك الترحيل: "+(err.message||err),"err");}
+}
+async function glEditEntryOldPrompt_UNUSED(id){
+ if(!glCan("edit"))return;
  const e=glState.entries.find(x=>x.id===id);if(!e||!["draft","posted"].includes(e.status))return toast("الحالة الحالية لا تسمح بالتعديل","err");
  const wasPosted=e.status==="posted";if(wasPosted&&!glCan("post"))return toast("تعديل القيد المُرحّل وإعادة ترحيله يحتاجان صلاحية الترحيل أيضًا","err");if(!wasPosted&&!glCan("add"))return toast("تعديل المسودة يحتاج صلاحية الإضافة","err");
  const oldLines=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);
