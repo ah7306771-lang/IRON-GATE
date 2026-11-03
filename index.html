@@ -2902,6 +2902,8 @@ const SCREENS = [
     {id:"form",label:"بيانات التحصيل"},
     {id:"details",label:"تفاصيل السداد (التخصيص على الأقساط)"}
   ]},
+  { id:"customerAdjustments", label:"تسويات العملاء", icon:"⚖", acts:["add","edit","delete","print"] },
+  { id:"supplierAdjustments", label:"تسويات الموردين", icon:"⚖", acts:["add","edit","delete","print"] },
   { id:"settlement",label:"تسوية فواتير العملاء",icon:"⚖",acts:["edit","delete","print"], tabs:[
     {id:"auto",label:"تسكين آلي"},
     {id:"assistance",label:"تسكين مساعدة (يدوي)"},
@@ -3261,12 +3263,14 @@ const navGroups = [
     { id:"salesInstallments", icon:"💳", label:"الأقساط", badge:"late" },
     { id:"overdueSummary", icon:"📉", label:"إجمالي المتأخرات" },
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
-    { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" }
+    { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" },
+    { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" }
   ]},
   { id:"purchasing", icon:"🛍", label:"نظام المشتريات", items:[
     { id:"purchaseReport", icon:"📊", label:"تقرير المشتريات" },
     { id:"supplierStatement", icon:"📒", label:"كشف حساب مورد" },
-    { id:"supplierTB", icon:"⚖", label:"ميزان مراجعة الموردين" }
+    { id:"supplierTB", icon:"⚖", label:"ميزان مراجعة الموردين" },
+    { id:"supplierAdjustments", icon:"⚖", label:"تسويات الموردين" }
   ]},
   { id:"treasury", icon:"💰", label:"نظام الخزينة", items:[
     { id:"receipts", icon:"↓", label:"التحصيلات" },
@@ -3414,6 +3418,8 @@ function go(page){
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
+  else if(page==="customerAdjustments"){ c.innerHTML = viewAdjustments("in"); renderAdjustments("in"); }
+  else if(page==="supplierAdjustments"){ c.innerHTML = viewAdjustments("out"); renderAdjustments("out"); }
   else if(page==="settlement"){ c.innerHTML = viewSettlement(); renderSettlement(); }
   else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
@@ -4115,8 +4121,14 @@ function tbMovements(kind){
     if(e.direction!==(customer?'in':'out')) return;
     const name=customer?e.customer:e.supplier; if(!name||!e.date) return;
     if(e.status==="guarantee") return;
-    if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
     const amount=+e.amount||0; if(!amount) return;
+    // التسويات: ما تتأثرش بـstatus (ما فيهاش ارتداد)، وتدخل بالاتجاه المحدد يدويًا
+    if(e.method==="adjustment"){
+      const kind = e.adjustmentKind || "debit";
+      out.push({party:name, date:e.date, debit:kind==="debit"?amount:0, credit:kind==="credit"?amount:0});
+      return;
+    }
+    if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
     const reversed=e.status==='returned';
     out.push({party:name,date:e.date,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0)});
   });
@@ -4317,9 +4329,19 @@ function partyStatementRows(kind){
     if(e.direction!==(customer?'in':'out') || !parties.includes(party) || !e.date || !dateOk(e.date)) return;
     const unique='treasury:'+e.id; if(seen.has(unique)) return; seen.add(unique);
     if(e.status==="guarantee") return;
-    if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
     const amount=+e.amount||0; if(!amount) return;
-    const internalRef='سند '+(e.no||e.refNo||e.id||'—'), status=({cash:'نقدي',transfer:'تحويل',receivable:'أوراق قبض',collected:'محصل شيك',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
+    const internalRef='سند '+(e.no||e.refNo||e.id||'—');
+    // تسوية غير نقدية — تظهر بسطر خاص في كشف الحساب
+    if(e.method==="adjustment"){
+      const kind = e.adjustmentKind || "debit";
+      const label = kind==="debit" ? "⚖ تسوية مدينة" : "⚖ تسوية دائنة";
+      const desc = label + (e.notes?" — "+e.notes:"");
+      if(q&&!(internalRef+' '+desc).toLowerCase().includes(q)) return;
+      rows.push({date:e.date,party,ref:'',order:'—',orderKey:'adj:'+e.id,diameter:'—',type:'—',factory:'—',desc,debit:kind==="debit"?amount:0,credit:kind==="credit"?amount:0,inclusiveTotal:0,quantity:0,actualWeight:0,source:'adjustment',sortRef:String(e.no||e.id||''),unique});
+      return;
+    }
+    if(customer && e.method==="bank" && e.status!=="collected" && !(e.status==="returned" && e.wasCollected)) return;
+    const status=({cash:'نقدي',transfer:'تحويل',receivable:'أوراق قبض',collected:'محصل شيك',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
     const desc=(customer?'تحصيل عميل':'دفعة مورد')+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');
     if(q&&!(internalRef+' '+desc+' '+(e.notes||'')).toLowerCase().includes(q)) return;
     const reversed=e.status==='returned';
@@ -4349,7 +4371,27 @@ function renderPartyStatement(){
   const balanceLabel=customer?(final>=0?'رصيد مدين مستحق على العميل':'رصيد دائن للعميل'):(final>=0?'رصيد دائن مستحق للمورد':'رصيد مدين لدى المورد');
   const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td class="statement-desc">${escapeHtml(r.desc)}</td><td class="num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join('');
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', partyMaster=parties.length?parties.join('، '):(customer?'لم يتم اختيار عميل':'لم يتم اختيار مورد');
-  el.innerHTML=`<style>.party-statement-view .statement-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;padding:13px 16px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin-bottom:12px;text-align:center}.party-statement-view .statement-master .master-label{color:#8a6a19;font-size:12px;font-weight:700}.party-statement-view .statement-master .master-name{font-size:17px;font-weight:900;color:#172b49}.party-statement-view .trade-report-table{width:100%;min-width:980px;text-align:center}.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{text-align:center!important;vertical-align:middle}.party-statement-view .trade-report-table .statement-desc{white-space:normal;min-width:280px;line-height:1.7}.party-statement-view .trade-report-table .num{direction:ltr;text-align:center!important;font-variant-numeric:tabular-nums}.party-statement-view .statement-meta{text-align:center;color:var(--text-dim);font-size:12px;margin:0 0 12px}.party-statement-view .statement-card-head{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:14px}.party-statement-view .kpis .kpi{text-align:center}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(opening*parties.length)}</div><div class="sub">${cur} · لكل طرف ${money(opening)}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
+  el.innerHTML=`<style>.party-statement-view .statement-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;padding:13px 16px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin-bottom:12px;text-align:center}.party-statement-view .statement-master .master-label{color:#8a6a19;font-size:12px;font-weight:700}.party-statement-view .statement-master .master-name{font-size:17px;font-weight:900;color:#172b49}.party-statement-view .trade-report-table{width:100%;min-width:980px;text-align:center}.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{text-align:center!important;vertical-align:middle}.party-statement-view .trade-report-table .statement-desc{white-space:normal;min-width:280px;line-height:1.7}.party-statement-view .trade-report-table .num{direction:ltr;text-align:center!important;font-variant-numeric:tabular-nums}.party-statement-view .statement-meta{text-align:center;color:var(--text-dim);font-size:12px;margin:0 0 12px}.party-statement-view .statement-card-head{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:14px}.party-statement-view .kpis .kpi{text-align:center}
+/* الموبيل: عمود "الرصيد الجاري" يفضل ثابت على اليسار علشان ما يختفيش مع السكرول الأفقي */
+.party-statement-view .tbl-wrap{overflow-x:auto;position:relative}
+@media(max-width:900px){
+  .party-statement-view .trade-report-table{min-width:720px;font-size:11.5px}
+  .party-statement-view .trade-report-table th:last-child,
+  .party-statement-view .trade-report-table td:last-child{
+    position:sticky;left:0;z-index:3;
+    background:#fef3c7;border-right:2px solid #d4a017;
+    box-shadow:4px 0 6px rgba(0,0,0,.08);
+    min-width:110px
+  }
+  .party-statement-view .trade-report-table thead th:last-child{background:#1a1a1a;color:#fef3c7;border-right:2px solid #d4a017}
+  .party-statement-view .trade-report-table tfoot td:last-child{background:#d4a017;color:#111;font-weight:800;border-right:2px solid #92400e}
+  .party-statement-view .trade-report-table .statement-desc{min-width:160px;font-size:11px}
+}
+@media(max-width:600px){
+  .party-statement-view .trade-report-table{min-width:620px;font-size:11px}
+  .party-statement-view .trade-report-table th,
+  .party-statement-view .trade-report-table td{padding:6px 4px}
+}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(opening*parties.length)}</div><div class="sub">${cur} · لكل طرف ${money(opening)}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
 }
 function openPartyStatementQueue(reports,title){
   const w=window.open('','_blank');
@@ -4359,13 +4401,134 @@ function openPartyStatementQueue(reports,title){
   w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#e8edf3}.toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#172337;color:#fff;box-shadow:0 2px 10px #0002}.toolbar strong{flex:1}.toolbar button{border:0;border-radius:7px;padding:9px 13px;font-weight:bold;cursor:pointer}.print{background:#d9ad3b;color:#172337}.nav{background:#fff;color:#172337}.close{background:transparent;color:#fff;border:1px solid #ffffff66!important}#counter{font-size:12px;color:#e8c968}iframe{display:block;width:100%;height:calc(100vh - 54px);border:0;background:white}</style></head><body><div class="toolbar"><strong>${title}</strong><span id="counter"></span><button id="previousReportBtn" class="nav" onclick="move(-1)">السابق</button><button class="print" onclick="printCurrent()">🖨 طباعة هذا الكشف</button><button class="nav" onclick="shareCurrent()">↗ مشاركة</button><button id="nextReportBtn" class="nav" onclick="move(1)">الكشف التالي ⟵</button><button class="close" onclick="window.close()">إغلاق</button></div><iframe id="report"></iframe><script>const reports=${safeReports};let index=0;const frame=document.getElementById('report');function show(){frame.srcdoc=reports[index];document.getElementById('counter').textContent='الكشف '+(index+1)+' من '+reports.length;document.getElementById('previousReportBtn').disabled=index===0;document.getElementById('nextReportBtn').disabled=index===reports.length-1;document.getElementById('nextReportBtn').textContent=index===reports.length-1?'انتهت الكشوف ✓':'الكشف التالي ⟵';}function move(step){if(index+step<0||index+step>=reports.length){if(step>0&&index===reports.length-1)alert('تم الوصول إلى آخر كشف.');return;}index+=step;show();}function printCurrent(){frame.contentWindow.focus();frame.contentWindow.print();}async function shareCurrent(){const d=frame.contentDocument;const text=(d&&d.body?d.body.innerText:'').slice(0,12000);try{if(navigator.share){await navigator.share({title:d.title||'كشف حساب',text});return;}await navigator.clipboard.writeText(text);alert('تم نسخ محتوى الكشف للمشاركة.');}catch(e){alert('تعذرت المشاركة المباشرة؛ يمكنك نسخ محتوى الكشف أو طباعته PDF.');}}show();<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
   w.document.close();
 }
+// ============== قالب التقارير الاحترافي الموحَّد (IRON GATE Pro Report) ==============
+// يستخدمه كشوف الحساب + تقرير التوريد + تقرير الأقساط لإنتاج تنسيق موحَّد
+function igProReportHtml(opts){
+  const {emoji="📄", title="تقرير", titleEn="REPORT", sub="", filters=[], kpis=[], tableHtml="", note=""} = opts||{};
+  const cur = state.settings.currency||"ج.م";
+  const filtersBar = filters.length ? `<div class="rprt-filters">${filters.map(f=>`<span class="rprt-chip">${escapeHtml(f)}</span>`).join("")}</div>` : "";
+  const kpiBar = kpis.length ? `<div class="rprt-kpis">${kpis.map(k=>`<div class="rprt-kpi" style="border-top-color:${k.color||'#64748b'}"><div class="lbl">${escapeHtml(k.lbl||"")}</div><div class="val">${k.val||""}</div><div class="sub">${escapeHtml(k.sub||"")}</div></div>`).join("")}</div>` : "";
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${escapeHtml(title)}</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:"Cairo","Tahoma",Arial,sans-serif;color:#1f2937;padding:14px 18px;background:#f8fafc;margin:0}
+.rprt-doc{background:#fff;padding:18px 20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
+.rprt-hdr{text-align:center;padding:14px 10px 16px;background:linear-gradient(180deg,#fffbea 0%,#fff 100%);border-bottom:3px solid #d4a017;border-radius:10px 10px 0 0;margin:-18px -20px 10px}
+.rprt-hdr .emoji{font-size:28px;margin-bottom:4px}
+.rprt-hdr h1{margin:4px 0 2px;font-size:22px;color:#1a1a1a;font-weight:900}
+.rprt-hdr .en{color:#d4a017;font-size:13px;letter-spacing:3px;font-weight:800}
+.rprt-hdr .sub{color:#6b7280;font-size:11.5px;margin-top:4px}
+.rprt-filters{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;justify-content:center}
+.rprt-chip{background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:14px;font-size:11px;font-weight:700;border:1px solid #fde68a}
+.rprt-kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 12px}
+.rprt-kpi{background:#fff;border:1px solid #e5e7eb;border-top:4px solid #64748b;border-radius:10px;padding:12px 14px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center}
+.rprt-kpi .lbl{font-size:10.5px;color:#6b7280;font-weight:700;margin-bottom:5px;letter-spacing:.3px}
+.rprt-kpi .val{font-size:19px;font-weight:900;color:#111;line-height:1.1;direction:ltr}
+.rprt-kpi .sub{font-size:10px;color:#9ca3af;margin-top:3px}
+table.rprt-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
+table.rprt-tbl thead th{background:linear-gradient(180deg,#1a1a1a,#262626);color:#fff;padding:10px 6px;text-align:center;font-weight:800;font-size:11.5px;line-height:1.35;border-right:1px solid #333;white-space:normal}
+table.rprt-tbl thead th:first-child{border-right:0}
+table.rprt-tbl tbody td{padding:8px 6px;text-align:center;border-bottom:1px solid #f1f5f9;color:#1f2937;white-space:nowrap;font-weight:600}
+table.rprt-tbl tbody tr:nth-child(even) td{background:#fafbfc}
+table.rprt-tbl tbody td.n{font-variant-numeric:tabular-nums;direction:ltr}
+table.rprt-tbl tbody tr:last-child td{border-bottom:0}
+table.rprt-tbl tbody td.c-order{font-weight:900;color:#92400e}
+table.rprt-tbl tbody td.c-party{font-weight:800;color:#1a1a1a}
+table.rprt-tbl tbody td.c-dr{color:#b91c1c;font-weight:800}
+table.rprt-tbl tbody td.c-cr{color:#059669;font-weight:800}
+table.rprt-tbl tbody td.c-bal{background:#fef9e7;font-weight:900;color:#111}
+table.rprt-tbl tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
+.rprt-badge{display:inline-block;padding:4px 10px;border-radius:14px;font-weight:900;font-size:11px;border:1px solid rgba(0,0,0,.08)}
+.rprt-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:10px;padding:14px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin:12px 0;text-align:center}
+.rprt-master .lbl{color:#8a6a19;font-size:12px;font-weight:700}
+.rprt-master .name{font-size:18px;font-weight:900;color:#172b49}
+.rprt-note{text-align:center;color:#9ca3af;font-size:10.5px;margin-top:14px;padding-top:10px;border-top:1px dashed #e5e7eb}
+@media print{
+  @page{size:A4 landscape;margin:6mm}
+  body{padding:0;background:#fff}
+  .rprt-doc{box-shadow:none;border-radius:0;padding:10px}
+  .rprt-hdr{border-radius:0;margin:-10px -10px 10px}
+  tr{break-inside:avoid}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style></head><body>
+<div class="rprt-doc">
+  <div class="rprt-hdr">
+    <div class="emoji">${emoji}</div>
+    <h1>${escapeHtml(title)}</h1>
+    <div class="en">${escapeHtml(titleEn)}</div>
+    <div class="sub">${new Date().toLocaleDateString("en-GB")} · العملة: ${escapeHtml(cur)}${sub?" · "+escapeHtml(sub):""}</div>
+  </div>
+  ${filtersBar}
+  ${kpiBar}
+  ${tableHtml}
+  <div class="rprt-note">${escapeHtml(note||"تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — "+new Date().toLocaleString("en-GB"))}</div>
+</div>
+</body></html>`;
+}
+
 function partyStatementHtmlFor(kind,partyName,allParties){
   const f=partyStatementFilters[kind], customer=kind==='clientStatement', opening=Number(f.opening)||0;
   const rows=partyStatementRows(kind).filter(r=>(r.party||'')===partyName); let running=opening;
   rows.forEach(r=>{running+=customer?(r.debit-r.credit):(r.credit-r.debit);r.balance=running;});
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), cur=state.settings.currency||'ج.م', inclusive=rows.reduce((a,r)=>a+(+r.inclusiveTotal||0),0);
-  const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td>${escapeHtml(r.desc)}</td><td>${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td>${money(r.debit)}</td><td>${money(r.credit)}</td><td>${money(r.balance)}</td></tr>`).join('');
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title} - ${escapeHtml(partyName)}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px;text-align:center}h1{text-align:center;color:#9a7410;font-size:22px}.master{margin:12px auto;padding:12px;border:1px solid #e8d7ad;background:#fffaf0;border-radius:9px;font-size:17px;font-weight:bold;text-align:center}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;text-align:center}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center;vertical-align:middle}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><div class="master">${customer?'العميل':'المورد'}: ${escapeHtml(partyName)}</div><p>نوع العرض: ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${escapeHtml(f.from||'بداية غير محددة')} إلى ${escapeHtml(f.to||'نهاية غير محددة')} · رصيد أول المدة: ${money(opening)} ${cur}</p><p>يشمل المبيعات/المشتريات من بيانات التوريد، والتحصيلات/المدفوعات من شاشة الخزينة</p><table><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||'<tr><td colspan="7">لا توجد حركات مطابقة للفترة</td></tr>'}</tbody><tfoot><tr><td colspan="3">الإجمالي والرصيد الختامي</td><td>${money(inclusive)}</td><td>${money(rows.reduce((a,r)=>a+r.debit,0))}</td><td>${money(rows.reduce((a,r)=>a+r.credit,0))}</td><td>${money(running)}</td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
+  const body=rows.map((r,i)=>`<tr>
+    <td>${escapeHtml(r.date)}</td>
+    <td class="c-order">${escapeHtml(String(r.order||'—'))}</td>
+    <td style="white-space:normal;min-width:180px;text-align:right;line-height:1.6">${escapeHtml(r.desc)}</td>
+    <td class="n">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td>
+    <td class="n c-dr">${money(r.debit)}</td>
+    <td class="n c-cr">${money(r.credit)}</td>
+    <td class="n c-bal">${money(r.balance)}</td>
+  </tr>`).join('');
+  const totalDebit=rows.reduce((a,r)=>a+r.debit,0), totalCredit=rows.reduce((a,r)=>a+r.credit,0);
+  const balanceLabel = customer
+    ? (running>=0?'رصيد مدين مستحق على العميل':'رصيد دائن للعميل (له لدينا)')
+    : (running>=0?'رصيد دائن مستحق للمورد (علينا)':'رصيد مدين لدى المورد (لنا)');
+  const balanceColor = running>=0 ? "#dc2626" : "#059669";
+  const kpis = [
+    {lbl:"عدد الحركات", val:rows.length+" حركة", sub:"&nbsp;", color:"#64748b"},
+    {lbl:"رصيد أول المدة", val:money(opening), sub:cur, color:"#6366f1"},
+    {lbl:"إجمالي المدين", val:money(totalDebit), sub:cur, color:"#b91c1c"},
+    {lbl:"إجمالي الدائن", val:money(totalCredit), sub:cur, color:"#059669"},
+    {lbl:"الرصيد الختامي", val:`<span style="color:${balanceColor}">${money(Math.abs(running))}</span>`, sub:balanceLabel, color:balanceColor}
+  ];
+  const filters = [
+    f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار',
+    `الفترة: ${f.from||'بداية غير محددة'} → ${f.to||'نهاية غير محددة'}`
+  ];
+  const tableHtml = `
+    <div class="rprt-master">
+      <span class="lbl">${customer?'العميل':'المورد'}</span>
+      <span class="name">${escapeHtml(partyName)}</span>
+      <span class="rprt-badge" style="background:${running>=0?'#fee2e2':'#dcfce7'};color:${balanceColor}">${balanceLabel}: ${money(Math.abs(running))} ${escapeHtml(cur)}</span>
+    </div>
+    <table class="rprt-tbl">
+      <thead><tr>
+        <th>التاريخ</th><th>أمر البيع</th><th>البيان</th>
+        <th>إجمالي شامل (${escapeHtml(cur)})</th>
+        <th>مدين (${escapeHtml(cur)})</th>
+        <th>دائن (${escapeHtml(cur)})</th>
+        <th>الرصيد الجاري (${escapeHtml(cur)})</th>
+      </tr></thead>
+      <tbody>${body||`<tr><td colspan="7" style="padding:28px;color:#9ca3af">لا توجد حركات مطابقة للفترة</td></tr>`}</tbody>
+      <tfoot><tr>
+        <td colspan="3" style="text-align:right">💰 الإجمالي والرصيد الختامي</td>
+        <td class="n">${money(inclusive)}</td>
+        <td class="n">${money(totalDebit)}</td>
+        <td class="n">${money(totalCredit)}</td>
+        <td class="n">${money(running)}</td>
+      </tr></tfoot>
+    </table>`;
+  return igProReportHtml({
+    emoji: customer?"🧑‍💼":"🏭",
+    title: title,
+    titleEn: customer?"CUSTOMER ACCOUNT STATEMENT":"SUPPLIER ACCOUNT STATEMENT",
+    sub: `${rows.length} حركة`,
+    filters: filters,
+    kpis: kpis,
+    tableHtml: tableHtml
+  });
 }
 
 function partyStatementExport(kind,format){
@@ -6763,32 +6926,102 @@ tbody tr:nth-child(even) td.pay-terms-cell{background:#fcefc6}
 th.pay-terms-start,td.pay-terms-start{border-right:3px solid #d4a017}
 th.pay-cash,td.pay-cash{background:#d1fae5;color:#065f46}
 tbody tr:nth-child(even) td.pay-cash{background:#a7f3d0}`;
+// تنسيق قيمة KPI للعرض
+function _supFmtKpi(x){
+  const n=Number(x.n)||0;
+  return n.toLocaleString("en-US",{minimumFractionDigits:x.d==null?2:x.d,maximumFractionDigits:x.d==null?2:x.d});
+}
+// بناء جدول/جداول التوريد كـ HTML بتنسيق الـ pro template
+function supBuildProTableHtml(C){
+  const {SB,SS,L}=C, nm=(v,d)=> Number(v||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+  let h = "";
+  // تفصيل حسب العميل والمورد
+  if(SS){ const tb=supBreakTable("customer",C); h+=`<h3 class="sup-sec-h">🧑‍💼 ${escapeHtml(tb.title)}</h3><table class="rprt-tbl">${supProBreakTable(tb)}</table>`; }
+  if(SB){ const tb=supBreakTable("supplier",C); h+=`<h3 class="sup-sec-h">🏭 ${escapeHtml(tb.title)}</h3><table class="rprt-tbl">${supProBreakTable(tb)}</table>`; }
+  // تفصيل البوالص
+  const head=["#","تاريخ","أمر البيع","المورد","العميل","المصنع","القطر","النوع","كمية","وزن"]
+    .concat(SB?["سعر الشراء","إجمالي شراء"]:[]).concat(SS?["سعر البيع","قبل الضريبة","ضريبة","خصم","الإجمالي"]:[]);
+  let i=0;
+  const bodyR=L.map(({s,it})=>{
+    i++;
+    const a=supplyAmounts(s,it);
+    return `<tr>
+      <td>${i}</td>
+      <td>${escapeHtml(s.date||"")}</td>
+      <td class="c-order">${escapeHtml(String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||"—"))}</td>
+      <td>${escapeHtml(s.supplier||"")}</td>
+      <td class="c-party">${escapeHtml(s.customer||"")}</td>
+      <td>${escapeHtml(itemFactory(s,it)||"—")}</td>
+      <td>${escapeHtml(String(it.diameter||""))}</td>
+      <td>${escapeHtml(String(it.type||""))}</td>
+      <td class="n">${nm(+it.supplyQty||0,3)}</td>
+      <td class="n">${nm(+it.actualWeight||0,3)}</td>
+      ${SB?`<td class="n">${nm(+it.buyPrice||0,2)}</td><td class="n c-dr">${nm(a.buyTotal,2)}</td>`:""}
+      ${SS?`<td class="n">${nm(+it.sellPrice||0,2)}</td><td class="n">${nm(a.subtotal,2)}</td><td class="n">${nm(a.tax,2)}</td><td class="n">${nm(a.discount,2)}</td><td class="n c-bal">${nm(a.total,2)}</td>`:""}
+    </tr>`;
+  }).join("");
+  const T = L.reduce((t,{s,it})=>{ const a=supplyAmounts(s,it); t.q+=+it.supplyQty||0; t.w+=+it.actualWeight||0; t.buy+=a.buyTotal; t.sub+=a.subtotal; t.tax+=a.tax; t.dis+=a.discount; t.tot+=a.total; return t; },{q:0,w:0,buy:0,sub:0,tax:0,dis:0,tot:0});
+  const foot = `<tr>
+    <td colspan="8" style="text-align:right">💰 الإجمالي العام</td>
+    <td class="n">${nm(T.q,3)}</td>
+    <td class="n">${nm(T.w,3)}</td>
+    ${SB?`<td></td><td class="n">${nm(T.buy,2)}</td>`:""}
+    ${SS?`<td></td><td class="n">${nm(T.sub,2)}</td><td class="n">${nm(T.tax,2)}</td><td class="n">${nm(T.dis,2)}</td><td class="n">${nm(T.tot,2)}</td>`:""}
+  </tr>`;
+  h += `<h3 class="sup-sec-h">▦ تفصيل البوالص</h3>
+    <table class="rprt-tbl">
+      <thead><tr>${head.map(x=>`<th>${escapeHtml(x)}</th>`).join("")}</tr></thead>
+      <tbody>${bodyR||`<tr><td colspan="${head.length}" style="padding:20px;color:#9ca3af">لا توجد بيانات</td></tr>`}</tbody>
+      <tfoot>${foot}</tfoot>
+    </table>`;
+  return h;
+}
+// جدول breakdown بتنسيق pro
+function supProBreakTable(tb){
+  const nm=(v,d)=> typeof v==="number" ? Number(v).toLocaleString("en-US",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d}) : escapeHtml(String(v||""));
+  const head = `<thead><tr>${tb.cols.map(c=>`<th>${escapeHtml(c.h)}</th>`).join("")}</tr></thead>`;
+  const body = `<tbody>${tb.rows.map(r=>`<tr>${r.map((v,i)=>`<td${typeof v==="number"?' class="n"':''}>${nm(v,tb.cols[i].d==null?2:tb.cols[i].d)}</td>`).join("")}</tr>`).join("")||`<tr><td colspan="${tb.cols.length}" style="padding:20px;color:#9ca3af">—</td></tr>`}</tbody>`;
+  const foot = `<tfoot><tr>${tb.foot.map((v,i)=>`<td${typeof v==="number"?' class="n"':''}>${typeof v==="number"?nm(v,tb.cols[i].d==null?2:tb.cols[i].d):escapeHtml(String(v||""))}</td>`).join("")}</tr></tfoot>`;
+  return head+body+foot;
+}
+function supBuildProReportHtml(){
+  const C=supCompute();
+  const kpis = supKpiList(C).map(x=>({
+    lbl:x.l,
+    val:_supFmtKpi(x),
+    sub:x.s||"",
+    color:x.l.includes("مشتريات")?"#b91c1c":x.l.includes("مبيعات")?"#059669":x.l.includes("ضريبة")?"#8b5cf6":x.l.includes("هامش")?"#d97706":"#1e40af"
+  }));
+  const filters = [];
+  if(supFilter.from||supFilter.to) filters.push(`التاريخ: ${supFilter.from||'من البداية'} → ${supFilter.to||'لآخر تاريخ'}`);
+  igMsNormArr(supFilter.supplier).length && filters.push(`الموردون: ${igMsNormArr(supFilter.supplier).length===1?igMsNormArr(supFilter.supplier)[0]:'('+igMsNormArr(supFilter.supplier).length+')'}`);
+  igMsNormArr(supFilter.customer).length && filters.push(`العملاء: ${igMsNormArr(supFilter.customer).length===1?igMsNormArr(supFilter.customer)[0]:'('+igMsNormArr(supFilter.customer).length+')'}`);
+  igMsNormArr(supFilter.factory).length && filters.push(`المصانع: ${igMsNormArr(supFilter.factory).length===1?igMsNormArr(supFilter.factory)[0]:'('+igMsNormArr(supFilter.factory).length+')'}`);
+  igMsNormArr(supFilter.status).length && filters.push(`الحالات: ${igMsNormArr(supFilter.status).length===1?igMsNormArr(supFilter.status)[0]:'('+igMsNormArr(supFilter.status).length+')'}`);
+  if(supFilter.q) filters.push(`بحث: ${supFilter.q}`);
+  if(!filters.length) filters.push("بدون فلتر — كل البيانات");
+  const tableHtml = `<style>.sup-sec-h{margin:18px 0 8px;font-size:14px;color:#92400e;background:#fef3c7;padding:7px 14px;border-radius:4px;border-right:4px solid #d4a017;font-weight:800}</style>` + supBuildProTableHtml(C);
+  return igProReportHtml({
+    emoji:"📦",
+    title:"تقرير بيانات التوريد",
+    titleEn:"SUPPLY DATA REPORT",
+    sub:`${new Set(C.L.map(x=>x.s.id)).size} بوليصة · ${C.L.length} صنف`,
+    filters:filters,
+    kpis:kpis,
+    tableHtml:tableHtml
+  });
+}
 function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
-  const kpis = supKpiList(C);
-  const kpisHtml = `<div class="sup-kpis">${kpis.map(x=>`<div class="sup-kpi"><div class="lbl">${escapeHtml(x.l)}</div><div class="val">${(Number(x.n)||0).toLocaleString("en-US",{minimumFractionDigits:x.d==null?2:x.d,maximumFractionDigits:x.d==null?2:x.d})}</div><div class="sub">${escapeHtml(x.s||"")}</div></div>`).join("")}</div>`;
-  const header = `<div class="sup-hdr"><h1>تقرير بيانات التوريد</h1><div class="en">IRON GATE SUPPLIES — SUPPLY DATA REPORT</div></div>
-    <div class="sup-meta">${escapeHtml(supFilterText())} · تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")} · عدد البوالص: ${new Set(C.L.map(x=>x.s.id)).size} · عدد الأصناف: ${C.L.length} · العملة: ${escapeHtml(state.settings.currency||"ج.م")}</div>
-    ${kpisHtml}`;
-  const body = supReportHtml(C,true).replace(/^<h2>[^<]*<\/h2><p class="muted">[^<]*<\/p>/,"").replace(/<h3>ملخص المبالغ<\/h3><table border="1"><tbody>[\s\S]*?<\/tbody><\/table>/,"");
-  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" dir="rtl"><head><meta charset="UTF-8"><style>${SUP_REPORT_CSS}</style></head><body>${header}${body}</body></html>`;
+  const html = supBuildProReportHtml();
   igSaveXlsx(html,"بيانات_التوريد_"+new Date().toISOString().slice(0,10));
   toast("✓ تم تصدير ملف Excel احترافي","ok");
 }
 function supExportPdf(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للطباعة","err"); return; }
-  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>تقرير بيانات التوريد</title><link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet"><style>@page{size:A4 landscape;margin:8mm}${SUP_REPORT_CSS}body{padding:8px}th,td{white-space:nowrap}</style></head><body>${supReportHtml(C,false)}<script>
-(function(){
-  function fit(avail){ document.querySelectorAll('table').forEach(function(t){ t.style.zoom=1; var w=t.scrollWidth; if(w>avail) t.style.zoom=(avail/w).toFixed(3); }); }
-  function screenFit(){ fit(Math.max(300,document.documentElement.clientWidth-24)); }
-  window.addEventListener('load',screenFit);
-  window.addEventListener('resize',screenFit);
-  window.addEventListener('beforeprint',function(){ fit(1040); });
-  window.addEventListener('afterprint',screenFit);
-})();
-<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
+  const html = supBuildProReportHtml();
   openReportPreview(html,'تقرير بيانات التوريد');
 }
 
@@ -8535,14 +8768,16 @@ async function qtToSaleOrder(id){
 // الحالة (status): "collected" | "pending" | "returned" | "deposited" | "cash_received"
 
 const txMethods = [
-  { v:"cash",      label:"نقدي",         ico:"💵" },
-  { v:"transfer",  label:"تحويل بنكي",   ico:"🔁" },
-  { v:"bank",      label:"شيك بنكي",     ico:"🏦" }
+  { v:"cash",       label:"نقدي",            ico:"💵" },
+  { v:"transfer",   label:"تحويل بنكي",      ico:"🔁" },
+  { v:"bank",       label:"شيك بنكي",        ico:"🏦" },
+  { v:"adjustment", label:"تسوية (غير نقدية)", ico:"⚖" }
 ];
 const txStatuses = [
   // حالات تلقائية مرتبطة بطريقة السداد (ليست حالات قابلة للتغيير يدويًا)
   { v:"cash",          label:"نقدي",               color:"ok" },
   { v:"transfer",      label:"تحويل",              color:"ok" },
+  { v:"adjustment",    label:"تسوية",              color:"info" },
   // حالات الشيكات فقط — تظل قابلة للتغيير حسب دورة الشيك
   { v:"receivable",    label:"أوراق قبض",          color:"warn" },
   { v:"pending",       label:"شيكات تحت التحصيل",  color:"warn" },
@@ -8550,8 +8785,15 @@ const txStatuses = [
   { v:"returned",      label:"مرتد",               color:"danger" },
   { v:"guarantee",     label:"شيك ضمان",           color:"warn" }
 ];
-function txMethodLabel(v){
+// التسويات: حركة محاسبية غير نقدية — لا تؤثر على الخزنة لكنها تؤثر على رصيد الطرف
+function isAdjustment(e){ return e && e.method==="adjustment"; }
+function adjustmentIcon(kind){ return kind==="debit"?"⚠️":"✨"; }
+function txMethodLabel(v, e){
   if(v==="transfer_supplier") return "🔄 تحويل لمورد";
+  if(v==="adjustment"){
+    const k = e && e.adjustmentKind;
+    return k==="debit" ? "⚖ تسوية مدينة" : k==="credit" ? "⚖ تسوية دائنة" : "⚖ تسوية";
+  }
   const m=txMethods.find(x=>x.v===v); return m?`${m.ico} ${m.label}`:"—";
 }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
@@ -8782,10 +9024,17 @@ function viewTreasury(direction){
   const list = treasuryList(direction);
   txRestoreView(direction);   // يرجّع آخر فلتر وترتيب لنفس الشاشة (الأفتراضي: التاريخ من الأقدم للأحدث)
 
-  // KPIs
-  const totals = { all:0, collected:0, cash:0, transfer:0, receivable:0, pending:0, returned:0, guarantee:0 };
+  // KPIs — التسويات في بوكس مستقل، مش بتدخل في النقدية ولا بتحسب في "إجمالي الحركة النقدية"
+  const totals = { all:0, collected:0, cash:0, transfer:0, receivable:0, pending:0, returned:0, guarantee:0, adjustment:0, adjDebit:0, adjCredit:0 };
   list.forEach(e=>{
     const v = +e.amount||0;
+    // التسويات في بوكس منفصل
+    if(e.method==="adjustment"){
+      totals.adjustment += v;
+      if(e.adjustmentKind==="debit") totals.adjDebit += v;
+      else if(e.adjustmentKind==="credit") totals.adjCredit += v;
+      return; // لا تدخل في totals.all أو أي بوكس نقدي
+    }
     totals.all += v;
     let key;
     if(e.status==="returned") key="returned";
@@ -8812,8 +9061,8 @@ function viewTreasury(direction){
     <button class="btn" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
   </div>
 
-  <div class="kpis compact tx-kpis" style="grid-template-columns:repeat(${isIn?8:7},minmax(150px,1fr));overflow-x:auto">
-    ${k("إجمالي الحركة", totals.all, cur, "var(--gold-2)")}
+  <div class="kpis compact tx-kpis" style="grid-template-columns:repeat(${isIn?9:8},minmax(140px,1fr));overflow-x:auto">
+    ${k("إجمالي الحركة النقدية", totals.all, cur, "var(--gold-2)")}
     ${k("نقدي", totals.cash, cur, "var(--ok)")}
     ${k("تحويلات", totals.transfer, cur, "var(--ok)")}
     ${k("محصل شيك", totals.collected, cur, "var(--ok)")}
@@ -8821,6 +9070,7 @@ function viewTreasury(direction){
     ${k("شيكات تحت التحصيل", totals.pending, cur, "var(--warn)")}
     ${k("شيكات ضمان", totals.guarantee, cur, "var(--warn)")}
     ${k("مرتد", totals.returned, cur, "var(--danger)")}
+    ${k("⚖ تسويات (غير نقدية)", totals.adjustment, `م:${fmt(totals.adjDebit)} · د:${fmt(totals.adjCredit)}`, "#8b5cf6")}
   </div>
 
   <div class="tx-ftoggle">
@@ -8955,8 +9205,72 @@ function txExportHtml(direction){
     return `<tr><td>${escapeHtml(String(e.no||i+1))}</td><td>${escapeHtml(e.date||"—")}</td><td class="nm">${escapeHtml(e[pf]||"—")}</td><td>${escapeHtml(((txMethods.find(m=>m.v===e.method)||{}).label)||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td class="n">${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(((txStatuses.find(s=>s.v===e.status)||{}).label)||"—")}</td><td>${escapeHtml(al?al.text:"—")}</td><td class="nt">${escapeHtml(e.notes||"")}</td></tr>`;
   }).join("");
   const style=`body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:16px}h1{text-align:center;color:#9a7410;font-size:22px;margin:0 0 4px}p{text-align:center;color:#475569;margin:3px 0;font-size:12px}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}td.nm{font-weight:800}td.n{direction:ltr;white-space:nowrap;font-weight:800}td.nt{text-align:right;max-width:200px}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}thead{display:table-header-group}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}}`;
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>${style}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>الفلتر: ${escapeHtml(txFilterSummary(direction))}</p><p>الترتيب: ${escapeHtml(sortName)} (${txSort.dir==="desc"?"تنازلي":"تصاعدي"}) · عدد السجلات: ${rows.length} · تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")}</p>
-  <table><thead><tr><th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th><th class="num">القيمة (${escapeHtml(cur)})</th><th>تاريخ الاستحقاق</th><th>الخزنة / البنك</th><th>البنك المسحوب عليه</th><th>الحالة</th><th>التنبيه</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td class="n">${fmt(total)}</td><td colspan="6"></td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
+  // محدَّث: استخدام القالب الاحترافي الموحَّد
+  const statusColor = s => {
+    const map = {receivable:{bg:"#fef3c7",fg:"#854d0e"}, pending:{bg:"#dbeafe",fg:"#1e40af"}, deposited:{bg:"#dbeafe",fg:"#1e40af"}, collected:{bg:"#dcfce7",fg:"#166534"}, returned:{bg:"#fee2e2",fg:"#991b1b"}, guarantee:{bg:"#fef3c7",fg:"#854d0e"}, cash:{bg:"#dcfce7",fg:"#166534"}, transfer:{bg:"#dcfce7",fg:"#166534"}};
+    return map[s] || {bg:"#e5e7eb",fg:"#374151"};
+  };
+  let cashTotal=0, transferTotal=0, chequeTotal=0;
+  rows.forEach(e=>{ const amt=+e.amount||0;
+    if(e.method==="cash") cashTotal+=amt;
+    else if(e.method==="transfer"||e.method==="transfer_supplier") transferTotal+=amt;
+    else if(e.method==="bank") chequeTotal+=amt;
+  });
+  const proBody = rows.map((e,i)=>{
+    const al=txAlertInfo(e);
+    const sv = ((txStatuses.find(s=>s.v===e.status)||{}).label)||"—";
+    const sc = statusColor(e.status);
+    const methodLabel = typeof txMethodLabel==="function"?txMethodLabel(e.method):(((txMethods.find(m=>m.v===e.method)||{}).label)||"—");
+    return `<tr>
+      <td>${escapeHtml(String(e.no||i+1))}</td>
+      <td>${escapeHtml(e.date||"—")}</td>
+      <td class="c-party">${escapeHtml(e[pf]||"—")}</td>
+      <td>${escapeHtml(methodLabel)}</td>
+      <td>${escapeHtml(String(e.refNo||"—"))}</td>
+      <td class="n ${isIn?'c-cr':'c-dr'}">${fmt(e.amount)}</td>
+      <td>${escapeHtml(e.dueDate||"—")}</td>
+      <td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td>
+      <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
+      <td><span class="rprt-badge" style="background:${sc.bg};color:${sc.fg}">${escapeHtml(sv)}</span></td>
+      <td>${escapeHtml(al?al.text:"—")}</td>
+      <td style="white-space:normal;max-width:220px;text-align:right;line-height:1.5">${escapeHtml(e.notes||"—")}</td>
+    </tr>`;
+  }).join("");
+  const kpis = [
+    {lbl:"عدد السجلات", val:rows.length+" سجل", sub:"&nbsp;", color:"#64748b"},
+    {lbl:"إجمالي الحركة", val:fmt(total), sub:cur, color:isIn?"#16a34a":"#dc2626"},
+    {lbl:"نقدي", val:fmt(cashTotal), sub:cur, color:"#059669"},
+    {lbl:"تحويلات", val:fmt(transferTotal), sub:cur, color:"#1e40af"},
+    {lbl:"شيكات", val:fmt(chequeTotal), sub:cur, color:"#d97706"}
+  ];
+  const filters = [
+    txFilterSummary(direction),
+    `الترتيب: ${sortName} (${txSort.dir==="desc"?"تنازلي":"تصاعدي"})`
+  ];
+  const tableHtml = `
+    <table class="rprt-tbl">
+      <thead><tr>
+        <th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th>
+        <th>القيمة (${escapeHtml(cur)})</th>
+        <th>تاريخ الاستحقاق</th><th>الخزنة / البنك</th><th>البنك المسحوب عليه</th>
+        <th>الحالة</th><th>التنبيه</th><th>ملاحظات</th>
+      </tr></thead>
+      <tbody>${proBody||`<tr><td colspan="12" style="padding:28px;color:#9ca3af">لا توجد سجلات مطابقة</td></tr>`}</tbody>
+      <tfoot><tr>
+        <td colspan="5" style="text-align:right">💰 الإجمالي</td>
+        <td class="n">${fmt(total)}</td>
+        <td colspan="6"></td>
+      </tr></tfoot>
+    </table>`;
+  return igProReportHtml({
+    emoji: isIn?"↓":"↑",
+    title: isIn?"سجل التحصيلات":"سجل المدفوعات",
+    titleEn: isIn?"RECEIPTS LEDGER":"PAYMENTS LEDGER",
+    sub: `${rows.length} حركة`,
+    filters: filters,
+    kpis: kpis,
+    tableHtml: tableHtml
+  });
 }
 function txExport(direction,format){
   const rows=txFilteredSorted(direction), isIn=direction==="in", title=isIn?"التحصيلات":"المدفوعات";
@@ -8982,7 +9296,7 @@ function renderTreasury(direction){
       <td style="color:var(--text-dim)">${e.no||""}</td>
       <td>${e.date||""}</td>
       <td><strong>${escapeHtml(e[partyField]||"—")}</strong></td>
-      <td>${txMethodLabel(e.method)}</td>
+      <td>${txMethodLabel(e.method, e)}</td>
       <td style="direction:ltr;text-align:right">${escapeHtml(e.refNo||"—")}</td>
       <td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>
       <td>${e.dueDate||"—"}</td>
@@ -9002,6 +9316,203 @@ function renderTreasury(direction){
   document.getElementById("txBody").innerHTML = body || `<tr><td colspan="13"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
   document.getElementById("txFoot").innerHTML = filtered.length ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="7"></td></tr>` : "";
   if(direction==="in") renderIncomingCheckSummary();
+}
+
+// =========================== شاشات تسويات العملاء والموردين ===========================
+// شاشة سريعة تحت المبيعات/المشتريات لعرض وإدارة التسويات (التسوية = method:"adjustment" في treasuryEntries)
+function newAdjustment(direction, kind){
+  if(!guardAct(direction==="in"?"customerAdjustments":"supplierAdjustments","add")) return;
+  window.__forceAdjustmentNext = kind || "debit";
+  openTxForm(direction, null);
+}
+function viewAdjustments(direction){
+  const isIn = direction==="in";
+  const title = isIn ? "⚖ تسويات العملاء" : "⚖ تسويات الموردين";
+  const subtitle = isIn ? "تسويات غير نقدية تُسجَّل على حساب العميل مباشرة — بدون أثر على الخزنة" : "تسويات غير نقدية تُسجَّل على حساب المورد مباشرة — بدون أثر على الخزنة";
+  return `<div class="page-head"><h2>${title}</h2>
+    <span style="color:var(--text-dim);font-size:12px;margin-right:10px">${subtitle}</span>
+    <div class="spacer"></div>
+    <button class="btn ghost sm" onclick="newAdjustment('${direction}','credit')" style="border-color:#16a34a;color:#16a34a">✨ تسوية دائنة</button>
+    <button class="btn sm" onclick="newAdjustment('${direction}','debit')" style="background:#dc2626;color:#fff;border-color:#dc2626">⚠️ تسوية مدينة</button>
+  </div>
+  <div class="filters" style="gap:10px;align-items:center">
+    <input class="inp" id="adjQ" placeholder="بحث: ${isIn?'العميل':'المورد'} / القيمة / الملاحظات" oninput="renderAdjustments('${direction}')" style="min-width:220px">
+    <select class="inp" id="adjKindFilter" onchange="renderAdjustments('${direction}')" style="min-width:150px">
+      <option value="">كل الأنواع</option>
+      <option value="debit">⚠️ مدينة فقط</option>
+      <option value="credit">✨ دائنة فقط</option>
+    </select>
+    <input class="inp" type="date" id="adjFrom" placeholder="من" onchange="renderAdjustments('${direction}')">
+    <input class="inp" type="date" id="adjTo" placeholder="إلى" onchange="renderAdjustments('${direction}')">
+    <div class="spacer"></div>
+    <button class="btn ghost sm" onclick="adjustmentsExport('${direction}')">⬇ تصدير Excel</button>
+    <button class="btn ghost sm" onclick="adjustmentsPrint('${direction}')">🖨 عرض / طباعة</button>
+  </div>
+  <div class="kpis compact" id="adjKpis"></div>
+  <div id="adjView"></div>`;
+}
+function adjustmentsList(direction){
+  const isIn = direction==="in";
+  const q = String(document.getElementById("adjQ")?.value||"").trim().toLowerCase();
+  const kindF = document.getElementById("adjKindFilter")?.value||"";
+  const from = document.getElementById("adjFrom")?.value||"";
+  const to = document.getElementById("adjTo")?.value||"";
+  return (state.treasuryEntries||[])
+    .filter(e=>e.direction===direction && e.method==="adjustment")
+    .filter(e=>!kindF || e.adjustmentKind===kindF)
+    .filter(e=>!from || (e.date||"")>=from)
+    .filter(e=>!to || (e.date||"")<=to)
+    .filter(e=>{
+      if(!q) return true;
+      const hay = [e[isIn?"customer":"supplier"], e.amount, e.notes, e.no].map(v=>String(v||"").toLowerCase()).join(" ");
+      return hay.includes(q);
+    })
+    .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))|| (+b.no||0)-(+a.no||0));
+}
+function renderAdjustments(direction){
+  const isIn = direction==="in";
+  const rows = adjustmentsList(direction);
+  const cur = state.settings.currency||"ج.م";
+  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const net = debitTotal - creditTotal;
+  const kpi=(l,v,s,c)=>`<div class="kpi"${c?` style="border-right:4px solid ${c}"`:""}><div class="lbl">${l}</div><div class="val small">${v}</div><div class="sub">${s||""}</div></div>`;
+  document.getElementById("adjKpis").innerHTML =
+    kpi("عدد التسويات", rows.length, "&nbsp;", "#64748b") +
+    kpi("⚠️ إجمالي مدينة", fmt(debitTotal), cur, "#dc2626") +
+    kpi("✨ إجمالي دائنة", fmt(creditTotal), cur, "#16a34a") +
+    kpi("صافي الأثر", `<span style="color:${net>=0?'#dc2626':'#16a34a'}">${fmt(Math.abs(net))}</span>`, (net>=0?(isIn?"يزيد مستحق العملاء":"يقل مستحق الموردين"):(isIn?"يقل مستحق العملاء":"يزيد مستحق الموردين"))+" · "+cur, net>=0?"#dc2626":"#16a34a");
+
+  const body = rows.map((e,i)=>{
+    const kind=e.adjustmentKind||"debit";
+    const kindBadge = kind==="debit"
+      ? `<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:800">⚠️ مدينة</span>`
+      : `<span class="chip" style="background:#dcfce7;color:#166534;font-weight:800">✨ دائنة</span>`;
+    const allocCount = (e.allocations||[]).length;
+    return `<tr style="${kind==='debit'?'background:#fef2f2':'background:#f0fdf4'}">
+      <td>${e.no||i+1}</td>
+      <td>${e.date||"—"}</td>
+      <td><strong>${escapeHtml(e[isIn?"customer":"supplier"]||"—")}</strong></td>
+      <td>${kindBadge}</td>
+      <td class="num" style="font-weight:800;color:${kind==='debit'?'#991b1b':'#166534'}">${fmt(e.amount)}</td>
+      <td>${allocCount>0?`<span class="chip">${allocCount} تخصيص</span>`:'—'}</td>
+      <td style="font-size:11px;color:var(--text-dim);max-width:300px;white-space:normal;line-height:1.5">${escapeHtml(e.notes||"—")}</td>
+      <td>
+        <div class="td-actions">
+          <button onclick="txEdit('${e.id}','${direction}')">تعديل</button>
+          <button class="del" onclick="txDel('${e.id}','${direction}')">حذف</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+  const container = document.getElementById("adjView");
+  if(!rows.length){
+    container.innerHTML = `<div class="empty" style="padding:30px"><p>لا توجد تسويات مطابقة. اضغط "⚠️ تسوية مدينة" أو "✨ تسوية دائنة" لإنشاء واحدة جديدة.</p></div>`;
+    return;
+  }
+  container.innerHTML = `<div class="tbl-wrap"><table><thead><tr>
+    <th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>نوع التسوية</th><th>القيمة (${escapeHtml(cur)})</th><th>التخصيص</th><th>السبب / الملاحظات</th><th></th>
+  </tr></thead><tbody>${body}</tbody></table></div>`;
+}
+function guardAct(scr,act){
+  if(typeof can==="function" && !can(scr,act)){
+    toast("ليس لديك صلاحية "+act+" في "+scr,"err");
+    return false;
+  }
+  return true;
+}
+function adjustmentsExport(direction){
+  const rows = adjustmentsList(direction); if(!rows.length){ toast("لا توجد تسويات للتصدير","err"); return; }
+  const isIn = direction==="in";
+  const cur = state.settings.currency||"ج.م";
+  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const body = rows.map((e,i)=>{
+    const kind=e.adjustmentKind||"debit";
+    const bg = kind==="debit"?"#fef2f2":"#f0fdf4";
+    const col = kind==="debit"?"#991b1b":"#166534";
+    const kindLabel = kind==="debit"?"⚠️ مدينة":"✨ دائنة";
+    const kindBg = kind==="debit"?"#fee2e2":"#dcfce7";
+    return `<tr style="background:${bg}">
+      <td>${e.no||i+1}</td>
+      <td>${e.date||"—"}</td>
+      <td class="c-party">${escapeHtml(e[isIn?"customer":"supplier"]||"—")}</td>
+      <td><span class="rprt-badge" style="background:${kindBg};color:${col}">${kindLabel}</span></td>
+      <td class="n" style="font-weight:800;color:${col}">${fmt(e.amount)}</td>
+      <td style="white-space:normal;max-width:280px;text-align:right">${escapeHtml(e.notes||"—")}</td>
+    </tr>`;
+  }).join("");
+  const foot = `<tr>
+    <td colspan="4" style="text-align:right">💰 الإجمالي</td>
+    <td class="n">${fmt(debitTotal+creditTotal)}</td>
+    <td>مدين: ${fmt(debitTotal)} · دائن: ${fmt(creditTotal)}</td>
+  </tr>`;
+  const kpis = [
+    {lbl:"عدد التسويات",val:rows.length,sub:"&nbsp;",color:"#64748b"},
+    {lbl:"⚠️ إجمالي مدينة",val:fmt(debitTotal),sub:cur,color:"#dc2626"},
+    {lbl:"✨ إجمالي دائنة",val:fmt(creditTotal),sub:cur,color:"#16a34a"},
+    {lbl:"صافي الأثر",val:fmt(Math.abs(debitTotal-creditTotal)),sub:cur,color:(debitTotal-creditTotal)>=0?"#dc2626":"#16a34a"}
+  ];
+  const html = igProReportHtml({
+    emoji:"⚖",
+    title:isIn?"تسويات العملاء":"تسويات الموردين",
+    titleEn:isIn?"CUSTOMER ADJUSTMENTS":"SUPPLIER ADJUSTMENTS",
+    sub:`${rows.length} تسوية`,
+    filters:["تسويات غير نقدية — مسجلة على حساب "+(isIn?"العميل":"المورد")+" بدون أثر على الخزنة"],
+    kpis:kpis,
+    tableHtml:`<table class="rprt-tbl">
+      <thead><tr>
+        <th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>نوع التسوية</th><th>القيمة (${escapeHtml(cur)})</th><th>السبب / الملاحظات</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot>${foot}</tfoot>
+    </table>`
+  });
+  igSaveXlsx(html, (isIn?"تسويات_العملاء_":"تسويات_الموردين_")+new Date().toISOString().slice(0,10));
+  toast("✓ تم تجهيز ملف Excel","ok");
+}
+function adjustmentsPrint(direction){
+  const rows = adjustmentsList(direction); if(!rows.length){ toast("لا توجد تسويات للطباعة","err"); return; }
+  // Reuse export HTML
+  const isIn = direction==="in";
+  const cur = state.settings.currency||"ج.م";
+  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const body = rows.map((e,i)=>{
+    const kind=e.adjustmentKind||"debit";
+    const bg = kind==="debit"?"#fef2f2":"#f0fdf4";
+    const col = kind==="debit"?"#991b1b":"#166534";
+    const kindLabel = kind==="debit"?"⚠️ مدينة":"✨ دائنة";
+    const kindBg = kind==="debit"?"#fee2e2":"#dcfce7";
+    return `<tr style="background:${bg}">
+      <td>${e.no||i+1}</td>
+      <td>${e.date||"—"}</td>
+      <td class="c-party">${escapeHtml(e[isIn?"customer":"supplier"]||"—")}</td>
+      <td><span class="rprt-badge" style="background:${kindBg};color:${col}">${kindLabel}</span></td>
+      <td class="n" style="font-weight:800;color:${col}">${fmt(e.amount)}</td>
+      <td style="white-space:normal;max-width:280px;text-align:right">${escapeHtml(e.notes||"—")}</td>
+    </tr>`;
+  }).join("");
+  const kpis = [
+    {lbl:"عدد التسويات",val:rows.length,sub:"&nbsp;",color:"#64748b"},
+    {lbl:"⚠️ إجمالي مدينة",val:fmt(debitTotal),sub:cur,color:"#dc2626"},
+    {lbl:"✨ إجمالي دائنة",val:fmt(creditTotal),sub:cur,color:"#16a34a"},
+    {lbl:"صافي الأثر",val:fmt(Math.abs(debitTotal-creditTotal)),sub:cur,color:(debitTotal-creditTotal)>=0?"#dc2626":"#16a34a"}
+  ];
+  const html = igProReportHtml({
+    emoji:"⚖",
+    title:isIn?"تسويات العملاء":"تسويات الموردين",
+    titleEn:isIn?"CUSTOMER ADJUSTMENTS":"SUPPLIER ADJUSTMENTS",
+    sub:`${rows.length} تسوية`,
+    filters:["تسويات غير نقدية — مسجلة على حساب "+(isIn?"العميل":"المورد")+" بدون أثر على الخزنة"],
+    kpis:kpis,
+    tableHtml:`<table class="rprt-tbl">
+      <thead><tr><th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>نوع التسوية</th><th>القيمة (${escapeHtml(cur)})</th><th>السبب / الملاحظات</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td colspan="4" style="text-align:right">💰 الإجمالي</td><td class="n">${fmt(debitTotal+creditTotal)}</td><td>مدين: ${fmt(debitTotal)} · دائن: ${fmt(creditTotal)}</td></tr></tfoot>
+    </table>`
+  });
+  openReportPreview(html, isIn?"تسويات العملاء":"تسويات الموردين");
 }
 
 // ملخص أوراق القبض والشيكات تحت التحصيل مجمّع لكل عميل وحالة.
@@ -9156,13 +9667,78 @@ function renderChequeRegister(){
 }
 function crSortHead(key,label){const active=window.crSortKey===key;return `<button class="cr-sort" onclick="crSortBy('${key}')">${label}${active?(window.crSortDir==="asc"?" ▲":" ▼"):" ↕"}</button>`;}
 function crSortBy(key){if(window.crSortKey===key)window.crSortDir=window.crSortDir==="asc"?"desc":"asc";else{window.crSortKey=key;window.crSortDir="asc";}renderChequeRegister();}
-function chequeReportHTML(){const rows=chequeRegisterFiltered(),cur=state.settings.currency||"ج.م",heads=["م","تاريخ الشيك","العميل","رقم الشيك","القيمة","الاستحقاق","البنك المسحوب عليه","البنك/الخزينة","الموقف","تنبيه الاستحقاق","ملاحظات"];const body=rows.map(e=>{const d=chequeDueInfo(e);return `<tr><td>${escapeHtml(e.no||"—")}</td><td>${escapeHtml(e.date||"—")}</td><td>${escapeHtml(e.customer||"—")}</td><td>${escapeHtml(e.refNo||"—")}</td><td>${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(chequeStatusLabel(e))}</td><td>${escapeHtml(d.text)}</td><td>${escapeHtml(e.notes||"—")}</td></tr>`}).join("");return `<h3>أوراق القبض وشيكات تحت التحصيل</h3><p>عدد السجلات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)}</p><div class="tbl-wrap"><table class="cr-table"><thead><tr>${heads.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${body||'<tr><td colspan="11">لا توجد بيانات مطابقة</td></tr>'}</tbody></table></div>`;}
-function openChequeReportView(){openModal("عرض كشف أوراق القبض والشيكات",`<div class="cr-preview-actions"><button class="btn sm" onclick="printChequeRegister()">🖨 طباعة</button><button class="btn ghost sm" onclick="exportChequeRegisterExcel()">⬇ Excel</button><button class="btn ghost sm" onclick="exportChequeRegisterPDF()">⬇ PDF</button><button class="btn ghost sm" onclick="crZoom(-1)">−</button><b id="crZoomLabel">100%</b><button class="btn ghost sm" onclick="crZoom(1)">+</button></div><div id="crPreview" class="cr-preview">${chequeReportHTML()}</div>`,{wide:true});}
+function chequeReportHTML(){
+  const rows=chequeRegisterFiltered(),cur=state.settings.currency||"ج.م";
+  const dueColor = kind => kind==="overdue"?{bg:"#fee2e2",fg:"#991b1b"}:kind==="today"?{bg:"#fef08a",fg:"#854d0e"}:kind==="soon"?{bg:"#fed7aa",fg:"#9a3412"}:kind==="future"?{bg:"#dcfce7",fg:"#166534"}:{bg:"#e5e7eb",fg:"#374151"};
+  const stColor = s => s==="receivable"?{bg:"#fef3c7",fg:"#854d0e"}:{bg:"#dbeafe",fg:"#1e40af"};
+  const body=rows.map((e,i)=>{
+    const d=chequeDueInfo(e), dc=dueColor(d.kind), sc=stColor(e.status);
+    return `<tr>
+      <td>${escapeHtml(String(e.no||i+1))}</td>
+      <td>${escapeHtml(e.date||"—")}</td>
+      <td class="c-party">${escapeHtml(e.customer||"—")}</td>
+      <td style="font-weight:800">${escapeHtml(String(e.refNo||"—"))}</td>
+      <td class="n c-bal">${fmt(e.amount)}</td>
+      <td>${escapeHtml(e.dueDate||"—")}</td>
+      <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
+      <td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td>
+      <td><span class="rprt-badge" style="background:${sc.bg};color:${sc.fg}">${escapeHtml(chequeStatusLabel(e))}</span></td>
+      <td><span class="rprt-badge" style="background:${dc.bg};color:${dc.fg}">${escapeHtml(d.text)}</span></td>
+      <td style="white-space:normal;max-width:200px;text-align:right">${escapeHtml(e.notes||"—")}</td>
+    </tr>`;
+  }).join("");
+  // إحصائيات
+  const all = chequeRegisterAll();
+  const receivable=all.filter(e=>e.status==="receivable"), pending=all.filter(e=>["pending","deposited"].includes(e.status));
+  const overdue=all.filter(e=>chequeDueInfo(e).kind==="overdue");
+  const sum=a=>a.reduce((n,e)=>n+(+e.amount||0),0);
+  const kpis = [
+    {lbl:"المعروض", val:rows.length+" شيك", sub:fmt(sumChequeAmounts(rows))+" "+cur, color:"#64748b"},
+    {lbl:"أوراق قبض", val:fmt(sum(receivable)), sub:receivable.length+" شيك", color:"#d97706"},
+    {lbl:"تحت التحصيل", val:fmt(sum(pending)), sub:pending.length+" شيك", color:"#1e40af"},
+    {lbl:"إجمالي كل الشيكات", val:fmt(sum(all)), sub:all.length+" شيك", color:"#1a1a1a"},
+    {lbl:"متأخر", val:fmt(sum(overdue)), sub:overdue.length+" شيك", color:"#dc2626"}
+  ];
+  const filters = [];
+  if(chequeRegisterFilter.status) filters.push("الحالة: "+(chequeRegisterFilter.status==="receivable"?"أوراق قبض":"شيكات تحت التحصيل"));
+  if(chequeRegisterFilter.due) filters.push("الاستحقاق: "+({overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام"}[chequeRegisterFilter.due]||chequeRegisterFilter.due));
+  if(chequeRegisterFilter.from) filters.push("من "+chequeRegisterFilter.from);
+  if(chequeRegisterFilter.to) filters.push("إلى "+chequeRegisterFilter.to);
+  if(chequeRegisterFilter.q) filters.push("بحث: "+chequeRegisterFilter.q);
+  if(!filters.length) filters.push("كل الشيكات (بدون فلتر)");
+  const tableHtml = `
+    <table class="rprt-tbl">
+      <thead><tr>
+        <th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th>
+        <th>القيمة (${escapeHtml(cur)})</th>
+        <th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك / الخزينة</th>
+        <th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th>
+      </tr></thead>
+      <tbody>${body||`<tr><td colspan="11" style="padding:28px;color:#9ca3af">لا توجد شيكات مطابقة</td></tr>`}</tbody>
+      <tfoot><tr>
+        <td colspan="4" style="text-align:right">💰 إجمالي الشيكات المعروضة</td>
+        <td class="n">${fmt(sumChequeAmounts(rows))}</td>
+        <td colspan="6">${rows.length} شيك</td>
+      </tr></tfoot>
+    </table>`;
+  // تم إرجاع HTML كامل باستخدام القالب الاحترافي الموحَّد
+  return igProReportHtml({
+    emoji:"🏦",
+    title:"أوراق القبض وشيكات تحت التحصيل",
+    titleEn:"PROMISSORY NOTES & CHEQUES REGISTER",
+    sub:`${rows.length} شيك معروض`,
+    filters:filters,
+    kpis:kpis,
+    tableHtml:tableHtml
+  });
+}
+function openChequeReportView(){ openReportPreview(chequeReportHTML(),"أوراق القبض وشيكات تحت التحصيل"); }
 function exportChequeRegisterExcel(){
-  const html=`<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Tahoma,Arial}table{border-collapse:collapse;width:100%}th,td{border:1px solid #b8c5d6;padding:7px;text-align:center;white-space:nowrap}th{background:#fce4d6;font-weight:bold}tfoot{font-weight:bold;background:#edf2f8}</style></head><body>${chequeReportHTML()}</body></html>`;
+  // chequeReportHTML() بترجع HTML كامل بالفعل بالقالب الاحترافي
+  const html = chequeReportHTML();
   if(typeof window.igSaveXlsx==="function") window.igSaveXlsx(html,"أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10));
   else { downloadChequeRegister(); toast("تم التصدير بصيغة CSV لعدم توفر مولد Excel","err"); return; }
-  toast("تم تجهيز ملف Excel","ok");
+  toast("✓ تم تجهيز ملف Excel احترافي","ok");
 }
 async function exportChequeRegisterPDF(){
   const rows=chequeRegisterFiltered(); if(!rows.length){toast("لا توجد بيانات للتصدير","err");return;}
@@ -9184,11 +9760,9 @@ async function exportChequeRegisterPDF(){
 function crZoom(d){window.crZoomLevel=Math.max(.7,Math.min(1.6,(window.crZoomLevel||1)+d*.1));const p=document.getElementById("crPreview"),l=document.getElementById("crZoomLabel");if(p)p.style.zoom=window.crZoomLevel;if(l)l.textContent=Math.round(window.crZoomLevel*100)+"%";}
 function downloadChequeRegister(){const rows=chequeRegisterFiltered(),head=["م","تاريخ الشيك","العميل","رقم الشيك","القيمة","الاستحقاق","البنك المسحوب عليه","البنك/الخزينة","الموقف","تنبيه الاستحقاق","ملاحظات"],data=rows.map(e=>[e.no,e.date,e.customer,e.refNo,e.amount,e.dueDate,e.bankDrawn?treasuryLabel(e.bankDrawn):"",e.treasury?treasuryLabel(e.treasury):"",chequeStatusLabel(e),chequeDueInfo(e).text,e.notes]);const csv="\ufeff"+[head,...data].map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const a=document.createElement("a"),u=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.href=u;a.download="cheques_report.csv";a.click();URL.revokeObjectURL(u);}
 function printChequeRegister(){
-  const rows=chequeRegisterFiltered(), cur=state.settings.currency||"ج.م";
   const w=window.open("","_blank"); if(!w){toast("المتصفح منع فتح نافذة الطباعة","err");return;}
-  const body=rows.map(e=>{const due=chequeDueInfo(e);return `<tr><td>${escapeHtml(String(e.no||"—"))}</td><td>${escapeHtml(e.date||"—")}</td><td>${escapeHtml(e.customer||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td>${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(chequeStatusLabel(e))}</td><td>${escapeHtml(due.text)}</td><td>${escapeHtml(e.notes||"—")}</td></tr>`;}).join("");
-  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>أوراق القبض وشيكات تحت التحصيل</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:14px;color:#1f2937}h2{text-align:center;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #94a3b8;padding:6px;text-align:center}th{background:#fce4d6}@page{size:A4 landscape;margin:8mm}tr{break-inside:avoid}
-</style></head><body><h2>أوراق القبض وشيكات تحت التحصيل</h2><p>عدد الشيكات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(cur)} — تاريخ الطباعة: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>م</th><th>تاريخ الشيك</th><th>العميل</th><th>رقم الشيك</th><th>القيمة (${escapeHtml(cur)})</th><th>الاستحقاق</th><th>البنك المسحوب عليه</th><th>البنك/الخزينة</th><th>الموقف</th><th>تنبيه الاستحقاق</th><th>ملاحظات</th></tr></thead><tbody>${body}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
+  const html = chequeReportHTML().replace("</body>",'<script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body>');
+  w.document.write(html);
   w.document.close();
 }
 function sumChequeAmounts(rows){ return rows.reduce((n,e)=>n+(+e.amount||0),0); }
@@ -9222,19 +9796,22 @@ function openTxForm(direction, existing){
     direction, no: nextTxNo(direction),
     date: new Date().toISOString().slice(0,10),
     [partyField]: "",
-    method: "cash",
+    method: window.__forceAdjustmentNext ? "adjustment" : "cash",
     refNo: "",
     amount: "",
     dueDate: "",
     treasury: "",
     bankDrawn: "",
-    status: "cash",
+    status: window.__forceAdjustmentNext ? "adjustment" : "cash",
     notes: "",
     allocations: [],
     targetSupplier: "",
-    linkedTxId: ""
+    linkedTxId: "",
+    adjustmentKind: window.__forceAdjustmentNext || ""
   };
+  window.__forceAdjustmentNext = false;
   if(draft.method==="cash" || draft.method==="transfer") draft.status=draft.method;
+  if(draft.method==="adjustment") draft.status="adjustment";
   txEditingId = existing ? existing.id : null;
 
   const bankOptions = (state.banks||[]).map(b=>`<option value="${escapeAttr(b.code)}" ${draft.treasury===b.code?'selected':''}>${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("");
@@ -9290,6 +9867,14 @@ function openTxForm(direction, existing){
           ${supplierOptionsHtml}
         </select>
       </div>`:""}
+      <div class="fld" id="tx_adjustmentKindWrap" style="display:none;grid-column:span 2">
+        <label>⚖ نوع التسوية * <span style="color:var(--text-dim);font-weight:400">(بدون أثر على الخزنة — تسجَّل في حساب ${partyLabel} فقط)</span></label>
+        <select class="inp" id="tx_adjustmentKind">
+          <option value="">— اختر —</option>
+          <option value="debit"  ${draft.adjustmentKind==='debit'?'selected':''}>⚠️ ${isIn?'تسوية مدينة على العميل':'تسوية مدينة على المورد'} (${isIn?'يزيد المستحق عليه':'يقلل المستحق له'})</option>
+          <option value="credit" ${draft.adjustmentKind==='credit'?'selected':''}>✨ ${isIn?'تسوية دائنة للعميل':'تسوية دائنة للمورد'} (${isIn?'يقلل المستحق عليه':'يزيد المستحق له'})</option>
+        </select>
+      </div>
       <div class="fld" id="tx_refNoWrap"><label id="tx_refNoLabel">رقم الشيك</label>
         <input class="inp" id="tx_refNo" value="${escapeAttr(draft.refNo||"")}" placeholder="123456" style="direction:ltr;text-align:right">
       </div>
@@ -9341,11 +9926,14 @@ function openTxForm(direction, existing){
   `, ()=>{
     const method = document.getElementById("tx_method").value;
     const isTransferSupplier = method==="transfer_supplier";
-    const treasuryVal = isTransferSupplier ? ""
+    const isAdj = method==="adjustment";
+    const treasuryVal = (isTransferSupplier || isAdj) ? ""
       : (method === "cash"
         ? document.getElementById("tx_treasury").value
         : document.getElementById("tx_bank").value);
     const targetSupplierVal = isIn && isTransferSupplier ? (document.getElementById("tx_supplierTarget")?.value||"").trim() : "";
+    const adjustmentKind = isAdj ? (document.getElementById("tx_adjustmentKind")?.value||"") : "";
+    const allocTypeVal = isIn ? (isAdj ? (adjustmentKind==="credit" ? (document.getElementById("tx_allocationType")?.value||"") : "") : (document.getElementById("tx_allocationType")?.value||"")) : "";
 
     const d = {
       ...draft,
@@ -9357,17 +9945,20 @@ function openTxForm(direction, existing){
       dueDate: document.getElementById("tx_dueDate").value,
       treasury: treasuryVal,
       bankDrawn: method!=="bank" ? "" : (document.getElementById("tx_bankDrawnSel").value==="__other" ? document.getElementById("tx_bankDrawnOther").value.trim() : document.getElementById("tx_bankDrawnSel").value),
-      status: method==="cash" ? "cash" : (method==="transfer"||isTransferSupplier) ? "transfer" : document.getElementById("tx_status").value,
+      status: isAdj ? "adjustment" : (method==="cash" ? "cash" : (method==="transfer"||isTransferSupplier) ? "transfer" : document.getElementById("tx_status").value),
       notes: document.getElementById("tx_notes").value.trim(),
-      allocationType: isIn ? (document.getElementById("tx_allocationType")?.value||"") : "",
-      allocations: isIn ? txBuildAllocations(document.getElementById("tx_allocationType")?.value||"", +document.getElementById("tx_amount").value||0) : (draft.allocations||[]),
+      allocationType: allocTypeVal,
+      allocations: isIn ? txBuildAllocations(allocTypeVal, +document.getElementById("tx_amount").value||0) : (draft.allocations||[]),
       wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned")),
-      targetSupplier: targetSupplierVal
+      targetSupplier: targetSupplierVal,
+      adjustmentKind: adjustmentKind
     };
     if(!d.date){ toast("التاريخ مطلوب","err"); return false; }
     if(!d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); return false; }
     if(!d.amount || d.amount<=0){ toast("القيمة لازم تكون أكبر من صفر","err"); return false; }
-    if(isTransferSupplier){
+    if(isAdj){
+      if(!adjustmentKind){ toast("اختر نوع التسوية (مدينة أو دائنة)","err"); return false; }
+    } else if(isTransferSupplier){
       if(!targetSupplierVal){ toast("اختر المورد المحوَّل إليه","err"); return false; }
     } else if(!d.treasury){ toast(method==="cash"?"الخزينة مطلوبة":"البنك مطلوب","err"); return false; }
 
@@ -9501,6 +10092,19 @@ function txInvoiceRowsForCustomer(customer, excludeEntryId){
       const paid=paidFor(so,orderNo,pt.no), rem=pt.amount-paid;
       out.push({orderId,orderNo,date:docDate,total,installment:pt.no,label:pt.no===0?'قسط نقدي':'قسط '+pt.no,due:pt.due||'',amount:pt.amount,paid,remaining:rem<1?0:rem});
     });
+  });
+  // تسويات مدينة على العميل → تدخل كـ"قسط افتراضي" مستحق التحصيل (orderNo = ADJ-<no>)
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.id===excludeEntryId) return;
+    if(e.direction!=="in" || e.method!=="adjustment" || e.adjustmentKind!=="debit") return;
+    if(String(e.customer||"").trim()!==cust) return;
+    const amount = +e.amount||0; if(amount<=0.009) return;
+    const orderNo = "ADJ-"+(e.no||e.id);
+    const paid = (state.treasuryEntries||[])
+      .filter(x=>x.id!==excludeEntryId && x.direction==='in' && String(x.customer||"").trim()===cust && (x.method!=="bank"||x.status==="collected") && x.status!=="returned")
+      .reduce((s,x)=>s+(x.allocations||[]).filter(a=>+a.installment===1 && String(a.orderNo||"")===orderNo).reduce((v,a)=>v+(+a.amount||0),0),0);
+    const rem = amount - paid;
+    out.push({orderId:orderNo, orderNo, date:e.date||"", total:amount, installment:1, label:"⚖ تسوية مدينة", due:e.dueDate||e.date||"", amount:amount, paid, remaining:rem<0.009?0:rem, adjustmentId:e.id});
   });
   return out.sort((a,b)=>(a.due?0:1)-(b.due?0:1)||String(a.due).localeCompare(String(b.due))||String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true})||a.installment-b.installment);
 }
@@ -9957,6 +10561,26 @@ function salesInstallmentBaseRows(){
       out.push({orderId:g.so?.id||g.orderNo,orderNo:g.orderNo,customer:g.customer,date:invoiceDate,due,label:pt.label,installment:pt.no,amount:+pt.amount||0,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total,pays,near:remaining>0.004&&!!due&&days<=0&&days>=-7});
     });
   });
+  // التسويات المدينة على العملاء → تدخل كأقساط مستحقة في شاشة الأقساط
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.direction!=="in" || e.method!=="adjustment" || e.adjustmentKind!=="debit") return;
+    const customer=String(e.customer||"").trim(); if(!customer) return;
+    const amount = +e.amount||0; if(amount<=0.009) return;
+    const orderNo="ADJ-"+(e.no||e.id);
+    const invoiceDate=String(e.date||"").slice(0,10);
+    const due=String(e.dueDate||e.date||"").slice(0,10);
+    // المسدد من هذه التسوية = مجموع allocations المخصصة لها من أي تحصيل (orderNo=ADJ-X installment=1)
+    const paid = (state.treasuryEntries||[])
+      .filter(x=>x.direction==='in' && String(x.customer||"").trim()===customer && (x.method!=="bank"||x.status==="collected") && x.status!=="returned")
+      .reduce((s,x)=>s+(x.allocations||[]).filter(a=>+a.installment===1 && String(a.orderNo||"")===orderNo).reduce((v,a)=>v+(+a.amount||0),0),0);
+    let remaining = Math.max(0, amount-paid), waived=0;
+    const today=new Date(); today.setHours(0,0,0,0);
+    const dd=due?new Date(due+"T00:00:00"):null;
+    const days=dd&&!Number.isNaN(dd.getTime())?Math.floor((today-dd)/86400000):0;
+    if(remaining>0.004&&remaining<SI_SMALL_BALANCE&&due&&days>0){ waived=remaining; remaining=0; }
+    const status=remaining<=0.004?"مسدد":!due?"بدون تاريخ":days>0?"متأخر":days===0?"مستحق اليوم":"قادم";
+    out.push({orderId:orderNo,orderNo,customer,date:invoiceDate,due,label:"⚖ تسوية مدينة",installment:1,amount,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total:amount,pays:[paid].filter(v=>v>0),near:remaining>0.004&&!!due&&days<=0&&days>=-7, isAdjustment:true, adjustmentId:e.id});
+  });
   return out.sort((a,b)=>{
     const ad=a.due||"9999-12-31",bd=b.due||"9999-12-31";
     return ad.localeCompare(bd)||String(b.date).localeCompare(String(a.date))||String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true})||a.installment-b.installment;
@@ -10086,53 +10710,94 @@ function salesInstallmentsExport(format){
   const total=k=>rows.reduce((a,r)=>a+(+r[k]||0),0),cur=state.settings.currency||"ج.م",n=salesInstallmentMoney;
   const F=salesInstallmentFilters;
   const asLabel=(arr,one,many,all)=>{ const a=igMsNormArr(arr); if(!a.length) return all; if(a.length===1) return one+": "+a[0]; return many+": ("+a.length+")"; };
-  const filters=[asLabel(F.customer,"العميل","العملاء","كل العملاء"),asLabel(F.order,"أمر البيع","أوامر البيع","كل الأوامر"),asLabel(F.status,"الحالة","الحالات","كل الحالات"),(F.from||F.to)?"الاستحقاق: "+(F.from||"من البداية")+" إلى "+(F.to||"مفتوح"):"كل التواريخ",F.q?"البحث: "+F.q:""].filter(Boolean).join(" · ");
+  const filtersList=[asLabel(F.customer,"العميل","العملاء","كل العملاء"),asLabel(F.order,"أمر البيع","أوامر البيع","كل الأوامر"),asLabel(F.status,"الحالة","الحالات","كل الحالات"),(F.from||F.to)?"الاستحقاق: "+(F.from||"من البداية")+" إلى "+(F.to||"مفتوح"):"كل التواريخ",F.q?"البحث: "+F.q:""].filter(Boolean);
   const cols=siColumns(rows).filter(c=>c.pay===undefined&&c.k!=="diff");
-  const statusBg = s => s==="متأخر"?"#fecaca":s==="مسدد"?"#bbf7d0":s==="مستحق اليوم"?"#fef08a":s==="قادم"?"#bfdbfe":"#e5e7eb";
-  const statusTx = s => s==="متأخر"?"#991b1b":s==="مسدد"?"#166534":s==="مستحق اليوم"?"#854d0e":s==="قادم"?"#1e40af":"#374151";
-  const body=rows.map(r=>{
-    const rowBg=r.status==="متأخر"?"background:#fef2f2":r.status==="مسدد"?"background:#f0fdf4":r.status==="مستحق اليوم"?"background:#fefce8":"";
-    return `<tr style="${rowBg}">${cols.map(c=>{
+  // ألوان مطابقة للشاشة
+  const statusColor = s => s==="متأخر"?{bg:"#fee2e2",fg:"#991b1b",rowBg:"#fef2f2"}
+                        :s==="مسدد"?{bg:"#dcfce7",fg:"#166534",rowBg:"#f0fdf4"}
+                        :s==="مستحق اليوم"?{bg:"#fef08a",fg:"#854d0e",rowBg:"#fefce8"}
+                        :s==="قادم"?{bg:"#dbeafe",fg:"#1e40af",rowBg:"#eff6ff"}
+                        :{bg:"#e5e7eb",fg:"#374151",rowBg:"#fff"};
+  const body=rows.map((r,ri)=>{
+    const sc=statusColor(r.status);
+    const rowBg = sc.rowBg || (ri%2?"#fafbfc":"#ffffff");
+    return `<tr style="background:${rowBg}">${cols.map(c=>{
       const val=escapeHtml(siCell(r,c));
-      if(c.k==="status") return `<td style="text-align:center"><span style="display:inline-block;padding:3px 10px;border-radius:12px;background:${statusBg(r.status)};color:${statusTx(r.status)};font-weight:800;font-size:11px">${val}</span></td>`;
-      if(c.k==="order") return `<td style="font-weight:800;color:#92400e">${val}</td>`;
-      if(c.k==="remaining"||c.k==="lateRemaining") return `<td class="n" style="font-weight:800;color:#b91c1c">${val}</td>`;
-      if(c.k==="paid") return `<td class="n" style="color:#059669">${val}</td>`;
+      if(c.k==="status") return `<td style="text-align:center;padding:6px 4px"><span style="display:inline-block;padding:4px 10px;border-radius:14px;background:${sc.bg};color:${sc.fg};font-weight:900;font-size:11px;border:1px solid ${sc.fg}22">${val}</span></td>`;
+      if(c.k==="order") return `<td style="font-weight:900;color:#92400e;background:${rowBg}">${val}</td>`;
+      if(c.k==="customer") return `<td style="font-weight:800;color:#1a1a1a">${val}</td>`;
+      if(c.k==="remaining"||c.k==="lateRemaining") return `<td class="n" style="font-weight:900;color:${+r[c.k]>0.004?'#b91c1c':'#6b7280'}">${val}</td>`;
+      if(c.k==="paid") return `<td class="n" style="color:#059669;font-weight:800">${val}</td>`;
       if(["total","amount","days"].includes(c.k)) return `<td class="n">${val}</td>`;
       return `<td>${val}</td>`;
     }).join("")}</tr>`;
   }).join("");
-  const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left">الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  // بطاقات ملخصة احترافية فوق الجدول
-  const statsCard = (lbl,val,sub,bg,color)=>`<div style="background:${bg};color:${color};padding:12px 14px;border-radius:10px;border:1px solid rgba(0,0,0,.08);min-width:140px"><div style="font-size:11px;opacity:.8;margin-bottom:4px">${lbl}</div><div style="font-size:18px;font-weight:900">${val}</div><div style="font-size:10px;opacity:.75;margin-top:2px">${sub}</div></div>`;
-  const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد");
-  const summaryBar = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;justify-content:center">
-    ${statsCard("عدد الأقساط",rows.length,"قسط","#fef3c7","#92400e")}
-    ${statsCard("إجمالي الأقساط",n(total("amount")),cur,"#dbeafe","#1e3a8a")}
-    ${statsCard("المسدد",n(total("paid")),paidRows.length+" مسدد","#dcfce7","#166534")}
-    ${statsCard("المتبقي",n(total("remaining")),cur,"#fff7ed","#9a3412")}
-    ${statsCard("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#fee2e2","#991b1b")}
+  const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left;font-size:13px">💰 الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
+  // بطاقات KPI احترافية — مطابقة لتصميم الشاشة
+  const kpi = (lbl,val,sub,accent)=>`<div style="background:#fff;border:1px solid #e5e7eb;border-top:4px solid ${accent};border-radius:10px;padding:12px 14px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center">
+    <div style="font-size:10.5px;color:#6b7280;font-weight:700;margin-bottom:5px;letter-spacing:.3px">${lbl}</div>
+    <div style="font-size:19px;font-weight:900;color:#111;line-height:1.1;direction:ltr">${val}</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:3px">${sub}</div>
   </div>`;
+  const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
+  const kpis = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 10px">
+    ${kpi("عدد الأقساط",rows.length+" قسط","&nbsp;","#64748b")}
+    ${kpi("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
+    ${kpi("المسدد",n(total("paid")),paidRows.length+" قسط مسدد","#16a34a")}
+    ${kpi("المتبقي",n(total("remaining")),cur,"#d97706")}
+    ${kpi("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#dc2626")}
+    ${nearRows.length?kpi("قريب الاستحقاق",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط (7 أيام)","#eab308"):""}
+  </div>`;
+  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;justify-content:center">
+    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:14px;font-size:11px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
+  </div>` : "";
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
-    body{font-family:Tahoma,"Cairo",Arial,sans-serif;color:#000;padding:10px;background:#fff;margin:0}
-    .hdr{text-align:center;padding:14px 10px;border-bottom:3px solid #d4a017;margin-bottom:10px}
-    .hdr h1{margin:0;font-size:22px;color:#111}
-    .hdr .en{color:#d4a017;font-size:14px;letter-spacing:2px;margin-top:4px}
-    .meta{text-align:center;color:#374151;font-size:11px;background:#f9fafb;padding:8px;border-radius:6px;margin-bottom:10px;border:1px solid #e5e7eb}
-    table{width:100%;border-collapse:collapse;font-size:14px;font-weight:800;margin-top:8px;table-layout:auto}
-    thead th{background:#1a1a1a;color:#fff;padding:8px 3px;text-align:center;font-weight:900;font-size:13px;line-height:1.35;border:1px solid #1a1a1a;white-space:normal}
-    tbody td{padding:6px 3px;text-align:center;border:1px solid #9ca3af;color:#000;font-weight:800;white-space:nowrap}
-    tbody td:nth-child(2){white-space:normal;min-width:80px;line-height:1.35}
-    tbody td.n{font-variant-numeric:tabular-nums;font-weight:900}
-    tfoot td{background:#d4a017;color:#000;font-weight:900;padding:8px 3px;border:1px solid #a67c0a;font-size:14px;white-space:nowrap}
-    @media print{@page{size:A4 landscape;margin:5mm}body{padding:0}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+    *{box-sizing:border-box}
+    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:14px 18px;background:#f8fafc;margin:0}
+    .doc{background:#fff;padding:18px 20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
+    .hdr{text-align:center;padding:14px 10px 16px;background:linear-gradient(180deg,#fffbea 0%,#fff 100%);border-bottom:3px solid #d4a017;border-radius:10px 10px 0 0;margin:-18px -20px 10px}
+    .hdr .emoji{font-size:28px;margin-bottom:4px}
+    .hdr h1{margin:4px 0 2px;font-size:22px;color:#1a1a1a;font-weight:900}
+    .hdr .en{color:#d4a017;font-size:13px;letter-spacing:3px;font-weight:800}
+    .hdr .sub{color:#6b7280;font-size:11px;margin-top:4px}
+    .meta{text-align:center;color:#374151;font-size:11.5px;background:#f9fafb;padding:9px 14px;border-radius:6px;margin:10px 0;border:1px solid #e5e7eb}
+    .meta b{color:#111}
+    table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
+    thead th{background:linear-gradient(180deg,#1a1a1a,#262626);color:#fff;padding:10px 6px;text-align:center;font-weight:800;font-size:11.5px;line-height:1.35;border-right:1px solid #333;white-space:normal}
+    thead th:first-child{border-right:0}
+    tbody td{padding:8px 6px;text-align:center;border-bottom:1px solid #f1f5f9;color:#1f2937;white-space:nowrap;font-weight:600}
+    tbody td.n{font-variant-numeric:tabular-nums;direction:ltr}
+    tbody tr:last-child td{border-bottom:0}
+    tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
+    .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
+    @media print{
+      @page{size:A4 landscape;margin:6mm}
+      body{padding:0;background:#fff}
+      .doc{box-shadow:none;border-radius:0;padding:10px}
+      .hdr{border-radius:0;margin:-10px -10px 10px}
+      tr{break-inside:avoid}
+      *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    }
   </style></head><body>
-    <div class="hdr"><h1>${title}</h1><div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div></div>
-    <div class="meta">${escapeHtml(filters)} · تاريخ الاستخراج: ${new Date().toLocaleDateString("en-GB")} · عدد الأقساط: ${rows.length} · العملة: ${escapeHtml(cur)}</div>
-    ${summaryBar}
-    <table><thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
+    <div class="doc">
+      <div class="hdr">
+        <div class="emoji">💳</div>
+        <h1>${title}</h1>
+        <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
+        <div class="sub">${new Date().toLocaleDateString("en-GB")} · ${rows.length} قسط · ${escapeHtml(cur)}</div>
+      </div>
+      ${filtersBar}
+      ${kpis}
+      <table>
+        <thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot>${foot}</tfoot>
+      </table>
+      <div class="fnote">تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — ${new Date().toLocaleString("en-GB")}</div>
+    </div>
+  </body></html>`;
   if(format==="excel"){
-    igSaveXlsx(html,"سجل_الأقساط_"+new Date().toISOString().slice(0,10));toast("تم تجهيز ملف Excel للأقساط","ok");
+    igSaveXlsx(html,"سجل_الأقساط_"+new Date().toISOString().slice(0,10));toast("✓ تم تجهيز ملف Excel احترافي","ok");
   }else openReportPreview(html,title);
 }
 
@@ -10168,10 +10833,16 @@ function salesInstallmentsExport(format){
   Object.defineProperty(D,"loginChecksBtn",{configurable:true,enumerable:true,get(){ try{return txCheckRows();}catch(e){return [];} }});
   Object.defineProperty(D,"loginPartiesBtn",{configurable:true,enumerable:true,get(){
     try{
-      // مصدر الأرصدة هو نفس حساب ميزان المراجعة الداخلي، بنفس الحركات وأرصدة أول المدة والفلاتر.
-      const c=tbCompute("clientTB"), v=tbCompute("supplierTB");
-      // نعرض الاتجاهين للعملاء والموردين، ولا نستبعد الرصيد العكسي؛ الإشارة تظل مطابقة للميزان.
-      // الموجب: رصيد طبيعي للطرف، والسالب: رصيد عكسي ويظهر باللون الأحمر.
+      // الأرصدة الحقيقية الكاملة (من بداية التعامل حتى الآن) — بدون أي فلتر تاريخ، علشان الإشعار يبين الرصيد الفعلي الحالي
+      // دائماً، بغض النظر عن أي فلتر محفوظ في شاشة الميزان الداخلية.
+      const compute = kind => {
+        const saved = {...tbFilters[kind]};
+        tbFilters[kind] = {from:"", to:"", partyFrom:"", partyTo:"", hideZero:true, filtersOpen:true};
+        const r = tbCompute(kind);
+        tbFilters[kind] = saved;
+        return r;
+      };
+      const c=compute("clientTB"), v=compute("supplierTB");
       const nonZero = rows => rows.filter(r=>Math.abs(Number(r.closeNat)||0)>0.004)
         .map(r=>[r.name,fmt(r.closeNat)]);
       return {clients:nonZero(c.rows), suppliers:nonZero(v.rows)};
@@ -10306,9 +10977,9 @@ function txBuildAllocations(kind, amount){
 function txSetDefaultStatus(){
   const method=document.getElementById("tx_method")?.value||"cash";
   const status=document.getElementById("tx_status"); if(!status) return;
-  // النقدي والتحويل حالتهما ثابتة تلقائيًا، والشيك يحتفظ بدورة حالاته المستقلة.
-  if(method==="cash" || method==="transfer" || method==="transfer_supplier"){
-    status.value = method==="cash" ? "cash" : "transfer";
+  // النقدي والتحويل والتسوية حالتهم ثابتة تلقائيًا، والشيك يحتفظ بدورة حالاته المستقلة.
+  if(method==="cash" || method==="transfer" || method==="transfer_supplier" || method==="adjustment"){
+    status.value = method==="cash" ? "cash" : (method==="adjustment"?"adjustment":"transfer");
     status.disabled=true;
     status.title="الحالة تتحدد تلقائيًا حسب طريقة السداد";
   }else{
@@ -10319,21 +10990,28 @@ function txSetDefaultStatus(){
 }
 function txToggleFields(){
   const method = document.getElementById("tx_method")?.value || "cash";
-  const isCash=method==="cash", isCheck=method==="bank", isTransfer=method==="transfer", isTS=method==="transfer_supplier";
+  const isCash=method==="cash", isCheck=method==="bank", isTransfer=method==="transfer", isTS=method==="transfer_supplier", isAdj=method==="adjustment";
   const treasuryCashWrap = document.getElementById("tx_treasuryCashWrap");
   const treasuryBankWrap = document.getElementById("tx_treasuryBankWrap");
   const supplierTargetWrap = document.getElementById("tx_supplierTargetWrap");
+  const adjustmentKindWrap = document.getElementById("tx_adjustmentKindWrap");
   const refNoWrap = document.getElementById("tx_refNoWrap");
   const dueWrap = document.getElementById("tx_dueWrap");
   const bankWrap = document.getElementById("tx_bankWrap");
   const refLabel = document.getElementById("tx_refNoLabel");
-  if(treasuryCashWrap) treasuryCashWrap.style.display=(isCash && !isTS)?"":"none";
-  if(treasuryBankWrap) treasuryBankWrap.style.display=(!isCash && !isTS)?"":"none";
+  if(treasuryCashWrap) treasuryCashWrap.style.display=(isCash && !isTS && !isAdj)?"":"none";
+  if(treasuryBankWrap) treasuryBankWrap.style.display=(!isCash && !isTS && !isAdj)?"":"none";
   if(supplierTargetWrap) supplierTargetWrap.style.display=isTS?"":"none";
+  if(adjustmentKindWrap) adjustmentKindWrap.style.display=isAdj?"":"none";
   if(refNoWrap) refNoWrap.style.display=(isCheck||isTransfer||isTS)?"":"none";
   if(dueWrap) dueWrap.style.display=isCheck?"":"none";
   if(bankWrap) bankWrap.style.display=isCheck?"":"none";
   if(refLabel) refLabel.textContent=isTS?"رقم مرجع التحويل للمورد":(isTransfer?"رقم مرجع التحويل":"رقم الشيك");
+  // تنبيه بصري عند التسوية
+  const modal = document.querySelector('#modalBackdrop .modal');
+  if(modal){
+    modal.classList.toggle('tx-is-adj', isAdj);
+  }
 }
 
 // ---------- utils ----------
