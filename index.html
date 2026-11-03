@@ -3457,22 +3457,277 @@ const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt
 const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const glDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const glCan=a=>can("gl",a);
-const glTabs=[ ["entries","قيود يومية"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"] ];
-function viewGL(){const title=glTabs.find(([k])=>k===glState.tab)?.[1]||"المحاسبة العامة";const cards=glTabs.map(([k,n],i)=>{const desc={entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية"}[k];const ico={entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚"}[k];return `<button type="button" class="card" onclick="glSetTab('${k}')" style="text-align:right;padding:20px;cursor:pointer;border:1px solid var(--border);display:flex;gap:14px;align-items:center;min-height:104px;background:var(--surface)"><span style="font-size:30px;width:48px;height:48px;display:grid;place-items:center;border-radius:12px;background:var(--surface-2,rgba(100,116,139,.12))">${ico}</span><span style="flex:1"><b style="display:block;font-size:16px;margin-bottom:5px">${n}</b><small class="muted">${desc}</small></span><span style="font-size:22px;color:var(--text-dim)">‹</span></button>`;}).join("");return `<section class="card" style="padding:18px;margin-bottom:14px"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h2 style="margin:0 0 5px">${glState.home?'الحسابات العامة':title}</h2><div class="muted">دفتر أستاذ مستقل — اليومية العامة ومتابعة القيود المُرحّلة</div></div><div style="display:flex;gap:8px"><button class="btn" onclick="glLoad()">تحديث البيانات</button>${glState.home?'':`<button class="btn" onclick="glGoHome()">العودة للحسابات العامة</button>`}</div></div><div class="muted" style="margin-top:8px">صلاحياتك: ${["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة الإعدادات",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط"}</div></section>${glState.home?`<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">${cards}</section>`:`<section class="card" style="padding:12px 16px"><nav class="gl-screen-tabs" aria-label="شاشات الحسابات العامة" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--border)">${glTabs.map(([k,n])=>`<button type="button" class="btn ${glState.tab===k?'primary':''}" onclick="glSetTab('${k}')">${n}</button>`).join('')}</nav><div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'جاري تحميل السجلات…'}</div></section>`}`;}
+const glTabs=[ ["entries","قيود يومية"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"] ];
+// مؤشرات النظام (System Indicators) — تحدد الأب الرئيسي لكل مجموعة حسابات حتى يتعرف النظام تلقائيًا
+const GL_IND_KEY = "ig_gl_indicators_v1";
+const GL_INDICATORS_DEF = [
+  {k:"revenue_root",   label:"حساب الإيرادات الرئيسي",       desc:"الأب الرئيسي لكل حسابات الإيرادات (المبيعات، إيرادات أخرى...)", icon:"💰", color:"#16a34a"},
+  {k:"expense_root",   label:"حساب المصروفات الرئيسي",       desc:"الأب الرئيسي لكل حسابات المصروفات (مرتبات، إيجار، كهرباء...)",   icon:"💸", color:"#dc2626"},
+  {k:"pnl_account",    label:"حساب الأرباح والخسائر",       desc:"يُستخدم عند الإقفال السنوي لتحويل صافي الدخل",                 icon:"⚖",  color:"#d97706"},
+  {k:"retained_earnings", label:"حساب الأرباح المحتجزة",     desc:"المكان اللي يتجمع فيه صافي الأرباح من سنوات سابقة",             icon:"🏦", color:"#1e40af"},
+  {k:"ar_root",        label:"حساب الذمم المدينة (العملاء)", desc:"الأب الرئيسي لحسابات العملاء الفرعية",                           icon:"🧑‍💼",color:"#0891b2"},
+  {k:"ap_root",        label:"حساب الذمم الدائنة (الموردين)",desc:"الأب الرئيسي لحسابات الموردين الفرعية",                          icon:"🏭", color:"#be185d"},
+  {k:"cash_root",      label:"حساب الخزائن النقدية",         desc:"الأب الرئيسي لكل الخزائن",                                        icon:"💵", color:"#059669"},
+  {k:"bank_root",      label:"حساب البنوك",                 desc:"الأب الرئيسي لكل حسابات البنوك",                                  icon:"🏦", color:"#1e40af"},
+  {k:"vat_output",     label:"ضريبة القيمة المضافة — مخرجات", desc:"ضريبة المبيعات المستحقة",                                        icon:"📊", color:"#8b5cf6"},
+  {k:"vat_input",      label:"ضريبة القيمة المضافة — مدخلات", desc:"ضريبة المشتريات القابلة للخصم",                                  icon:"📊", color:"#8b5cf6"}
+];
+function glLoadIndicators(){
+  try{ return JSON.parse(localStorage.getItem(GL_IND_KEY)||"{}"); }catch(e){ return {}; }
+}
+function glSaveIndicators(obj){
+  try{ localStorage.setItem(GL_IND_KEY, JSON.stringify(obj)); return true; }catch(e){ return false; }
+  // ملاحظة: يتم الحفظ محليًا الآن. للتزامن مع السوبابيز، نحتاج معرفة schema جدول gl_settings.
+}
+window.glIndicators = glLoadIndicators();
+function glSetIndicator(key, accountId){
+  const cur = glLoadIndicators();
+  if(accountId) cur[key] = accountId;
+  else delete cur[key];
+  glSaveIndicators(cur);
+  window.glIndicators = cur;
+}
+function glIndicatorAccount(key){
+  const id = (window.glIndicators||{})[key];
+  if(!id) return null;
+  return glState.accounts.find(a=>a.id===id) || null;
+}
+function viewGL(){
+  const title=glTabs.find(([k])=>k===glState.tab)?.[1]||"المحاسبة العامة";
+  const descs = {entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية",indicators:"تحديد أب الإيرادات/المصروفات والحسابات الرئيسية"};
+  const icons = {entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚"};
+  const tabColors = {entries:"#d4a017",posted:"#059669",accounts:"#1e40af",centers:"#8b5cf6",years:"#d97706",journals:"#dc2626",indicators:"#92400e"};
+  const cards = glTabs.map(([k,n])=>{
+    const c = tabColors[k] || "#64748b";
+    return `<button type="button" class="gl-home-card" onclick="glSetTab('${k}')" style="--c:${c}">
+      <span class="ic">${icons[k]||"◆"}</span>
+      <span class="meta"><b>${n}</b><small>${descs[k]||""}</small></span>
+      <span class="arr">‹</span>
+    </button>`;
+  }).join("");
+  const perms = ["add","edit","post","manage","print"].filter(glCan).map(x=>({add:"إضافة",edit:"تعديل",post:"ترحيل",manage:"إدارة",print:"طباعة"}[x])).join(" · ")||"مشاهدة فقط";
+  const refreshBtn = `<button class="gl-refresh-btn" onclick="glLoad()" title="تحديث البيانات" aria-label="تحديث"><span class="ri">↻</span></button>`;
+  const styleBlock = `<style>
+    .gl-head-card{background:linear-gradient(135deg,#fffbea,#fff);border:1px solid #e8d7ad;border-top:3px solid #d4a017;border-radius:12px;padding:16px 20px;margin-bottom:14px;box-shadow:0 2px 6px rgba(212,160,23,.08)}
+    .gl-head-card h2{margin:0 0 4px;color:#1a1a1a;font-weight:900;font-size:20px}
+    .gl-head-card .sub{color:#6b7280;font-size:12px}
+    .gl-head-card .perm{display:inline-block;margin-top:8px;padding:3px 10px;background:#fef3c7;color:#92400e;border-radius:12px;font-size:11px;font-weight:800}
+    .gl-head-actions{display:flex;gap:8px;align-items:center}
+    .gl-refresh-btn{width:38px;height:38px;border-radius:50%;border:1px solid #e5d7b1;background:linear-gradient(180deg,#fffbea,#fef3c7);color:#92400e;font-size:18px;cursor:pointer;display:grid;place-items:center;transition:transform .3s,box-shadow .2s}
+    .gl-refresh-btn:hover{transform:rotate(180deg);box-shadow:0 2px 8px rgba(212,160,23,.3);border-color:#d4a017}
+    .gl-home-card{all:unset;text-align:right;padding:18px 20px;cursor:pointer;border:1px solid #e8d7ad;border-top:4px solid var(--c,#d4a017);border-radius:12px;display:flex;gap:14px;align-items:center;min-height:94px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:transform .15s,box-shadow .2s}
+    .gl-home-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(212,160,23,.15)}
+    .gl-home-card .ic{font-size:28px;width:52px;height:52px;display:grid;place-items:center;border-radius:12px;background:linear-gradient(135deg,#fffbea,#fef3c7);border:1px solid #e8d7ad;flex-shrink:0}
+    .gl-home-card .meta{flex:1;min-width:0}
+    .gl-home-card .meta b{display:block;font-size:15px;color:#1a1a1a;font-weight:900;margin-bottom:3px}
+    .gl-home-card .meta small{color:#6b7280;font-size:11.5px;line-height:1.5}
+    .gl-home-card .arr{font-size:22px;color:#d4a017;font-weight:900}
+    .gl-screen-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;padding:8px;background:#faf7ef;border:1px solid #e8d7ad;border-radius:12px}
+    .gl-screen-tabs .btn{border-radius:8px;padding:8px 14px;font-weight:700;border:1px solid transparent;background:transparent;color:#6b7280;cursor:pointer;transition:all .15s}
+    .gl-screen-tabs .btn:hover{background:#fff;color:#92400e}
+    .gl-screen-tabs .btn.primary{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;border-color:#a67c0a;box-shadow:0 1px 3px rgba(212,160,23,.3)}
+    .gl-screen-wrap{background:#fff;border:1px solid #e8d7ad;border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    /* شجرة الحسابات — تحسينات */
+    .gl-breadcrumbs{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:10px 14px;background:linear-gradient(135deg,#fffbea,#fef3c7);border:1px solid #e8d7ad;border-radius:10px;margin-bottom:12px;font-size:12.5px}
+    .gl-breadcrumbs .bc-label{font-weight:800;color:#92400e;margin-left:4px}
+    .gl-breadcrumbs .bc-chip{padding:3px 10px;background:#fff;border:1px solid #e5d7b1;border-radius:12px;color:#1a1a1a;font-weight:700;cursor:pointer;transition:all .15s}
+    .gl-breadcrumbs .bc-chip:hover{background:#fde68a;border-color:#d4a017}
+    .gl-breadcrumbs .bc-sep{color:#d4a017;font-weight:900}
+    .gl-breadcrumbs .bc-last{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;border-color:#a67c0a}
+    #glAccountsTree li .in-path{box-shadow:0 0 0 1px #d4a017,0 2px 6px rgba(212,160,23,.15)!important;background:linear-gradient(90deg,rgba(212,160,23,.06),transparent)!important}
+    #glAccountsTree li .is-selected{box-shadow:0 0 0 2px #d4a017,0 4px 10px rgba(212,160,23,.25)!important;background:linear-gradient(90deg,#fef3c7,#fff)!important}
+  </style>`;
+  return `${styleBlock}
+  <section class="gl-head-card">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+      <div>
+        <h2>⚖ ${glState.home?'الحسابات العامة':title}</h2>
+        <div class="sub">دفتر أستاذ مستقل — اليومية العامة ومتابعة القيود المُرحّلة</div>
+        <span class="perm">صلاحياتك: ${perms}</span>
+      </div>
+      <div class="gl-head-actions">
+        ${glState.home?'':`<button class="btn ghost sm" onclick="glGoHome()">← الرجوع للحسابات العامة</button>`}
+        ${refreshBtn}
+      </div>
+    </div>
+  </section>
+  ${glState.home
+    ? `<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${cards}</section>`
+    : `<section class="gl-screen-wrap">
+         <nav class="gl-screen-tabs" aria-label="شاشات الحسابات العامة">
+           ${glTabs.map(([k,n])=>`<button type="button" class="btn ${glState.tab===k?'primary':''}" onclick="glSetTab('${k}')">${icons[k]||""} ${n}</button>`).join('')}
+         </nav>
+         <div id="glBody">${glState.loading?'جاري تحميل بيانات المحاسبة…':'جاري تحميل السجلات…'}</div>
+       </section>`
+  }`;
+}
 function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go("gl");return;}const c=document.getElementById("content");if(c){c.innerHTML=viewGL();glRender();if(t==="entries"&&glCan("add"))setTimeout(()=>{if(glState.tab==="entries"&&!document.getElementById("modalBackdrop"))glOpenEntryForm();},80);}try{renderNav();}catch(e){}}
 function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();if(t==="entries"&&glCan("add"))setTimeout(()=>{if(glState.tab==="entries"&&!document.getElementById("modalBackdrop"))glOpenEntryForm();},80);}}
 function glGoHome(){glState.home=true;const c=document.getElementById("content");if(c&&currentPage==="gl")c.innerHTML=viewGL();}
 async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];const sr=await sb.from("gl_posting_sources").select("*");glState.sources=sr.error?[]:(sr.data||[]);glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
-function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():glRenderEntries();}
+function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():glRenderEntries();}
+
+// ============== مؤشرات النظام (System Indicators) ==============
+function glRenderIndicators(){
+  window.glIndicators = glLoadIndicators();
+  const canEdit = glCan("manage");
+  // اختار من كل الحسابات (مش بس leaf) — المؤشرات غالبًا بتكون حسابات أب
+  const allAccts = glState.accounts.slice().sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),"en",{numeric:true}));
+  const typeLabel = {asset:"أصل",liability:"خصم",equity:"حقوق ملكية",revenue:"إيراد",expense:"مصروف"};
+  const typeBg = {asset:"#dbeafe",liability:"#fee2e2",equity:"#dcfce7",revenue:"#bbf7d0",expense:"#fecaca"};
+  const typeColor = {asset:"#1e40af",liability:"#991b1b",equity:"#166534",revenue:"#166534",expense:"#991b1b"};
+
+  const configuredCount = GL_INDICATORS_DEF.filter(ind=>window.glIndicators[ind.k]).length;
+  const cards = GL_INDICATORS_DEF.map(ind=>{
+    const curId = window.glIndicators[ind.k]||"";
+    const curAcc = allAccts.find(a=>a.id===curId);
+    const options = `<option value="">— لم يُحدَّد —</option>` + allAccts.map(a=>{
+      const indent = "　".repeat(Math.max(0,(a.level_no||1)-1));
+      return `<option value="${a.id}" ${curId===a.id?'selected':''}>${indent}${glEsc(a.account_code)} — ${glEsc(a.account_name)} (${typeLabel[a.account_type]||a.account_type||'—'})</option>`;
+    }).join("");
+    const statusBadge = curAcc
+      ? `<span style="display:inline-block;background:${typeBg[curAcc.account_type]||'#e5e7eb'};color:${typeColor[curAcc.account_type]||'#374151'};padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800">✓ ${glEsc(curAcc.account_code)} — ${glEsc(curAcc.account_name)}</span>`
+      : `<span style="display:inline-block;background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:800">⚠️ غير محدد</span>`;
+    return `<div class="gl-ind-card" style="background:#fff;border:1px solid #e5e7eb;border-top:4px solid ${ind.color};border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.05)">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:26px">${ind.icon}</span>
+        <div style="flex:1">
+          <div style="font-weight:900;color:#111;font-size:14px">${glEsc(ind.label)}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:2px">${glEsc(ind.desc)}</div>
+        </div>
+      </div>
+      <div style="margin:10px 0 8px">${statusBadge}</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="input" style="flex:1" ${canEdit?'':'disabled'} onchange="glSetIndicatorAndRender('${ind.k}', this.value)">${options}</select>
+        ${curId?`<button class="btn danger sm" ${canEdit?'':'disabled'} onclick="glClearIndicator('${ind.k}')" title="مسح">🗑</button>`:''}
+      </div>
+    </div>`;
+  }).join("");
+
+  return `<style>
+    .gl-ind-hdr{background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;padding:16px;margin-bottom:16px}
+    .gl-ind-hdr h3{margin:0 0 6px;color:#8a6a19;font-size:16px;font-weight:900}
+    .gl-ind-hdr p{margin:0;color:#6b7280;font-size:12px;line-height:1.7}
+    .gl-ind-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+    .gl-ind-stat{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+    .gl-ind-stat span{background:#fff;border:1px solid #e5e7eb;padding:4px 10px;border-radius:12px;font-size:11px;color:#374151}
+    .gl-ind-stat b{color:#d4a017;font-weight:900}
+  </style>
+  <div class="gl-ind-hdr">
+    <h3>🎚 مؤشرات النظام المحاسبي</h3>
+    <p>حدِّد من هنا الحسابات الرئيسية الأب لكل مجموعة. النظام هيستخدم هذه المؤشرات تلقائيًا في: التقارير (قائمة الدخل / الميزانية)، الترحيل الآلي من العمليات التشغيلية (المبيعات ↔ الإيرادات، المدفوعات ↔ المصروفات)، الإقفال السنوي، وتصنيف الحسابات في الـdashboard.</p>
+    <div class="gl-ind-stat">
+      <span>تم إعداد: <b>${configuredCount}</b> من ${GL_INDICATORS_DEF.length} مؤشر</span>
+      <span>الحسابات المتاحة: <b>${allAccts.length}</b></span>
+      ${canEdit?'<span style="color:#059669">✓ لديك صلاحية التعديل</span>':'<span style="color:#dc2626">⚠️ تحتاج صلاحية manage للتعديل</span>'}
+    </div>
+  </div>
+  <div class="gl-ind-grid">${cards}</div>
+  <div style="margin-top:14px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af">
+    <b>ℹ️ ملاحظة:</b> الإعدادات تُحفظ محليًا دلوقتي في هذا المتصفح. لمزامنتها لكل الأجهزة عبر السوبابيز، نحتاج إضافة عمود واحد في جدول <code>gl_settings</code> أو تأكيد schema الحالي.
+  </div>`;
+}
+function glSetIndicatorAndRender(key, accountId){
+  if(!glCan("manage")) return toast("لا تملك صلاحية إدارة المؤشرات","err");
+  glSetIndicator(key, accountId);
+  toast("✓ تم حفظ المؤشر","ok");
+  glRender();
+}
+function glClearIndicator(key){
+  if(!glCan("manage")) return;
+  if(!confirm("مسح هذا المؤشر؟")) return;
+  glSetIndicator(key, null);
+  toast("تم مسح المؤشر","ok");
+  glRender();
+}
 function glTable(head,rows){return `<div style="overflow:auto"><table class="table" style="width:100%"><thead><tr>${head.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows||`<tr><td colspan="${head.length}" class="muted">لا توجد بيانات</td></tr>`}</tbody></table></div>`;}
+function glAccountPath(id){
+  const chain=[]; let cur = glState.accounts.find(a=>a.id===id);
+  while(cur){ chain.unshift(cur); cur = cur.parent_id ? glState.accounts.find(a=>a.id===cur.parent_id) : null; }
+  return chain;
+}
+const GL_ORDER_KEY="ig_gl_account_order_v1";
+function glLoadOrder(){try{return JSON.parse(localStorage.getItem(GL_ORDER_KEY)||"{}")||{}}catch(e){return{}}}
+function glSaveOrder(o){try{localStorage.setItem(GL_ORDER_KEY,JSON.stringify(o))}catch(e){}}
+function glSortChildren(kids,parentKey){
+  const order=glLoadOrder()[parentKey]||[];
+  const idx=new Map(order.map((id,i)=>[id,i]));
+  return kids.slice().sort((a,b)=>{
+    const ia=idx.has(a.id)?idx.get(a.id):9999,ib=idx.has(b.id)?idx.get(b.id):9999;
+    if(ia!==ib)return ia-ib;
+    return String(a.account_code).localeCompare(String(b.account_code),"en",{numeric:true});
+  });
+}
+function glDragStart(ev,id,parentKey){ev.stopPropagation();ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',JSON.stringify({id,parentKey}));ev.currentTarget.style.opacity='0.4';}
+function glDragEnd(ev){ev.currentTarget.style.opacity='';document.querySelectorAll('.gl-drop-above,.gl-drop-below').forEach(el=>el.classList.remove('gl-drop-above','gl-drop-below'));}
+function glDragOver(ev,id,parentKey){
+  let payload;try{payload=JSON.parse(ev.dataTransfer.getData('text/plain')||'{}')}catch(e){payload={}}
+  // Can't read dataTransfer on dragover in most browsers; use visual only
+  ev.preventDefault();ev.dataTransfer.dropEffect='move';
+  const el=ev.currentTarget;const rect=el.getBoundingClientRect();const above=(ev.clientY-rect.top)<rect.height/2;
+  el.classList.remove('gl-drop-above','gl-drop-below');el.classList.add(above?'gl-drop-above':'gl-drop-below');
+}
+function glDragLeave(ev){ev.currentTarget.classList.remove('gl-drop-above','gl-drop-below');}
+function glDrop(ev,targetId,parentKey){
+  ev.preventDefault();ev.stopPropagation();
+  let payload={};try{payload=JSON.parse(ev.dataTransfer.getData('text/plain')||'{}')}catch(e){}
+  const el=ev.currentTarget;const rect=el.getBoundingClientRect();const above=(ev.clientY-rect.top)<rect.height/2;
+  el.classList.remove('gl-drop-above','gl-drop-below');
+  if(!payload.id||payload.id===targetId||payload.parentKey!==parentKey){toast('يمكن إعادة الترتيب فقط بين إخوة نفس الحساب الأب','err');return;}
+  const siblings=glState.accounts.filter(x=>(x.parent_id||"__root")===parentKey);
+  const current=glSortChildren(siblings,parentKey).map(x=>x.id);
+  const from=current.indexOf(payload.id);if(from<0)return;
+  current.splice(from,1);
+  let to=current.indexOf(targetId);if(to<0)to=current.length;
+  if(!above)to+=1;
+  current.splice(to,0,payload.id);
+  const all=glLoadOrder();all[parentKey]=current;glSaveOrder(all);
+  toast('✓ تم إعادة الترتيب','ok');glRender();
+}
 function glRenderAccounts(){
  const byParent=new Map();glState.accounts.forEach(a=>{const k=a.parent_id||"__root";if(!byParent.has(k))byParent.set(k,[]);byParent.get(k).push(a);});
  const selected=glState.accounts.find(a=>a.id===glSelectedAccountId)||null;
- const iconBtn=(ico,label,fn,disabled=false,danger=false)=>`<button type="button" class="btn sm ${danger?'danger':''}" title="${label}" aria-label="${label}" ${disabled?'disabled':''} onclick="${fn}"><span style="font-size:17px;line-height:1">${ico}</span><span>${label}</span></button>`;
- const renderNode=(a)=>{const kids=byParent.get(a.id)||[];const isSel=a.id===glSelectedAccountId;return `<li style="margin:4px 0"><div onclick="glSelectAccount('${a.id}')" style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid ${isSel?'var(--primary,#315b9b)':'var(--border)'};border-radius:10px;background:${isSel?'rgba(49,91,155,.10)':'var(--surface)'};margin-right:${Math.max(0,(a.level_no-1)*18)}px;cursor:pointer;box-shadow:${isSel?'0 0 0 1px rgba(49,91,155,.18)':'none'}"><span style="width:25px;text-align:center;color:var(--text-dim)">${kids.length?`<button class="btn sm" title="فتح/إغلاق" onclick="event.stopPropagation();glToggleAccountNode(this,'${a.id}')">${glCollapsedNodes.has(a.id)?'＋':'－'}</button>`:'<span>　</span>'}</span><span style="font-size:18px">${a.is_group?'📁':'📄'}</span><b dir="ltr" style="min-width:125px">${glEsc(a.account_code)}</b><span style="flex:1;font-weight:600">${glEsc(a.account_name)}</span><small class="muted">${a.is_group?'تجميعي':'تفصيلي'} · مستوى ${a.level_no}</small><small style="color:${a.is_active?'#16834a':'#b45309'}">${a.is_active?'نشط':'موقوف'}</small></div>${kids.length?`<ul class="gl-account-children" data-parent="${a.id}" style="list-style:none;padding-right:22px;margin:4px 0" ${glCollapsedNodes.has(a.id)?'hidden':''}>${kids.map(renderNode).join("")}</ul>`:""}</li>`;};
- const roots=(byParent.get("__root")||[]).sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),"en",{numeric:true}));
- const toolbar=glCan("manage")?`<div style="display:flex;gap:7px;flex-wrap:wrap;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;align-items:center"><div style="display:flex;gap:6px;flex-wrap:wrap">${iconBtn('＋','إضافة فرعي',"glShowAddAccountForm()",!selected||Number(selected.level_no)>=6)}${iconBtn('✎','تعديل',"glEditAccount('"+(selected?.id||"")+"')",!selected)}${iconBtn('🗑','حذف حساب',"glDeleteAccount('"+(selected?.id||"")+"')",!selected,true)}${iconBtn('⌕','بحث',"glSearchAccounts()")}${iconBtn('⌄','فتح الكل',"glExpandAllAccounts()")}${iconBtn('⌃','إغلاق الكل',"glCollapseAllAccounts()")}</div><span style="flex:1"></span><span class="muted" style="font-size:12px">${selected?`المحدد: ${glEsc(selected.account_code)} — ${glEsc(selected.account_name)}`:'حدد الحساب الأب أولاً'}</span></div>${glAccountAddMode&&selected?`<div class="card" style="padding:12px;margin:0 0 12px;border:1px solid var(--primary)"><label style="display:block;margin-bottom:7px;font-weight:700">اسم الحساب الجديد تحت: ${glEsc(selected.account_name)}</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="glNewAccountName" class="input" style="flex:1;min-width:220px" placeholder="اكتب اسم الحساب فقط" onkeydown="if(event.key==='Enter')glSaveQuickAccount()" autofocus><button class="btn primary" onclick="glSaveQuickAccount()">إضافة الحساب</button><button class="btn" onclick="glCancelQuickAccount()">إلغاء</button></div></div>`:""}`:"";
- return `${toolbar}<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 12px"><div><b>شجرة دليل الحسابات</b><div class="muted" style="font-size:12px">${glState.accounts.length} حساب · اختر الحساب ثم استخدم شريط الأدوات</div></div><span class="muted" style="font-size:12px">الأخضر: نشط · البرتقالي: موقوف</span></div><ul id="glAccountsTree" style="list-style:none;padding:0;margin:0">${roots.map(renderNode).join("")||'<li class="muted">لا توجد حسابات. شغّل سكربت استيراد الدليل أولاً.</li>'}</ul>`;
+ const pathIds = new Set((selected?glAccountPath(selected.id):[]).map(a=>a.id));
+ const iconBtn=(ico,label,fn,disabled=false,danger=false)=>`<button type="button" class="btn sm ${danger?'danger':''}" title="${label}" aria-label="${label}" ${disabled?'disabled':''} onclick="${fn}" style="padding:7px 12px;${danger?'background:#fee2e2;color:#991b1b;border-color:#fecaca':'background:linear-gradient(180deg,#fffbea,#fef3c7);color:#92400e;border-color:#e5d7b1'};font-weight:700;border-radius:8px;cursor:pointer;transition:all .15s"><span style="font-size:15px;line-height:1;margin-left:4px">${ico}</span><span>${label}</span></button>`;
+ const typeBadge = a => {
+   const types = {asset:{bg:"#dbeafe",fg:"#1e40af",lbl:"أصل"},liability:{bg:"#fee2e2",fg:"#991b1b",lbl:"خصم"},equity:{bg:"#dcfce7",fg:"#166534",lbl:"حقوق"},revenue:{bg:"#bbf7d0",fg:"#166534",lbl:"إيراد"},expense:{bg:"#fecaca",fg:"#991b1b",lbl:"مصروف"}};
+   const t = types[a.account_type]; if(!t) return "";
+   return `<span style="padding:2px 8px;background:${t.bg};color:${t.fg};border-radius:10px;font-size:10.5px;font-weight:800">${t.lbl}</span>`;
+ };
+ const canReorder = glCan("manage");
+ const renderNode=(a,parentKey)=>{
+   const kids=glSortChildren(byParent.get(a.id)||[],a.id);
+   const isSel=a.id===glSelectedAccountId;
+   const inPath = pathIds.has(a.id) && !isSel;
+   const nodeCls = isSel ? 'is-selected' : (inPath ? 'in-path' : '');
+   const nodeStyle = `display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid ${isSel?'#d4a017':'#e5d7b1'};border-radius:10px;background:#fff;margin-right:${Math.max(0,(a.level_no-1)*18)}px;cursor:pointer;transition:all .15s`;
+   const dragAttrs = canReorder ? `draggable="true" ondragstart="glDragStart(event,'${a.id}','${parentKey}')" ondragend="glDragEnd(event)" ondragover="glDragOver(event,'${a.id}','${parentKey}')" ondragleave="glDragLeave(event)" ondrop="glDrop(event,'${a.id}','${parentKey}')"` : '';
+   const handle = canReorder ? `<span class="gl-drag-handle" title="اسحب لإعادة الترتيب" style="cursor:grab;color:#d4a017;font-weight:900;padding:0 4px;user-select:none">⋮⋮</span>` : '';
+   return `<li style="margin:5px 0"><div class="${nodeCls}" ${dragAttrs} onclick="glSelectAccount('${a.id}')" style="${nodeStyle}">
+     ${handle}
+     <span style="width:28px;text-align:center">${kids.length?`<button class="gl-tree-toggle" title="فتح/إغلاق" onclick="event.stopPropagation();glToggleAccountNode(this,'${a.id}')" style="width:22px;height:22px;border-radius:6px;border:1px solid #e5d7b1;background:#fef3c7;color:#92400e;font-weight:900;cursor:pointer;line-height:1">${glCollapsedNodes.has(a.id)?'＋':'－'}</button>`:'<span style="color:#d4a017">·</span>'}</span>
+     <span style="font-size:17px">${a.is_group?'📁':'📄'}</span>
+     <b dir="ltr" style="min-width:125px;color:#92400e">${glEsc(a.account_code)}</b>
+     <span style="flex:1;font-weight:700;color:#1a1a1a">${glEsc(a.account_name)}</span>
+     ${typeBadge(a)}
+     <small style="color:#9ca3af;font-size:10.5px">L${a.level_no}</small>
+     <small style="padding:2px 7px;border-radius:10px;background:${a.is_active?'#dcfce7':'#fef3c7'};color:${a.is_active?'#166534':'#92400e'};font-size:10px;font-weight:800">${a.is_active?'● نشط':'○ موقوف'}</small>
+   </div>${kids.length?`<ul class="gl-account-children" data-parent="${a.id}" style="list-style:none;padding-right:20px;margin:3px 0;border-right:2px dashed #e5d7b1" ${glCollapsedNodes.has(a.id)?'hidden':''}>${kids.map(k=>renderNode(k,a.id)).join("")}</ul>`:""}</li>`;
+ };
+ const roots=glSortChildren(byParent.get("__root")||[],"__root");
+ // Breadcrumbs
+ const bcChain = selected ? glAccountPath(selected.id) : [];
+ const breadcrumbs = selected ? `<div class="gl-breadcrumbs">
+   <span class="bc-label">📍 المسار:</span>
+   ${bcChain.map((a,i)=>{
+     const isLast = i===bcChain.length-1;
+     return `<button type="button" class="bc-chip ${isLast?'bc-last':''}" onclick="glSelectAccount('${a.id}')"><bdi dir="ltr">${glEsc(a.account_code)}</bdi> ${glEsc(a.account_name)}</button>${!isLast?'<span class="bc-sep">◂</span>':''}`;
+   }).join("")}
+ </div>` : "";
+ const toolbar=glCan("manage")?`<div style="display:flex;gap:7px;flex-wrap:wrap;padding:12px;background:linear-gradient(135deg,#fffbea,#fff);border:1px solid #e8d7ad;border-top:3px solid #d4a017;border-radius:12px;margin-bottom:12px;align-items:center;box-shadow:0 1px 3px rgba(212,160,23,.08)"><div style="display:flex;gap:6px;flex-wrap:wrap">${iconBtn('＋','إضافة فرعي',"glShowAddAccountForm()",!selected||Number(selected.level_no)>=6)}${iconBtn('✎','تعديل',"glEditAccount('"+(selected?.id||"")+"')",!selected)}${iconBtn('🗑','حذف',"glDeleteAccount('"+(selected?.id||"")+"')",!selected,true)}${iconBtn('⌕','بحث',"glSearchAccounts()")}${iconBtn('⌄','فتح الكل',"glExpandAllAccounts()")}${iconBtn('⌃','إغلاق الكل',"glCollapseAllAccounts()")}</div><span style="flex:1"></span><span style="font-size:11px;color:${selected?'#92400e':'#9ca3af'};font-weight:700">${selected?`💡 المحدد: ${glEsc(selected.account_code)}`:'💡 حدد الحساب الأب أولاً'}</span></div>${glAccountAddMode&&selected?`<div style="padding:14px;margin:0 0 12px;border:2px solid #d4a017;border-radius:12px;background:linear-gradient(135deg,#fffbea,#fef3c7)"><label style="display:block;margin-bottom:8px;font-weight:900;color:#92400e">➕ اسم الحساب الجديد تحت: <b style="color:#1a1a1a">${glEsc(selected.account_name)}</b></label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="glNewAccountName" class="input" style="flex:1;min-width:220px;padding:9px;border:1px solid #e5d7b1;border-radius:7px;background:#fff" placeholder="اكتب اسم الحساب فقط" onkeydown="if(event.key==='Enter')glSaveQuickAccount()" autofocus><button class="btn" onclick="glSaveQuickAccount()" style="background:#d4a017;color:#1a1a1a;font-weight:800;padding:9px 16px;border-radius:7px">✓ إضافة الحساب</button><button class="btn" onclick="glCancelQuickAccount()" style="background:#fff;color:#6b7280;border:1px solid #e5e7eb;padding:9px 16px;border-radius:7px">إلغاء</button></div></div>`:""}`:"";
+ const dragStyle = `<style>.gl-drop-above{box-shadow:0 -3px 0 0 #d4a017 inset,0 0 8px rgba(212,160,23,.3)!important}.gl-drop-below{box-shadow:0 3px 0 0 #d4a017 inset,0 0 8px rgba(212,160,23,.3)!important}.gl-drag-handle:hover{color:#92400e!important;background:#fef3c7;border-radius:4px}#glAccountsTree [draggable="true"]:hover .gl-drag-handle{color:#92400e}</style>`;
+const resetBtn = canReorder ? `<button class="btn sm" onclick="if(confirm('إعادة الترتيب الافتراضي؟')){localStorage.removeItem('ig_gl_account_order_v1');toast('✓ تم إعادة الترتيب للوضع الافتراضي','ok');glRender();}" style="background:#fff;color:#92400e;border:1px solid #e5d7b1;padding:5px 10px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">↺ إعادة الترتيب</button>` : '';
+return `${dragStyle}${toolbar}${breadcrumbs}<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 2px 12px"><div><b style="color:#1a1a1a;font-size:14px">🌳 شجرة دليل الحسابات</b><div style="color:#6b7280;font-size:11.5px;margin-top:3px">${glState.accounts.length} حساب · ${canReorder?'اسحب ⋮⋮ لإعادة الترتيب بين إخوة نفس الأب':'اختر الحساب ثم استخدم شريط الأدوات'}</div></div><div style="display:flex;gap:6px;font-size:11px;align-items:center"><span style="padding:3px 10px;background:#dcfce7;color:#166534;border-radius:10px;font-weight:800">● نشط</span><span style="padding:3px 10px;background:#fef3c7;color:#92400e;border-radius:10px;font-weight:800">○ موقوف</span>${resetBtn}</div></div><ul id="glAccountsTree" style="list-style:none;padding:0;margin:0">${roots.map(r=>renderNode(r,"__root")).join("")||'<li style="color:#9ca3af;padding:20px;text-align:center;background:#fef3c7;border-radius:10px">لا توجد حسابات. شغّل سكربت استيراد الدليل أولاً.</li>'}</ul>`;
 }
 let glCollapsedNodes=new Set();
 function glSelectAccount(id){glSelectedAccountId=id;glRender();}
@@ -3615,11 +3870,25 @@ function glOpenEntryForm(){
  if(!activeJ.length||!activeY.length||!accounts.length)return toast('يلزم إعداد يومية وسنة مالية وحسابات نهائية (آخر مستوى) قابلة للترحيل أولاً','err');
  const journalOpts=activeJ.map(j=>`<option value="${j.id}">${glEsc(j.journal_code)} — ${glEsc(j.journal_name)}</option>`).join('');
  const body=`<style>
- #modalBackdrop{z-index:10000}#modalBackdrop .modal{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;max-width:none!important;max-height:100dvh!important;margin:0!important;border-radius:0!important;display:flex!important;flex-direction:column!important}#modalBackdrop .mhead{flex:0 0 auto}#modalBackdrop .mbody{flex:1 1 auto;overflow:auto!important;padding:clamp(10px,1.5vw,22px);background:#f3f7fc;color:#10284b}
- .gl-entry-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;background:#fff;border:1px solid #d8e4f3;border-radius:12px;padding:16px;margin-bottom:12px}
- .gl-entry-field label{display:block;font-weight:700;font-size:12px;color:#17365f;margin-bottom:6px}.gl-entry-field input,.gl-entry-field select,.gl-entry-field textarea{width:100%;min-height:38px;border:1px solid #cbd9eb;border-radius:7px;padding:7px 9px;background:#fff;color:#17365f}
- .gl-entry-table-wrap{overflow:auto;background:#fff;border:1px solid #d8e4f3;border-radius:12px;padding:10px}.gl-entry-table{width:100%;border-collapse:separate;border-spacing:0;min-width:950px}.gl-entry-table td{height:48px}.gl-entry-actions-top{position:sticky;top:-10px;z-index:5;border-bottom:1px solid #d8e4f3!important}.gl-entry-table th{background:#102b52;color:#fff;padding:11px 8px;font-size:12px;white-space:nowrap}.gl-entry-table td{padding:6px;border-bottom:1px solid #e2eaf4}.gl-entry-table .input{border:1px solid #d4e0ef;border-radius:6px;padding:7px;background:#fff;color:#17365f}.gl-entry-totals{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;margin-top:12px}.gl-entry-total{background:#eaf1fa;border:1px solid #d4e0ef;border-radius:9px;padding:10px 16px;min-width:170px}.gl-entry-total b{display:block;color:#17365f;font-size:11px}.gl-entry-total strong{font-size:17px;color:#102b52;direction:ltr;display:block;margin-top:4px}
- .gl-e-account-box{display:grid;grid-template-columns:minmax(115px,.85fr) minmax(150px,1.15fr);gap:5px;position:relative}.gl-e-code-line{display:flex;align-items:center;gap:4px;min-width:0}.gl-e-picker{position:static;flex:0 0 30px}.gl-e-search-icon{width:29px;height:30px;border:1px solid #cbd9eb;border-radius:7px;background:#f1f5fb;color:#17365f;font-size:19px;line-height:1;cursor:pointer}.gl-e-search{position:absolute;top:38px;right:0;width:min(440px,82vw);min-height:38px;z-index:10021;background:#fff;box-shadow:0 6px 18px #102b5220}.gl-e-search[hidden]{display:none}.gl-e-code,.gl-e-name{width:100%;min-width:0}.gl-e-results{display:none;position:absolute;z-index:10020;top:78px;right:0;width:min(560px,88vw);max-height:300px;overflow:auto;background:#fff;border:1px solid #9db4d3;border-radius:8px;box-shadow:0 10px 28px #102b5230}.gl-e-result{display:flex;width:100%;gap:14px;justify-content:flex-start;align-items:center;padding:9px 12px;border:0;border-bottom:1px solid #e5edf7;background:#fff;color:#17365f;text-align:right;cursor:pointer}.gl-e-result:hover{background:#eaf2fc}.gl-e-result b{min-width:125px;text-align:left}.gl-e-empty{padding:12px;color:#64748b}.gl-entry-totals{justify-content:flex-start}.gl-entry-summary{display:grid;grid-template-columns:minmax(250px,1fr) minmax(320px,1.4fr);gap:12px;align-items:stretch;margin-top:12px}.gl-entry-line-desc{display:flex;flex-direction:column}.gl-entry-line-desc textarea{flex:1;min-height:100px}.gl-entry-actions{position:sticky;bottom:-14px;background:#f3f7fc;padding:12px 0 4px;z-index:2}@media(max-width:850px){.gl-entry-summary{grid-template-columns:1fr}}@media(max-width:520px){.gl-entry-grid{grid-template-columns:1fr}.gl-entry-total{min-width:calc(50% - 12px);flex:1}.gl-e-account-box{grid-template-columns:1fr 1fr}}
+ /* ====== Gold Theme (موحّد مع باقي النظام) ====== */
+ #modalBackdrop{z-index:10000}#modalBackdrop .modal{position:fixed!important;inset:0!important;width:100vw!important;height:100dvh!important;max-width:none!important;max-height:100dvh!important;margin:0!important;border-radius:0!important;display:flex!important;flex-direction:column!important}#modalBackdrop .mhead{flex:0 0 auto;background:linear-gradient(180deg,#1a1a1a,#2a2a2a);color:#fef3c7;border-bottom:3px solid #d4a017}#modalBackdrop .mbody{flex:1 1 auto;overflow:auto!important;padding:clamp(10px,1.5vw,22px);background:#faf7ef;color:#1a1a1a}
+ .gl-entry-grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;background:#fff;border:1px solid #e8d7ad;border-top:3px solid #d4a017;border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 2px 6px rgba(212,160,23,.08)}
+ .gl-entry-field label{display:block;font-weight:800;font-size:12px;color:#92400e;margin-bottom:6px}.gl-entry-field input,.gl-entry-field select,.gl-entry-field textarea{width:100%;min-height:38px;border:1px solid #e5d7b1;border-radius:7px;padding:7px 9px;background:#fff;color:#1a1a1a;font-weight:600}
+ .gl-entry-field input:focus,.gl-entry-field select:focus,.gl-entry-field textarea:focus{outline:none;border-color:#d4a017;box-shadow:0 0 0 3px rgba(212,160,23,.15)}
+ .gl-entry-table-wrap{overflow:auto;background:#fff;border:1px solid #e8d7ad;border-top:3px solid #d4a017;border-radius:12px;padding:10px}.gl-entry-table{width:100%;border-collapse:separate;border-spacing:0;min-width:950px}.gl-entry-table td{height:48px}.gl-entry-actions-top{position:sticky;top:-10px;z-index:5;border-bottom:1px solid #e8d7ad!important}.gl-entry-table th{background:linear-gradient(180deg,#1a1a1a,#262626);color:#fef3c7;padding:11px 8px;font-size:12px;white-space:nowrap;font-weight:800}.gl-entry-table td{padding:6px;border-bottom:1px solid #f1ead6}.gl-entry-table .input{border:1px solid #e5d7b1;border-radius:6px;padding:7px;background:#fff;color:#1a1a1a}.gl-entry-table .input:focus{outline:none;border-color:#d4a017;box-shadow:0 0 0 2px rgba(212,160,23,.12)}
+ .gl-entry-totals{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end;margin-top:12px}.gl-entry-total{background:linear-gradient(135deg,#fffbea,#fef3c7);border:1px solid #e8d7ad;border-radius:9px;padding:10px 16px;min-width:170px}.gl-entry-total b{display:block;color:#92400e;font-size:11px;font-weight:800}.gl-entry-total strong{font-size:17px;color:#1a1a1a;direction:ltr;display:block;margin-top:4px;font-weight:900}
+ .gl-e-account-box{display:grid;grid-template-columns:minmax(115px,.85fr) minmax(150px,1.15fr);gap:5px;position:relative}.gl-e-code-line{display:flex;align-items:center;gap:4px;min-width:0}.gl-e-picker{position:static;flex:0 0 30px}.gl-e-search-icon{width:29px;height:30px;border:1px solid #e5d7b1;border-radius:7px;background:linear-gradient(180deg,#fffbea,#fef3c7);color:#92400e;font-size:19px;line-height:1;cursor:pointer;font-weight:800}.gl-e-search-icon:hover{background:linear-gradient(180deg,#fef3c7,#fde68a);border-color:#d4a017}
+ .gl-e-search{position:absolute;top:38px;right:0;width:min(440px,82vw);min-height:38px;z-index:10021;background:#fff;box-shadow:0 8px 24px rgba(212,160,23,.25);border:2px solid #d4a017!important;border-radius:8px}
+ .gl-e-search[hidden]{display:none}.gl-e-code,.gl-e-name{width:100%;min-width:0}
+ .gl-e-results{display:none;position:absolute;z-index:10020;top:78px;right:0;width:min(560px,88vw);max-height:300px;overflow:auto;background:#fff;border:2px solid #d4a017;border-radius:8px;box-shadow:0 10px 28px rgba(212,160,23,.3)}
+ .gl-e-result{display:flex;width:100%;gap:14px;justify-content:flex-start;align-items:center;padding:9px 12px;border:0;border-bottom:1px solid #f1ead6;background:#fff;color:#1a1a1a;text-align:right;cursor:pointer;font-weight:600}
+ .gl-e-result:hover{background:linear-gradient(90deg,#fffbea,#fef3c7)}.gl-e-result b{min-width:125px;text-align:left;color:#92400e;font-weight:900}
+ .gl-e-empty{padding:12px;color:#9ca3af}
+ .gl-entry-totals{justify-content:flex-start}
+ .gl-entry-summary{display:grid;grid-template-columns:minmax(250px,1fr) minmax(320px,1.4fr);gap:12px;align-items:stretch;margin-top:12px}
+ .gl-entry-line-desc{display:flex;flex-direction:column}.gl-entry-line-desc textarea{flex:1;min-height:100px}
+ .gl-entry-actions{position:sticky;bottom:-14px;background:#faf7ef;padding:12px 0 4px;z-index:2}
+ @media(max-width:850px){.gl-entry-summary{grid-template-columns:1fr}}@media(max-width:520px){.gl-entry-grid{grid-template-columns:1fr}.gl-entry-total{min-width:calc(50% - 12px);flex:1}.gl-e-account-box{grid-template-columns:1fr 1fr}}
  @media(max-width:850px){.gl-entry-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}}@media(max-width:520px){.gl-entry-grid{grid-template-columns:1fr}.gl-entry-actions-top .btn{flex:1;min-width:95px}}
  </style>
  <div class="gl-entry-actions gl-entry-actions-top" style="display:flex;justify-content:flex-start;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 0;background:transparent"><button type="button" class="btn" onclick="glPrintEntryForm()">🖨 طباعة القيد</button><button type="button" class="btn primary" onclick="glSaveEntryForm()">حفظ كمسودة</button><button type="button" class="btn" onclick="closeModal()">إلغاء</button></div>
@@ -3632,7 +3901,7 @@ function glOpenEntryForm(){
   <div class="gl-entry-field" style="grid-column:span 2"><label>البيان الرئيسي *</label><input id="glEntryDescription" placeholder="اكتب بيان القيد"></div>
   <div class="gl-entry-field"><label>العملة</label><input value="الجنيه المصري (EGP)" disabled></div>
  </div>
- <div class="gl-entry-table-wrap"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><b style="color:#102b52">تفاصيل القيد المحاسبي</b><button type="button" class="btn" onclick="glEntryAddRow()">＋ إضافة سطر</button></div>
+ <div class="gl-entry-table-wrap"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><b style="color:#92400e;font-size:14px">📝 تفاصيل القيد المحاسبي</b><button type="button" class="btn" onclick="glEntryAddRow()" style="background:#d4a017;color:#1a1a1a;font-weight:800">＋ إضافة سطر</button></div>
  <table class="gl-entry-table"><thead><tr><th>م</th><th>كود واسم الحساب *</th><th>مدين</th><th>دائن</th><th>مركز التكلفة</th><th>بيان السطر</th><th>إجراء</th></tr></thead><tbody id="glEntryLinesBody"></tbody></table>
  <div class="gl-entry-summary"><div class="gl-entry-line-desc gl-entry-field"><label>ملاحظات / بيان إضافي</label><textarea id="glEntryNotes" placeholder="ملاحظات إضافية"></textarea></div><div class="gl-entry-totals"><div class="gl-entry-total"><b>إجمالي المدين</b><strong id="glEntryTotalDebit">0.00</strong></div><div class="gl-entry-total"><b>إجمالي الدائن</b><strong id="glEntryTotalCredit">0.00</strong></div><div class="gl-entry-total"><b>الفرق</b><strong id="glEntryDifference">0.00</strong></div><div class="gl-entry-total"><b>حالة القيد</b><strong id="glEntryBalanceState">القيد غير متوازن</strong></div></div></div></div>
  <div class="muted" style="margin-top:8px">المصدر: يدوي</div>
@@ -3660,7 +3929,9 @@ async function glSaveEntryForm(){
  for(let i=0;i<trs.length;i++){const tr=trs[i],accountId=tr.querySelector('.gl-e-account').value,debit=Number(tr.querySelector('.gl-e-debit').value||0),credit=Number(tr.querySelector('.gl-e-credit').value||0);if(!accountId&&!debit&&!credit)continue;if(!accountId)return toast('اختر الحساب في السطر '+(i+1),'err');if(debit<0||credit<0||((debit>0)===(credit>0)))return toast('كل سطر يجب أن يحتوي مبلغًا في المدين أو الدائن فقط — السطر '+(i+1),'err');if(!glState.accounts.some(a=>a.id===accountId&&glIsPostingLeafAccount(a)))return toast('الحساب المختار ليس حسابًا نهائيًا نشطًا وقابلًا للترحيل','err');totalD+=Math.round(debit*100);totalC+=Math.round(credit*100);lines.push({line_no:lines.length+1,account_id:accountId,description:tr.querySelector('.gl-e-desc')?.value.trim()||null,debit,credit,cost_center_id:tr.querySelector('.gl-e-center').value||null});}
  if(lines.length<2)return toast('القيد يحتاج سطرين على الأقل','err');if(lines.length>50)return toast('الحد الأقصى 50 سطرًا','err');if(totalD!==totalC)return toast('القيد غير متوازن: إجمالي المدين '+glNum(totalD/100)+' وإجمالي الدائن '+glNum(totalC/100),'err');
  const btn=document.querySelector('#modalBackdrop button[onclick="glSaveEntryForm()"]');if(btn){btn.disabled=true;btn.textContent='جارٍ الحفظ…';}
- let entry=null;try{entry=await glInsert('gl_entries',{journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:desc,reference_no:docNo||null,status:'draft',currency_code:'EGP',exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});const lr=await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;toast('تم حفظ القيد كمسودة بنجاح','ok');closeModal();await glLoad();}catch(e){if(entry){const cleanup=await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft');if(cleanup.error)console.warn('GL draft cleanup failed',cleanup.error);}if(btn){btn.disabled=false;btn.textContent='حفظ كمسودة';}toast('تعذر حفظ القيد: '+(e.message||e),'err');}
+ // رقم المستند بيتخزن في البيان لأن عمود reference_no مش موجود في الـschema الحالي
+ const finalDesc = docNo ? `${desc} — [مستند: ${docNo}]` : desc;
+ let entry=null;try{entry=await glInsert('gl_entries',{journal_id:journalId,fiscal_year_id:y.id,period_id:period.id,entry_date:date,document_date:docDate,description:finalDesc,status:'draft',currency_code:'EGP',exchange_rate:1,total_debit:totalD/100,total_credit:totalC/100});const lr=await sb.from('gl_entry_lines').insert(lines.map(x=>({...x,entry_id:entry.id})));if(lr.error)throw lr.error;toast('✓ تم حفظ القيد كمسودة بنجاح','ok');closeModal();await glLoad();}catch(e){if(entry){const cleanup=await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft');if(cleanup.error)console.warn('GL draft cleanup failed',cleanup.error);}if(btn){btn.disabled=false;btn.textContent='حفظ كمسودة';}toast('تعذر حفظ القيد: '+(e.message||e),'err');}
 }
 async function glAddEntry(){glOpenEntryForm();}
 async function glEditEntry(id){
