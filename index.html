@@ -2228,7 +2228,7 @@ const defaults = {
     { code: "MAIN", name: "الخزنة الرئيسية" },
     { code: "CHK", name: "خزنة الشيكات" }
   ],
-  settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م" },
+  settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م", warehouses: [] },
   // placeholders for next phases
   shipments: [],
   policies: [],
@@ -2908,7 +2908,7 @@ const SCREENS = [
     {id:"diameters",label:"الأقطار"},{id:"types",label:"الأنواع"},
     {id:"factories",label:"المصانع"},{id:"quoteDescs",label:"أوصاف عرض السعر"},
     {id:"cementTypes",label:"أنواع الاسمنت"},{id:"statuses",label:"حالات التعتيق"},
-    {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"}
+    {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"},{id:"warehouses",label:"المخازن"}
   ]},
   { id:"settings",  label:"الإعدادات العامة",  icon:"⚙",  acts:["edit"] },
   { id:"quote",     label:"عرض السعر",         icon:"💲", acts:["add","edit","delete","print"] },
@@ -2964,6 +2964,9 @@ function permsGrant(p, scr, acts){
   (acts||[]).forEach(a=>{ if(a==="*") s.acts.forEach(x=>{ p.screens[scr][x]=true; }); else p.screens[scr][a]=true; });
   return p;
 }
+// بنود قائمة "+ جديد" في الشريط العلوي (كل بند يحتاج صلاحية "إضافة" في شاشته + السماح له من نموذج المستخدم)
+const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
+const quickOn=(p,id)=>!p||!p.quick||typeof p.quick!=="object"||p.quick[id]!==false;
 const ROLE_PRESETS = {
   admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
   manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
@@ -3001,6 +3004,7 @@ function normalizePerms(p){
     if(s.prices){ const h = p.hide[s.id] = p.hide[s.id]||{}; h.buy = h.buy===true; h.sell = h.sell===true; }
   });
   p.sys.backup = p.sys.backup===true;
+  if(p.quick&&typeof p.quick==="object"){ const q={}; QUICK_NEW_ITEMS.forEach(x=>{ q[x[2]]=p.quick[x[2]]!==false; }); p.quick=q; } else delete p.quick;
   return p;
 }
 
@@ -5477,6 +5481,18 @@ function renderManagementReports(){
  el.innerHTML=`<section class="card"><div class="head"><h3>👥 موقف كل عميل</h3><span class="count">بيع وتوريد وتحصيل ومتأخرات</span></div><div class="body">${table(['العميل','إجمالي أوامر البيع/التوريد ('+cur+')','الكمية الموردة (طن)','التحصيل ('+cur+')','المتبقي ('+cur+')','الأقساط المتأخرة ('+cur+')'],clientRows)}</div></section><section class="card"><div class="head"><h3>🏭 موقف كل مورد</h3><span class="count">مشتريات ومدفوعات وشيكات</span></div><div class="body">${table(['المورد','إجمالي المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي ('+cur+')','شيكات مستحقة/تحت التحصيل ('+cur+')'],supplierRows)}</div></section><section class="card"><div class="head"><h3>📊 ربحية أوامر البيع</h3><span class="count">هامش فعلي على التوريد المسجل</span></div><div class="body"><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">الربح هنا = صافي قيمة البيع المحسوبة في بيانات التوريد − تكلفة الشراء الفعلية (الوزن الفعلي × سعر الشراء). لا تتوفر في النموذج الحالي قيمة مستقلة موثوقة للربح المتوقع.</div>${table(['أمر البيع','العميل','قيمة البيع ('+cur+')','تكلفة الشراء ('+cur+')','الربح المحسوب ('+cur+')','هامش الربح/طن ('+cur+')'],profitRows)}</div></section><section class="card"><div class="head"><h3>⏳ تقرير أعمار الديون</h3><span class="count">من تاريخ الاستحقاق حتى اليوم</span></div><div class="body">${table(['مدة التأخير','عدد الأقساط','إجمالي المتأخر ('+cur+')'],age)}</div></section>`;
 }
 
+// صافي أرصدة العملاء/الموردين الحالية (من بداية التعامل حتى الآن) — نفس طريقة إشعار "أرصدة العملاء والموردين"
+function dxPartyNets(){
+  const sumOf=kind=>{
+    const saved={...tbFilters[kind]};
+    try{ tbFilters[kind]={from:"",to:"",partyFrom:"",partyTo:"",hideZero:false,filtersOpen:true}; return r2(tbCompute(kind).rows.reduce((a,r)=>a+(Number(r.closeNat)||0),0)); }
+    finally{ tbFilters[kind]=saved; }
+  };
+  const out={c:null,v:null};
+  try{ if(canView("clientTB")) out.c=sumOf("clientTB"); }catch(e){}
+  try{ if(canView("supplierTB")) out.v=sumOf("supplierTB"); }catch(e){}
+  return out;
+}
 function viewDashboard(){
   const arr = key => Array.isArray(state[key]) ? state[key] : [];
   const cur = (state.settings&&state.settings.currency)||"ج.م";
@@ -5561,7 +5577,8 @@ function viewDashboard(){
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),'receipts')}
       ${kpi('k-blue','▥','أقساط غير مسددة (متأخر + قادم)',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط = '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا','salesInstallments','مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),'salesInstallments')}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
+      ${(()=>{ const n=dxPartyNets(); return (n.c===null?'':kpi('k-blue','♙','رصيد العملاء الصافي',money(n.c)+' <em>'+cur+'</em>',n.c>=0?'مستحق لنا عند العملاء':'رصيد دائن للعملاء (علينا)','clientTB','صافي أرصدة كل العملاء حتى الآن (أول المدة + المبيعات − التحصيلات)'))+(n.v===null?'':kpi('k-slate','♧','رصيد الموردين الصافي',money(n.v)+' <em>'+cur+'</em>',n.v>=0?'مستحق للموردين (علينا)':'رصيد مدين لدى الموردين (لنا)','supplierTB','صافي أرصدة كل الموردين حتى الآن (أول المدة + المشتريات − المدفوعات)')); })()}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل','master')}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل','master')}`;
 
   const lateList = lateTop.map(r=>`<tr><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
@@ -6364,7 +6381,8 @@ const masterTabs = [
   { id:"cementTypes", key:"cementTypes", label:"أنواع الاسمنت", icon:"◉" },
   { id:"statuses", key:"statuses", label:"حالات التعتيق", icon:"◉" },
   { id:"banks", key:"banks", label:"البنوك", icon:"🏦" },
-  { id:"safes", key:"safes", label:"الخزائن", icon:"🗄" }
+  { id:"safes", key:"safes", label:"الخزائن", icon:"🗄" },
+  { id:"warehouses", key:"warehouses", label:"المخازن", icon:"🏬" }
 ];
 
 const isPartyKey = k => k==="customers" || k==="suppliers";
@@ -6383,6 +6401,7 @@ function viewMaster(){
   `).join("");
 
   const tab = allowed.find(t=>t.id===currentTab) || allowed[0];
+  if(tab.id==="warehouses") return whMasterHtml(tabs);
   const items = state[tab.key] || [];
   const isParty = isPartyKey(tab.key);
   const isTreasury = isTreasuryKey(tab.key);
@@ -6540,6 +6559,134 @@ function mdAccClear(id){ ['id','code','name'].forEach(k=>{const e=document.getEl
 document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccCloseAll(); });
 
 function bindMaster(){}
+
+// ================= المخازن: شجرة مخازن بنفس أسلوب دليل الحسابات + ربط كل مخزن بحساب (آخر مستوى) =================
+// التخزين داخل settings.warehouses (بيتزامن مع السيرفر مع الإعدادات بدون جدول جديد).
+let whQ = "", whCollapsed = new Set();
+function whList(){ if(!state.settings) state.settings={}; if(!Array.isArray(state.settings.warehouses)) state.settings.warehouses=[]; return state.settings.warehouses; }
+const whById = id => whList().find(x=>x.id===id);
+const whCodeCmp = (a,b)=>String(a.code||"").localeCompare(String(b.code||""),"en",{numeric:true});
+const whKids = pid => whList().filter(x=>(x.parentId||"")===(pid||"")).sort(whCodeCmp);
+const whHasKids = id => whList().some(x=>x.parentId===id);
+function whLevel(w){ let n=1, g=0; while(w&&w.parentId&&g++<50){ w=whById(w.parentId); if(w) n++; } return n; }
+function whNextCode(pid){
+  const kids=whKids(pid), par=pid?whById(pid):null;
+  if(!par){ const mx=Math.max(0,...kids.map(k=>parseInt(k.code,10)||0)); return String(mx+1); }
+  const pre=String(par.code||""); let mx=0;
+  kids.forEach(k=>{ const c=String(k.code||""); if(c.startsWith(pre)){ const n=parseInt(c.slice(pre.length),10); if(Number.isFinite(n)&&n>mx) mx=n; } });
+  return pre+String(mx+1).padStart(2,"0");
+}
+function whMatches(w,q){ return [w.code,w.name,w.accountCode,w.accountName].some(v=>String(v||"").toLowerCase().includes(q)); }
+function whVisibleSet(q){
+  const keep=new Set(); if(!q) return null;
+  whList().forEach(w=>{ if(whMatches(w,q)){ let x=w,g=0; while(x&&g++<50){ keep.add(x.id); x=x.parentId?whById(x.parentId):null; } } });
+  return keep;
+}
+function whTreeHtml(){
+  const q=String(whQ||"").trim().toLowerCase(), vis=whVisibleSet(q), canA=can("master","add"), canE=can("master","edit"), canD=can("master","delete");
+  const acc=w=>{ const a=mdAccShow(w); return a; };
+  let rows="", n=0;
+  const walk=(pid)=>{
+    whKids(pid).forEach(w=>{
+      if(vis&&!vis.has(w.id)) return;
+      n++;
+      const kids=whHasKids(w.id), lvl=whLevel(w), open=q?true:!whCollapsed.has(w.id), a=acc(w);
+      const tg=kids?`<button type="button" class="wh-tg" onclick="whToggle('${w.id}')" aria-label="طي/فتح">${open?"▾":"▸"}</button>`:`<span class="wh-tg wh-dot">•</span>`;
+      const hit=q&&whMatches(w,q)?" wh-hit":"";
+      rows+=`<tr class="wh-r wh-l${Math.min(lvl,5)}${kids?" wh-grp":""}${hit}">
+        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text);white-space:nowrap">${escapeHtml(w.code||"")}</td>
+        <td><div class="wh-name" style="padding-inline-start:${(lvl-1)*22}px">${tg}<strong>${escapeHtml(w.name||"")}</strong><span class="wh-badge">${kids?"مجموعة":"مخزن"}</span></div></td>
+        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(kids?"":a.code)}</td>
+        <td>${escapeHtml(kids?"":a.name)}</td>
+        <td style="width:210px"><div class="td-actions">
+          <button onclick="whAdd('${w.id}')" title="إضافة مخزن فرعي">＋ فرعي</button>
+          <button onclick="whEdit('${w.id}')">تعديل</button>
+          <button class="del" onclick="whDel('${w.id}')">حذف</button></div></td></tr>`;
+      if(open) walk(w.id);
+    });
+  };
+  walk("");
+  if(!rows) rows=`<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>${q?"لا توجد نتائج مطابقة.":"لا توجد مخازن بعد — اضغط \"+ إضافة مخزن رئيسي\"."}</p></div></td></tr>`;
+  return `<table class="wh-tree"><thead><tr><th style="width:130px">الكود</th><th>اسم المخزن</th><th style="width:150px">رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function whMasterHtml(tabs){
+  const total=whList().length, leaf=whList().filter(w=>!whHasKids(w.id)).length;
+  return `<style>
+    .wh-tree{width:100%;border-collapse:collapse}
+    .wh-tree th{background:var(--panel-2,#f6f1e4);text-align:right;padding:9px 10px;font-size:12px;color:var(--text-dim);border-bottom:2px solid var(--gold)}
+    .wh-tree td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+    .wh-name{display:flex;align-items:center;gap:6px}
+    .wh-tg{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:transparent;border-radius:5px;cursor:pointer;font-size:12px;color:var(--gold-text);padding:0}
+    .wh-dot{border:none;color:var(--text-dim);cursor:default}
+    .wh-badge{font-size:10px;padding:1px 7px;border-radius:9px;background:rgba(212,160,23,.14);color:var(--gold-text)}
+    .wh-grp td{background:rgba(212,160,23,.05);font-weight:600}
+    .wh-l1 td strong{font-size:14px}
+    .wh-hit td{background:#fef3c7!important}
+    .wh-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .wh-bar .inp{max-width:320px}
+  </style>
+  <div class="page-head"><h2>البيانات الأساسية</h2><div class="spacer"></div>
+    <button class="btn" onclick="whAdd('')">+ إضافة مخزن رئيسي</button></div>
+  <div class="tabs">${tabs}</div>
+  <div class="wh-bar">
+    <input class="inp" id="whSearch" placeholder="بحث بكود المخزن أو اسمه أو رقم/اسم الحساب..." value="${escapeAttr(whQ)}" oninput="whSearchSet(this.value)" autocomplete="off">
+    <button class="btn ghost" onclick="whExpandAll()">فتح الكل</button>
+    <button class="btn ghost" onclick="whCollapseAll()">طي الكل</button>
+    <span style="color:var(--text-dim);font-size:12px">عدد المخازن: <strong style="color:var(--gold-text)">${leaf}</strong> · إجمالي العقد: ${total}</span>
+  </div>
+  <div class="tbl-wrap" id="whTree">${whTreeHtml()}</div>`;
+}
+function whRefresh(){ const el=document.getElementById("whTree"); if(el) el.innerHTML=whTreeHtml(); }
+function whSearchSet(v){ whQ=v; whRefresh(); }
+function whToggle(id){ if(whCollapsed.has(id)) whCollapsed.delete(id); else whCollapsed.add(id); whRefresh(); }
+function whExpandAll(){ whCollapsed.clear(); whRefresh(); }
+function whCollapseAll(){ whList().forEach(w=>{ if(whHasKids(w.id)) whCollapsed.add(w.id); }); whRefresh(); }
+function whFormHtml(w,parent){
+  const v=escapeAttr, grp=w.id&&whHasKids(w.id);
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="fld"><label>كود المخزن *</label><input class="inp" id="wh_code" value="${v(w.code||"")}" style="direction:ltr;text-align:right" autocomplete="off"></div>
+    <div class="fld"><label>اسم المخزن *</label><input class="inp" id="wh_name" value="${v(w.name||"")}" placeholder="مثال: مخزن بدر" autocomplete="off"></div>
+    <div class="fld" style="grid-column:span 2"><label>يتبع</label><input class="inp" readonly value="${v(parent?parent.code+" — "+parent.name:"— مخزن رئيسي —")}"></div>
+    ${grp?`<div style="grid-column:span 2;font-size:12px;color:var(--text-dim)">هذا المخزن مجموعة (له مخازن فرعية) — الربط بحساب يكون على المخزن الفرعي الأخير فقط.</div>`:mdAccHtml('wh_acc',w)}
+    <div class="fld" style="grid-column:span 2"><label>ملاحظات</label><input class="inp" id="wh_notes" value="${v(w.notes||"")}" autocomplete="off"></div>
+  </div>`;
+}
+function whRead(){ const g=k=>(document.getElementById(k)?.value||"").trim(); return {code:g("wh_code"),name:g("wh_name"),notes:g("wh_notes"),...(document.getElementById("wh_acc_id")?mdAccRead("wh_acc"):{})}; }
+function whCheck(r,selfId){
+  if(!r.code){ toast("كود المخزن مطلوب","err"); return false; }
+  if(!r.name){ toast("اسم المخزن مطلوب","err"); return false; }
+  if(whList().some(x=>x.id!==selfId&&String(x.code)===r.code)){ toast("كود المخزن مستخدم بالفعل","err"); return false; }
+  if(r.accountId){ const o=whList().find(x=>x.id!==selfId&&String(x.accountId)===String(r.accountId)); if(o){ toast(`الحساب ده مربوط بالفعل بالمخزن: ${o.name}`,"err"); return false; } }
+  return true;
+}
+async function whAdd(parentId){
+  const par=parentId?whById(parentId):null;
+  if(par&&par.accountId&&!await askConfirm(`المخزن "${par.name}" مربوط بحساب. إضافة مخزن فرعي تحته هتحوّله لمجموعة وتشيل ربطه بالحساب. تكمل؟`)) return;
+  openModal(par?`إضافة مخزن فرعي تحت: ${escapeHtml(par.name)}`:"إضافة مخزن رئيسي", whFormHtml({code:whNextCode(parentId||"")},par), ()=>{
+    const r=whRead(); if(!whCheck(r,null)) return false;
+    if(par){ par.accountId=""; par.accountCode=""; par.accountName=""; whCollapsed.delete(par.id); }
+    whList().push({id:"wh_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),parentId:parentId||"",...r});
+    saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
+  });
+  setTimeout(()=>{ const el=document.getElementById("wh_name"); if(el) el.focus(); },50);
+}
+function whEdit(id){
+  const w=whById(id); if(!w) return;
+  const par=w.parentId?whById(w.parentId):null;
+  openModal("تعديل المخزن", whFormHtml(w,par), ()=>{
+    const r=whRead(); if(!whCheck(r,w.id)) return false;
+    Object.assign(w,{code:r.code,name:r.name,notes:r.notes});
+    if(whHasKids(w.id)){ w.accountId=""; w.accountCode=""; w.accountName=""; } else Object.assign(w,{accountId:r.accountId||"",accountCode:r.accountCode||"",accountName:r.accountName||""});
+    saveState(); go("master"); toast("تم التعديل","ok"); return true;
+  });
+  setTimeout(()=>{ const el=document.getElementById("wh_name"); if(el){ el.focus(); el.select(); } },50);
+}
+async function whDel(id){
+  const w=whById(id); if(!w) return;
+  if(whHasKids(id)){ toast("لا يمكن حذف مخزن له مخازن فرعية — احذف الفرعية أولًا","err"); return; }
+  if(!await askConfirm(`حذف المخزن "${w.code} — ${w.name}" ؟`)) return;
+  state.settings.warehouses=whList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
+}
 
 function partyFormHtml(p){
   const v = (x)=>escapeAttr(x||"");
@@ -7217,6 +7364,7 @@ function migrateState(s){
   if(!Array.isArray(s.cementTypes)) s.cementTypes=["بني سويف","حلوان"];
   if(!s.settings) s.settings = { tax:14, profitTax:1, discount1pct:true, currency:"ج.م" };
   if(s.settings.profitTax===undefined) s.settings.profitTax = 1;
+  if(!Array.isArray(s.settings.warehouses)) s.settings.warehouses = [];
   // الخزائن والبنوك
   if(!Array.isArray(s.treasuries)) s.treasuries = [];
   s.treasuries = s.treasuries.map(t=>typeof t==="string"?{name:t,kind:"safe",notes:""}:({name:t.name||"",kind:t.kind||"safe",notes:t.notes||""}));
@@ -13005,6 +13153,7 @@ function noAccessHtml(){
   }
   const S=(scr,act)=>()=>({scr,act});
   guard("addItem",S("master","add")); guard("editItem",S("master","edit")); guard("delItem",S("master","delete"));
+  guard("whAdd",S("master","add")); guard("whEdit",S("master","edit")); guard("whDel",S("master","delete"));
   guard("saveSettings",S("settings","edit"));
   guard("resetAll",()=>({admin:true}),{type:"reset",counter:()=>state,info:()=>"إعادة تعيين كامل للبيانات"});
   guard("exportData",()=>({sys:"backup"}),{type:"backup_export",always:true,info:()=>"تصدير نسخة احتياطية"});
@@ -13059,6 +13208,7 @@ function noAccessHtml(){
   // 3) إخفاء الأزرار اللي المستخدم مالوش صلاحية عليها (بيتطبق تلقائي على أي رسم جديد للشاشة)
   const RULES=[
     [/\baddItem\(/,()=>can("master","add")], [/\beditItem\(/,()=>can("master","edit")], [/\bdelItem\(/,()=>can("master","delete")],
+    [/\bwhAdd\(/,()=>can("master","add")], [/\bwhEdit\(/,()=>can("master","edit")], [/\bwhDel\(/,()=>can("master","delete")],
     [/\bsaveSettings\(/,()=>can("settings","edit")], [/\bresetAll\(/,()=>isAdmin()],
     [/\bexportData\(|importFile|\bimportData\(/,()=>canSys("backup")],
     [/\bsoNew\(/,()=>can("saleOrder","add")], [/\bsoSave\(/,()=>can("saleOrder",soLoadedId?"edit":"add")],
@@ -13181,7 +13331,8 @@ function permMatrixHtml(p){
     }
     return tr;
   }).join("");
-  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const quick=`<div class="pm-quick" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">➕ بنود زر "+ جديد" في الشريط العلوي</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${QUICK_NEW_ITEMS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pq_${x[2]}" ${quickOn(p,x[2])?"checked":""}> ${x[0]} ${escapeHtml(x[1])}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">البند بيظهر للمستخدم لو متعلّم هنا <b>و</b> عنده صلاحية "إضافة" في شاشته. لو شلت التعليم من الكل، الزر بيختفي.</div></div>`;
+  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}`;
 }
 function pmChange(scr,act){
   if(act!=="view") return;
@@ -13200,6 +13351,7 @@ function readPermForm(){
     if(s.prices){ ["buy","sell"].forEach(k=>{ p.hide[s.id][k]=vw&&!!document.getElementById(`ph_${s.id}_${k}`)?.checked; }); }
   });
   p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
+  if(document.getElementById("pq_"+QUICK_NEW_ITEMS[0][2])){ p.quick={}; QUICK_NEW_ITEMS.forEach(x=>{ p.quick[x[2]]=!!document.getElementById("pq_"+x[2])?.checked; }); }
   return p;
 }
 function pmRender(p){
@@ -13271,6 +13423,7 @@ function permDiff(a,b){
     if(ch.length) out.push(`${s.label}: ${ch.join("، ")}`);
   });
   if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
+  { const ch=QUICK_NEW_ITEMS.filter(x=>quickOn(a,x[2])!==quickOn(b,x[2])).map(x=>(quickOn(b,x[2])?"+":"−")+x[1]); if(ch.length) out.push("بنود + جديد: "+ch.join("، ")); }
   return out;
 }
 function saveUserForm(){
@@ -13809,8 +13962,7 @@ if('serviceWorker' in navigator){
 <script>
 // ===== الشريط العلوي: "+ جديد" وقائمة المستخدم (بتفتح على مستوى الصفحة، وعلى الموبايل Bottom Sheet) =====
 function tbQuickItems(){
-  const L=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
-  return L.filter(x=>{ try{ return can(x[2],"add"); }catch(e){ return false; } });
+  return QUICK_NEW_ITEMS.filter(x=>{ try{ const u=curU(); return can(x[2],"add") && (isAdmin(u)||quickOn(u&&u.perms,x[2])); }catch(e){ return false; } });
 }
 function renderQuickNew(){ const b=document.getElementById("tbNew"); if(b) b.style.display=tbQuickItems().length?"":"none"; }
 function tbMenuHtml(kind){
@@ -15449,4 +15601,31 @@ function renderManagementReports(){
 <style id="tx-settlement-professional-v2">
 #txDetailsTabBtn:disabled,.tx-tab-locked{opacity:.42!important;filter:grayscale(1);cursor:not-allowed!important;pointer-events:none!important}#tx_amount.tx-next-required{border:2px solid var(--gold)!important;box-shadow:0 0 0 4px rgba(218,170,35,.14)!important;background:#fffdf4!important}#txSettlementTable{border-collapse:separate!important;border-spacing:0!important;width:100%;font-size:12px}#txSettlementTable thead th{position:sticky;top:0;background:#102b52!important;color:#fff!important;padding:11px 9px!important;border-bottom:3px solid #d5a72b!important;z-index:1}#txSettlementTable tbody td{padding:10px 9px!important;border-bottom:1px solid #e1e9f4!important;background:#fff}#txSettlementTable tbody tr:nth-child(even) td{background:#f5f8fd}#txSettlementTable tbody tr:hover td{background:#fff8df!important}#txSettlementTable tbody td:nth-child(8){color:#16834b;font-weight:700}#txSettlementTable tbody td:nth-child(9){color:#c17a08;font-weight:800;background:#fff8e8}#txSettlementTable .tx-alloc-amount,#txSettlementTable .tx-auto-alloc{font-weight:800;color:#1557a2}#txSettlementSummary{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;margin:10px 0 14px;border:1px solid #d7e2f1;border-radius:12px;background:linear-gradient(110deg,#f7faff,#fffdf4)}#txSettlementSummary span{padding:8px 12px;border-radius:8px;background:#eaf1fb;color:#17365f}#txSettlementSummary span:last-child{background:#fff2d8;color:#9b6500}#txSettlementSummary b{font-size:14px}#txSettlementDetails .tbl-wrap{max-height:55vh;overflow:auto;border:1px solid #d9e3f0;border-radius:10px}
 @media(max-width:700px){.tx-head-grid{grid-template-columns:1fr 1fr!important}.tx-form-grid{grid-template-columns:1fr!important}.tx-head-grid [style*="grid-column:span 2"]{grid-column:span 2!important}#txSettlementTable{min-width:900px}}
+</style>
+
+<style id="dx-compact">
+@media(min-width:641px){
+.dx-hero{padding:11px 20px!important;border-radius:14px!important;margin-bottom:10px!important;gap:10px!important}
+.dx-hero:after{width:170px!important;height:170px!important;top:-90px!important}
+.dx-hero h1{font-size:clamp(17px,1.6vw,21px)!important;margin-bottom:2px!important}
+.dx-hero p{font-size:11.5px!important;line-height:1.5!important}
+.dx-eyebrow{font-size:11px!important;margin-bottom:3px!important}
+.dx-bar{margin-bottom:8px!important}
+.dx-periods button{min-height:30px!important;padding:4px 12px!important;font-size:11.5px!important}
+.dx-stamp{font-size:11px!important}
+.dx-stamp button{width:30px!important;height:30px!important;font-size:15px!important}
+.dx-kpis{grid-template-columns:repeat(auto-fit,minmax(175px,1fr))!important;gap:9px!important;margin-bottom:10px!important}
+.dx-kpis>*{grid-column:auto!important}
+.dx-kpi{padding:9px 11px!important;gap:9px!important;border-radius:12px!important}
+.dx-kpi-ic{width:30px!important;height:30px!important;font-size:15px!important;border-radius:9px!important}
+.dx-kpi-lbl{font-size:11px!important}
+.dx-kpi strong{font-size:clamp(14px,1.15vw,17px)!important}
+.dx-kpi strong em{font-size:10px!important}
+.dx-kpi small{font-size:10px!important}
+.dx-note{margin:-2px 2px 10px!important;font-size:10.5px!important}
+.dx-followup-summaries{gap:9px!important;margin-bottom:12px!important}
+.dx-followup-card{padding:9px 12px!important;gap:9px!important;border-radius:12px!important}
+.dx-followup-card .dx-followup-icon{flex-basis:30px!important;height:30px!important;font-size:16px!important;border-radius:9px!important}
+.dx-followup-content>strong{font-size:clamp(15px,1.3vw,18px)!important}
+}
 </style>
