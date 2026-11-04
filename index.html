@@ -1942,6 +1942,27 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
   #igViewer .igv-page img{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 </style>
+<style id="md-acc-css">
+.md-acc{position:relative}
+.md-acc-row{display:grid;grid-template-columns:minmax(110px,.8fr) 38px minmax(140px,1.4fr) 34px;gap:6px;align-items:center}
+.md-acc-code{direction:ltr;text-align:right;font-family:monospace;font-weight:800;color:#92400e}
+.md-acc-btn,.md-acc-clear{height:38px;border:1px solid #e5d7b1;border-radius:8px;background:linear-gradient(180deg,#fffbea,#fef3c7);color:#92400e;font-size:16px;cursor:pointer;font-weight:800}
+.md-acc-btn:hover{background:linear-gradient(180deg,#fef3c7,#fde68a);border-color:#d4a017}
+.md-acc-clear{background:#fff;color:#b91c1c;border-color:#e5e7eb;font-size:13px}
+.md-acc-pop{position:fixed;z-index:2147483000;background:#fff;border:2px solid #d4a017;border-radius:10px;box-shadow:0 10px 28px rgba(212,160,23,.35);padding:8px}
+.md-acc-pop[hidden]{display:none}
+.md-acc-search{width:100%;margin-bottom:6px;border:2px solid #d4a017!important;background:#fff!important;color:#1a1a1a!important}
+.md-acc-results{max-height:min(300px,calc(100vh - 140px));overflow:auto}
+.md-acc-item{display:flex;width:100%;gap:14px;align-items:center;padding:9px 12px;border:0;border-bottom:1px solid #f1ead6;background:#fff;color:#1a1a1a;text-align:right;cursor:pointer;font-weight:600;font-family:inherit}
+.md-acc-item:hover{background:linear-gradient(90deg,#fffbea,#fef3c7)}
+.md-acc-item b{min-width:125px;text-align:left;color:#92400e;font-weight:900}
+.md-acc-empty{padding:12px;color:#9ca3af;text-align:center}
+@media(max-width:560px){.md-acc-row{grid-template-columns:1fr 38px 34px}.md-acc-name{grid-column:1/-1;order:5}}
+</style>
+<style id="so-save-bottom-css">
+.so-save-bottom{display:flex;margin:18px 0 10px}
+.so-save-bottom .btn{flex:1;min-height:50px;font-size:15px;font-weight:800;letter-spacing:.2px}
+</style>
 </head>
 <body>
 
@@ -2754,11 +2775,15 @@ async function syncDocs(){
     for(let i=0;i<d.up.length;i+=100){
       const heads=[], items=[], ids=[];
       d.up.slice(i,i+100).forEach(([r,p])=>{ const k=(g==="ship")?packShipment(r,p):packSO(r); heads.push(k.row); items.push(...k.items); ids.push(k.row.id); });
+      window.igSyncStep=cfg.t+" (حفظ الرأس)";
       let r=await sb.from(cfg.t).upsert(heads,{ onConflict:"id" }); if(r.error) throw r.error;
+      window.igSyncStep=cfg.it+" (مسح البنود القديمة)";
       r=await sb.from(cfg.it).delete().in(cfg.fk,ids); if(r.error) throw r.error;
+      window.igSyncStep=cfg.it+" (إضافة البنود)";
       for(let j=0;j<items.length;j+=500){ r=await sb.from(cfg.it).insert(items.slice(j,j+500)); if(r.error) throw r.error; }
     }
     for(let i=0;i<d.del.length;i+=100){
+      window.igSyncStep=cfg.t+" (حذف)";
       const r=await sb.from(cfg.t).delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
     }
     if(!docMeta.has(g)){
@@ -2771,6 +2796,7 @@ async function syncDocs(){
   clearLocalSaleOrderCache();
   const cn=counterNow();
   if(cn!==counterSnap){
+    window.igSyncStep="app_counters (عدّاد أوامر البيع)";
     const r=await sb.from("app_counters").upsert({ name:"soNextNum", value:Number(cn) },{ onConflict:"name" }); if(r.error) throw r.error;
     counterSnap=cn;
   }
@@ -2809,12 +2835,18 @@ async function syncMaster(){
       }
       lastSnaps[k] = snap;
     }
-    await syncDocs();
-    await syncTreasury();
-    await syncQuotes();
-    await syncOpeningBalances();
-    await syncOrderTerms(); window.igSyncErr=null;
-  }catch(e){ window.igSyncErr=String((e&&e.message)||e); toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
+    window.igSyncStep="أوامر البيع/البوالص"; await syncDocs();
+    window.igSyncStep="الخزينة"; await syncTreasury();
+    window.igSyncStep="عروض الأسعار"; await syncQuotes();
+    window.igSyncStep="أرصدة أول المدة"; await syncOpeningBalances();
+    window.igSyncStep="شروط السداد"; await syncOrderTerms(); window.igSyncErr=null; window.igSyncStep="";
+  }catch(e){
+    const det=[e&&e.code?("كود: "+e.code):"", e&&e.details?("تفاصيل: "+e.details):"", e&&e.hint?("تلميح: "+e.hint):""].filter(Boolean).join(" | ");
+    const full=String((e&&e.message)||e)+(det?" — "+det:"")+(window.igSyncStep?" — الخطوة: "+window.igSyncStep:"");
+    window.igSyncErr=full; try{ console.error("sync failed:",e,"step:",window.igSyncStep); }catch(_){}
+    toast("فشل الحفظ على السيرفر: "+full,"err");
+    if(window.igLastErrShown!==full){ window.igLastErrShown=full; try{ _igDialog({title:"فشل الرفع — سبب الخطأ",msg:full,ok:"حسنًا",single:true,danger:true}); }catch(_){} }
+  }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
 // تحديث تلقائي من الأجهزة الأخرى عبر Supabase Realtime.
@@ -5980,7 +6012,7 @@ function tbOpenStatement(kind,name){
   const sk=kind==='clientTB'?'clientStatement':'supplierStatement', f=tbFilters[kind];
   const row=tbCompute(kind).rows.find(r=>r.name===name);
   const nat=row?(kind==='clientTB'?(row.od-row.oc):(row.oc-row.od)):0;
-  partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{from:f.from,to:f.to,party:'',parties:[],partyFrom:name,partyTo:name,opening:String(r2(nat)),q:''});
+  partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{from:f.from,to:f.to,party:'',parties:[],partyFrom:name,partyTo:name,q:''});
   go(sk);
 }
 function tbEditOpening(kind){
@@ -6029,8 +6061,8 @@ function tbExport(kind,format){
 
 // ========== كشوف حساب العملاء والموردين ==========
 const partyStatementFilters = {
-  clientStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true},
-  supplierStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true}
+  clientStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true},
+  supplierStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true}
 };
 function viewPartyStatement(kind){
   const customer=kind==='clientStatement', f=partyStatementFilters[kind], title=customer?'كشف حساب عميل':'كشف حساب مورد';
@@ -6043,8 +6075,7 @@ function viewPartyStatement(kind){
       <div class="fld statement-filter-field"><label>طريقة عرض الكشف</label><select class="inp" onchange="partyStatementFilters['${kind}'].view=this.value;renderPartyStatement()"><option value="detail" ${f.view==='detail'?'selected':''}>تفصيلي — كل قطر/صنف</option><option value="summary" ${f.view==='summary'?'selected':''}>إجمالي — أمر البيع سطر واحد</option></select></div>
       <div class="fld statement-filter-field"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="partyStatementFilters['${kind}'].from=this.value;renderPartyStatement()"></div>
       <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="partyStatementFilters['${kind}'].to=this.value;renderPartyStatement()"></div>
-      <div class="fld statement-filter-field"><label>رصيد أول المدة (${customer?'مدين موجب / دائن سالب':'دائن موجب / مدين سالب'})</label><input class="inp" type="number" step="0.01" value="${escapeAttr(f.opening)}" oninput="partyStatementFilters['${kind}'].opening=this.value;renderPartyStatement()"></div>
-      <div class="fld statement-filter-field"><label>بحث في الحركة</label><input class="inp" placeholder="ابحث بأمر البيع أو البيان" value="${escapeAttr(f.q)}" oninput="partyStatementFilters['${kind}'].q=this.value;renderPartyStatement()"></div>
+            <div class="fld statement-filter-field"><label>بحث في الحركة</label><input class="inp" placeholder="ابحث بأمر البيع أو البيان" value="${escapeAttr(f.q)}" oninput="partyStatementFilters['${kind}'].q=this.value;renderPartyStatement()"></div>
       <div class="fld statement-filter-actions" style="justify-content:end"><label>&nbsp;</label><button type="button" class="btn ghost" onclick="fpClear('${kind}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button></div>
     </div><div style="font-size:12px;color:var(--text-dim);margin-top:10px">يتم اختيار جميع الأسماء الواقعة بين البداية والنهاية حسب ترتيب الأسماء. عند اختيار أكثر من طرف، تتم معاينة وطباعة كشف مستقل لكل طرف. تشمل النتائج حركات التوريد والتحصيلات أو المدفوعات المسجلة بالخزينة.</div></div></div><div id="partyStatementResults"></div></div>`;
 }
@@ -6064,10 +6095,11 @@ function partyStatementSelected(kind){
   }
   return [...new Set((f.parties&&f.parties.length)?f.parties:(f.party?[f.party]:[]))];
 }
-function partyStatementRows(kind){
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), q=(f.q||'').trim().toLowerCase(), rows=[], seen=new Set();
+function partyStatementRows(kind,opts){
+  opts=opts||{};
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), q=opts.pre?'':(f.q||'').trim().toLowerCase(), rows=[], seen=new Set();
   if(!parties.length) return [];
-  const dateOk=d=>(!f.from||d>=f.from)&&(!f.to||d<=f.to);
+  const dateOk=d=>opts.pre?(!!f.from&&d<f.from):((!f.from||d>=f.from)&&(!f.to||d<=f.to));
   const orderOf=s=>String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'بدون أمر بيع');
   (state.shipments||[]).forEach(s=>{
     const party=customer?s.customer:s.supplier;
@@ -6109,7 +6141,7 @@ function partyStatementRows(kind){
     rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id,diameter:'—',type:'—',factory:'—',desc,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0),inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',sortRef:String(e.no||e.id||''),unique});
   });
   let result=rows;
-  if(f.view==='summary'){
+  if(f.view==='summary'&&!opts.pre){
     const grouped=new Map(), other=[];
     rows.forEach(r=>{
       if(r.source!=='supply'){other.push(r);return;}
@@ -6121,38 +6153,39 @@ function partyStatementRows(kind){
   }
   return result.sort((a,b)=>a.date.localeCompare(b.date)||String(a.order||'').localeCompare(String(b.order||''),'ar',{numeric:true})||String(a.sortRef||'').localeCompare(String(b.sortRef||''),'ar',{numeric:true}));
 }
+// رصيد أول المدة = الرصيد اليدوي + صافي كل الحركات السابقة لتاريخ "من تاريخ" (لكل طرف)
+function partyStatementOpenings(kind){
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind);
+  const m=new Map(parties.map(p=>[p,0]));
+  if(f.from) partyStatementRows(kind,{pre:true}).forEach(r=>{const k=r.party||'—'; if(!m.has(k)) return; m.set(k,m.get(k)+(customer?((+r.debit||0)-(+r.credit||0)):((+r.credit||0)-(+r.debit||0))));});
+  return m;
+}
 function renderPartyStatement(){
   const kind=currentPage; if(!['clientStatement','supplierStatement'].includes(kind)) return;
   const el=document.getElementById('partyStatementResults'); if(!el)return;
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), rows=partyStatementRows(kind), opening=Number(f.opening)||0;
-  const balances=new Map(parties.map(p=>[p,opening])); rows.forEach(r=>{const k=r.party||'—';let b=balances.has(k)?balances.get(k):opening;b+=customer?(r.debit-r.credit):(r.credit-r.debit);balances.set(k,b);r.balance=b;});
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), rows=partyStatementRows(kind), openMap=partyStatementOpenings(kind), openTotal=[...openMap.values()].reduce((a,b)=>a+b,0);
+  const balances=new Map(openMap); rows.forEach(r=>{const k=r.party||'—';let b=balances.has(k)?balances.get(k):0;b+=customer?(r.debit-r.credit):(r.credit-r.debit);balances.set(k,b);r.balance=b;});
   const finalBalance=[...balances.values()].reduce((a,b)=>a+b,0);
   const sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0), money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), qty=v=>Number(v||0).toLocaleString('en-US',{maximumFractionDigits:3}), cur=state.settings.currency||'ج.م';
   const deb=sum('debit'), cred=sum('credit'), inclusive=sum('inclusiveTotal'), final=finalBalance;
   const balanceLabel=customer?(final>=0?'رصيد مدين مستحق على العميل':'رصيد دائن للعميل'):(final>=0?'رصيد دائن مستحق للمورد':'رصيد مدين لدى المورد');
-  const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td class="statement-desc">${escapeHtml(r.desc)}</td><td class="num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join('');
+  const openRows=parties.map(p=>`<tr class="statement-open-row"><td>${escapeHtml(f.from||'—')}</td><td>—</td><td class="statement-desc"><b>رصيد أول المدة</b>${parties.length>1?' — '+escapeHtml(p):''}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(openMap.get(p)||0)}</b></td></tr>`).join('');
+  const body=openRows+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td class="statement-desc">${escapeHtml(r.desc)}</td><td class="num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join('');
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', partyMaster=parties.length?parties.join('، '):(customer?'لم يتم اختيار عميل':'لم يتم اختيار مورد');
   el.innerHTML=`<style>.party-statement-view .statement-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;padding:13px 16px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin-bottom:12px;text-align:center}.party-statement-view .statement-master .master-label{color:#8a6a19;font-size:12px;font-weight:700}.party-statement-view .statement-master .master-name{font-size:17px;font-weight:900;color:#172b49}.party-statement-view .trade-report-table{width:100%;min-width:980px;text-align:center}.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{text-align:center!important;vertical-align:middle}.party-statement-view .trade-report-table .statement-desc{white-space:normal;min-width:280px;line-height:1.7}.party-statement-view .trade-report-table .num{direction:ltr;text-align:center!important;font-variant-numeric:tabular-nums}.party-statement-view .statement-meta{text-align:center;color:var(--text-dim);font-size:12px;margin:0 0 12px}.party-statement-view .statement-card-head{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:14px}.party-statement-view .kpis .kpi{text-align:center}
-/* الموبيل: عمود "الرصيد الجاري" يفضل ثابت على اليسار علشان ما يختفيش مع السكرول الأفقي */
-.party-statement-view .tbl-wrap{overflow-x:auto;position:relative}
+/* الموبيل: إظهار كل الأعمدة (كان فيه قاعدة عامة بتخفي عمود دائن والرصيد) مع سكرول أفقي */
+.party-statement-view .tbl-wrap{overflow-x:auto;position:relative;-webkit-overflow-scrolling:touch}
+.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{display:table-cell!important}
+.party-statement-view .trade-report-table tfoot{position:static!important}
+.party-statement-view .statement-open-row td{background:#e2f0d9!important;font-weight:800;color:#14532d}
 @media(max-width:900px){
-  .party-statement-view .trade-report-table{min-width:720px;font-size:11.5px}
-  .party-statement-view .trade-report-table th:last-child,
-  .party-statement-view .trade-report-table td:last-child{
-    position:sticky;left:0;z-index:3;
-    background:#fef3c7;border-right:2px solid #d4a017;
-    box-shadow:4px 0 6px rgba(0,0,0,.08);
-    min-width:110px
-  }
-  .party-statement-view .trade-report-table thead th:last-child{background:#1a1a1a;color:#fef3c7;border-right:2px solid #d4a017}
-  .party-statement-view .trade-report-table tfoot td:last-child{background:#d4a017;color:#111;font-weight:800;border-right:2px solid #92400e}
-  .party-statement-view .trade-report-table .statement-desc{min-width:160px;font-size:11px}
+  .party-statement-view .trade-report-table{min-width:700px;font-size:11.5px}
+  .party-statement-view .trade-report-table .statement-desc{min-width:150px;font-size:11px}
 }
 @media(max-width:600px){
-  .party-statement-view .trade-report-table{min-width:620px;font-size:11px}
-  .party-statement-view .trade-report-table th,
-  .party-statement-view .trade-report-table td{padding:6px 4px}
-}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(opening*parties.length)}</div><div class="sub">${cur} · لكل طرف ${money(opening)}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
+  .party-statement-view .trade-report-table{min-width:660px;font-size:11px}
+  .party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{padding:6px 4px}
+}}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(openTotal)}</div><div class="sub">${cur}${f.from?' · قبل '+escapeHtml(f.from):''}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
 }
 function openPartyStatementQueue(reports,title){
   const w=window.open('','_blank');
@@ -6229,11 +6262,12 @@ table.rprt-tbl tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color
 }
 
 function partyStatementHtmlFor(kind,partyName,allParties){
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', opening=Number(f.opening)||0;
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', opening=partyStatementOpenings(kind).get(partyName)||0;
   const rows=partyStatementRows(kind).filter(r=>(r.party||'')===partyName); let running=opening;
   rows.forEach(r=>{running+=customer?(r.debit-r.credit):(r.credit-r.debit);r.balance=running;});
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), cur=state.settings.currency||'ج.م', inclusive=rows.reduce((a,r)=>a+(+r.inclusiveTotal||0),0);
-  const body=rows.map((r,i)=>`<tr>
+  const openRow=`<tr style="background:#e2f0d9"><td>${escapeHtml(f.from||'—')}</td><td>—</td><td style="text-align:right;font-weight:900">رصيد أول المدة</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n c-bal" style="background:#e2f0d9">${money(opening)}</td></tr>`;
+  const body=openRow+rows.map((r,i)=>`<tr>
     <td>${escapeHtml(r.date)}</td>
     <td class="c-order">${escapeHtml(String(r.order||'—'))}</td>
     <td style="white-space:normal;min-width:180px;text-align:right;line-height:1.6">${escapeHtml(r.desc)}</td>
@@ -6264,7 +6298,7 @@ function partyStatementHtmlFor(kind,partyName,allParties){
       <span class="name">${escapeHtml(partyName)}</span>
       <span class="rprt-badge" style="background:${running>=0?'#fee2e2':'#dcfce7'};color:${balanceColor}">${balanceLabel}: ${money(Math.abs(running))} ${escapeHtml(cur)}</span>
     </div>
-    <table class="rprt-tbl">
+    <div style="overflow-x:auto"><table class="rprt-tbl" style="min-width:640px">
       <thead><tr>
         <th>التاريخ</th><th>أمر البيع</th><th>البيان</th>
         <th>إجمالي شامل (${escapeHtml(cur)})</th>
@@ -6280,7 +6314,7 @@ function partyStatementHtmlFor(kind,partyName,allParties){
         <td class="n">${money(totalCredit)}</td>
         <td class="n">${money(running)}</td>
       </tr></tfoot>
-    </table>`;
+    </table></div>`;
   return igProReportHtml({
     emoji: customer?"🧑‍💼":"🏭",
     title: title,
@@ -6357,12 +6391,14 @@ function viewMaster(){
 
   let header, rows;
   if(isBank || isSafe){
-    header = `<tr><th>#</th><th>الكود *</th><th>الاسم *</th><th>إجراءات</th></tr>`;
+    header = `<tr><th>#</th><th>الكود *</th><th>الاسم *</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((item,i)=>`
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
         <td><strong style="font-family:monospace;color:var(--gold-text)">${escapeHtml(item.code||"")}</strong></td>
         <td>${escapeHtml(item.name||"")}</td>
+        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(mdAccShow(item).code)}</td>
+        <td>${escapeHtml(mdAccShow(item).name)}</td>
         <td style="width:140px">
           <div class="td-actions">
             <button onclick="editItem('${tab.key}',${i})">تعديل</button>
@@ -6370,7 +6406,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="4"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
+    `).join("") : `<tr><td colspan="6"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isTreasury){
     header = `<tr><th>#</th><th>الاسم</th><th>النوع</th><th>ملاحظات</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((t,i)=>`
@@ -6388,7 +6424,7 @@ function viewMaster(){
       </tr>
     `).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isParty){
-    header = `<tr><th>#</th><th>الاسم</th><th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>إجراءات</th></tr>`;
+    header = `<tr><th>#</th><th>الاسم</th><th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((p,i)=>`
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
@@ -6397,6 +6433,8 @@ function viewMaster(){
         <td style="direction:ltr;text-align:right">${escapeHtml(p.taxCard||"—")}</td>
         <td style="direction:ltr;text-align:right">${escapeHtml(p.commercialReg||"—")}</td>
         <td style="font-size:12px;color:var(--text-dim);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.address||"—")}</td>
+        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(mdAccShow(p).code)}</td>
+        <td>${escapeHtml(mdAccShow(p).name)}</td>
         <td style="width:140px">
           <div class="td-actions">
             <button onclick="editItem('${tab.key}',${i})">تعديل</button>
@@ -6404,7 +6442,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="7"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
+    `).join("") : `<tr><td colspan="9"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
   } else {
     header = `<tr><th>#</th><th>${tab.label}</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((v,i) => `
@@ -6440,6 +6478,67 @@ function viewMaster(){
   `;
 }
 
+// ================= اختيار حساب من دليل الحسابات (آخر مستوى) للبيانات الأساسية =================
+async function mdAccEnsure(){
+  if(glState.accounts&&glState.accounts.length) return true;
+  try{
+    const r=await sb.from('gl_accounts').select('*').order('account_code',{ascending:true});
+    if(r.error) throw r.error;
+    glState.accounts=r.data||[];
+    return glState.accounts.length>0 || (toast('دليل الحسابات فارغ','err'),false);
+  }catch(e){ toast('تعذر تحميل دليل الحسابات','err'); return false; }
+}
+function mdAccShow(item){
+  item=item||{};
+  const a=(item.accountId&&glState.accounts||[]).find(x=>String(x.id)===String(item.accountId));
+  return {code:a?a.account_code:(item.accountCode||''), name:a?a.account_name:(item.accountName||'')};
+}
+function mdAccHtml(id,item){
+  const a=mdAccShow(item), v=escapeAttr;
+  return `<div class="fld md-acc" style="grid-column:span 2"><label>الحساب في دليل الحسابات</label>
+    <input type="hidden" id="${id}_id" value="${v(item&&item.accountId||'')}">
+    <div class="md-acc-row">
+      <input class="inp md-acc-code" id="${id}_code" readonly placeholder="رقم الحساب" value="${v(a.code)}">
+      <button type="button" class="md-acc-btn" title="بحث في دليل الحسابات" aria-label="بحث في دليل الحسابات" onclick="mdAccToggle('${id}')">🔍</button>
+      <input class="inp md-acc-name" id="${id}_name" readonly placeholder="اسم الحساب" value="${v(a.name)}">
+      <button type="button" class="md-acc-clear" title="مسح الحساب" aria-label="مسح الحساب" onclick="mdAccClear('${id}')">✕</button>
+    </div>
+    <div class="md-acc-pop" id="${id}_pop" hidden>
+      <input class="inp md-acc-search" id="${id}_q" placeholder="ابحث برقم الحساب أو اسمه (آخر مستوى فقط)..." oninput="mdAccFilter('${id}')" autocomplete="off">
+      <div class="md-acc-results" id="${id}_res"></div>
+    </div></div>`;
+}
+function mdAccRead(id){
+  const g=k=>(document.getElementById(id+'_'+k)?.value||'').trim();
+  return {accountId:g('id'),accountCode:g('code'),accountName:g('name')};
+}
+function mdAccCloseAll(){ document.querySelectorAll('.md-acc-pop').forEach(x=>x.hidden=true); }
+async function mdAccToggle(id){
+  const pop=document.getElementById(id+'_pop'); if(!pop) return;
+  const wasOpen=!pop.hidden; mdAccCloseAll(); if(wasOpen) return;
+  if(!await mdAccEnsure()) return;
+  const r=document.getElementById(id+'_code').closest('.md-acc-row').getBoundingClientRect();
+  const w=Math.min(560,window.innerWidth-24), right=Math.max(12,window.innerWidth-r.right-(w>r.width?0:0));
+  const top=Math.max(8,Math.min(window.innerHeight-340,r.bottom+4));
+  pop.style.top=top+'px'; pop.style.right=Math.min(right,Math.max(12,window.innerWidth-w-12))+'px'; pop.style.width=w+'px';
+  pop.hidden=false;
+  const q=document.getElementById(id+'_q'); q.value=''; mdAccFilter(id); q.focus();
+}
+function mdAccFilter(id){
+  const q=String(document.getElementById(id+'_q').value||'').trim().toLowerCase(), list=document.getElementById(id+'_res');
+  const m=glPostingLeafAccounts().filter(a=>String(a.account_code||'').toLowerCase().includes(q)||String(a.account_name||'').toLowerCase().includes(q)).slice(0,80);
+  list.innerHTML=m.map(a=>`<button type="button" class="md-acc-item" onclick="mdAccChoose('${id}','${String(a.id).replace(/'/g,"")}')"><b dir="ltr">${escapeHtml(String(a.account_code||''))}</b><span>${escapeHtml(String(a.account_name||''))}</span></button>`).join('')||'<div class="md-acc-empty">لا توجد حسابات مطابقة</div>';
+}
+function mdAccChoose(id,accId){
+  const a=glState.accounts.find(x=>String(x.id)===String(accId)); if(!a) return;
+  document.getElementById(id+'_id').value=a.id;
+  document.getElementById(id+'_code').value=a.account_code||'';
+  document.getElementById(id+'_name').value=a.account_name||'';
+  mdAccCloseAll();
+}
+function mdAccClear(id){ ['id','code','name'].forEach(k=>{const e=document.getElementById(id+'_'+k); if(e) e.value='';}); mdAccCloseAll(); }
+document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccCloseAll(); });
+
 function bindMaster(){}
 
 function partyFormHtml(p){
@@ -6468,6 +6567,7 @@ function partyFormHtml(p){
         <input class="inp" id="pf_address" value="${v(p.address)}" placeholder="العنوان الكامل">
       </div>
       ${currentTab==="customers" ? `<div class="fld" style="grid-column:span 2;padding:10px;border:1px solid var(--border);border-radius:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="pf_applyDiscount1Pct" ${p.applyDiscount1Pct?"checked":""}> تطبيق خصم 1% على هذا العميل (من السعر قبل الضريبة)</label></div>` : ""}
+      ${mdAccHtml('pf_acc',p)}
       <div class="fld" style="grid-column:span 2"><label>ملاحظات</label>
         <textarea class="inp" id="pf_notes" rows="2" placeholder="ملاحظات...">${escapeHtml(p.notes||"")}</textarea>
       </div>
@@ -6484,7 +6584,8 @@ function partyFormRead(){
     contactPerson: (document.getElementById("pf_contactPerson")?.value||"").trim(),
     address: (document.getElementById("pf_address")?.value||"").trim(),
     notes: (document.getElementById("pf_notes")?.value||"").trim(),
-    applyDiscount1Pct: !!document.getElementById("pf_applyDiscount1Pct")?.checked
+    applyDiscount1Pct: !!document.getElementById("pf_applyDiscount1Pct")?.checked,
+    ...mdAccRead('pf_acc')
   };
 }
 
@@ -6523,13 +6624,15 @@ function bankFormHtml(b){
       <div class="fld"><label>الاسم *</label>
         <input class="inp" id="bk_name" value="${escapeAttr(b.name||"")}" placeholder="بنك Credit Agricole">
       </div>
+      ${mdAccHtml('bk_acc',b)}
     </div>
   `;
 }
 function bankFormRead(){
   return {
     code: (document.getElementById("bk_code")?.value||"").trim().toUpperCase(),
-    name: (document.getElementById("bk_name")?.value||"").trim()
+    name: (document.getElementById("bk_name")?.value||"").trim(),
+    ...mdAccRead('bk_acc')
   };
 }
 
@@ -6542,13 +6645,15 @@ function safeFormHtml(s){
       <div class="fld"><label>الاسم *</label>
         <input class="inp" id="sf_name" value="${escapeAttr(s.name||"")}" placeholder="الخزنة الرئيسية">
       </div>
+      ${mdAccHtml('sf_acc',s)}
     </div>
   `;
 }
 function safeFormRead(){
   return {
     code: (document.getElementById("sf_code")?.value||"").trim().toUpperCase(),
-    name: (document.getElementById("sf_name")?.value||"").trim()
+    name: (document.getElementById("sf_name")?.value||"").trim(),
+    ...mdAccRead('sf_acc')
   };
 }
 
@@ -6884,7 +6989,7 @@ function _cmdkBuild(q){
   const party=(label,list,sk,ic)=>{
     if(!toks.length||!canView(sk)) return;
     let names=[]; try{ names=partyNames(list); }catch(e){}
-    const r=names.filter(n=>match(_nrm(n))).slice(0,6).map(n=>({ic,t:n,s:"فتح كشف الحساب",run:()=>{ partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{party:"",parties:[],partyFrom:n,partyTo:n,opening:"0",q:""}); go(sk); }}));
+    const r=names.filter(n=>match(_nrm(n))).slice(0,6).map(n=>({ic,t:n,s:"فتح كشف الحساب",run:()=>{ partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{party:"",parties:[],partyFrom:n,partyTo:n,q:""}); go(sk); }}));
     if(r.length) groups.push([label,r]);
   };
   party("العملاء",state.customers,"clientStatement","🧑‍💼"); party("الموردون",state.suppliers,"supplierStatement","🏭");
@@ -7049,7 +7154,7 @@ async function importData(e){
 const fmt=(n,d=2)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const r2=n=>Math.round((n+Number.EPSILON)*100)/100;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
-const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:"",sellPrice:"",agingStatus:"",notes:""});
+const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:0,sellPrice:0,agingStatus:"",notes:""});
 const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:"",site:"",
   saleOrderId:"", saleOrderNo:"",
   terms:{cashPct:0,installments:0,periodDays:0}, paySchedule:null, payScheduleReset:false, payScheduleResetImported:false, payScheduleResetOrderNo:"",
@@ -7464,7 +7569,7 @@ async function pickSO(id){
       factory:"", diameter, type, agingStatus:"",
       supplyQty: remaining.toString(),
       actualWeight: remaining.toString(),  // المتبقي كافتراضي (المستخدم يعدّل)
-      buyPrice:"", sellPrice:"",
+      buyPrice:0, sellPrice:0,
       notes: soNoteMap[key] || ""
     });
   }
@@ -7850,7 +7955,7 @@ function toDraft(r){
     applyProfitTax: r.applyProfitTax ?? !!r.applyDiscount,
     profitTaxPct: r.profitTaxPct ?? (+state.settings.profitTax||1),
     notes:r.notes||"",
-    items:r.items.map(it=>({factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??"",sellPrice:it.sellPrice??"",notes:it.notes||""}))};
+    items:r.items.map(it=>({factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??0,sellPrice:it.sellPrice??0,notes:it.notes||""}))};
 }
 function loadRecord(src,id,editMode){
   const r=(src==="shipments"?state.shipments:state.policies).find(x=>x.id===id); if(!r) return;
@@ -7874,14 +7979,14 @@ async function deletePolicy(){
 
 // ---------- حفظ ----------
 function termsBlank(t){ const cp=t.cashPct, n=t.installments, days=t.periodDays; return [cp,n,days].every(v=>v===""||v==null) || ((+cp||0)===0 && (+n||0)===0 && (+days||0)===0); }
-const rowUsed=it=>it.diameter||it.type||it.supplyQty||it.actualWeight||it.sellPrice||it.buyPrice;
+const rowUsed=it=>it.diameter||it.type||it.supplyQty||it.actualWeight||(+it.sellPrice>0)||(+it.buyPrice>0);
 // الناقص قبل الترحيل: الوزن الفعلي + الأسعار + شروط الدفع
 function missingList(d){
   const m=[], add=(label,line,key)=>{ let e=m.find(x=>x.key===key); if(!e){e={label,key,lines:[]};m.push(e);} if(line) e.lines.push(line); };
   d.items.forEach((it,i)=>{ if(!rowUsed(it)) return;
     if(!(+it.actualWeight>0)) add("الوزن الفعلي",i+1,"actualWeight");
-    // سعر الشراء اختياري — لو فاضي يترحّل بصفر
-    if(!(+it.sellPrice>0)) add("سعر البيع",i+1,"sellPrice"); });
+    // سعر الشراء وسعر البيع اختياريان — لو فاضيين يتحفظوا ويترحّلوا بصفر
+  });
   // شروط السداد اختيارية عند حفظ/ترحيل البوليصة؛ تُراجع وتُستكمل لاحقًا من أمر البيع.
   return m;
 }
@@ -7918,7 +8023,7 @@ function buildRecord(strict){
     if(!it.diameter||!it.type) return err("اختر القطر والنوع لكل صنف");
     if(!(+it.supplyQty>0)) return err("اكتب كمية التوريد (أكبر من صفر)");
     if(has(it.actualWeight)&&!(+it.actualWeight>0)) return err("الوزن الفعلي لازم يكون أكبر من صفر");
-    if(has(it.sellPrice)&&!(+it.sellPrice>0)) return err("سعر البيع لازم يكون أكبر من صفر");
+    if(has(it.sellPrice)&&!(+it.sellPrice>=0)) return err("سعر البيع لا يمكن أن يكون أقل من صفر");
     if(has(it.buyPrice)&&+it.buyPrice<0) return err("سعر الشراء لا يمكن أن يكون أقل من صفر");
   }
   if(strict){ const m=missingList(d); if(m.length){ showMissing(m); return null; } }
@@ -7926,7 +8031,7 @@ function buildRecord(strict){
   const items=rows.map(it=>{
     const c=calcItem(it,opts);
     return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
-      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:num(it.sellPrice),
+      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:(has(it.sellPrice)?+it.sellPrice:0),
       tax:c.tax,discount:c.discount,total:c.total,notes:(it.notes||"").trim()};
   });
   const t=draftTotals();
@@ -9525,7 +9630,7 @@ function viewSaleOrder(){
         <div class="fld"><label>عدد الأقساط</label><div class="inp" aria-readonly="true">${escapeHtml(d.terms.installments??'—')}</div></div>
         <div class="fld"><label>فترة القسط (يوم)</label><div class="inp" aria-readonly="true">${escapeHtml(d.terms.periodDays??'—')}</div></div>
       </div>${locked?'<p class="so-virtual-hint" style="color:var(--warn)">لا يمكن تعديل الشروط لوجود تحصيلات مسجلة على الأمر.</p>':''}</div></div>
-      <div class="so-actions"><button class="btn" onclick="soSave()" ${locked?'disabled':''}>💾 حفظ شروط السداد</button><button class="btn ghost" onclick="soReturnToPolicy()">إلغاء والرجوع للبوليصة</button></div><div class="so-status-msg" id="soStatusMsg"></div>`;
+      <div class="so-actions"><button class="btn" onclick="soSaveConfirmed()" ${locked?'disabled':''}>💾 حفظ شروط السداد</button><button class="btn ghost" onclick="soReturnToPolicy()">إلغاء والرجوع للبوليصة</button></div><div class="so-status-msg" id="soStatusMsg"></div>`;
   }
   if(!d._termsEdited) d.terms = termsFromOrder(d.orderNo);
   const lastD = orderLastDate(d.orderNo); if(lastD) d.date = lastD;
@@ -9545,7 +9650,7 @@ function viewSaleOrder(){
 
   <div class="so-actions">
     ${soReturnContext?'<button class="btn ghost" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
-    <button class="btn ghost" onclick="soSave()">💾 حفظ الأمر</button>
+    <button class="btn ghost" onclick="soSaveConfirmed()">💾 حفظ الأمر</button>
     <button class="btn" onclick="soDownloadPdf()">⬇ تحميل PDF</button>
     <button class="btn ghost" onclick="soSharePdf()">↗ مشاركة</button>
     <button class="btn ghost" onclick="soView()">👁 عرض</button>
@@ -9614,6 +9719,8 @@ function viewSaleOrder(){
   <div class="card" style="margin-top:16px"><div class="head"><h3>ملاحظات عامة</h3></div><div class="body">
     <textarea class="inp" id="soNotes" rows="3" oninput="soDraft.notes=this.value;soRenderPreview()" placeholder="ملاحظات (اختياري)">${escapeHtml(d.notes)}</textarea>
   </div></div>
+
+  <div class="so-save-bottom"><button class="btn" onclick="soSaveConfirmed()">💾 حفظ أمر البيع</button></div>
   `;
 }
 
@@ -9799,6 +9906,32 @@ function soStatus(msg,isErr){
   el.textContent = msg||""; el.className = "so-status-msg"+(isErr?" err":"");
   if(msg && !isErr) setTimeout(()=>{ if(el.textContent===msg) el.textContent=""; }, 3500);
 }
+// ===== حفظ مع تأكيد: بعد الحفظ ينتظر وصول البيانات لقاعدة البيانات ثم يعرض رسالة تأكيد =====
+function igWaitSynced(ms){
+  return new Promise(res=>{
+    const t0=Date.now();
+    (function tick(){
+      let pending=true;
+      try{ pending=!!syncBusy||hasPendingLocalChanges(); }catch(e){ pending=false; }
+      if(!pending) return res(true);
+      if(Date.now()-t0>ms) return res(false);
+      setTimeout(tick,250);
+    })();
+  });
+}
+async function igRunSaveConfirmed(label,noGetter,fn,statusFn){
+  const no=String(noGetter()||'').trim();
+  const orig=window[statusFn]; let r=null;
+  window[statusFn]=function(m,e){ r={m:m,e:!!e}; return orig.apply(this,arguments); };
+  try{ fn(); }finally{ window[statusFn]=orig; }
+  if(!r||r.e) return;   // رسالة الخطأ ظهرت من الدالة الأصلية ولا يوجد حفظ
+  toast('جارٍ الحفظ على قاعدة البيانات…');
+  const ok=await igWaitSynced(10000);
+  if(ok) _igDialog({title:'تم الحفظ ✓',msg:'تم حفظ '+label+(no?' رقم '+no:'')+' على قاعدة البيانات بنجاح.',ok:'حسنًا',single:true});
+  else _igDialog({title:'لم يتأكد الحفظ',msg:'لم يصل '+label+(no?' رقم '+no:'')+' إلى قاعدة البيانات بعد. تأكد من الاتصال بالإنترنت وأعد الضغط على حفظ.',ok:'حسنًا',single:true});
+}
+function soSaveConfirmed(){ return igRunSaveConfirmed('أمر البيع',()=>soDraft&&soDraft.orderNo,soSave,'soStatus'); }
+function qtSaveConfirmed(){ return igRunSaveConfirmed('عرض السعر',()=>qtDraft&&qtDraft.quoteNo,qtSave,'qtStatus'); }
 function soSave(){
   if(!docsReady){ soStatus("لا يمكن حفظ أمر البيع: قاعدة البيانات غير متاحة. لم يتم الحفظ محليًا.",true); return; }
   if(soVirtualMode){
@@ -10229,7 +10362,7 @@ function viewQuote(){
   </div>
   <button class="btn ghost so-search-btn" onclick="qtOpenSearch()">🔍 البحث عن عرض سعر سابق</button>
   <div class="so-actions">
-    <button class="btn ghost" onclick="qtSave()">💾 حفظ العرض</button>
+    <button class="btn ghost" onclick="qtSaveConfirmed()">💾 حفظ العرض</button>
     <button class="btn" onclick="qtDownloadPdf()">⬇ تحميل PDF</button>
     <button class="btn ghost" onclick="qtSharePdf()">↗ مشاركة</button>
     <button class="btn ghost" onclick="qtPreview()">👁 عرض</button>
@@ -10257,7 +10390,8 @@ function viewQuote(){
   </div></div>
   <div class="card qt-items-card" style="margin-top:16px"><div class="head"><h3>تفاصيل الأصناف</h3>
     <button class="btn sm" style="margin-right:auto" onclick="qtAddItem()">+ إضافة صنف جديد</button>
-  </div><div class="body"><div class="so-items-wrap" id="qtItemsWrap"></div></div></div>`;
+  </div><div class="body"><div class="so-items-wrap" id="qtItemsWrap"></div></div></div>
+  <div class="so-save-bottom"><button class="btn" onclick="qtSaveConfirmed()">💾 حفظ عرض السعر</button></div>`;
 }
 function bindQuote(){ qtRenderItems(); qtRenderPreview(); if(typeof igQtSnapReset==="function") igQtSnapReset(); }
 
@@ -13873,7 +14007,7 @@ const OBJ={
   quoteList:()=>qlF
 };
 const trDef=()=>({from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",q:""});
-const stDef=()=>({from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true});
+const stDef=()=>({from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true});
 const DEF={
   supply:()=>({q:"",supplier:"",customer:"",factory:"",status:"",from:igYearStart(),to:igYearEnd(),grouped:!!supFilter.grouped}),
   salesReport:trDef, purchaseReport:trDef,
@@ -14016,7 +14150,7 @@ document.addEventListener("keydown",function(e){
   // عناوين الأعمدة والصفوف القابلة للنقر
   if((e.key==="Enter"||e.key===" ")&&t&&t.matches&&t.matches("th[tabindex],tr[tabindex]")){ e.preventDefault(); t.click(); return; }
   // Ctrl+S في أمر البيع
-  if((e.ctrlKey||e.metaKey)&&e.code==="KeyS"&&currentPage==="saleOrder"&&document.getElementById("soOrderNo")){ e.preventDefault(); try{ soSave(); }catch(_){} return; }
+  if((e.ctrlKey||e.metaKey)&&e.code==="KeyS"&&currentPage==="saleOrder"&&document.getElementById("soOrderNo")){ e.preventDefault(); try{ soSaveConfirmed(); }catch(_){} return; }
   if(document.querySelector(".ig-dlg-bg")) return;                       // نوافذ التأكيد بتدير مفاتيحها بنفسها
   const ck=document.getElementById("cmdk"); if(ck&&ck.classList.contains("on")) return;
   const bd=topModal();
