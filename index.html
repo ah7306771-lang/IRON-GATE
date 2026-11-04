@@ -5650,7 +5650,27 @@ function viewDashboard(){
         </div>
       </div>
     </div>
-    <div class="dx-card dx-chq">
+    ${(()=>{
+      const pend = (state.policies||[]).slice().sort((a,b)=>String(a.policyNo).localeCompare(String(b.policyNo),undefined,{numeric:true}));
+      if(!pend.length) return "";
+      const readyCount = pend.filter(r=>!missingList(toDraft(r)).length).length;
+      const chips = pend.slice(0,30).map(r=>{
+        const miss = missingList(toDraft(r)).length;
+        const soNo = r.saleOrderNo || state.saleOrders.find(o=>o.id===r.saleOrderId)?.orderNo || "";
+        return `<button type="button" onclick="loadRecord('policies','${r.id}',false);go('shipments')" style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;padding:8px 12px;background:${miss?'#fef3c7':'#dcfce7'};border:1px solid ${miss?'#fcd34d':'#86efac'};border-right:4px solid ${miss?'#d4a017':'#16a34a'};border-radius:7px;cursor:pointer;font-weight:700;min-width:140px;text-align:right">
+          <b style="font-size:13px;color:${miss?'#92400e':'#166534'}">${escapeHtml(r.policyNo)}</b>
+          ${soNo?`<small style="color:var(--gold-text);font-weight:800;font-size:10.5px">🔗 أمر #${escapeHtml(soNo)}</small>`:""}
+          <small style="color:#4b5563;font-size:10.5px">${escapeHtml(r.customer||'—')}</small>
+          <small style="color:${miss?'#92400e':'#166534'};font-size:10px;font-weight:700">${miss?'⚠ ناقصها بيانات':'✓ جاهزة للترحيل'}</small>
+        </button>`;
+      }).join("");
+      return `<div class="dx-card" style="margin-top:14px;border-top:3px solid var(--gold)">
+        <div class="dx-card-h"><div><h3>📄 بوالص لم تُرحَّل بعد</h3><small>${pend.length} بوليصة · ${readyCount} جاهزة للترحيل · ${pend.length-readyCount} ناقصها بيانات</small></div><button class="dx-link" onclick="go('shipments')">عرض الكل ←</button></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 2px">${chips}</div>
+        ${pend.length>30?`<div class="dx-empty" style="padding:10px">و ${pend.length-30} بوليصة أخرى — اضغط «عرض الكل»</div>`:""}
+      </div>`;
+    })()}
+    <div class="dx-card dx-chq" style="margin-top:14px">
       <div class="dx-card-h"><div><h3>شيكات تحتاج متابعة</h3><small>${chqRows.length?`${chqRows.length} شيك لم يُحصَّل بعد · ${chqLate} فات ميعاده`:"مستحقة خلال 7 أيام أو فات ميعادها ولم تُحصَّل"}</small></div><button class="dx-link" onclick="go('chequeRegister')">عرض الكل ←</button></div>
       ${!canMoney?`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`:chqList?`<table class="dx-tbl"><thead><tr><th>العميل / الشيك</th><th>المبلغ (${cur})</th><th>الاستحقاق</th></tr></thead><tbody>${chqList}</tbody></table>${chqRows.length>8?`<div class="dx-empty" style="padding:10px">و ${chqRows.length-8} شيك آخر — اضغط «عرض الكل»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد شيكات مستحقة أو متأخرة</div>`}
     </div>
@@ -5883,7 +5903,7 @@ function orderReportExport(format){
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>${css}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p style="text-align:center;color:#64748b">${data.length} أمر${rng}</p>`
     +data.map(g=>`<h3>أمر بيع رقم ${escapeHtml(g.no)}</h3>${orderReportBlock(g,SS)}`).join("")+`<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
   if(format==="excel"){
-    igSaveXlsx(html,"تقرير_أوامر_البيع_"+new Date().toISOString().slice(0,10)); toast("تم تجهيز ملف Excel المنسق","ok");
+    igSaveXlsx(html,igSafeFileName("تقرير_أوامر_البيع_"+new Date().toISOString().slice(0,10))); toast("تم تجهيز ملف Excel المنسق","ok");
   } else openReportPreview(html,title);
 }
 
@@ -5894,7 +5914,7 @@ function tradeReportExport(kind,format){
   const n=v=>Number(v||0).toFixed(2);
   const body=rows.map(r=>sales?`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td><td>${n(r.subtotal)}</td><td>${n(r.tax)}</td><td>${n(r.discount)}</td><td>${n(r.net)}</td><td>${r.status}</td></tr>`:`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td>${r.qty.toFixed(3)}</td><td>${r.weight.toFixed(3)}</td><td>${n(r.weight?r.buy/r.weight:0)}</td><td>${n(r.buy)}</td></tr>`).join('');
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body><h1>${title} — IRON GATE SUPPLIES</h1><p>تاريخ استخراج التقرير: ${new Date().toLocaleDateString('en-GB')} · عدد السجلات: ${rows.length} · تقرير المبيعات مجمّع حسب أمر البيع ولا يعرض البوالص</p><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></body></html>`;
-  if(format==='excel'){igSaveXlsx(html,(sales?'تقرير_المبيعات_حسب_أمر_البيع_':'تقرير_المشتريات_')+new Date().toISOString().slice(0,10));toast('تم تجهيز ملف Excel المنسق','ok');}else openReportPreview(html,title);
+  if(format==='excel'){igSaveXlsx(html,igSafeFileName((sales?'تقرير_المبيعات_حسب_أمر_البيع_':'تقرير_المشتريات_')+new Date().toISOString().slice(0,10)));toast('تم تجهيز ملف Excel المنسق','ok');}else openReportPreview(html,title);
 }
 
 
@@ -6078,7 +6098,7 @@ function tbExport(kind,format){
   if(!data.rows.length){ toast('لا توجد بيانات مطابقة للتصدير','err'); return; }
   const html=tbDocHtml(kind);
   if(format==='excel'){
-    igSaveXlsx(html,(customer?'ميزان_مراجعة_العملاء_':'ميزان_مراجعة_الموردين_')+new Date().toISOString().slice(0,10)); toast('تم تجهيز ملف Excel المنسق','ok');
+    igSaveXlsx(html,igSafeFileName((customer?'ميزان_مراجعة_العملاء_':'ميزان_مراجعة_الموردين_')+new Date().toISOString().slice(0,10))); toast('تم تجهيز ملف Excel المنسق','ok');
   } else openReportPreview(html,title);
 }
 
@@ -6224,28 +6244,32 @@ function igProReportHtml(opts){
   const {emoji="📄", title="تقرير", titleEn="REPORT", sub="", filters=[], kpis=[], tableHtml="", note=""} = opts||{};
   const cur = state.settings.currency||"ج.م";
   const filtersBar = filters.length ? `<div class="rprt-filters">${filters.map(f=>`<span class="rprt-chip">${escapeHtml(f)}</span>`).join("")}</div>` : "";
-  const kpiBar = kpis.length ? `<div class="rprt-kpis">${kpis.map(k=>`<div class="rprt-kpi" style="border-top-color:${k.color||'#64748b'}"><div class="lbl">${escapeHtml(k.lbl||"")}</div><div class="val">${k.val||""}</div><div class="sub">${escapeHtml(k.sub||"")}</div></div>`).join("")}</div>` : "";
+  const kpiBar = kpis.length ? `<div class="rprt-kpis">${kpis.map(k=>{
+    const accent = k.color || '#64748b';
+    const sub = k.sub || '';
+    return `<span class="rprt-kpi" style="border-right-color:${accent}"><span class="lbl">${escapeHtml(k.lbl||"")}:</span><b class="val">${k.val||""}</b>${sub?`<span class="sub">${sub.replace(/<[^>]*>/g,'')}</span>`:''}</span>`;
+  }).join("")}</div>` : "";
   return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${escapeHtml(title)}</title>
 <style>
 *{box-sizing:border-box}
-body{font-family:"Cairo","Tahoma",Arial,sans-serif;color:#1f2937;padding:14px 18px;background:#f8fafc;margin:0}
-.rprt-doc{background:#fff;padding:18px 20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
-.rprt-hdr{text-align:center;padding:14px 10px 16px;background:linear-gradient(180deg,#fffbea 0%,#fff 100%);border-bottom:3px solid #d4a017;border-radius:10px 10px 0 0;margin:-18px -20px 10px}
-.rprt-hdr .emoji{font-size:28px;margin-bottom:4px}
-.rprt-hdr h1{margin:4px 0 2px;font-size:22px;color:#1a1a1a;font-weight:900}
-.rprt-hdr .en{color:#d4a017;font-size:13px;letter-spacing:3px;font-weight:800}
-.rprt-hdr .sub{color:#6b7280;font-size:11.5px;margin-top:4px}
-.rprt-filters{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;justify-content:center}
-.rprt-chip{background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:14px;font-size:11px;font-weight:700;border:1px solid #fde68a}
-.rprt-kpis{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0 12px}
-.rprt-kpi{background:#fff;border:1px solid #e5e7eb;border-top:4px solid #64748b;border-radius:10px;padding:12px 14px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center}
-.rprt-kpi .lbl{font-size:10.5px;color:#6b7280;font-weight:700;margin-bottom:5px;letter-spacing:.3px}
-.rprt-kpi .val{font-size:19px;font-weight:900;color:#111;line-height:1.1;direction:ltr}
-.rprt-kpi .sub{font-size:10px;color:#9ca3af;margin-top:3px}
+body{font-family:"Cairo","Tahoma",Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0}
+.rprt-doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
+.rprt-hdr{text-align:center;padding:5px 10px 6px;background:linear-gradient(90deg,#fffbea 0%,#fff 50%,#fffbea 100%);border-bottom:2px solid #d4a017;border-radius:6px 6px 0 0;margin:-8px -12px 5px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+.rprt-hdr .emoji{font-size:16px;margin:0}
+.rprt-hdr h1{margin:0;font-size:15px;color:#1a1a1a;font-weight:900}
+.rprt-hdr .en{color:#d4a017;font-size:10px;letter-spacing:2px;font-weight:800}
+.rprt-hdr .sub{color:#6b7280;font-size:10px;margin:0}
+.rprt-filters{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0;justify-content:center}
+.rprt-chip{background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:12px;font-size:9.5px;font-weight:700;border:1px solid #fde68a}
+.rprt-kpis{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0;padding:5px 8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px}
+.rprt-kpi{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:#fff;border-right:3px solid #64748b;border-radius:0 4px 4px 0;white-space:nowrap}
+.rprt-kpi .lbl{color:#6b7280;font-size:10px;font-weight:700}
+.rprt-kpi .val{color:#111;font-size:11.5px;direction:ltr;font-variant-numeric:tabular-nums;font-weight:900}
+.rprt-kpi .sub{color:#9ca3af;font-size:9px}
 table.rprt-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
-table.rprt-tbl thead th{background:linear-gradient(180deg,#1a1a1a,#262626);color:#fff;padding:10px 6px;text-align:center;font-weight:800;font-size:11.5px;line-height:1.35;border-right:1px solid #333;white-space:normal}
+table.rprt-tbl thead th{background:linear-gradient(180deg,#1a1a1a,#262626);color:#fff;padding:9px 6px;text-align:center;font-weight:800;font-size:11.5px;line-height:1.35;border-right:1px solid #333;white-space:normal}
 table.rprt-tbl thead th:first-child{border-right:0}
-table.rprt-tbl tbody td{padding:8px 6px;text-align:center;border-bottom:1px solid #f1f5f9;color:#1f2937;white-space:nowrap;font-weight:600}
+table.rprt-tbl tbody td{padding:7px 6px;text-align:center;border-bottom:1px solid #f1f5f9;color:#1f2937;white-space:nowrap;font-weight:600}
 table.rprt-tbl tbody tr:nth-child(even) td{background:#fafbfc}
 table.rprt-tbl tbody td.n{font-variant-numeric:tabular-nums;direction:ltr}
 table.rprt-tbl tbody tr:last-child td{border-bottom:0}
@@ -6254,32 +6278,35 @@ table.rprt-tbl tbody td.c-party{font-weight:800;color:#1a1a1a}
 table.rprt-tbl tbody td.c-dr{color:#b91c1c;font-weight:800}
 table.rprt-tbl tbody td.c-cr{color:#059669;font-weight:800}
 table.rprt-tbl tbody td.c-bal{background:#fef9e7;font-weight:900;color:#111}
-table.rprt-tbl tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
-.rprt-badge{display:inline-block;padding:4px 10px;border-radius:14px;font-weight:900;font-size:11px;border:1px solid rgba(0,0,0,.08)}
-.rprt-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:10px;padding:14px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin:12px 0;text-align:center}
-.rprt-master .lbl{color:#8a6a19;font-size:12px;font-weight:700}
-.rprt-master .name{font-size:18px;font-weight:900;color:#172b49}
-.rprt-note{text-align:center;color:#9ca3af;font-size:10.5px;margin-top:14px;padding-top:10px;border-top:1px dashed #e5e7eb}
+table.rprt-tbl tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:10px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
+.rprt-badge{display:inline-block;padding:3px 9px;border-radius:12px;font-weight:900;font-size:10.5px;border:1px solid rgba(0,0,0,.08)}
+.rprt-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:10px;padding:6px 10px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:7px;margin:5px 0;text-align:center}
+.rprt-master .lbl{color:#8a6a19;font-size:11px;font-weight:700}
+.rprt-master .name{font-size:14px;font-weight:900;color:#172b49}
+.rprt-note{text-align:center;color:#9ca3af;font-size:9.5px;margin-top:8px;padding-top:6px;border-top:1px dashed #e5e7eb}
 @media print{
-  @page{size:A4 landscape;margin:6mm}
+  @page{size:A4 landscape;margin:5mm}
   body{padding:0;background:#fff}
-  .rprt-doc{box-shadow:none;border-radius:0;padding:10px}
-  .rprt-hdr{border-radius:0;margin:-10px -10px 10px}
+  .rprt-doc{box-shadow:none;border-radius:0;padding:4px 6px}
+  .rprt-hdr{border-radius:0;margin:-4px -6px 3px;padding:3px 10px 4px}
+  .rprt-hdr h1{font-size:13px}.rprt-hdr .en{font-size:9px}.rprt-hdr .sub{font-size:9px}
   tr{break-inside:avoid}
+  thead{display:table-header-group}
+  tfoot{display:table-footer-group}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 </style></head><body>
 <div class="rprt-doc">
   <div class="rprt-hdr">
-    <div class="emoji">${emoji}</div>
+    <span class="emoji">${emoji}</span>
     <h1>${escapeHtml(title)}</h1>
-    <div class="en">${escapeHtml(titleEn)}</div>
-    <div class="sub">${new Date().toLocaleDateString("en-GB")} · العملة: ${escapeHtml(cur)}${sub?" · "+escapeHtml(sub):""}</div>
+    <span class="en">${escapeHtml(titleEn)}</span>
+    <span class="sub">${new Date().toLocaleDateString("en-GB")} · ${escapeHtml(cur)}${sub?" · "+escapeHtml(sub):""}</span>
   </div>
   ${filtersBar}
   ${kpiBar}
   ${tableHtml}
-  <div class="rprt-note">${escapeHtml(note||"تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — "+new Date().toLocaleString("en-GB"))}</div>
+  <div class="rprt-note">${escapeHtml(note||"IRON GATE SUPPLIES — "+new Date().toLocaleString("en-GB"))}</div>
 </div>
 </body></html>`;
 }
@@ -6358,12 +6385,12 @@ function partyStatementExport(kind,format){
     if(format==='excel'){
       const combined=reports.map((h,i)=>`<div style="page-break-after:always">${h.slice(h.indexOf('<body>')+6,h.indexOf('<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body>'))}</div>`).join('');
       const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><style>body{font-family:Tahoma,Arial;text-align:center}table{border-collapse:collapse;width:100%}td,th{text-align:center;border:1px solid #bbb;padding:6px}</style></head><body>${combined}<style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`;
-      igSaveXlsx(html,(customer?'كشف_حساب_عملاء_':'كشف_حساب_موردين_')+new Date().toISOString().slice(0,10));toast('تم تجهيز كشوف منفصلة لكل طرف','ok');
+      igSaveXlsx(html,igSafeFileName((customer?'كشف_حساب_عملاء_':'كشف_حساب_موردين_')+new Date().toISOString().slice(0,10)));toast('تم تجهيز كشوف منفصلة لكل طرف','ok');
     } else openPartyStatementQueue(reports,title+' — معاينة متتابعة');
     return;
   }
   const html=partyStatementHtmlFor(kind,parties[0],parties);
-  if(format==='excel'){igSaveXlsx(html,(customer?'كشف_حساب_عميل_':'كشف_حساب_مورد_')+new Date().toISOString().slice(0,10));toast('تم تجهيز كشف الحساب Excel','ok');}
+  if(format==='excel'){igSaveXlsx(html,igSafeFileName((customer?'كشف_حساب_عميل_':'كشف_حساب_مورد_')+new Date().toISOString().slice(0,10)));toast('تم تجهيز كشف الحساب Excel','ok');}
   else openReportPreview(html,title);
 }
 
@@ -7719,10 +7746,11 @@ async function pickSO(id){
   for(const [key, remaining] of Object.entries(r.remaining)){
     if(remaining<=0.0005) continue;
     const [diameter, type] = key.split("|");
+    const fullQty = r.planned[key]||remaining; // الكمية الكلية الأصلية من أمر البيع
     newItems.push({
       factory:"", diameter, type, agingStatus:"",
-      supplyQty: remaining.toString(),
-      actualWeight: remaining.toString(),  // المتبقي كافتراضي (المستخدم يعدّل)
+      supplyQty: fullQty.toString(),         // كمية التوريد = الكمية الكلية الأصلية من أمر البيع
+      actualWeight: remaining.toString(),    // الوزن الفعلي = المتبقي فقط (للتعديل من المستخدم)
       buyPrice:0, sellPrice:0,
       notes: soNoteMap[key] || ""
     });
@@ -8296,7 +8324,8 @@ function pendList(){
   if(!shown.length) return '<span style="color:var(--text-dim);font-size:13px">مفيش نتائج</span>';
   return shown.map(r=>{
     const miss=missingList(toDraft(r)).length, cur=editingSrc==="policies"&&editingId===r.id;
-    return `<button class="pchip ${miss?"inc":"rdy"} ${cur?"cur":""}" onclick="openPending('${r.id}')" title="${escapeAttr(r.customer+" — "+r.supplier)}${miss?" — ناقصها بيانات قبل الترحيل":" — جاهزة للترحيل"}"><b>${escapeHtml(r.policyNo)}</b><small>${escapeHtml(r.customer)}</small></button>`;
+    const soNo = r.saleOrderNo || state.saleOrders.find(o=>o.id===r.saleOrderId)?.orderNo || "";
+    return `<button class="pchip ${miss?"inc":"rdy"} ${cur?"cur":""}" onclick="openPending('${r.id}')" title="${escapeAttr(r.customer+" — "+r.supplier+(soNo?" — أمر بيع #"+soNo:""))}${miss?" — ناقصها بيانات قبل الترحيل":" — جاهزة للترحيل"}"><b>${escapeHtml(r.policyNo)}</b>${soNo?`<small style="color:var(--gold-text);font-weight:800">🔗 أمر #${escapeHtml(soNo)}</small>`:""}<small>${escapeHtml(r.customer)}</small></button>`;
   }).join("");
 }
 function pendingPanel(){
@@ -9037,7 +9066,7 @@ function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
   const html = supBuildProReportHtml();
-  igSaveXlsx(html,"بيانات_التوريد_"+new Date().toISOString().slice(0,10));
+  igSaveXlsx(html,igSafeFileName("بيانات_التوريد_"+new Date().toISOString().slice(0,10)));
   toast("✓ تم تصدير ملف Excel احترافي","ok");
 }
 function supExportPdf(){
@@ -9462,8 +9491,9 @@ async function supBuildInvoicePdfBlob(){ return igPagesToPdfBlob(await supBuildI
 async function supDownloadInvoicePdf(fileName){
   try{
     const blob = await supBuildInvoicePdfBlob();
+    const safe = igSafeFileName(fileName||"Sales_Invoice",".pdf");
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href=url; a.download=fileName||"Invoice.pdf";
+    const a = document.createElement("a"); a.href=url; a.download=safe;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
     toast("تم تحميل الفاتورة ✓","ok");
@@ -9472,14 +9502,15 @@ async function supDownloadInvoicePdf(fileName){
 async function supShareInvoicePdf(fileName){
   try{
     const blob = await supBuildInvoicePdfBlob();
-    const file = new File([blob], fileName||"Invoice.pdf", { type:"application/pdf" });
+    const safe = igSafeFileName(fileName||"Sales_Invoice",".pdf");
+    const file = new File([blob], safe, { type:"application/pdf" });
     if(navigator.canShare && navigator.canShare({ files:[file] })){
       await navigator.share({ files:[file], title:"فاتورة مبيعات - IRON GATE", text:"فاتورة مبيعات" });
       toast("تمت المشاركة ✓","ok");
     } else {
       // fallback: نزل
       const url = URL.createObjectURL(blob);
-      const a=document.createElement("a"); a.href=url; a.download=fileName||"Invoice.pdf";
+      const a=document.createElement("a"); a.href=url; a.download=igSafeFileName(fileName||"Sales_Invoice",".pdf");
       document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
       toast("المشاركة غير مدعومة — تم التحميل بدلًا منها","warn");
     }
@@ -11827,7 +11858,7 @@ async function chequeViewShare(){
 function exportChequeRegisterExcel(){
   // chequeReportHTML() بترجع HTML كامل بالفعل بالقالب الاحترافي
   const html = chequeReportHTML();
-  if(typeof window.igSaveXlsx==="function") window.igSaveXlsx(html,"أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10));
+  if(typeof window.igSaveXlsx==="function") window.igSaveXlsx(html,igSafeFileName("أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10)));
   else { downloadChequeRegister(); toast("تم التصدير بصيغة CSV لعدم توفر مولد Excel","err"); return; }
   toast("✓ تم تجهيز ملف Excel احترافي","ok");
 }
@@ -11848,7 +11879,48 @@ async function chequeBuildPdf(){
   }catch(e){console.error(e);toast("تعذر إنشاء PDF؛ يمكنك استخدام الطباعة ثم حفظ كـ PDF","err");return null;}
   finally{host.remove();}
 }
-const chequePdfName=()=>"أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10)+".pdf";
+// تحويل أسماء الملفات العربية لصيغة ASCII آمنة عشان المشاركة والتحميل ما يبوظش الاسم
+function igSafeFileName(nameAr, ext){
+  const map = {
+    "أوراق_القبض_وشيكات_تحت_التحصيل":"Cheques_Register",
+    "أوراق القبض وشيكات تحت التحصيل":"Cheques Register",
+    "سجل_الأقساط":"Installments_Register",
+    "سجل الأقساط":"Installments Register",
+    "تقرير_المبيعات_حسب_أمر_البيع":"Sales_By_Order",
+    "تقرير_المبيعات":"Sales_Report",
+    "تقرير_المشتريات":"Purchases_Report",
+    "ميزان_مراجعة_العملاء":"Customers_TrialBalance",
+    "ميزان_مراجعة_الموردين":"Suppliers_TrialBalance",
+    "كشف_حساب_عميل":"Customer_Statement",
+    "كشف_حساب_عملاء":"Customers_Statements",
+    "كشف_حساب_مورد":"Supplier_Statement",
+    "كشف_حساب_موردين":"Suppliers_Statements",
+    "بيانات_التوريد":"Supply_Data",
+    "تقرير_أوامر_البيع":"Sale_Orders_Report",
+    "فاتورة ضريبية":"Tax_Invoice",
+    "قيد_محاسبي":"Journal_Entry",
+    "قيد محاسبي":"Journal_Entry",
+    "أمر_بيع":"Sale_Order",
+    "أمر بيع":"Sale_Order",
+    "عرض_سعر":"Quotation",
+    "عرض سعر":"Quotation",
+    "فاتورة_مبيعات":"Sales_Invoice",
+    "فاتورة مبيعات":"Sales_Invoice",
+    "بوليصة":"Policy",
+    "تقرير_التسويات":"Adjustments_Report"
+  };
+  let s = String(nameAr||"IronGate_Report");
+  // استبدال أي كلمة عربية معروفة بمقابلها الإنجليزي
+  Object.keys(map).forEach(k=>{ s = s.split(k).join(map[k]); });
+  // إزالة أي حرف غير ASCII (لو فضل حروف عربية)
+  s = s.replace(/[؀-ۿ]+/g,"").replace(/_{2,}/g,"_").replace(/^_+|_+$/g,"").trim();
+  if(!s) s = "IronGate_Report";
+  // إضافة prefix ثابت
+  s = "IronGate_" + s.replace(/^IronGate_/,"");
+  if(ext) s += (ext.startsWith(".")?ext:"."+ext);
+  return s;
+}
+const chequePdfName=()=>igSafeFileName("أوراق_القبض_وشيكات_تحت_التحصيل_"+new Date().toISOString().slice(0,10),".pdf");
 async function exportChequeRegisterPDF(){
   const pdf=await chequeBuildPdf(); if(!pdf) return;
   pdf.save(chequePdfName()); toast("تم تحميل ملف PDF","ok");
@@ -12848,7 +12920,7 @@ function overdueSummaryRows(){
 }
 function viewOverdueSummary(){return `<section class="card overdue-summary-page"><div class="head"><div><h2 style="margin:0">📉 إجمالي المتأخرات المستحقة لكل عميل</h2><small>المبالغ المتبقية من الأقساط التي تجاوزت تاريخ الاستحقاق</small></div><div class="spacer"></div><button class="btn ghost" onclick="overdueSummaryExport('pdf')">🖨 طباعة / PDF</button><button class="btn" onclick="overdueSummaryExport('excel')">⬇ Excel</button></div><div class="body"><div class="qs-installment-filters"><label>بحث عن عميل<input id="osSearch" type="search" placeholder="اسم العميل" oninput="renderOverdueSummary()"></label><label>ترتيب حسب<select id="osSort" onchange="renderOverdueSummary()"><option value="amount">أعلى مبلغ</option><option value="avg">متوسط التأخير</option><option value="customer">اسم العميل</option></select></label></div><div id="osSummary" class="qs-installment-summary"></div><div class="tbl-wrap"><table class="tbl" id="overdueSummaryTable"><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط المتأخرة</th><th>عدد أوامر البيع</th></tr></thead><tbody id="osBody"></tbody></table></div><div id="osCount" style="margin-top:8px;color:var(--text-dim);font-size:12px"></div></div></section>`;}
 function renderOverdueSummary(){if(currentPage!=="overdueSummary")return;const q=(document.getElementById("osSearch")?.value||"").trim().toLowerCase(),sort=document.getElementById("osSort")?.value||"amount";let rows=overdueSummaryRows().filter(x=>x.customer.toLowerCase().includes(q));rows.sort((a,b)=>sort==="customer"?a.customer.localeCompare(b.customer,"ar"):b[sort]-a[sort]);const money=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const total=rows.reduce((a,x)=>a+x.amount,0),avg=rows.length?rows.reduce((a,x)=>a+x.avg,0)/rows.length:0;const cur=state.settings.currency||"ج.م";const sm=document.getElementById("osSummary");if(sm)sm.innerHTML=`<span><b>الإجمالي العام للنتائج</b><strong>${money(total)} ${escapeHtml(cur)}</strong></span><span><b>عدد العملاء</b><strong>${rows.length}</strong></span><span><b>متوسط التأخير العام</b><strong>${avg.toFixed(1)} يوم</strong></span>`;const body=document.getElementById("osBody");if(body)body.innerHTML=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td style="color:#b91c1c;font-weight:800">${money(x.amount)}</td><td>${x.avg.toFixed(1)} يوم</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("")||'<tr><td colspan="5" style="text-align:center">لا توجد متأخرات مطابقة</td></tr>';const count=document.getElementById("osCount");if(count)count.textContent=`عدد العملاء بعد البحث: ${rows.length} · العملة: ${cur}`;}
-function overdueSummaryExport(format){const rows=overdueSummaryRows(),cur=state.settings.currency||"ج.م",m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const body=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td>${m(x.amount)}</td><td>${x.avg.toFixed(1)}</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إجمالي المتأخرات</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63}p{text-align:center}table{width:100%;border-collapse:collapse}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:9px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>إجمالي المتأخرات المستحقة لكل عميل</h1><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط</th><th>عدد أوامر البيع</th></tr></thead><tbody>${body}</tbody></table></html>`;if(format==="excel")igSaveXlsx(html,"إجمالي_المتأخرات_"+new Date().toISOString().slice(0,10));else openReportPreview(html,"إجمالي المتأخرات");}
+function overdueSummaryExport(format){const rows=overdueSummaryRows(),cur=state.settings.currency||"ج.م",m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const body=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td>${m(x.amount)}</td><td>${x.avg.toFixed(1)}</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إجمالي المتأخرات</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63}p{text-align:center}table{width:100%;border-collapse:collapse}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:9px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>إجمالي المتأخرات المستحقة لكل عميل</h1><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط</th><th>عدد أوامر البيع</th></tr></thead><tbody>${body}</tbody></table></html>`;if(format==="excel")igSaveXlsx(html,igSafeFileName("إجمالي_المتأخرات_"+new Date().toISOString().slice(0,10)));else openReportPreview(html,"إجمالي المتأخرات");}
 
 function salesInstallmentsExport(format){
   const rows=salesInstallmentFilteredRows(); if(!rows.length){toast("لا توجد أقساط مطابقة للتصدير","err");return;}
@@ -12946,7 +13018,7 @@ function salesInstallmentsExport(format){
     </div>
   </body></html>`;
   if(format==="excel"){
-    igSaveXlsx(html,"سجل_الأقساط_"+new Date().toISOString().slice(0,10));toast("✓ تم تجهيز ملف Excel احترافي","ok");
+    igSaveXlsx(html,igSafeFileName("سجل_الأقساط_"+new Date().toISOString().slice(0,10)));toast("✓ تم تجهيز ملف Excel احترافي","ok");
   }else openReportPreview(html,title);
 }
 
