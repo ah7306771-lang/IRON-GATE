@@ -5613,11 +5613,22 @@ function viewDashboard(){
 
     <div class="dx-kpis">${moneyKpis}</div>
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
-    ${custodyAllowed?`<div class="dx-followup-summaries">
-      <button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
-        <span class="dx-followup-icon">💼</span><span class="dx-followup-content"><b>عهد تحتاج تسوية</b><strong>${custodyCache.loaded?custodyOpenRows.length:"تحميل"} <small>${custodyCache.loaded?"عهدة":"بيانات العهد"}</small></strong><small>${custodyCache.loaded?`صافي الأرصدة ${money(custodyOpenTotal)} ${cur}`:"اضغط لتحميل ومراجعة أرصدة العهد"}</small></span><span class="dx-followup-arrow">←</span>
-      </button>
-    </div>`:""}`:""}
+    ${(()=>{
+      const pend = arr("policies");
+      const readyCount = pend.filter(r=>!missingList(toDraft(r)).length).length;
+      const cards=[];
+      if(custodyAllowed){
+        cards.push(`<button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
+          <span class="dx-followup-icon">💼</span><span class="dx-followup-content"><b>عهد تحتاج تسوية</b><strong>${custodyCache.loaded?custodyOpenRows.length:"تحميل"} <small>${custodyCache.loaded?"عهدة":"بيانات العهد"}</small></strong><small>${custodyCache.loaded?`صافي الأرصدة ${money(custodyOpenTotal)} ${cur}`:"اضغط لتحميل ومراجعة أرصدة العهد"}</small></span><span class="dx-followup-arrow">←</span>
+        </button>`);
+      }
+      if(pend.length){
+        cards.push(`<button type="button" class="dx-followup-card" style="border-right:4px solid #d4a017" onclick="go('shipments')">
+          <span class="dx-followup-icon">📄</span><span class="dx-followup-content"><b>بوالص لم تُرحَّل</b><strong>${pend.length} <small>بوليصة</small></strong><small>${readyCount} جاهزة للترحيل · ${pend.length-readyCount} ناقصها بيانات</small></span><span class="dx-followup-arrow">←</span>
+        </button>`);
+      }
+      return cards.length ? `<div class="dx-followup-summaries">${cards.join("")}</div>` : "";
+    })()}`:""}
 
     <div class="dx-grid2">
       <div class="dx-card">
@@ -5650,26 +5661,6 @@ function viewDashboard(){
         </div>
       </div>
     </div>
-    ${(()=>{
-      const pend = (state.policies||[]).slice().sort((a,b)=>String(a.policyNo).localeCompare(String(b.policyNo),undefined,{numeric:true}));
-      if(!pend.length) return "";
-      const readyCount = pend.filter(r=>!missingList(toDraft(r)).length).length;
-      const chips = pend.slice(0,30).map(r=>{
-        const miss = missingList(toDraft(r)).length;
-        const soNo = r.saleOrderNo || state.saleOrders.find(o=>o.id===r.saleOrderId)?.orderNo || "";
-        return `<button type="button" onclick="loadRecord('policies','${r.id}',false);go('shipments')" style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:3px;padding:8px 12px;background:${miss?'#fef3c7':'#dcfce7'};border:1px solid ${miss?'#fcd34d':'#86efac'};border-right:4px solid ${miss?'#d4a017':'#16a34a'};border-radius:7px;cursor:pointer;font-weight:700;min-width:140px;text-align:right">
-          <b style="font-size:13px;color:${miss?'#92400e':'#166534'}">${escapeHtml(r.policyNo)}</b>
-          ${soNo?`<small style="color:var(--gold-text);font-weight:800;font-size:10.5px">🔗 أمر #${escapeHtml(soNo)}</small>`:""}
-          <small style="color:#4b5563;font-size:10.5px">${escapeHtml(r.customer||'—')}</small>
-          <small style="color:${miss?'#92400e':'#166534'};font-size:10px;font-weight:700">${miss?'⚠ ناقصها بيانات':'✓ جاهزة للترحيل'}</small>
-        </button>`;
-      }).join("");
-      return `<div class="dx-card" style="margin-top:14px;border-top:3px solid var(--gold)">
-        <div class="dx-card-h"><div><h3>📄 بوالص لم تُرحَّل بعد</h3><small>${pend.length} بوليصة · ${readyCount} جاهزة للترحيل · ${pend.length-readyCount} ناقصها بيانات</small></div><button class="dx-link" onclick="go('shipments')">عرض الكل ←</button></div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;padding:6px 2px">${chips}</div>
-        ${pend.length>30?`<div class="dx-empty" style="padding:10px">و ${pend.length-30} بوليصة أخرى — اضغط «عرض الكل»</div>`:""}
-      </div>`;
-    })()}
     <div class="dx-card dx-chq" style="margin-top:14px">
       <div class="dx-card-h"><div><h3>شيكات تحتاج متابعة</h3><small>${chqRows.length?`${chqRows.length} شيك لم يُحصَّل بعد · ${chqLate} فات ميعاده`:"مستحقة خلال 7 أيام أو فات ميعادها ولم تُحصَّل"}</small></div><button class="dx-link" onclick="go('chequeRegister')">عرض الكل ←</button></div>
       ${!canMoney?`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`:chqList?`<table class="dx-tbl"><thead><tr><th>العميل / الشيك</th><th>المبلغ (${cur})</th><th>الاستحقاق</th></tr></thead><tbody>${chqList}</tbody></table>${chqRows.length>8?`<div class="dx-empty" style="padding:10px">و ${chqRows.length-8} شيك آخر — اضغط «عرض الكل»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد شيكات مستحقة أو متأخرة</div>`}
