@@ -2233,6 +2233,8 @@ const defaults = {
     { code: "MAIN", name: "الخزنة الرئيسية" },
     { code: "CHK", name: "خزنة الشيكات" }
   ],
+  itemGroups: [],        // المجموعات الرئيسية للأصناف (حديد / اسمنت ...) ولكل مجموعة حسابين
+  diameterGroups: {},    // اسم الصنف (القطر) ← كود مجموعته
   warehouses: [],   // المخازن (جدول warehouses في Supabase)
   settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م", warehouses: [] },
   // placeholders for next phases
@@ -2306,7 +2308,8 @@ const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", comme
 const MASTER_TABLES = {
   suppliers:   { t:"suppliers",       k:"name", f:"name", cols:PARTY_COLS },
   customers:   { t:"customers",       k:"name", f:"name", cols:Object.assign({}, PARTY_COLS, { applyDiscount1Pct:"apply_discount_1pct" }) },
-  diameters:   { t:"diameters",       k:"name" },
+  diameters:   { t:"diameters",       k:"name", gm:"diameterGroups" },   // gm: خريطة (اسم الصنف ← كود المجموعة) بتتحفظ في عمود group_id
+  itemGroups:  { t:"item_groups",      k:"id", f:"id", cols:{ name:"name", acc1Id:"acc1_id", acc1Code:"acc1_code", acc1Name:"acc1_name", acc2Id:"acc2_id", acc2Code:"acc2_code", acc2Name:"acc2_name" } },
   types:       { t:"steel_types",     k:"name" },
   factories:   { t:"factories",       k:"name" },
   statuses:    { t:"policy_statuses", k:"name" },
@@ -2463,11 +2466,11 @@ async function syncOrderTerms(){
   orderTermsSnap=d.cur;
 }
 
-function snapOf(k){ return JSON.stringify(k==="settings" ? state.settings : state[k]); }
+function snapOf(k){ return JSON.stringify(k==="settings" ? state.settings : k==="diameters" ? [state.diameters,state.diameterGroups] : state[k]); }
 function changedKinds(){ return MASTER_KINDS.concat(["settings"]).filter(k=>!skipSyncKinds.has(k) && snapOf(k)!==lastSnaps[k]); }
 function mapProfile(r){ return { id:r.id, no:r.user_no, name:r.name, role:r.role, active:r.active, mustChange:r.must_change, perms:r.perms||{} }; }
 function toRow(cfg, it, i){
-  if(!cfg.cols) return { [cfg.k]:String(it), sort:i };
+  if(!cfg.cols){ const r0={ [cfg.k]:String(it), sort:i }; if(cfg.gm) r0.group_id=(state[cfg.gm]||{})[it]||null; return r0; }
   const row = { [cfg.k]:String(it[cfg.f]), sort:i };
   for(const [js,col] of Object.entries(cfg.cols)){
     if(js==="applyDiscount1Pct"){ row[col] = !!it[js]; continue; } // عمود منطقي (true/false) مش نص
@@ -2493,15 +2496,17 @@ async function loadMaster(admin){
     const k=kinds[i];
     if(r.error){
       // جدول المخازن لسه متعملش على Supabase: نكمل تحميل التطبيق ونوقف رفعه لحد ما يتشغّل ملف SQL
-      if(k==="warehouses" && /relation|does not exist|schema cache|42P01|PGRST205/i.test(String(r.error.message||"")+String(r.error.code||""))){
-        skipSyncKinds.add(k); console.warn("جدول warehouses غير موجود:",r.error);
-        toast("جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
-        if(!Array.isArray(state.warehouses)||!state.warehouses.length) state.warehouses=(state.settings&&state.settings.warehouses||[]).slice();
+      if((k==="warehouses"||k==="itemGroups") && /relation|does not exist|schema cache|42P01|PGRST205/i.test(String(r.error.message||"")+String(r.error.code||""))){
+        skipSyncKinds.add(k); console.warn("جدول "+MASTER_TABLES[k].t+" غير موجود:",r.error);
+        toast(k==="itemGroups"?"جدول مجموعات الأصناف غير موجود على Supabase — شغّل ملف irongate_item_groups.sql":"جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
+        if(k==="warehouses"&&(!Array.isArray(state.warehouses)||!state.warehouses.length)) state.warehouses=(state.settings&&state.settings.warehouses||[]).slice();
+        if(k==="itemGroups"&&!Array.isArray(state.itemGroups)) state.itemGroups=[];
         return;
       }
       throw r.error;
     }
     state[k] = (r.data||[]).map(x=>fromRow(MASTER_TABLES[k], x));
+    if(k==="diameters"){ state.diameterGroups={}; (r.data||[]).forEach(x=>{ if(x&&x.group_id) state.diameterGroups[x.name]=x.group_id; }); }
     if(k==="warehouses" && !state[k].length){
       const legacy=(((st.data||{}).data||{}).warehouses)||[];   // مخازن قديمة كانت محفوظة داخل settings
       if(Array.isArray(legacy)&&legacy.length){ state[k]=legacy.map(x=>Object.assign({},x)); whMigrate=true; }
@@ -2856,6 +2861,11 @@ async function syncMaster(){
             u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
             toast("تم الحفظ، لكن فلاج خصم العميل 1% محتاج عمود apply_discount_1pct في جدول customers على Supabase (شغّل أمر SQL الجاهز)","err");
           }
+          if(u.error && /group_id/.test(String(u.error.message||""))){
+            rows.forEach(r=>{ delete r.group_id; });
+            u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
+            toast("تم الحفظ، لكن ربط الصنف بالمجموعة محتاج عمود group_id في جدول diameters (شغّل ملف irongate_item_groups.sql)","err");
+          }
           if(u.error && /account_(id|code|name)/.test(String(u.error.message||""))){
             rows.forEach(r=>{ delete r.account_id; delete r.account_code; delete r.account_name; });
             u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
@@ -2937,7 +2947,7 @@ const SCREENS = [
   { id:"dashboard", label:"لوحة التحكم",       icon:"⬢",  acts:[] },
   { id:"master",    label:"البيانات الأساسية", icon:"◉",  acts:["add","edit","delete"], tabs:[
     {id:"customers",label:"العملاء"},{id:"suppliers",label:"الموردين"},
-    {id:"diameters",label:"الأقطار"},{id:"types",label:"الأنواع"},
+    {id:"diameters",label:"الأصناف"},{id:"types",label:"الأنواع"},
     {id:"factories",label:"المصانع"},{id:"quoteDescs",label:"أوصاف عرض السعر"},
     {id:"cementTypes",label:"أنواع الاسمنت"},{id:"statuses",label:"حالات التعتيق"},
     {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"},{id:"warehouses",label:"المخازن"}
@@ -3454,7 +3464,7 @@ function go(page){
   renderNav();
   const titles = {
     dashboard:["لوحة التحكم","نظرة عامة على النظام"],
-    master:["البيانات الأساسية","الموردين، العملاء، الأقطار، الأنواع، المصانع"],
+    master:["البيانات الأساسية","الموردين، العملاء، الأصناف (مجموعات وأقطار)، الأنواع، المصانع"],
     quoteList:["سجل عروض السعر","كل العروض وحالاتها — فتح وتحويل لأمر بيع"],
     quote:["عرض سعر","إنشاء عرض سعر — طباعة ومشاركة PDF"],
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
@@ -6425,7 +6435,7 @@ function viewSoon(){
 const masterTabs = [
   { id:"suppliers", key:"suppliers", label:"الموردين", icon:"◉" },
   { id:"customers", key:"customers", label:"العملاء", icon:"◉" },
-  { id:"diameters", key:"diameters", label:"الأقطار", icon:"◉" },
+  { id:"diameters", key:"diameters", label:"الأصناف", icon:"◉" },
   { id:"types", key:"types", label:"الأنواع", icon:"◉" },
   { id:"factories", key:"factories", label:"المصانع", icon:"◉" },
   { id:"quoteDescs", key:"quoteDescs", label:"أوصاف عرض السعر", icon:"◉" },
@@ -6453,6 +6463,7 @@ function viewMaster(){
 
   const tab = allowed.find(t=>t.id===currentTab) || allowed[0];
   if(tab.id==="warehouses") return whMasterHtml(tabs);
+  if(tab.id==="diameters") return itemsMasterHtml(tabs);
   const items = state[tab.key] || [];
   const isParty = isPartyKey(tab.key);
   const isTreasury = isTreasuryKey(tab.key);
@@ -6563,9 +6574,9 @@ function mdAccShow(item){
   const a=(item.accountId&&glState.accounts||[]).find(x=>String(x.id)===String(item.accountId));
   return {code:a?a.account_code:(item.accountCode||''), name:a?a.account_name:(item.accountName||'')};
 }
-function mdAccHtml(id,item){
+function mdAccHtml(id,item,label){
   const a=mdAccShow(item), v=escapeAttr;
-  return `<div class="fld md-acc" style="grid-column:span 2"><label>الحساب في دليل الحسابات</label>
+  return `<div class="fld md-acc" style="grid-column:span 2"><label>${label||"الحساب في دليل الحسابات"}</label>
     <input type="hidden" id="${id}_id" value="${v(item&&item.accountId||'')}">
     <div class="md-acc-row">
       <input class="inp md-acc-code" id="${id}_code" readonly placeholder="رقم الحساب" value="${v(a.code)}">
@@ -6737,6 +6748,114 @@ async function whDel(id){
   if(whHasKids(id)){ toast("لا يمكن حذف مخزن له مخازن فرعية — احذف الفرعية أولًا","err"); return; }
   if(!await askConfirm(`حذف المخزن "${w.code} — ${w.name}" ؟`)) return;
   state.warehouses=whList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
+}
+
+// ================= الأصناف: مجموعات رئيسية (حديد / اسمنت ...) ولكل مجموعة حسابين + الأقطار (الأصناف) تحتها =================
+// الأصناف نفسها (state.diameters) فضلت قائمة أسماء زي ما هي عشان كل الشاشات القديمة تفضل شغالة؛ المجموعة بتتحفظ في عمود group_id.
+const IG_ACC1_LABEL = "الحساب الأول — حساب المشتريات / المخزون";
+const IG_ACC2_LABEL = "الحساب الثاني — حساب المبيعات / الإيرادات";
+function igList(){ if(!Array.isArray(state.itemGroups)) state.itemGroups=[]; return state.itemGroups; }
+function igMap(){ if(!state.diameterGroups||typeof state.diameterGroups!=="object"||Array.isArray(state.diameterGroups)) state.diameterGroups={}; return state.diameterGroups; }
+const igById = id => igList().find(g=>g.id===id);
+function igItemsOf(gid){ const m=igMap(); return (state.diameters||[]).map((n,i)=>({n,i})).filter(x=>(igById(m[x.n]||"")?m[x.n]:"")===(gid||"")); }
+function igAcc(g,n){ return mdAccShow({accountId:g["acc"+n+"Id"],accountCode:g["acc"+n+"Code"],accountName:g["acc"+n+"Name"]}); }
+function itemsMasterHtml(tabs){
+  const canA=can("master","add"), canE=can("master","edit"), canD=can("master","delete");
+  const accCell=(g,n)=>{ const a=igAcc(g,n); return a.code?`<span style="direction:ltr;unicode-bidi:plaintext;font-family:monospace;color:var(--gold-text)">${escapeHtml(a.code)}</span> — ${escapeHtml(a.name)}`:`<span style="color:var(--warn,#b45309);font-size:12px">غير مربوط</span>`; };
+  const itemRows=(gid)=>igItemsOf(gid).map(({n,i})=>`<tr>
+      <td style="padding-inline-start:44px"><span style="color:var(--text-dim)">•</span> ${escapeHtml(n)}</td><td colspan="2" style="color:var(--text-dim);font-size:12px">صنف</td>
+      <td style="width:210px"><div class="td-actions">${canE?`<button onclick="itEdit(${i})">تعديل / نقل</button>`:""}${canD?`<button class="del" onclick="itDel(${i})">حذف</button>`:""}</div></td></tr>`).join("");
+  let rows="";
+  igList().forEach(g=>{
+    const its=igItemsOf(g.id);
+    rows+=`<tr style="background:rgba(212,160,23,.07);font-weight:700">
+      <td><strong>${escapeHtml(g.name||"")}</strong> <span class="wh-badge" style="font-size:10px;padding:1px 7px;border-radius:9px;background:rgba(212,160,23,.14);color:var(--gold-text)">مجموعة · ${its.length} صنف</span></td>
+      <td style="font-weight:400">${accCell(g,1)}</td><td style="font-weight:400">${accCell(g,2)}</td>
+      <td style="width:210px"><div class="td-actions">${canA?`<button onclick="itAdd('${escapeAttr(g.id)}')">＋ صنف</button>`:""}${canE?`<button onclick="igEdit('${escapeAttr(g.id)}')">تعديل</button>`:""}${canD?`<button class="del" onclick="igDel('${escapeAttr(g.id)}')">حذف</button>`:""}</div></td></tr>`+itemRows(g.id);
+  });
+  const orphans=igItemsOf("");
+  if(orphans.length) rows+=`<tr style="background:rgba(120,120,120,.08);font-weight:700"><td colspan="3">بدون مجموعة <span style="font-weight:400;color:var(--text-dim);font-size:12px">(${orphans.length} صنف — عدّل الصنف وانقله لمجموعة)</span></td><td></td></tr>`+itemRows("");
+  if(!rows) rows=`<tr><td colspan="4"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد مجموعات بعد — اضغط "+ مجموعة رئيسية".</p></div></td></tr>`;
+  return `<div class="page-head"><h2>البيانات الأساسية</h2><div class="spacer"></div>
+      ${canA?`<button class="btn ghost" onclick="itAdd('')">+ صنف</button><button class="btn" onclick="igAdd()">+ مجموعة رئيسية</button>`:""}</div>
+    <div class="tabs">${tabs}</div>
+    <div class="tbl-wrap"><table><thead><tr><th>المجموعة / الصنف</th><th>${IG_ACC1_LABEL.split(" — ")[1]}</th><th>${IG_ACC2_LABEL.split(" — ")[1]}</th><th>إجراءات</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p style="margin-top:12px;color:var(--text-dim);font-size:12px">عدد المجموعات: <strong style="color:var(--gold-text)">${igList().length}</strong> · عدد الأصناف: <strong style="color:var(--gold-text)">${(state.diameters||[]).length}</strong></p>`;
+}
+function igFormHtml(g){
+  g=g||{};
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <div class="fld" style="grid-column:span 2"><label>اسم المجموعة *</label><input class="inp" id="ig_name" value="${escapeAttr(g.name||"")}" placeholder="مثال: حديد / اسمنت" autocomplete="off"></div>
+    ${mdAccHtml("ig_a1",{accountId:g.acc1Id,accountCode:g.acc1Code,accountName:g.acc1Name},IG_ACC1_LABEL)}
+    ${mdAccHtml("ig_a2",{accountId:g.acc2Id,accountCode:g.acc2Code,accountName:g.acc2Name},IG_ACC2_LABEL)}
+  </div>`;
+}
+function igRead(){
+  const a=mdAccRead("ig_a1"), b=mdAccRead("ig_a2");
+  return {name:(document.getElementById("ig_name")?.value||"").trim(),
+    acc1Id:a.accountId,acc1Code:a.accountCode,acc1Name:a.accountName, acc2Id:b.accountId,acc2Code:b.accountCode,acc2Name:b.accountName};
+}
+function igCheck(r,selfId){
+  if(!r.name){ toast("اسم المجموعة مطلوب","err"); return false; }
+  if(igList().some(x=>x.id!==selfId&&x.name===r.name)){ toast("اسم المجموعة موجود بالفعل","err"); return false; }
+  if(r.acc1Id&&r.acc1Id===r.acc2Id){ toast("لازم الحسابين يكونوا مختلفين","err"); return false; }
+  return true;
+}
+function igAdd(){
+  openModal("إضافة مجموعة رئيسية", igFormHtml({}), ()=>{
+    const r=igRead(); if(!igCheck(r,null)) return false;
+    igList().push({id:"ig_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),...r});
+    saveState(); go("master"); toast("تمت إضافة المجموعة","ok"); return true;
+  });
+  setTimeout(()=>document.getElementById("ig_name")?.focus(),50);
+}
+function igEdit(id){
+  const g=igById(id); if(!g) return;
+  openModal("تعديل المجموعة", igFormHtml(g), ()=>{
+    const r=igRead(); if(!igCheck(r,g.id)) return false;
+    Object.assign(g,r); saveState(); go("master"); toast("تم التعديل","ok"); return true;
+  });
+}
+async function igDel(id){
+  const g=igById(id); if(!g) return;
+  if(igItemsOf(id).length){ toast("المجموعة فيها أصناف — انقلها لمجموعة تانية أو احذفها الأول","err"); return; }
+  if(!await askConfirm(`حذف المجموعة "${g.name}" ؟`)) return;
+  state.itemGroups=igList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
+}
+function itGroupSelect(sel){
+  return `<select class="inp" id="it_group"><option value="">— بدون مجموعة —</option>${igList().map(g=>`<option value="${escapeAttr(g.id)}" ${g.id===sel?"selected":""}>${escapeHtml(g.name)}</option>`).join("")}</select>`;
+}
+function itAdd(gid){
+  openModal("إضافة أصناف", `<div style="display:grid;gap:12px">
+    <div class="fld"><label>المجموعة</label>${itGroupSelect(gid||"")}</div>
+    <div class="fld"><label>الأصناف * <span style="color:var(--text-dim);font-weight:400">(سطر لكل صنف)</span></label><textarea class="inp" id="it_names" rows="5" placeholder="مثال:&#10;10&#10;12&#10;16"></textarea></div></div>`, ()=>{
+    const names=(document.getElementById("it_names")?.value||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    const grp=document.getElementById("it_group")?.value||"";
+    if(!names.length){ toast("اكتب صنف واحد على الأقل","err"); return false; }
+    const seen=new Set(), exist=new Set(state.diameters||[]);
+    for(const n of names){ if(exist.has(n)||seen.has(n)){ toast(`الصنف "${n}" موجود بالفعل`,"err"); return false; } seen.add(n); }
+    names.forEach(n=>{ state.diameters.push(n); if(grp) igMap()[n]=grp; });
+    saveState(); go("master"); toast(`تمت إضافة ${names.length} صنف`,"ok"); return true;
+  });
+  setTimeout(()=>document.getElementById("it_names")?.focus(),50);
+}
+function itEdit(idx){
+  const old=state.diameters[idx]; if(old===undefined) return;
+  openModal("تعديل الصنف", `<div style="display:grid;gap:12px">
+    <div class="fld"><label>اسم الصنف *</label><input class="inp" id="it_name" value="${escapeAttr(old)}" autocomplete="off"></div>
+    <div class="fld"><label>المجموعة</label>${itGroupSelect(igMap()[old]||"")}</div></div>`, ()=>{
+    const n=(document.getElementById("it_name")?.value||"").trim(), grp=document.getElementById("it_group")?.value||"";
+    if(!n){ toast("يجب إدخال اسم","err"); return false; }
+    if(state.diameters.some((x,i)=>x===n&&i!==idx)){ toast("هذا الصنف موجود بالفعل","err"); return false; }
+    const m=igMap(); delete m[old]; state.diameters[idx]=n; if(grp) m[n]=grp;
+    saveState(); go("master"); toast("تم التعديل","ok"); return true;
+  });
+  setTimeout(()=>{ const el=document.getElementById("it_name"); if(el){ el.focus(); el.select(); } },50);
+}
+async function itDel(idx){
+  const n=state.diameters[idx]; if(n===undefined) return;
+  if(!await askConfirm(`حذف الصنف "${n}" ؟`)) return;
+  state.diameters.splice(idx,1); delete igMap()[n]; saveState(); go("master"); toast("تم الحذف","ok");
 }
 
 function partyFormHtml(p){
@@ -7417,6 +7536,8 @@ function migrateState(s){
   if(s.settings.profitTax===undefined) s.settings.profitTax = 1;
   if(!Array.isArray(s.settings.warehouses)) s.settings.warehouses = [];
   if(!Array.isArray(s.warehouses)) s.warehouses = [];
+  if(!Array.isArray(s.itemGroups)) s.itemGroups = [];
+  if(!s.diameterGroups||typeof s.diameterGroups!=="object"||Array.isArray(s.diameterGroups)) s.diameterGroups = {};
   // الخزائن والبنوك
   if(!Array.isArray(s.treasuries)) s.treasuries = [];
   s.treasuries = s.treasuries.map(t=>typeof t==="string"?{name:t,kind:"safe",notes:""}:({name:t.name||"",kind:t.kind||"safe",notes:t.notes||""}));
