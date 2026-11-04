@@ -1809,6 +1809,26 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
   .qsi-empty{text-align:center;padding:16px;color:#7a6a5a;font-size:12px}
   .qsi-chip{font-size:10px}
 }
+/* ===== تنسيق نوافذ التقارير: أقساط / شيكات / آخر سعر شراء وبيع ===== */
+.qs-modal #qsTitle{font-size:15px!important}
+.qs-modal .qsi-desktop{display:block!important}
+.qs-modal .qsi-cards{display:none!important}
+.qsi-filters{flex-wrap:nowrap!important;gap:6px!important;justify-content:stretch!important}
+.qsi-filters label{flex:1 1 0!important;min-width:0;justify-content:space-between;padding:6px 9px!important;font-size:11px!important}
+.qsi-filters select{flex:1;min-width:0;max-width:none!important;font-size:13px!important;font-weight:800}
+table.qsi-table th,table.qsi-table td{font-size:11px!important;padding:5px 6px!important;white-space:nowrap!important;display:table-cell!important}
+table.qs-chq th,table.qs-chq td{font-size:clamp(9.5px,2.7vw,12px)!important;padding:5px 3px!important;white-space:nowrap!important}
+table.qs-chq td:last-child{white-space:normal!important;min-width:64px}
+table.qs-chq td:nth-child(3){font-weight:800}
+table.qs-lp th,table.qs-lp td{font-size:12px!important;padding:6px 7px!important;white-space:nowrap!important}
+.qs-modal.qs-wide .qs-scroll{overflow-x:auto!important}
+.qslp-filter{display:flex;align-items:center;gap:8px;margin:8px 0 10px;padding:8px 10px;border:1px solid #ead8c8;border-radius:10px;background:#fffaf5}
+.qslp-filter span{font-weight:800;font-size:12px;color:#3b2a1a;white-space:nowrap}
+.qslp-filter select{flex:1;min-width:0;border:1px solid #d9c7b8;border-radius:8px;padding:7px;background:#fff;font:inherit;font-size:13px!important;color:#1a1a1a}
+.qslp-filter button{border:0;border-radius:8px;background:#2563eb;color:#fff;font:inherit;font-weight:800;font-size:13px;padding:8px 16px;cursor:pointer}
+.qs-actions .qs-btn{border-radius:14px!important;padding:13px 8px!important;font-size:14px!important}
+.qs-actions .qs-btn.pri{background:linear-gradient(180deg,#e8692a,#c2410c)!important;border-color:#c2410c!important;color:#fff!important}
+.qs-actions .qs-btn.sec{background:#fdeedd!important;border-color:#f3d2b2!important;color:#3b2a1a!important}
 </style>
 <style id="cheque-register-style">
 /* دفتر أوراق القبض وشيكات تحت التحصيل */
@@ -13435,8 +13455,8 @@ function salesInstallmentsExport(format){
       const days=dd&&!Number.isNaN(dd.getTime())?Math.round((dd-today)/86400000):null;
       const status=days===null?"بدون تاريخ":days<0?"متأخر":days===0?"مستحق اليوم":"قادم";
       const alert=days===null?"—":days<0?"متأخر "+Math.abs(days)+" يوم":days===0?"اليوم":"باقي "+days+" يوم";
-      const dueClass=days!==null&&days<=0?"qs-due-row":(days!==null&&days<=7?"qs-near-row":"");
-      return [e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bank||e.bankName||"—","شيك",alert,status,e.notes||"—",dueClass];
+      const dueClass=days!==null&&days<=0?"qs-due-row":"";
+      return [e.customer||"—",String(+e.amount||0),txDateLabel(due),e.bankDrawn||e.bank||e.bankName||"—","أ.ق",(days===null?"بدون تاريخ":days===0?"مستحق اليوم":alert),e.notes||"—",dueClass];
     });
   Object.defineProperty(D,"loginChecksAgainstUsBtn",{configurable:true,enumerable:true,get(){
     try{
@@ -13446,7 +13466,7 @@ function salesInstallmentsExport(format){
           const due=String(e.dueDate||""), today=new Date(); today.setHours(0,0,0,0);
           const dd=due?new Date(due+"T00:00:00"):null, days=dd&&!Number.isNaN(dd.getTime())?Math.round((dd-today)/86400000):null;
           const status=days===null?"بدون تاريخ":days<0?"متأخر "+Math.abs(days)+" يوم":days===0?"يستحق اليوم":"باقي "+days+" يوم";
-          return [e.supplier||e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bank||e.bankName||"—","شيك",status,e.notes||"—",days!==null&&days<=0?"qs-due-row":(days!==null&&days<=7?"qs-near-row":"")];
+          return [e.supplier||e.customer||"—",fmt(+e.amount||0),txDateLabel(due),e.bankDrawn||e.bank||e.bankName||"—","شيك",status,e.notes||"—",days!==null&&days<=0?"qs-due-row":(days!==null&&days<=7?"qs-near-row":"")];
         });
     }catch(e){ return []; }
   }});
@@ -14297,15 +14317,20 @@ function openMyPassword(first){
   // التقارير مربوطة ببيانات الخزينة والمستحقات عبر window.QS_DATA.
   var QS_DATA = window.QS_DATA = window.QS_DATA || {};
   var REPORTS = {
-    loginChecksBtn:{title:"🧾 كل الشيكات",wide:true,fit:true,cheques:true,cols:["#","العميل","القيمة","الاستحقاق","البنك","النوع","البيان","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},rowClass:function(r){return r[8]||"";},empty:"مفيش أوراق قبض مسجلة لسه"},
+    loginChecksBtn:{title:"🧾 كل الشيكات",wide:true,tcls:"qs-chq",cheques:true,cols:["#","العميل","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},rowClass:function(r){return r[7]||"";},empty:"مفيش أوراق قبض مسجلة لسه"},
     loginChecksAgainstUsBtn:{title:"📝 الشيكات الصادرة علينا",wide:true,fit:true,cols:["#","المستفيد","القيمة","الاستحقاق","البنك","النوع","الحالة","ملاحظات"],total:{label:"الإجمالي",col:2},rowClass:function(r){return r[7]||"";},empty:"مفيش شيكات علينا مسجلة لسه"},
     loginPartiesBtn:{title:"🤝 أرصدة العملاء والموردين",sections:[{tag:"🧑‍💼 أرصدة العملاء",key:"clients"},{tag:"🏭 أرصدة الموردين",key:"suppliers"}],cols:["#","الاسم","الرصيد"],total:{label:"الصافي",col:2},rowClass:function(r){return Number(String(r[1]||0).replace(/,/g,""))<0?"qs-negative-balance":"";},empty:"لا يوجد بيانات"},
     loginOverdueBtn:{title:"📉 اجمالي المتأخرات",fit:true,tcls:"qs-overdue",cols:["#","العميل","اجمالي المتأخر","عدد المستحقات","متوسط التأخير"],total:{label:"الإجمالي",col:2},empty:"مفيش متأخرات دلوقتي"},
     loginInstallmentsBtn:{title:"💳 الأقساط والمستحقات",wide:true,installment:true,empty:"لا توجد أقساط مستحقة من بيانات التوريد"},
-    loginLastPricesBtn:{title:"🏷️ اخر سعر شراء وبيع",wide:true,stickyFoot:true,dateCol:9,totals:[6,7],cols:["#","رقم الأمر","العميل","الوزن الفعلي","سعر الشراء","سعر البيع","إجمالي الشراء","إجمالي البيع","طريقة السداد","التاريخ"],empty:"مفيش أوامر بيع مسجلة لسه"},
+    loginLastPricesBtn:{title:"🏷️ اخر سعر شراء وبيع",wide:true,tcls:"qs-lp",dateCol:1,cols:["#","التاريخ","رقم الأمر","العميل","الوزن الفعلي","سعر شراء","سعر بيع"],empty:"مفيش أوامر بيع مسجلة لسه"},
     loginCustodyBtn:{title:"💼 العهد",cols:["#","الموظف","متبقي العهدة"],total:{label:"الإجمالي",col:2},empty:"مفيش عهد عليها رصيد دلوقتي"}
   };
   function esc(v){return String(v==null?"":v).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+  function arN(v){ var n=parseFloat(String(v).replace(/,/g,"")); if(!isFinite(n)) return esc(v); return n.toLocaleString("en-US",{maximumFractionDigits:2}).replace(/\d/g,function(d){return "٠١٢٣٤٥٦٧٨٩".charAt(+d)}).replace(/\./g,"٫"); }
+  function lpNo(v){ v=String(v==null?"":v).trim(); return /^\d+$/.test(v)?String(parseInt(v,10)):v; }
+  function lpW(v){ var n=parseFloat(String(v).replace(/,/g,"")); return isFinite(n)?n.toLocaleString("en-US",{maximumFractionDigits:3}):v; }
+  function lpP(v){ return String(v==null||v===""?"—":v).replace(/\.00\b/g,""); }
+  function lpRows(a){ return a.map(function(r){ return [r[8]||"",lpNo(r[0]),r[1],lpW(r[2]),lpP(r[3]),lpP(r[4])]; }); }
   function dateCell(v){ var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(v||"")); return m?'<bdi dir="ltr" class="qs-date">'+m[3]+"/"+m[2]+"/"+m[1]+"</bdi>":esc(v||"—"); }
   function table(cfg,rows){
     var th=cfg.cols.map(function(c){return "<th>"+esc(c)+"</th>"}).join("");
@@ -14313,7 +14338,7 @@ function openMyPassword(first){
     if(!rows.length){
       body='<tr><td colspan="'+cfg.cols.length+'" style="color:#7a6a5a;padding:14px 8px">'+esc(cfg.empty)+'</td></tr>';
     }else{
-      body=rows.map(function(r,i){var cls=cfg.rowClass?cfg.rowClass(r):"";var vals=r.slice(0,cfg.cols.length-1);return '<tr'+(cls?' class="'+esc(cls)+'"':'')+'><td>'+(i+1)+'</td>'+vals.map(function(v,ci){return "<td>"+(cfg.dateCol===ci+1?dateCell(v):esc(v))+"</td>"}).join("")+'</tr>';}).join("");
+      body=rows.map(function(r,i){var cls=cfg.rowClass?cfg.rowClass(r):"";var vals=r.slice(0,cfg.cols.length-1);return '<tr'+(cls?' class="'+esc(cls)+'"':'')+'><td>'+(i+1)+'</td>'+vals.map(function(v,ci){return "<td>"+(cfg.dateCol===ci+1?dateCell(v):(cfg.cheques&&ci===1?arN(v):esc(v)))+"</td>"}).join("")+'</tr>';}).join("");
     }
     var foot="";
     if(cfg.totals){
@@ -14322,7 +14347,7 @@ function openMyPassword(first){
       foot='<tr class="qs-net">'+cells2.map(function(c){return "<td>"+esc(c)+"</td>"}).join("")+"</tr>";
     }else if(cfg.total&&!cfg.installment){
       var sum=rows.reduce(function(a,r){return a+(parseFloat(String(r[cfg.total.col-1]).replace(/,/g,""))||0)},0);
-      var cells=cfg.cols.map(function(_,i){return cfg.cheques?(i===1?cfg.total.label:(i===2?(rows.length?sum.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"0.00"):"")):(i===1?cfg.total.label:(i===cfg.total.col?(rows.length?sum.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"0.00"):""))});
+      var cells=cfg.cols.map(function(_,i){return cfg.cheques?(i===1?cfg.total.label:(i===2?(rows.length?arN(sum):"٠"):"")):(i===1?cfg.total.label:(i===cfg.total.col?(rows.length?sum.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"0.00"):""))});
       foot='<tr class="qs-net">'+cells.map(function(c){return "<td>"+esc(c)+"</td>"}).join("")+"</tr>";
     }
     return '<div class="qs-scroll'+(cfg.fit?' qs-fit':'')+'"><table class="qs-table'+(cfg.stickyFoot?' qs-sticky-foot':'')+(cfg.tcls?' '+cfg.tcls:'')+'"><thead><tr>'+th+"</tr></thead><tbody>"+body+"</tbody>"+foot+"</table></div>";
@@ -14331,6 +14356,7 @@ function openMyPassword(first){
   var currentId="", QSI={status:"",customer:""};
   try{ Object.assign(QSI,JSON.parse(localStorage.getItem("ig_qs_inst_v1")||"{}")); }catch(e){}
   function qsiSave(){ try{ localStorage.setItem("ig_qs_inst_v1",JSON.stringify(QSI)); }catch(e){} }
+  function dmyFull(v){ var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(v||""); return m?'<bdi dir="ltr">'+m[3]+"/"+m[2]+"/"+m[1]+'</bdi>':esc(v||"—"); }
   function dmy(v){ var m=/^(\d{2})(\d{2})-(\d{2})-(\d{2})/.exec(v||""); return m?m[4]+"/"+m[3]+'/<i class="yy">'+m[1]+"</i>"+m[2]:esc(v||"—"); }
   function n2(v){ return (Number(v)||0).toLocaleString("en-US",{maximumFractionDigits:2}); }
   function arDays(n){ n=Math.abs(+n||0); return n===1?"يوم":n===2?"يومان":(n>=3&&n<=10?n+" أيام":n+" يوم"); }
@@ -14350,11 +14376,11 @@ function openMyPassword(first){
     if(QSI.customer&&customers.indexOf(QSI.customer)<0) QSI.customer="";
     var rows=qsiFiltered(), S=qsiSums(rows);
     var chip=function(cls,l,v){ return '<span class="qsi-chip '+cls+'">'+esc(l)+' <b>'+esc(v)+'</b></span>'; };
-    var head=["أمر البيع","العميل","تاريخ الفاتورة","تاريخ الاستحقاق","إجمالي الفاتورة","قيمة القسط","القسط","المسدد","المتبقي","المتبقي المتأخر","مدة التأخير","الحالة"];
+    var head=["أمر البيع","العميل","تاريخ الفاتورة","تاريخ الاستحقاق","إجمالي الفاتورة","قيمة القسط"];
     var body=rows.length?rows.map(function(r){
-      var cls=r.kind==="late"?"qs-due-row":r.kind==="near"?"qs-near-row":"";
-      return '<tr'+(cls?' class="'+cls+'"':'')+'><td>'+esc(r.orderNo||"—")+'</td><td class="qsi-cust">'+esc(r.customer)+'</td><td>'+dmy(r.date)+'</td><td>'+dmy(r.due)+'</td><td>'+n2(r.total)+'</td><td>'+n2(r.amount)+'</td><td>'+esc(r.label)+'</td><td>'+n2(r.paid)+'</td><td><b>'+n2(r.remaining)+'</b></td><td>'+n2(r.lateRemaining)+'</td><td>'+(r.kind==="late"&&r.days?esc(arDays(r.days)):"")+'</td><td class="qsi-st">'+esc(qsiStatusText(r))+'</td></tr>';
-    }).join(""):'<tr><td colspan="12" style="padding:16px;color:#7a6a5a">'+esc(REPORTS.loginInstallmentsBtn.empty)+'</td></tr>';
+      var cls=r.kind==="late"?"qs-due-row":"";
+      return '<tr'+(cls?' class="'+cls+'"':'')+'><td>'+esc(r.orderNo||"—")+'</td><td class="qsi-cust">'+esc(r.customer)+'</td><td>'+dmyFull(r.date)+'</td><td>'+dmyFull(r.due)+'</td><td>'+n2(r.total)+'</td><td>'+n2(r.amount)+'</td></tr>';
+    }).join(""):'<tr><td colspan="6" style="padding:16px;color:#7a6a5a">'+esc(REPORTS.loginInstallmentsBtn.empty)+'</td></tr>';
     var cards=rows.length?rows.map(function(r){
       var k=r.kind==="late"?"late":r.kind==="near"?"near":"run";
       var dd=r.kind==="late"&&r.days?'<div class="qsc-kv"><span>مدة التأخير</span><b>'+esc(arDays(r.days))+'</b></div>':'';
@@ -14363,7 +14389,7 @@ function openMyPassword(first){
         +'<div class="qsc-grid"><div class="qsc-kv"><span>قيمة القسط</span><b>'+n2(r.amount)+'</b></div><div class="qsc-kv"><span>المسدد</span><b>'+n2(r.paid)+'</b></div><div class="qsc-kv main"><span>المتبقي</span><b>'+n2(r.remaining)+'</b></div>'+(r.lateRemaining?'<div class="qsc-kv warn"><span>المتبقي المتأخر</span><b>'+n2(r.lateRemaining)+'</b></div>':'')+dd+'</div></div>';
     }).join(""):'<div class="qsi-empty">'+esc(REPORTS.loginInstallmentsBtn.empty)+'</div>';
     var totalCard=rows.length?'<div class="qsi-card total"><div class="qsc-grid"><div class="qsc-kv"><span>إجمالي القسط</span><b>'+n2(S.amount)+'</b></div><div class="qsc-kv"><span>المسدد</span><b>'+n2(S.paid)+'</b></div><div class="qsc-kv main"><span>المتبقي</span><b>'+n2(S.rem)+'</b></div><div class="qsc-kv warn"><span>المتأخر</span><b>'+n2(S.lateRem)+'</b></div></div></div>':'';
-    var foot=rows.length?'<tfoot><tr class="qs-net"><td></td><td>الإجمالي</td><td></td><td></td><td></td><td>'+n2(S.amount)+'</td><td></td><td>'+n2(S.paid)+'</td><td>'+n2(S.rem)+'</td><td>'+n2(S.lateRem)+'</td><td></td><td></td></tr></tfoot>':"";
+    var foot=rows.length?'<tfoot><tr class="qs-net"><td colspan="5">الإجمالي</td><td>'+n2(S.amount)+'</td></tr></tfoot>':"";
     root.innerHTML='<div class="qsi-chips">'+chip("late","متأخر:",n2(S.late))+chip("near","مستحق/قريب:",n2(S.near))+chip("rem","إجمالي المتبقي:",n2(S.rem))+chip("cnt","عدد الأقساط:",String(rows.length))+'</div>'
       +'<div class="qsi-filters"><label>الحالة <select id="qsiStatus"><option value="">الكل</option><option value="late"'+(QSI.status==="late"?" selected":"")+'>⚠ مستحق / متأخر</option><option value="near"'+(QSI.status==="near"?" selected":"")+'>🔔 قريب الاستحقاق</option><option value="run"'+(QSI.status==="run"?" selected":"")+'>🟢 جار</option></select></label>'
       +'<label>العميل <select id="qsiCustomer"><option value="">كل العملاء</option>'+customers.map(function(c){return '<option value="'+esc(c)+'"'+(QSI.customer===c?" selected":"")+'>'+esc(c)+'</option>'}).join("")+'</select></label></div>'
@@ -14384,8 +14410,18 @@ function openMyPassword(first){
   }
   function qsiPdfHtml2(){
     var rows=qsiFiltered(), S=qsiSums(rows);
-    var tr=rows.map(function(r){ var bg=r.kind==="late"?"#fde0e6":r.kind==="near"?"#fff4d6":""; return '<tr'+(bg?' style="background:'+bg+'"':"")+'><td>'+esc(r.orderNo||"—")+'</td><td>'+esc(r.customer)+'</td><td>'+dmy(r.date)+'</td><td>'+dmy(r.due)+'</td><td>'+n2(r.total)+'</td><td>'+n2(r.amount)+'</td><td>'+esc(r.label)+'</td><td>'+n2(r.paid)+'</td><td>'+n2(r.remaining)+'</td><td>'+n2(r.lateRemaining)+'</td><td>'+(r.kind==="late"&&r.days?esc(arDays(r.days)):"")+'</td><td>'+esc(qsiStatusText(r))+'</td></tr>'; }).join("");
-    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الأقساط والمستحقات</title><style>i.yy{font-style:normal}body{font-family:Tahoma,Arial,sans-serif;padding:14px}h1{text-align:center;font-size:18px}p{text-align:center;color:#555;font-size:12px}table{width:100%;border-collapse:collapse;font-size:10px}th,td{border:1px solid #444;padding:4px;text-align:center;white-space:nowrap}th{background:#eee}tfoot td{font-weight:bold;background:#f4f4f4}@media print{@page{size:A4 landscape;margin:8mm}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><h1>الأقساط والمستحقات — IRON GATE SUPPLIES</h1><p>'+today()+' · متأخر: '+n2(S.late)+' · مستحق/قريب: '+n2(S.near)+' · إجمالي المتبقي: '+n2(S.rem)+' · عدد الأقساط: '+rows.length+'</p><table><thead><tr><th>أمر البيع</th><th>العميل</th><th>تاريخ الفاتورة</th><th>تاريخ الاستحقاق</th><th>إجمالي الفاتورة</th><th>قيمة القسط</th><th>القسط</th><th>المسدد</th><th>المتبقي</th><th>المتبقي المتأخر</th><th>مدة التأخير</th><th>الحالة</th></tr></thead><tbody>'+tr+'</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td>'+n2(S.amount)+'</td><td></td><td>'+n2(S.paid)+'</td><td>'+n2(S.rem)+'</td><td>'+n2(S.lateRem)+'</td><td colspan="2"></td></tr></tfoot></table><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>';
+    var tr=rows.map(function(r){ var cls=r.kind==="late"?' style="background:#fef2f2"':r.kind==="near"?' style="background:#fef9c3"':""; return '<tr'+cls+'><td class="c-order">'+esc(r.orderNo||"—")+'</td><td class="c-party">'+esc(r.customer)+'</td><td>'+dmy(r.date)+'</td><td>'+dmy(r.due)+'</td><td class="n">'+n2(r.total)+'</td><td class="n">'+n2(r.amount)+'</td><td>'+esc(r.label)+'</td><td class="n c-cr">'+n2(r.paid)+'</td><td class="n c-bal">'+n2(r.remaining)+'</td><td class="n c-dr">'+n2(r.lateRemaining)+'</td><td>'+(r.kind==="late"&&r.days?esc(arDays(r.days)):"")+'</td><td>'+esc(qsiStatusText(r))+'</td></tr>'; }).join("");
+    var tableHtml='<table class="rprt-tbl"><thead><tr><th>أمر البيع</th><th>العميل</th><th>تاريخ الفاتورة</th><th>الاستحقاق</th><th>إجمالي الفاتورة</th><th>قيمة القسط</th><th>القسط</th><th>المسدد</th><th>المتبقي</th><th>المتأخر</th><th>مدة التأخير</th><th>الحالة</th></tr></thead><tbody>'+(tr||'<tr><td colspan="12" style="padding:20px;color:#9ca3af">لا توجد أقساط</td></tr>')+'</tbody><tfoot><tr><td colspan="5">الإجمالي</td><td class="n">'+n2(S.amount)+'</td><td></td><td class="n">'+n2(S.paid)+'</td><td class="n">'+n2(S.rem)+'</td><td class="n">'+n2(S.lateRem)+'</td><td colspan="2"></td></tr></tfoot></table>';
+    if(typeof igProReportHtml==="function"){
+      return igProReportHtml({emoji:"💳",title:"الأقساط والمستحقات",titleEn:"INSTALLMENTS & DUES",sub:rows.length+" قسط",
+        filters:[],
+        kpis:[{lbl:"متأخر",val:n2(S.late),sub:"ج.م",color:"#dc2626"},
+              {lbl:"مستحق/قريب",val:n2(S.near),sub:"ج.م",color:"#eab308"},
+              {lbl:"إجمالي المتبقي",val:n2(S.rem),sub:"ج.م",color:"#d97706"},
+              {lbl:"عدد الأقساط",val:rows.length+" قسط",sub:"",color:"#64748b"}],
+        tableHtml:tableHtml});
+    }
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>الأقساط والمستحقات</title></head><body>'+tableHtml+'</body></html>';
   }
   function openR(id){
     var cfg=REPORTS[id]; if(!cfg) return;
@@ -14393,7 +14429,7 @@ function openMyPassword(first){
     var tEl=document.getElementById("qsTitle");
     if(cfg.installment){ tEl.innerHTML=esc(cfg.title)+' <button type="button" class="qsi-refresh" id="qsiRefresh">🔄 تحديث</button>'; }
     else tEl.textContent=cfg.title;
-    document.getElementById("qsSub").textContent=(cfg.installment||id==="loginLastPricesBtn")?(today()+" — آخر تحديث للبيانات: "+new Date().toLocaleString("ar-EG",{hour:"numeric",minute:"2-digit"})):today();
+    document.getElementById("qsSub").textContent=today()+" — آخر تحديث للبيانات: "+new Date().toLocaleString("ar-EG",{hour:"numeric",minute:"2-digit"});
     currentId=id;
     document.getElementById("qsModal").classList.toggle("qs-wide",!!cfg.wide);
     var html="";
@@ -14403,8 +14439,8 @@ function openMyPassword(first){
       html='<div id="qsiRoot"></div>';
     }else if(id==="loginLastPricesBtn"){
       var rows=Array.isArray(data)?data:[];
-      var customers=[...new Set(rows.map(r=>r[2]).filter(Boolean))].sort(function(a,b){return a.localeCompare(b,"ar")});
-      html='<div class="qs-installment-filters"><label>فلتر بالعميل <select id="qslpCustomer"><option value="">كل العملاء</option>'+customers.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')+'</select></label></div><div id="qslpTable">'+table(cfg,rows)+'</div>';
+      var customers=[...new Set(rows.map(r=>r[1]).filter(Boolean))].sort(function(a,b){return a.localeCompare(b,"ar")});
+      html='<div class="qslp-filter"><span>فلتر بالعميل:</span><select id="qslpCustomer"><option value="">— كل العملاء —</option>'+customers.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('')+'</select><button type="button" id="qslpOk">موافق</button></div><div id="qslpTable">'+table(cfg,lpRows(rows))+'</div>';
     }else{
       html=table(cfg,Array.isArray(data)?data:[]);
     }
@@ -14412,10 +14448,8 @@ function openMyPassword(first){
     if(cfg.installment) qsiRender();
     if(id==="loginLastPricesBtn"){
       var customerFilter=document.getElementById("qslpCustomer");
-      if(customerFilter) customerFilter.addEventListener("change",function(){
-        var selected=this.value;
-        document.getElementById("qslpTable").innerHTML=table(cfg,rows.filter(r=>!selected||r[2]===selected));
-      });
+      var applyLp=function(){ var sel=customerFilter.value; document.getElementById("qslpTable").innerHTML=table(cfg,lpRows(rows.filter(r=>!sel||r[1]===sel))); };
+      if(customerFilter){ customerFilter.addEventListener("change",applyLp); var ok=document.getElementById("qslpOk"); if(ok) ok.addEventListener("click",applyLp); }
     }
     document.getElementById("qsOverlay").style.display="flex";
   }
@@ -14436,12 +14470,74 @@ function openMyPassword(first){
   document.getElementById("qsOverlay").addEventListener("click",function(e){if(e.target===this)closeR()});
   document.addEventListener("keydown",function(e){if(e.key==="Escape")closeR()});
   document.getElementById("qsModal").addEventListener("click",function(e){ if(e.target&&e.target.id==="qsiRefresh"){ qsiRender(); document.getElementById("qsSub").textContent=today()+" — آخر تحديث للبيانات: "+new Date().toLocaleString("ar-EG",{hour:"numeric",minute:"2-digit"}); refreshLoginNoticeBadges(); } });
+  function qsTitlePlain(){ var c=REPORTS[currentId]; return c?String(c.title).replace(/^[^\u0600-\u06FFA-Za-z0-9]+/,""):""; }
+  function qsTables(){ return document.querySelectorAll("#qsBody table.qs-table"); }
+  function qsGenericPdf(){
+    var ts=qsTables(); if(!ts.length) return "";
+    var t=qsTitlePlain();
+    // جهّز رموز وKPIs حسب نوع التقرير
+    var meta={
+      "loginChecksBtn":{emoji:"🧾",titleEn:"CHEQUES REGISTER"},
+      "loginChecksAgainstUsBtn":{emoji:"🧾",titleEn:"CHEQUES AGAINST US"},
+      "loginPartiesBtn":{emoji:"🤝",titleEn:"CUSTOMERS & SUPPLIERS BALANCES"},
+      "loginLastPricesBtn":{emoji:"🏷",titleEn:"LAST BUY/SELL PRICES"},
+      "loginOverdueBtn":{emoji:"⏰",titleEn:"OVERDUE INSTALLMENTS"}
+    }[currentId]||{emoji:"📄",titleEn:"REPORT"};
+    // حوّل جداول qs-table لأسلوب rprt-tbl
+    var h="";
+    document.querySelectorAll("#qsBody > *").forEach(function(n){
+      if(n.classList && n.classList.contains("qs-tag")){
+        h+='<div class="rprt-master" style="padding:4px 10px;margin:4px 0"><span class="lbl">'+esc(n.textContent)+'</span></div>';
+      } else if(n.querySelector && n.querySelector("table.qs-table")){
+        var clone = n.cloneNode(true);
+        clone.querySelectorAll("table.qs-table").forEach(function(tbl){ tbl.classList.remove("qs-table"); tbl.classList.add("rprt-tbl"); });
+        h+=clone.outerHTML;
+      }
+    });
+    // احسب KPIs من الجداول
+    var kpis=[];
+    var totalRows=0, totalValue=0, totalPositive=0, totalNegative=0;
+    ts.forEach(function(tbl){
+      var bodyTrs=tbl.querySelectorAll("tbody tr");
+      totalRows+=bodyTrs.length;
+      bodyTrs.forEach(function(tr){
+        var cells=tr.querySelectorAll("td");
+        cells.forEach(function(td){
+          var v=parseFloat(String(td.textContent||"").replace(/[^\d.\-]/g,""));
+          if(!isNaN(v) && Math.abs(v)>10){
+            if(v>0) totalPositive+=v; else totalNegative+=Math.abs(v);
+          }
+        });
+      });
+    });
+    kpis.push({lbl:"عدد السجلات",val:String(totalRows),sub:"",color:"#64748b"});
+    if(totalPositive>0) kpis.push({lbl:"إجمالي القيم الموجبة",val:(Math.round(totalPositive*100)/100).toLocaleString("en-US"),sub:"ج.م",color:"#059669"});
+    if(totalNegative>0) kpis.push({lbl:"إجمالي القيم السالبة",val:(Math.round(totalNegative*100)/100).toLocaleString("en-US"),sub:"ج.م",color:"#dc2626"});
+    if(typeof igProReportHtml==="function"){
+      return igProReportHtml({emoji:meta.emoji,title:t,titleEn:meta.titleEn,sub:totalRows+" سجل",filters:[],kpis:kpis,tableHtml:h});
+    }
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>'+esc(t)+'</title></head><body><h1>'+esc(t)+'</h1>'+h+'</body></html>';
+  }
+  function qsGenericText(){
+    var ts=qsTables(), t=qsTitlePlain()+" — "+today()+"\n", n=0, more=false;
+    ts.forEach(function(tb){ tb.querySelectorAll("tr").forEach(function(tr,i){
+      if(i===0&&tr.querySelector("th")) return;
+      if(n>=40){ more=true; return; }
+      var c=[].map.call(tr.children,function(td){return td.textContent.trim()}).filter(Boolean);
+      if(c.length){ t+="• "+c.join(" | ")+"\n"; n++; }
+    }); });
+    return n?t+(more?"…":""):"";
+  }
   document.getElementById("qsPdf").addEventListener("click",function(){
     if(currentId==="loginInstallmentsBtn"&&typeof openReportPreview==="function"){ openReportPreview(qsiPdfHtml(),"الأقساط والمستحقات"); return; }
+    var h=qsGenericPdf();
+    if(h&&typeof openReportPreview==="function"&&document.querySelector("#qsBody tbody tr td:not([colspan])")){ openReportPreview(h,qsTitlePlain()); return; }
     toast("مفيش بيانات للتصدير دلوقتي","ok");
   });
   document.getElementById("qsShare").addEventListener("click",function(){
     if(currentId==="loginInstallmentsBtn"){ window.open("https://wa.me/?text="+encodeURIComponent(qsiShareText()),"_blank"); return; }
+    var t=document.querySelector("#qsBody tbody tr td:not([colspan])")?qsGenericText():"";
+    if(t){ window.open("https://wa.me/?text="+encodeURIComponent(t),"_blank"); return; }
     toast("مفيش بيانات للتصدير دلوقتي","ok");
   });
 })();
