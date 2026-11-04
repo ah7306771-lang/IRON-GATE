@@ -10672,7 +10672,11 @@ async function qtBuildPages(){
   if(H<=1180){            // صفحة واحدة (نفس السلوك القديم)
     const r=Math.min((pw-m*2)/canvas.width,(ph-m*2)/canvas.height);
     const w=canvas.width*r, h=canvas.height*r;
-    pages.push({ src:canvas.toDataURL("image/jpeg",0.95), x:(pw-w)/2, y:m, w, h });
+    // اطبع الكانفاس على خلفية بيضاء قبل التحويل لـ JPEG (عشان أي مناطق شفافة ما تبقاش سوداء)
+    const bg=document.createElement("canvas"); bg.width=canvas.width; bg.height=canvas.height;
+    const bctx=bg.getContext("2d"); bctx.fillStyle="#ffffff"; bctx.fillRect(0,0,bg.width,bg.height);
+    bctx.drawImage(canvas,0,0);
+    pages.push({ src:bg.toDataURL("image/jpeg",0.95), x:(pw-w)/2, y:m, w, h });
   } else {                // أكتر من صفحة: القص عند حدود الصفوف/الفقرات
     const pageH=Math.floor(W*ph/pw)-8, top=paper.getBoundingClientRect().top;
     const cuts=Array.from(paper.querySelectorAll("#pvQtBody tr,.terms h3,.terms p,.order-greet,.qte-info-table,.sign-row,.qte-footer"))
@@ -10682,7 +10686,9 @@ async function qtBuildPages(){
       let end=y+pageH;
       if(end>=H) end=H; else { const c=cuts.filter(v=>v>y+200&&v<=end); if(c.length) end=c[c.length-1]; }
       const sl=document.createElement("canvas"); sl.width=canvas.width; sl.height=Math.max(1,Math.round((end-y)*s));
-      sl.getContext("2d").drawImage(canvas,0,Math.round(y*s),canvas.width,sl.height,0,0,canvas.width,sl.height);
+      const sctx=sl.getContext("2d");
+      sctx.fillStyle="#ffffff"; sctx.fillRect(0,0,sl.width,sl.height);
+      sctx.drawImage(canvas,0,Math.round(y*s),canvas.width,sl.height,0,0,canvas.width,sl.height);
       const w=pw-m*2, h=sl.height/canvas.width*w;
       pages.push({ src:sl.toDataURL("image/jpeg",0.95), x:m, y:m, w, h });
       y=end;
@@ -11863,9 +11869,24 @@ async function chequeBuildPdf(){
     const canvas=await html2canvas(host,{scale:2,backgroundColor:"#ffffff",useCORS:true,windowWidth:1600});
     const {jsPDF}=window.jspdf; const pdf=new jsPDF("l","mm","a4");
     const pageW=277,pageH=190;
-    const pageCanvas=document.createElement("canvas"),ctx=pageCanvas.getContext("2d");pageCanvas.width=canvas.width;pageCanvas.height=Math.floor(canvas.width*pageH/pageW);
+    const fullPageHeightPx = Math.floor(canvas.width*pageH/pageW);
+    const pageCanvas=document.createElement("canvas"),ctx=pageCanvas.getContext("2d");
     let y=0,first=true;
-    while(y<canvas.height){ctx.clearRect(0,0,pageCanvas.width,pageCanvas.height);ctx.drawImage(canvas,0,y,canvas.width,Math.min(pageCanvas.height,canvas.height-y),0,0,canvas.width,Math.min(pageCanvas.height,canvas.height-y));const h=Math.min(pageH,(canvas.height-y)*pageW/canvas.width);if(!first)pdf.addPage();pdf.addImage(pageCanvas.toDataURL("image/jpeg",.92),"JPEG",10,10,pageW,h);first=false;y+=pageCanvas.height;}
+    while(y<canvas.height){
+      const sliceH = Math.min(fullPageHeightPx, canvas.height-y);
+      // اضبط حجم pageCanvas على طول الشريحة الفعلية فقط — عشان الصفحة الأخيرة ما يكونش فيها مساحة سوداء فاضية
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = sliceH;
+      // املأ خلفية بيضاء (JPEG ما بيدعمش شفافية — لو فضل فاضي بيبقى أسود)
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0,0,pageCanvas.width,sliceH);
+      ctx.drawImage(canvas,0,y,canvas.width,sliceH,0,0,canvas.width,sliceH);
+      const hMm = sliceH*pageW/canvas.width; // الارتفاع بالمليمتر يطابق محتوى الصفحة بالظبط
+      if(!first) pdf.addPage();
+      pdf.addImage(pageCanvas.toDataURL("image/jpeg",.92),"JPEG",10,10,pageW,hMm);
+      first=false;
+      y += sliceH;
+    }
     return pdf;
   }catch(e){console.error(e);toast("تعذر إنشاء PDF؛ يمكنك استخدام الطباعة ثم حفظ كـ PDF","err");return null;}
   finally{host.remove();}
