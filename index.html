@@ -2866,10 +2866,12 @@ async function syncMaster(){
             u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
             toast("تم الحفظ، لكن ربط الصنف بالمجموعة محتاج عمود group_id في جدول diameters (شغّل ملف irongate_item_groups.sql)","err");
           }
-          if(u.error && /account_(id|code|name)/.test(String(u.error.message||""))){
-            rows.forEach(r=>{ delete r.account_id; delete r.account_code; delete r.account_name; });
+          if(u.error && /(account|acc[12])_(id|code|name)/.test(String(u.error.message||""))){
+            const _accErr=String(u.error.message||"");
+            rows.forEach(r=>{ ["account_id","account_code","account_name","acc1_id","acc1_code","acc1_name","acc2_id","acc2_code","acc2_name"].forEach(c=>{ delete r[c]; }); });
             u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
-            toast("تم الحفظ، لكن ربط الحساب محتاج أعمدة account_id/account_code/account_name في جدول "+cfg.t+" (شغّل ملف irongate_master_data_fix.sql)","err");
+            // مهم: من غير الأعمدة دي أرقام الحسابات مش بتتحفظ على السيرفر وبتختفي بعد إعادة فتح الصفحة — نوقف المستخدم برسالة واضحة بدل toast بيختفي
+            try{ _igDialog({title:"أرقام الحسابات لم تُحفظ على السيرفر",msg:"جدول "+cfg.t+" على Supabase ينقصه أعمدة ربط الحساب، فتم حفظ باقي البيانات بدون رقم الحساب (وهيختفي بعد إعادة فتح الصفحة).\nالحل: افتح Supabase ← SQL Editor ← شغّل ملف irongate_master_data_fix.sql ثم أعد إدخال الأرقام.\n\nتفاصيل الخطأ: "+_accErr,ok:"حسنًا",single:true,danger:true}); }catch(_){ toast("أرقام الحسابات لم تُحفظ — شغّل irongate_master_data_fix.sql على Supabase","err"); }
           }
           if(u.error) throw u.error;
         }
