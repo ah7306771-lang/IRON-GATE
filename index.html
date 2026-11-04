@@ -2957,7 +2957,7 @@ const SCREENS = [
   { id:"quoteList", label:"سجل عروض السعر",    icon:"📑", acts:["edit","delete"] },
   { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post","print"], prices:true },
-  { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete","print"], prices:true, tabs:[
+  { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete","print","post"], prices:true, tabs:[
     {id:"flat",label:"العرض العادي"},
     {id:"customer",label:"مبالغ العملاء"},
     {id:"supplier",label:"مبالغ الموردين"},
@@ -3564,6 +3564,29 @@ function glSetIndicator(key, accountId){
   else delete cur[key];
   glSaveIndicators(cur);
   window.glIndicators = cur;
+  glIndPush(key,accountId);
+}
+const GL_IND_TABLE="gl_indicators"; let glIndReady=false;
+async function glIndicatorsSync(force){
+  if(glIndReady&&!force) return window.glIndicators||{};
+  try{
+    const r=await sb.from(GL_IND_TABLE).select("*"); if(r.error) throw r.error;
+    const rows=r.data||[];
+    if(!rows.length){   // أول مرة: نرفع اللي كان محفوظ في المتصفح
+      const loc=glLoadIndicators(), ks=Object.keys(loc);
+      if(ks.length){ const up=await sb.from(GL_IND_TABLE).upsert(ks.map(k=>({ind_key:k,account_id:String(loc[k])}))); if(up.error) throw up.error; }
+      glIndReady=true; return window.glIndicators=loc;
+    }
+    const o={}; rows.forEach(x=>{ if(x.account_id) o[x.ind_key]=x.account_id; });
+    try{ localStorage.setItem(GL_IND_KEY,JSON.stringify(o)); }catch(e){}
+    glIndReady=true; return window.glIndicators=o;
+  }catch(e){ console.warn("تعذر تحميل المؤشرات من قاعدة البيانات",e); return window.glIndicators||glLoadIndicators(); }
+}
+async function glIndPush(key,accountId){
+  try{
+    const r=accountId?await sb.from(GL_IND_TABLE).upsert({ind_key:key,account_id:String(accountId),updated_at:new Date().toISOString()}):await sb.from(GL_IND_TABLE).delete().eq("ind_key",key);
+    if(r.error) throw r.error;
+  }catch(e){ toast("تعذر حفظ المؤشر في قاعدة البيانات (شغّل ملف irongate_order_posting.sql): "+(e.message||e),"err"); }
 }
 function glIndicatorAccount(key){
   const id = (window.glIndicators||{})[key];
@@ -3642,7 +3665,7 @@ function viewGL(){
 function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go("gl");return;}const c=document.getElementById("content");if(c){c.innerHTML=viewGL();glRender();}try{renderNav();}catch(e){}}
 function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
 function glGoHome(){glState.home=true;const c=document.getElementById("content");if(c&&currentPage==="gl")c.innerHTML=viewGL();}
-async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];const sr=await sb.from("gl_posting_sources").select("*");glState.sources=sr.error?[]:(sr.data||[]);glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
+async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];const sr=await sb.from("gl_posting_sources").select("*");glState.sources=sr.error?[]:(sr.data||[]);await glIndicatorsSync(true);glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
 function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
 
 // ============== موقف مركز تكلفة (Cost Center Position) ==============
@@ -4081,7 +4104,7 @@ function glRenderIndicators(){
   </div>
   <div class="gl-ind-grid">${cards}</div>
   <div style="margin-top:14px;padding:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af">
-    <b>ℹ️ ملاحظة:</b> الإعدادات تُحفظ محليًا دلوقتي في هذا المتصفح. لمزامنتها لكل الأجهزة عبر السوبابيز، نحتاج إضافة عمود واحد في جدول <code>gl_settings</code> أو تأكيد schema الحالي.
+    <b>ℹ️ ملاحظة:</b> المؤشرات بتتحفظ في قاعدة البيانات (جدول <code>gl_indicators</code>) وبتظهر على كل الأجهزة.
   </div>`;
 }
 function glSetIndicatorAndRender(key, accountId){
@@ -9377,6 +9400,7 @@ function supDueDateClass(date){if(!date)return 'sup-due-none';const today=new Da
 
 // ========== تجميع حسب أمر البيع (فاتورة واحدة لكل أمر) ==========
 function renderSupplyGrouped(L){
+  supEnsurePostMap();
   const SB=showBuy("supply"), SS=showSell("supply");
   const groups=new Map();
   L.forEach(({s,it})=>{
@@ -9416,7 +9440,7 @@ function renderSupplyGrouped(L){
       ${SB?`<td class="num">${fmt(totals.buy)}</td>`:""}
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold-text)">${fmt(totals.total)}</strong></td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
-      <td><div class="td-actions">${orderNo!=="—"?`<button class="icon-btn primary" type="button" title="تعديل شروط السداد" aria-label="تعديل شروط السداد" data-tooltip="تعديل شروط السداد" onclick="supOpenOrderTermsEdit('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">✎</span></button>`:""}${first?`<button class="icon-btn" type="button" title="فتح / تعديل البوليصة" aria-label="فتح / تعديل البوليصة" data-tooltip="فتح / تعديل البوليصة" onclick="supOpenGroupPolicy('${escapeAttr(String(g.key))}')"><span aria-hidden="true">▤</span></button>`:""}${orderNo!=="—"?`<button class="icon-btn" type="button" title="عرض أمر البيع ده في العرض العادي لتفاصيله" aria-label="عرض أمر البيع في العرض العادي" data-tooltip="عرض أمر البيع في العرض العادي" onclick="supGoOrderFlat('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">↗</span></button>`:""}<button class="icon-btn" type="button" title="عرض/طباعة فاتورة المبيعات (PDF/مشاركة)" aria-label="فاتورة المبيعات" data-tooltip="فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(g.key))}')"><span aria-hidden="true">🖨</span></button></div></td>
+      <td><div class="td-actions">${window.supPostMap[orderNo+"|purchase"]?`<span class="chip ok" title="قيد المشتريات رقم ${escapeAttr(String(window.supPostMap[orderNo+"|purchase"]))}">مُرحَّل ✓</span>`:""}${orderNo!=="—"&&can("supply","post")?`<button class="icon-btn" type="button" title="ترحيل حسابات" aria-label="ترحيل حسابات" data-tooltip="ترحيل حسابات" onclick="supPostAccounts('${escapeAttr(String(g.key))}')"><span aria-hidden="true">📒</span></button>`:""}${orderNo!=="—"?`<button class="icon-btn primary" type="button" title="تعديل شروط السداد" aria-label="تعديل شروط السداد" data-tooltip="تعديل شروط السداد" onclick="supOpenOrderTermsEdit('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">✎</span></button>`:""}${first?`<button class="icon-btn" type="button" title="فتح / تعديل البوليصة" aria-label="فتح / تعديل البوليصة" data-tooltip="فتح / تعديل البوليصة" onclick="supOpenGroupPolicy('${escapeAttr(String(g.key))}')"><span aria-hidden="true">▤</span></button>`:""}${orderNo!=="—"?`<button class="icon-btn" type="button" title="عرض أمر البيع ده في العرض العادي لتفاصيله" aria-label="عرض أمر البيع في العرض العادي" data-tooltip="عرض أمر البيع في العرض العادي" onclick="supGoOrderFlat('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">↗</span></button>`:""}<button class="icon-btn" type="button" title="عرض/طباعة فاتورة المبيعات (PDF/مشاركة)" aria-label="فاتورة المبيعات" data-tooltip="فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(g.key))}')"><span aria-hidden="true">🖨</span></button></div></td>
       ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>{const isDate=i>=5&&(i-5)%2===1, due=isDate?g.payment.schedule[Math.floor((i-5)/2)]?.date:"";return `<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${isDate&&due?`<span class="sup-due-date ${supDueDateClass(due)}">${escapeHtml(String(v??""))}</span>`:escapeHtml(String(v??""))}</td>`;}).join("")}
     </tr>`;
   }).join("");
@@ -9427,6 +9451,141 @@ function renderSupplyGrouped(L){
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
     ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}">${escapeHtml(h)}</th>`).join("")}
     </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td class="pay-cash"></td><td class="num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td></td><td></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td></td>`).join("")}</tr></tfoot></table></div>`;
+}
+
+
+// ================= ترحيل حسابات أمر البيع (مشتريات 502 + مبيعات 503) =================
+const SUP_POST_JOURNALS={purchase:"502",sales:"503"};
+function supPostCollect(key){
+  const rows=[]; let so=null, date="";
+  (state.shipments||[]).forEach(s=>{
+    const k=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id);
+    if(k!==key) return;
+    if(s.saleOrderId&&!so) so=(state.saleOrders||[]).find(x=>x.id===s.saleOrderId)||null;
+    (s.items||[]).forEach(it=>rows.push({s,it,a:supplyAmounts(s,it)}));
+  });
+  const f=rows[0]&&rows[0].s||{};
+  if(!so&&f.saleOrderNo) so=(state.saleOrders||[]).find(x=>String(x.orderNo)===String(f.saleOrderNo))||null;
+  const orderNo=String((so&&so.orderNo)||f.saleOrderNo||"");
+  date=(typeof soDateFor==="function"&&soDateFor(f.saleOrderNo,f.saleOrderId))||(so&&so.date)||f.date||"";
+  const byGroup=new Map();
+  rows.forEach(({it,a})=>{
+    const gid=(state.diameterGroups||{})[it.diameter]||"", g=byGroup.get(gid)||{gid,buy:0,sub:0,tax:0,dis:0,total:0};
+    g.buy+=a.buyTotal; g.sub+=a.subtotal; g.tax+=a.tax; g.dis+=a.discount; g.total+=a.total; byGroup.set(gid,g);
+  });
+  return {orderNo,so,date,customer:f.customer||(so&&so.customer)||"",supplier:f.supplier||(so&&so.supplier)||"",byGroup,count:rows.length};
+}
+async function supPostAccounts(key){
+  const c=supPostCollect(key);
+  if(!c.orderNo) return toast("الأمر ده مش مربوط برقم أمر بيع","err");
+  let accs=[],journals=[],years=[],periods=[],posted=null,postingsOk=true;
+  try{
+    await glIndicatorsSync(true);
+    const [a,j,y,p,q]=await Promise.all([sb.from("gl_accounts").select("*"),sb.from("gl_journals").select("*"),sb.from("gl_fiscal_years").select("*").eq("status","open"),sb.from("gl_periods").select("*").eq("status","open"),sb.from("sale_order_postings").select("*").eq("order_no",c.orderNo)]);
+    if(a.error) throw a.error; if(j.error) throw j.error; if(y.error) throw y.error; if(p.error) throw p.error;
+    accs=a.data||[]; journals=j.data||[]; years=y.data||[]; periods=p.data||[]; postingsOk=!q.error; posted=q.error?null:((q.data||[]).find(x=>x.kind==="purchase")||null); if(posted&&posted.entry_id){ const er=await sb.from("gl_entries").select("id,status,entry_no").eq("id",posted.entry_id).maybeSingle(); if(!er.data||er.data.status!=="posted"){ posted=null; } else posted.entry_no=er.data.entry_no; }
+  }catch(e){ return toast("تعذر قراءة بيانات الحسابات: "+(e.message||e),"err"); }
+  const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!accs.some(ch=>ch.is_active&&ch.parent_id===x.id);
+  const accOf=id=>accs.find(x=>String(x.id)===String(id));
+  const chk=[];   // [البند, الحساب/القيمة, ok, ملاحظة]
+  const acc=(label,id,code,name)=>{ const x=id?accOf(id):null; if(!x) return chk.push([label,"—",false,"غير مربوط بحساب"]); chk.push([label,x.account_code+" — "+x.account_name,isLeaf(x),isLeaf(x)?"":"مش حساب نهائي قابل للترحيل"]); };
+  const sup=findParty(state.suppliers,c.supplier)||{}, cus=findParty(state.customers,c.customer)||{};
+  acc("المورد: "+c.supplier,sup.accountId); acc("العميل: "+c.customer,cus.accountId);
+  const wid=(c.so&&c.so.warehouseId)||whDefaultId(), wh=whList().find(w=>String(w.id)===String(wid));
+  if(!wh) chk.push(["المخزن","—",false,"المخزن غير موجود (كود "+SO_DEFAULT_WH_CODE+")"]); else acc("المخزن: "+wh.code+" — "+wh.name,wh.accountId);
+  c.byGroup.forEach(g=>{ const ig=(state.itemGroups||[]).find(x=>String(x.id)===String(g.gid)); if(!ig){ chk.push(["مجموعة الصنف","—",false,"في أصناف بدون مجموعة"]); return; } acc("مجموعة "+ig.name+" — مشتريات/مخزون",ig.acc1Id); acc("مجموعة "+ig.name+" — مبيعات/إيرادات",ig.acc2Id); });
+  const ind=window.glIndicators||{}; acc("ضريبة القيمة المضافة (مؤشر)",ind.vat_account); acc("الأرباح التجارية والصناعية (مؤشر)",ind.trading_pnl);
+  [["purchase","يومية المشتريات"],["sales","يومية المبيعات"]].forEach(([k,l])=>{ const j=journals.find(x=>String(x.journal_code)===SUP_POST_JOURNALS[k]); chk.push([l+" "+SUP_POST_JOURNALS[k],j?j.journal_name:"—",!!(j&&j.is_active),j?(j.is_active?"":"اليومية غير نشطة"):"اليومية غير موجودة"]); });
+  const d=c.date||glDate(), y=years.find(x=>x.start_date<=d&&x.end_date>=d), p=y&&periods.find(x=>x.fiscal_year_id===y.id&&x.start_date<=d&&x.end_date>=d);
+  chk.push(["السنة/الفترة المالية ("+d+")",p?y.year_code:"—",!!p,p?"":"لا توجد سنة/فترة مفتوحة تغطي التاريخ"]);
+  const bad=chk.filter(r=>!r[2]).length;
+  const gname=gid=>{ const ig=(state.itemGroups||[]).find(x=>String(x.id)===String(gid)); return ig?ig.name:"بدون مجموعة"; };
+  const amt=[...c.byGroup.values()].map(g=>`<tr><td>${escapeHtml(gname(g.gid))}</td><td class="num">${fmt(g.buy)}</td><td class="num">${fmt(g.sub)}</td><td class="num">${fmt(g.tax)}</td><td class="num">${fmt(g.dis)}</td><td class="num"><strong>${fmt(g.total)}</strong></td></tr>`).join("");
+  const body=`<div style="margin-bottom:10px">أمر البيع <strong>${escapeHtml(c.orderNo)}</strong> — ${c.count} صنف${posted?` — <span class="chip ok">مُرحَّل بتاريخ ${escapeHtml(String(posted.posted_at||"").slice(0,10))}</span>`:""}</div>
+  <div class="tbl-wrap"><table style="width:100%"><thead><tr><th>البند</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>${chk.map(r=>`<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(r[1])}</td><td style="color:${r[2]?"var(--ok)":"var(--danger)"}">${r[2]?"✓":"⚠ "+escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table></div>
+  <div class="tbl-wrap" style="margin-top:12px"><table style="width:100%"><thead><tr><th>المجموعة</th><th>الشراء</th><th>البيع قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الصافي</th></tr></thead><tbody>${amt}</tbody></table></div>
+  <p style="margin-top:12px;font-weight:700;color:${bad?"var(--danger)":"var(--ok)"}">${bad?`في ${bad} بند محتاج تصليح قبل الترحيل.`:"كل الحسابات جاهزة."}${postingsOk?"":" ⚠ جدول sale_order_postings مش موجود — شغّل ملف irongate_order_posting.sql الأول."} قيد المبيعات لسه متوقف لحد ما قواعده تتحدد.</p>
+  ${supPurchasePreview(c,{sup,wh,ind})}`;
+  window._supPostCtx={c,sup,wh,ind,journals,accs,bad,postingsOk,posted};
+  openModal("ترحيل حسابات — أمر بيع "+c.orderNo,body,()=>{ supDoPostPurchase(); return false; });
+  const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)");
+  if(okb){ if(posted||bad||!postingsOk){ okb.remove(); } else okb.textContent="ترحيل قيد المشتريات"; }
+  const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
+}
+
+// ---- قيد المشتريات: مخزون مدين + قيمة مضافة مدين / مورد دائن + أرباح تجارية وصناعية دائن ----
+function supPurchasePlan(c,ids){
+  let buy=0,sub=0; c.byGroup.forEach(g=>{ buy+=g.buy; sub+=g.sub; });
+  const C=v=>Math.round((+v||0)*100), rate=+((state.settings||{}).tax)||14;
+  const buyC=C(buy), subC=C(sub), vatC=Math.round(buyC*rate/100), supC=buyC+vatC, profC=(subC+vatC)-supC;
+  const L=[
+    {k:"المخزون",acc:ids.inv,dr:subC,cr:0},
+    {k:"القيمة المضافة",acc:ids.vat,dr:vatC,cr:0},
+    {k:"المورد",acc:ids.sup,dr:0,cr:supC},
+    {k:"الأرباح التجارية والصناعية",acc:ids.pnl,dr:profC<0?-profC:0,cr:profC>0?profC:0}
+  ].filter(x=>x.dr||x.cr);
+  return {lines:L,buyC,subC,vatC,supC,profC,rate};
+}
+function supPurchasePreview(c,o){
+  const ctx={inv:o.wh&&o.wh.accountId,vat:o.ind.vat_account,sup:o.sup&&o.sup.accountId,pnl:o.ind.trading_pnl};
+  const pl=supPurchasePlan(c,ctx), f=v=>fmt(v/100);
+  const rows=pl.lines.map(x=>`<tr><td>${escapeHtml(x.k)}</td><td class="num">${x.dr?f(x.dr):""}</td><td class="num">${x.cr?f(x.cr):""}</td></tr>`).join("");
+  return `<div style="margin-top:12px;font-weight:800">قيد المشتريات (يومية ${SUP_POST_JOURNALS.purchase}) — ضريبة الشراء ${pl.rate}%</div>
+  <div class="tbl-wrap"><table style="width:100%"><thead><tr><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>الإجمالي</td><td class="num">${f(pl.lines.reduce((a,x)=>a+x.dr,0))}</td><td class="num">${f(pl.lines.reduce((a,x)=>a+x.cr,0))}</td></tr></tfoot></table></div>`;
+}
+async function supDoPostPurchase(){
+  const X=window._supPostCtx; if(!X) return;
+  if(X.bad||!X.postingsOk) return toast("في بنود محتاجة تصليح قبل الترحيل","err");
+  if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
+  const {c,sup,wh,ind,journals}=X, orderNo=c.orderNo;
+  const btn=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(btn){ btn.disabled=true; btn.textContent="جارٍ الترحيل…"; }
+  let entry=null;
+  try{
+    const date=c.date||glDate();
+    const [yr,pr]=await Promise.all([sb.from("gl_fiscal_years").select("*").eq("status","open").lte("start_date",date).gte("end_date",date),sb.from("gl_periods").select("*").eq("status","open").lte("start_date",date).gte("end_date",date)]);
+    if(yr.error) throw yr.error; if(pr.error) throw pr.error;
+    const y=(yr.data||[])[0]; if(!y) throw new Error("لا توجد سنة مالية مفتوحة تغطي "+date);
+    const per=(pr.data||[]).find(x=>x.fiscal_year_id===y.id); if(!per) throw new Error("لا توجد فترة مفتوحة تغطي "+date);
+    const j=journals.find(x=>String(x.journal_code)===SUP_POST_JOURNALS.purchase); if(!j) throw new Error("يومية المشتريات غير موجودة");
+    const pl=supPurchasePlan(c,{inv:wh.accountId,vat:ind.vat_account,sup:sup.accountId,pnl:ind.trading_pnl});
+    const td=pl.lines.reduce((a,x)=>a+x.dr,0), tc=pl.lines.reduce((a,x)=>a+x.cr,0);
+    if(td!==tc||!td) throw new Error("القيد غير متوازن: "+td/100+" / "+tc/100);
+    // لو في ترحيل قديم اتفك (قيد مسودة)، نمسحه ونعيد الترحيل
+    const old=await sb.from("sale_order_postings").select("*").eq("order_no",orderNo).eq("kind","purchase").maybeSingle();
+    if(old.data&&old.data.entry_id){ await sb.from("gl_entry_lines").delete().eq("entry_id",old.data.entry_id); await sb.from("gl_entries").delete().eq("id",old.data.entry_id).eq("status","draft"); }
+    // رقم القيد الشهري
+    const prefix=String(parseInt(date.slice(5,7),10));
+    const ne=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"%"); if(ne.error) throw ne.error;
+    const seqs=(ne.data||[]).map(e=>String(e.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
+    const entryNo=prefix+String((seqs.length?Math.max(...seqs):0)+1).padStart(4,"0");
+    const desc=`قيد مشتريات — أمر بيع ${orderNo} — ${c.supplier} — [مستند: ${orderNo}]`;
+    entry=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:y.id,period_id:per.id,entry_date:date,document_date:date,description:desc,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:td/100,total_credit:tc/100});
+    const lr=await sb.from("gl_entry_lines").insert(pl.lines.map((x,i)=>({entry_id:entry.id,line_no:i+1,account_id:x.acc,description:x.k+" — أمر بيع "+orderNo,debit:x.dr/100,credit:x.cr/100})));
+    if(lr.error) throw lr.error;
+    const pr2=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id}); if(pr2.error) throw pr2.error;
+    const u=(typeof curU==="function"&&curU())||{};
+    const sp=await sb.from("sale_order_postings").upsert({order_no:orderNo,kind:"purchase",entry_id:entry.id,entry_no:entryNo,journal_code:SUP_POST_JOURNALS.purchase,amount:td/100,posted_at:new Date().toISOString(),posted_by:u.name||u.username||""},{onConflict:"order_no,kind"});
+    if(sp.error) throw new Error("القيد اترحّل برقم "+entryNo+" لكن تسجيل الترحيل فشل: "+sp.error.message);
+    try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"بيانات التوريد",source_ref:orderNo}); }catch(e){}
+    toast("✓ تم ترحيل قيد المشتريات برقم "+entryNo,"ok"); closeModal(); window._supPostMapAt=0; supEnsurePostMap(true);
+  }catch(e){
+    if(entry&&!/اترحّل برقم/.test(String(e.message))){ try{ await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){} }
+    if(btn){ btn.disabled=false; btn.textContent="ترحيل قيد المشتريات"; }
+    toast("تعذر الترحيل: "+(e.message||e),"err");
+  }
+}
+// حالة الترحيل لكل أمر (من sale_order_postings + حالة القيد الفعلية في القيود)
+window.supPostMap=window.supPostMap||{}; window._supPostMapAt=0;
+async function supEnsurePostMap(force){
+  if(!force&&Date.now()-window._supPostMapAt<20000) return; window._supPostMapAt=Date.now();
+  try{
+    const r=await sb.from("sale_order_postings").select("order_no,kind,entry_id,entry_no"); if(r.error) return;
+    const ids=[...new Set((r.data||[]).map(x=>x.entry_id).filter(Boolean))], st={};
+    if(ids.length){ const e=await sb.from("gl_entries").select("id,status").in("id",ids); (e.data||[]).forEach(x=>st[x.id]=x.status); }
+    const m={}; (r.data||[]).forEach(x=>{ if(st[x.entry_id]==="posted") m[x.order_no+"|"+x.kind]=x.entry_no||"✓"; });
+    const changed=JSON.stringify(m)!==JSON.stringify(window.supPostMap); window.supPostMap=m;
+    if(changed&&currentPage==="supply") go("supply");
+  }catch(e){}
 }
 
 // فتح / تعديل البوليصة من تاب "تجميع حسب أمر البيع":
@@ -9947,11 +10106,13 @@ async function soAuditSupplyVsSales(){
 }
 
 // ================= أمر بيع (Sale Order) =================
+const SO_DEFAULT_WH_CODE="10201";   // مخزن سيارات مناديب
+function whDefaultId(){ const w=whList().find(x=>String(x.code)===SO_DEFAULT_WH_CODE); return w?String(w.id):""; }
 const soDefault = ()=>({
   id: "SO-"+Date.now()+"-"+Math.floor(Math.random()*1000),
   orderNo: String(state.soNextNum || 1).padStart(4,"0"),
   date: new Date().toISOString().slice(0,10),
-  customer:"", supplier:"", attention:"", address:"",
+  customer:"", supplier:"", attention:"", address:"", warehouseId: whDefaultId(),
   contactName:"", contactPhone:"", rep:"", notes:"",
   items: [{ id:"it-"+Math.random().toString(36).slice(2,8), diameter:"", qty:"", spec:"B500DWR", type:"", notes:"" }],
   closed: false, closedAt: null, closeReason: ""
@@ -10038,6 +10199,9 @@ function viewSaleOrder(){
       </div>
       <div class="fld" style="grid-column:span 2"><label>عنوان التوصيل</label>
         <input class="inp" id="soAddress" value="${escapeAttr(d.address)}" oninput="soDraft.address=this.value;soRenderPreview()" placeholder="عنوان التوصيل">
+      </div>
+      <div class="fld"><label>المخزن (للترحيل المحاسبي)</label>
+        <select class="inp" id="soWarehouse" onchange="soDraft.warehouseId=this.value">${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||whDefaultId())===String(w.id)?"selected":""}>${escapeHtml(String(w.code||""))} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>
       </div>
       <div class="fld"><label>مسئول التواصل</label>
         <input class="inp" id="soContactName" value="${escapeAttr(d.contactName)}" oninput="soDraft.contactName=this.value;soRenderPreview()" placeholder="اسم مسئول التواصل">
@@ -10296,6 +10460,7 @@ function soSave(){
   }
   const err = soValidate()||soTermsCheck(); if(err){ soStatus(err,true); return; }
   const rec = JSON.parse(JSON.stringify(soDraft));
+  if(!rec.warehouseId) rec.warehouseId=whDefaultId();
   delete rec._termsEdited; delete rec.terms;
   { const ld=orderLastDate(rec.orderNo); if(ld) rec.date=ld; }
   soApplyTerms(rec);
