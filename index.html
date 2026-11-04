@@ -2233,6 +2233,7 @@ const defaults = {
     { code: "MAIN", name: "الخزنة الرئيسية" },
     { code: "CHK", name: "خزنة الشيكات" }
   ],
+  warehouses: [],   // المخازن (جدول warehouses في Supabase)
   settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م", warehouses: [] },
   // placeholders for next phases
   shipments: [],
@@ -2300,7 +2301,7 @@ function saveState(){
 const SB_URL = "https://wadovjghevemdmqkhhml.supabase.co";
 const SB_KEY = "sb_publishable_mZH6txuODQ5vAAxqK4Gl7A_1Uk5H-wr";
 const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:true, autoRefreshToken:true, storage:window.sessionStorage } });
-const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", commercialReg:"commercial_reg", email:"email", contactPerson:"contact_person", notes:"notes" };
+const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", commercialReg:"commercial_reg", email:"email", contactPerson:"contact_person", notes:"notes", accountId:"account_id", accountCode:"account_code", accountName:"account_name" };
 // كل نوع بيانات أساسية له جدول لوحده: t=اسم الجدول، k=عمود المفتاح، f=اسم المفتاح في التطبيق، cols=باقي الأعمدة (لو مفيش يبقى قايمة نصوص)
 const MASTER_TABLES = {
   suppliers:   { t:"suppliers",       k:"name", f:"name", cols:PARTY_COLS },
@@ -2311,11 +2312,13 @@ const MASTER_TABLES = {
   statuses:    { t:"policy_statuses", k:"name" },
   quoteDescs:  { t:"quote_descs",     k:"name" },
   cementTypes: { t:"cement_types",    k:"name" },
-  banks:       { t:"banks",           k:"code", f:"code", cols:{ name:"name" } },
-  safes:       { t:"safes",           k:"code", f:"code", cols:{ name:"name" } },
-  treasuries:  { t:"treasuries",      k:"name", f:"name", cols:{ kind:"kind", notes:"notes" } }
+  banks:       { t:"banks",           k:"code", f:"code", cols:{ name:"name", accountId:"account_id", accountCode:"account_code", accountName:"account_name" } },
+  safes:       { t:"safes",           k:"code", f:"code", cols:{ name:"name", accountId:"account_id", accountCode:"account_code", accountName:"account_name" } },
+  treasuries:  { t:"treasuries",      k:"name", f:"name", cols:{ kind:"kind", notes:"notes" } },
+  warehouses:  { t:"warehouses",      k:"id",   f:"id",   cols:{ parentId:"parent_id", code:"code", name:"name", notes:"notes", accountId:"account_id", accountCode:"account_code", accountName:"account_name" } }
 };
 const MASTER_KINDS = Object.keys(MASTER_TABLES);
+const skipSyncKinds = new Set();
 let masterLoaded = false, syncTimer = null, syncBusy = false, syncAgain = false, lastSnaps = {};
 
 // ---------- مزامنة عروض الأسعار والأرصدة الافتتاحية ----------
@@ -2461,7 +2464,7 @@ async function syncOrderTerms(){
 }
 
 function snapOf(k){ return JSON.stringify(k==="settings" ? state.settings : state[k]); }
-function changedKinds(){ return MASTER_KINDS.concat(["settings"]).filter(k=>snapOf(k)!==lastSnaps[k]); }
+function changedKinds(){ return MASTER_KINDS.concat(["settings"]).filter(k=>!skipSyncKinds.has(k) && snapOf(k)!==lastSnaps[k]); }
 function mapProfile(r){ return { id:r.id, no:r.user_no, name:r.name, role:r.role, active:r.active, mustChange:r.must_change, perms:r.perms||{} }; }
 function toRow(cfg, it, i){
   if(!cfg.cols) return { [cfg.k]:String(it), sort:i };
@@ -2485,7 +2488,25 @@ async function loadMaster(admin){
     Promise.all(kinds.map(k=>sb.from(MASTER_TABLES[k].t).select("*").order("sort"))),
     sb.from("settings").select("data").eq("id",1).maybeSingle()
   ]);
-  res.forEach((r,i)=>{ if(r.error) throw r.error; state[kinds[i]] = (r.data||[]).map(x=>fromRow(MASTER_TABLES[kinds[i]], x)); });
+  let whMigrate=false;
+  res.forEach((r,i)=>{
+    const k=kinds[i];
+    if(r.error){
+      // جدول المخازن لسه متعملش على Supabase: نكمل تحميل التطبيق ونوقف رفعه لحد ما يتشغّل ملف SQL
+      if(k==="warehouses" && /relation|does not exist|schema cache|42P01|PGRST205/i.test(String(r.error.message||"")+String(r.error.code||""))){
+        skipSyncKinds.add(k); console.warn("جدول warehouses غير موجود:",r.error);
+        toast("جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
+        if(!Array.isArray(state.warehouses)||!state.warehouses.length) state.warehouses=(state.settings&&state.settings.warehouses||[]).slice();
+        return;
+      }
+      throw r.error;
+    }
+    state[k] = (r.data||[]).map(x=>fromRow(MASTER_TABLES[k], x));
+    if(k==="warehouses" && !state[k].length){
+      const legacy=(((st.data||{}).data||{}).warehouses)||[];   // مخازن قديمة كانت محفوظة داخل settings
+      if(Array.isArray(legacy)&&legacy.length){ state[k]=legacy.map(x=>Object.assign({},x)); whMigrate=true; }
+    }
+  });
   if(st.error) throw st.error;
   if(st.data && st.data.data) state.settings = Object.assign({}, state.settings, st.data.data);
   state.auditLog = [];
@@ -2500,8 +2521,9 @@ async function loadMaster(admin){
   await Promise.all([ adminP, loadDocs(), supLoadPaymentPlansFromSupabase(), txLoadTreasuryFromDb(), loadQuotesFromSupabase(), loadOpeningFromSupabase(), loadOrderTermsFromSupabase() ]);
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
+  if(whMigrate){ state.settings.warehouses=[]; lastSnaps.warehouses="__migrate__"; lastSnaps.settings="__migrate__"; }   // يرفع المخازن القديمة للجدول الجديد أول مرة ويفضّي النسخة القديمة من الإعدادات
   masterLoaded = true;
-  if((docsReady && docsChanged()) || txChanged() || quotesChanged() || openingChanged() || orderTermsChanged()) scheduleSync();   // رفع بيانات الجهاز لأول مرة
+  if((docsReady && docsChanged()) || txChanged() || quotesChanged() || openingChanged() || orderTermsChanged() || changedKinds().length) scheduleSync();   // رفع بيانات الجهاز لأول مرة
 }
 // ---------- البوالص (المحفوظة والمرحّلة) وأوامر البيع: جداول بأعمدة منفصلة لكل حقل ----------
 // النوع: t=نص، n=رقم، b=صح/غلط، d=تاريخ، z=تاريخ ووقت. أي حقل مش معروف بيتحفظ في عمود extra عشان مفيش بيانات تضيع.
@@ -2833,6 +2855,11 @@ async function syncMaster(){
             rows.forEach(r=>{ delete r.apply_discount_1pct; });
             u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
             toast("تم الحفظ، لكن فلاج خصم العميل 1% محتاج عمود apply_discount_1pct في جدول customers على Supabase (شغّل أمر SQL الجاهز)","err");
+          }
+          if(u.error && /account_(id|code|name)/.test(String(u.error.message||""))){
+            rows.forEach(r=>{ delete r.account_id; delete r.account_code; delete r.account_name; });
+            u = await sb.from(cfg.t).upsert(rows,{onConflict:cfg.k});
+            toast("تم الحفظ، لكن ربط الحساب محتاج أعمدة account_id/account_code/account_name في جدول "+cfg.t+" (شغّل ملف irongate_master_data_fix.sql)","err");
           }
           if(u.error) throw u.error;
         }
@@ -6585,9 +6612,9 @@ document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccClo
 function bindMaster(){}
 
 // ================= المخازن: شجرة مخازن بنفس أسلوب دليل الحسابات + ربط كل مخزن بحساب (آخر مستوى) =================
-// التخزين داخل settings.warehouses (بيتزامن مع السيرفر مع الإعدادات بدون جدول جديد).
+// التخزين في state.warehouses ← جدول warehouses في Supabase (كان قديمًا داخل settings.warehouses ويتم ترحيله تلقائيًا).
 let whQ = "", whCollapsed = new Set();
-function whList(){ if(!state.settings) state.settings={}; if(!Array.isArray(state.settings.warehouses)) state.settings.warehouses=[]; return state.settings.warehouses; }
+function whList(){ if(!Array.isArray(state.warehouses)) state.warehouses=[]; return state.warehouses; }
 const whById = id => whList().find(x=>x.id===id);
 const whCodeCmp = (a,b)=>String(a.code||"").localeCompare(String(b.code||""),"en",{numeric:true});
 const whKids = pid => whList().filter(x=>(x.parentId||"")===(pid||"")).sort(whCodeCmp);
@@ -6709,7 +6736,7 @@ async function whDel(id){
   const w=whById(id); if(!w) return;
   if(whHasKids(id)){ toast("لا يمكن حذف مخزن له مخازن فرعية — احذف الفرعية أولًا","err"); return; }
   if(!await askConfirm(`حذف المخزن "${w.code} — ${w.name}" ؟`)) return;
-  state.settings.warehouses=whList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
+  state.warehouses=whList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
 }
 
 function partyFormHtml(p){
@@ -7389,6 +7416,7 @@ function migrateState(s){
   if(!s.settings) s.settings = { tax:14, profitTax:1, discount1pct:true, currency:"ج.م" };
   if(s.settings.profitTax===undefined) s.settings.profitTax = 1;
   if(!Array.isArray(s.settings.warehouses)) s.settings.warehouses = [];
+  if(!Array.isArray(s.warehouses)) s.warehouses = [];
   // الخزائن والبنوك
   if(!Array.isArray(s.treasuries)) s.treasuries = [];
   s.treasuries = s.treasuries.map(t=>typeof t==="string"?{name:t,kind:"safe",notes:""}:({name:t.name||"",kind:t.kind||"safe",notes:t.notes||""}));
@@ -9267,7 +9295,7 @@ function renderSupplyGrouped(L){
       ${SB?`<td class="num">${fmt(totals.buy)}</td>`:""}
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold-text)">${fmt(totals.total)}</strong></td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
-      <td><div class="td-actions">${orderNo!=="—"?`<button class="icon-btn primary" type="button" title="تعديل شروط السداد" aria-label="تعديل شروط السداد" data-tooltip="تعديل شروط السداد" onclick="supOpenOrderTermsEdit('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">✎</span></button>`:""}${first?`<button class="icon-btn" type="button" title="فتح / تعديل البوليصة" aria-label="فتح / تعديل البوليصة" data-tooltip="فتح / تعديل البوليصة" onclick="editShipment('${first.id}')"><span aria-hidden="true">▤</span></button>`:""}${orderNo!=="—"?`<button class="icon-btn" type="button" title="عرض أمر البيع ده في العرض العادي لتفاصيله" aria-label="عرض أمر البيع في العرض العادي" data-tooltip="عرض أمر البيع في العرض العادي" onclick="supGoOrderFlat('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">↗</span></button>`:""}<button class="icon-btn" type="button" title="عرض/طباعة فاتورة المبيعات (PDF/مشاركة)" aria-label="فاتورة المبيعات" data-tooltip="فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(g.key))}')"><span aria-hidden="true">🖨</span></button></div></td>
+      <td><div class="td-actions">${orderNo!=="—"?`<button class="icon-btn primary" type="button" title="تعديل شروط السداد" aria-label="تعديل شروط السداد" data-tooltip="تعديل شروط السداد" onclick="supOpenOrderTermsEdit('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">✎</span></button>`:""}${first?`<button class="icon-btn" type="button" title="فتح / تعديل البوليصة" aria-label="فتح / تعديل البوليصة" data-tooltip="فتح / تعديل البوليصة" onclick="supOpenGroupPolicy('${escapeAttr(String(g.key))}')"><span aria-hidden="true">▤</span></button>`:""}${orderNo!=="—"?`<button class="icon-btn" type="button" title="عرض أمر البيع ده في العرض العادي لتفاصيله" aria-label="عرض أمر البيع في العرض العادي" data-tooltip="عرض أمر البيع في العرض العادي" onclick="supGoOrderFlat('${escapeAttr(String(orderNo))}')"><span aria-hidden="true">↗</span></button>`:""}<button class="icon-btn" type="button" title="عرض/طباعة فاتورة المبيعات (PDF/مشاركة)" aria-label="فاتورة المبيعات" data-tooltip="فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(g.key))}')"><span aria-hidden="true">🖨</span></button></div></td>
       ${supPaymentCells(g.payment,maxSchedule).map((v,i)=>{const isDate=i>=5&&(i-5)%2===1, due=isDate?g.payment.schedule[Math.floor((i-5)/2)]?.date:"";return `<td class="pay-terms-cell${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}${i===0||i===3||i===4||(i>=5&&(i-5)%2===1)?'':' num'}">${isDate&&due?`<span class="sup-due-date ${supDueDateClass(due)}">${escapeHtml(String(v??""))}</span>`:escapeHtml(String(v??""))}</td>`;}).join("")}
     </tr>`;
   }).join("");
@@ -9278,6 +9306,32 @@ function renderSupplyGrouped(L){
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
     ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-head${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}">${escapeHtml(h)}</th>`).join("")}
     </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="7">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td class="pay-cash"></td><td class="num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td></td><td></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td></td>`).join("")}</tr></tfoot></table></div>`;
+}
+
+// فتح / تعديل البوليصة من تاب "تجميع حسب أمر البيع":
+// لو الأمر فيه بوليصة واحدة تتفتح علطول، ولو أكتر من بوليصة تظهر قائمة اختيار.
+function supOpenGroupPolicy(key){
+  const pol=new Map();
+  supplyLines().forEach(({s,it})=>{
+    const k = s.saleOrderId ? "so:"+s.saleOrderId : (s.saleOrderNo ? "no:"+s.saleOrderNo : "policy:"+s.id);
+    if(k!==key) return;
+    if(!pol.has(s.id)) pol.set(s.id,{s,w:0,n:0});
+    const p=pol.get(s.id); p.w+=(+it.actualWeight||0); p.n++;
+  });
+  const list=[...pol.values()].sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||String(a.s.policyNo||"").localeCompare(String(b.s.policyNo||""),undefined,{numeric:true}));
+  if(!list.length){ toast("لم يتم العثور على بوليصة لهذا الأمر","err"); return; }
+  if(list.length===1){ editShipment(list[0].s.id); return; }
+  const rows=list.map(({s,w,n})=>`<tr>
+    <td><strong>${escapeHtml(String(s.policyNo||"—"))}</strong></td>
+    <td>${escapeHtml(s.date||"—")}</td>
+    <td class="num">${n}</td>
+    <td class="num">${fmt(w,3)}</td>
+    <td><button type="button" class="btn sm" onclick="closeModal();editShipment('${escapeAttr(s.id)}')">فتح / تعديل</button></td>
+  </tr>`).join("");
+  openModal(`اختر البوليصة (${list.length} بوليصة في هذا الأمر)`,
+    `<div class="tbl-wrap"><table style="white-space:nowrap;width:100%"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>عدد الأصناف</th><th>الوزن الفعلي (طن)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
+  document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)")?.remove();   // مفيش حاجة تتحفظ هنا
+  const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
 }
 
 function toggleSupGroup(key){
