@@ -304,10 +304,9 @@ tbody tr:last-child td{border-bottom:none}
 /* page header */
 .page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
 /* شريط الحفظ/الإجراءات بيلزق فوق في شاشة البوليصة وأمر البيع لما تنزل */
-body.page-shipments .page-head,body.page-saleOrder .page-head{position:sticky!important;top:-24px;z-index:50;background:var(--bg);padding:14px 10px 12px;margin:-24px -24px 14px;border-bottom:3px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.25),0 0 0 1px rgba(212,160,23,.3)}
-body.page-shipments .page-head h2,body.page-saleOrder .page-head h2{font-size:16px;margin:0}
-body.page-shipments .page-head .btn,body.page-saleOrder .page-head .btn{min-height:34px;padding:7px 13px;font-size:12.5px;font-weight:700}
-body.page-shipments .page-head .chip,body.page-saleOrder .page-head .chip{font-size:11px;padding:3px 10px}
+.ig-pol-head~.page-head,body.page-shipments .page-head,body.page-saleOrder .page-head{position:sticky;top:0;z-index:40;background:linear-gradient(180deg,var(--bg) 85%,rgba(0,0,0,0) 100%);backdrop-filter:blur(8px);padding:10px 4px;margin:-10px -4px 12px;border-bottom:2px solid var(--gold);box-shadow:0 6px 14px rgba(212,160,23,.15)}
+body.page-shipments .page-head h2,body.page-saleOrder .page-head h2{font-size:17px}
+body.page-shipments .page-head .btn,body.page-saleOrder .page-head .btn{min-height:34px;padding:6px 12px;font-size:12.5px;font-weight:700}
 .page-head h2{font-size:20px;color:var(--text)}
 .page-head .spacer{flex:1}
 
@@ -6269,7 +6268,6 @@ function viewShipments(){
     ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
     ${B("حفظ","saveShipment()","",!viewOnly)}
     ${B("ترحيل","postShipment()","",!posted)}
-    ${!isNew?B("🧾 فاتورة ضريبية","printPolicyTaxInvoice()","ghost",true):""}
     ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
   </div>
   ${posted&&!viewOnly?'<p style="color:var(--warn);font-size:12px;margin:-8px 0 14px">تنبيه: دي بوليصة مرحّلة — الحفظ هنا هيعدّل صفوفها في بيانات التوريد مباشرة.</p>':""}
@@ -7015,109 +7013,6 @@ function commitOrderTerms(rec){
     state.orderTerms[k]=ot;
     orderDocs(rec.saleOrderNo, rec.id).forEach(x=>{ x.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; });
   } else if(Array.isArray(rec.paymentSchedule)||rec.paymentScheduleReset) state.orderTerms[k]=ot;
-}
-function printPolicyTaxInvoice(){
-  const d = draft; if(!d) return toast("لا توجد بوليصة","err");
-  const items = d.items||[]; if(!items.length) return toast("لا توجد أصناف","err");
-  const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const money = n => Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const cur = state.settings.currency||"ج.م";
-  // احتساب: ممكن تطبّق الضريبة أم لا
-  const vatPct = (d.vatPct==null||d.vatPct==="") ? (+state.settings.tax||14) : +d.vatPct;
-  const applyVat = d.applyVat!==false;
-  let subTotal=0, vatTotal=0, grandTotal=0, totalWeight=0;
-  const rows = items.map((it,i)=>{
-    const w=+it.actualWeight||0, price=+it.sellPrice||0, line=w*price;
-    const vat = applyVat ? line*vatPct/100 : 0;
-    const lineTotal = line + vat - (+it.discount||0);
-    subTotal += line; vatTotal += vat; grandTotal += lineTotal; totalWeight += w;
-    return `<tr>
-      <td class="c">${i+1}</td>
-      <td>${esc(it.diameter||'')} مم ${esc(it.type||'')}</td>
-      <td class="c">طن</td>
-      <td class="n">${money(w)}</td>
-      <td class="n">${money(price)}</td>
-      <td class="n">${money(line)}</td>
-      <td class="n">${applyVat?money(vat):'—'}</td>
-      <td class="n">${money(lineTotal)}</td>
-    </tr>`;
-  }).join('');
-  const w=window.open('','_blank','width=1100,height=850');
-  if(!w) return toast('اسمح بفتح النوافذ المنبثقة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>فاتورة ضريبية ${esc(d.policyNo||'')}</title><style>
-    @page{size:A4;margin:12mm}*{box-sizing:border-box}
-    body{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a;margin:0;font-size:12px;background:#fff}
-    .wrap{padding:0 2mm}
-    .head{display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #d4a017;padding:8px 0 12px;margin-bottom:14px}
-    .brand h1{margin:0;font-size:24px;color:#92400e;letter-spacing:.5px}.brand p{margin:3px 0 0;font-size:11px;color:#6b7280}
-    .doctitle{text-align:center;background:linear-gradient(135deg,#fef3c7,#fcd34d);border:1px solid #d4a017;border-radius:10px;padding:8px 26px}
-    .doctitle h2{margin:0;font-size:19px;color:#92400e}.doctitle small{font-size:10.5px;color:#92400e;font-weight:700}
-    .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
-    .field{border:1px solid #e5d7b1;border-radius:7px;padding:8px 10px;background:#fffbea;min-height:48px}
-    .field b{display:block;color:#92400e;font-size:10.5px;margin-bottom:4px;font-weight:800}
-    .field span{font-weight:700;font-size:13px}
-    .parties{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-    .party{border:2px solid #d4a017;border-radius:9px;padding:10px 12px;background:#fff}
-    .party b{display:block;color:#92400e;font-size:11px;margin-bottom:6px}
-    .party .pname{font-size:15px;font-weight:800}
-    table{width:100%;border-collapse:collapse;table-layout:fixed}
-    th{background:#1a1a1a;color:#fef3c7;padding:10px 6px;border:1px solid #1a1a1a;font-size:12px}
-    td{padding:8px 6px;border:1px solid #e5d7b1;vertical-align:middle;font-size:12px}
-    tbody tr:nth-child(even){background:#fffbea}.c{text-align:center}.n{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}
-    tfoot td{background:#fef3c7;font-weight:bold;border-top:2px solid #d4a017}
-    .totals{display:flex;justify-content:flex-end;margin-top:12px}
-    .totals-box{min-width:300px;border:2px solid #d4a017;border-radius:9px;overflow:hidden}
-    .totals-box .trow{display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #e5d7b1;background:#fff}
-    .totals-box .trow:last-child{border-bottom:0;background:linear-gradient(135deg,#1a1a1a,#262626);color:#fef3c7;font-size:16px;font-weight:900}
-    .totals-box .trow b{color:#92400e}
-    .amount-words{margin-top:10px;padding:10px 14px;background:#fffbea;border:1px dashed #d4a017;border-radius:8px;font-weight:700;color:#1a1a1a}
-    .signs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:40px;text-align:center}
-    .sign{padding-top:9px;border-top:1px solid #92400e;font-weight:bold;color:#92400e}
-    .foot{margin-top:18px;text-align:center;color:#6b7280;font-size:10px;border-top:1px solid #e5d7b1;padding-top:10px}
-    .notes{margin-top:10px;padding:8px 10px;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;font-size:11px;color:#6b7280}
-    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-  </style></head><body><div class="wrap">
-    <header class="head">
-      <div class="brand"><h1>IRON GATE SUPPLIES</h1><p>توريد حديد التسليح — ${esc(cur)}</p></div>
-      <div class="doctitle"><h2>فاتورة ضريبية</h2><small>Tax Invoice</small></div>
-    </header>
-    <section class="meta">
-      <div class="field"><b>رقم الفاتورة</b><span>${esc(d.policyNo||'')}</span></div>
-      <div class="field"><b>التاريخ</b><span>${esc(d.date||'')}</span></div>
-      <div class="field"><b>أمر البيع</b><span>${esc(d.saleOrderNo||'—')}</span></div>
-      <div class="field"><b>العملة</b><span>${esc(cur)}</span></div>
-    </section>
-    <section class="parties">
-      <div class="party"><b>العميل (المُشتري)</b><div class="pname">${esc(d.customer||'—')}</div>${d.company?`<div style="color:#6b7280;margin-top:3px">${esc(d.company)}</div>`:''}${d.site?`<div style="color:#6b7280;font-size:11px">الموقع: ${esc(d.site)}</div>`:''}</div>
-      <div class="party"><b>المورد (البائع)</b><div class="pname">${esc(d.supplier||'—')}</div><div style="color:#6b7280;margin-top:3px">IRON GATE SUPPLIES</div></div>
-    </section>
-    <table>
-      <thead><tr>
-        <th style="width:4%">م</th>
-        <th style="width:28%">الصنف</th>
-        <th style="width:7%">الوحدة</th>
-        <th style="width:11%">الكمية</th>
-        <th style="width:12%">سعر الوحدة</th>
-        <th style="width:12%">المبلغ</th>
-        <th style="width:12%">ض.ق.م ${applyVat?vatPct+'%':''}</th>
-        <th style="width:14%">الإجمالي</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="3" class="c">الإجمالي</td><td class="n">${money(totalWeight)}</td><td></td><td class="n">${money(subTotal)}</td><td class="n">${applyVat?money(vatTotal):'—'}</td><td class="n">${money(grandTotal)}</td></tr></tfoot>
-    </table>
-    <div class="totals">
-      <div class="totals-box">
-        <div class="trow"><b>إجمالي قبل الضريبة</b><span class="n">${money(subTotal)} ${esc(cur)}</span></div>
-        <div class="trow"><b>ض.ق.م ${applyVat?'('+vatPct+'%)':'(معفاة)'}</b><span class="n">${money(vatTotal)} ${esc(cur)}</span></div>
-        <div class="trow"><b>الإجمالي النهائي</b><span class="n">${money(grandTotal)} ${esc(cur)}</span></div>
-      </div>
-    </div>
-    ${d.notes?`<div class="notes"><b>ملاحظات:</b> ${esc(d.notes)}</div>`:''}
-    <section class="signs"><div class="sign">إعداد</div><div class="sign">المستلم</div><div class="sign">اعتماد</div></section>
-    <div class="foot">IRON GATE SUPPLIES — فاتورة ضريبية رقم ${esc(d.policyNo||'')} — طُبعت بتاريخ ${esc(new Date().toLocaleDateString('ar-EG'))}</div>
-    </div>
-    <script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`;
-  w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
 function saveShipment(){
   if(viewOnly) return;
@@ -8677,11 +8572,9 @@ function viewSaleOrder(){
     <h2>${loaded?"أمر بيع رقم "+escapeHtml(d.orderNo):"أمر بيع جديد"}</h2>
     ${loaded?(d.closed?'<span class="chip warn">مقفول</span>':'<span class="chip ok">مفتوح</span>'):'<span class="chip">جديد</span>'}
     <div class="spacer"></div>
-    <button class="btn" onclick="soSave()" style="background:var(--gold);color:#1a1a1a;font-weight:800">💾 حفظ الأمر</button>
-    ${loaded?`<button class="btn ghost" onclick="soDownloadPdf()">⬇ PDF</button>`:''}
-    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال</button>`):""}
+    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال الأمر</button>`):""}
     <button class="btn ghost sm" onclick="soNew()">+ جديد</button>
-    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
+    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة السابقة</button>':''}
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
@@ -10699,8 +10592,6 @@ async function txDel(id, direction){
   // ملاحظة: التسكينات مخزّنة داخل كائن الحركة نفسها (e.allocations) — بمجرد حذف السجل من state.treasuryEntries،
   // كل الحسابات المعتمدة عليها (txInvoiceRowsForCustomer، settlementCustomerPaid، كشوف الحساب) هتلقائيًا
   // تتجاهل تسكيناته لأنها بتـfilter على الحركات الموجودة فقط. مفيش جدول منفصل للتسكينات.
-  // سجل مراجعة قبل الحذف
-  audit("tx_del",`حذف ${e.direction==="in"?"تحصيل":"دفعة"} #${e.no} (${fmt(e.amount)} ${state.settings.currency})${allocs.length?` — أُلغيت ${allocs.length} تسكينة بإجمالي ${fmt(allocsSum)}`:""}${linked?` + حذف السجل المرتبط #${linked.no}`:""}`);
   state.treasuryEntries = state.treasuryEntries.filter(x=>!toDelete.has(x.id));
   saveState(); renderTreasury(direction);
   const msg = allocs.length
@@ -10888,13 +10779,6 @@ function openTxForm(direction, existing){
     } else if(!d.treasury){ toast(method==="cash"?"الخزينة مطلوبة":"البنك مطلوب","err"); return false; }
 
     if(existing){
-      // سجل مراجعة: قارن القيم القديمة بالجديدة
-      const diffs=[];
-      if(+existing.amount !== +d.amount) diffs.push(`القيمة: ${fmt(existing.amount)} ← ${fmt(d.amount)}`);
-      if(existing.date !== d.date) diffs.push(`التاريخ: ${existing.date} ← ${d.date}`);
-      if(existing.method !== d.method) diffs.push(`الطريقة: ${existing.method} ← ${d.method}`);
-      if(existing.status !== d.status) diffs.push(`الحالة: ${existing.status} ← ${d.status}`);
-      if(diffs.length) audit("tx_edit",`تعديل ${d.direction==="in"?"تحصيل":"دفعة"} #${d.no}: ${diffs.join(" · ")}`);
       const i = state.treasuryEntries.findIndex(x=>x.id===existing.id);
       if(i>=0) state.treasuryEntries[i] = d;
       // مزامنة ثنائية الاتجاه مع السجل المرتبط (تحصيل ↔ دفعة تحويل لمورد)
@@ -11151,7 +11035,7 @@ function settlementCustomerCredit(customer){
       return sum + Math.max(0, amt-used);
     },0);
 }
-// إجمالي فواتير العميل (مجموع total للأصناف) + التسويات المدينة
+// إجمالي فواتير العميل (مجموع total للأصناف)
 function settlementCustomerInvoiceTotal(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   let total=0;
@@ -11159,26 +11043,7 @@ function settlementCustomerInvoiceTotal(customer){
     if(String(s.customer||"").trim()!==cust) return;
     (s.items||[]).forEach(it=>{ total += +supplyAmounts(s,it).total || 0; });
   });
-  // التسويات المدينة تضاف كفاتورة افتراضية (لاتساق مع شاشة الأقساط)
-  (state.treasuryEntries||[]).forEach(e=>{
-    if(e.direction!=="in" || e.method!=="adjustment" || e.adjustmentKind!=="debit") return;
-    if(String(e.customer||"").trim()!==cust) return;
-    total += +e.amount||0;
-  });
   return total;
-}
-// الشيكات تحت التحصيل للعميل (مجموع قيمة الشيكات اللي لسه مش collected ولا returned)
-function customerPendingCheques(customer){
-  const cust = String(customer||"").trim(); if(!cust) return 0;
-  return (state.treasuryEntries||[])
-    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && e.method==="bank" && ["receivable","pending","deposited","guarantee"].includes(e.status))
-    .reduce((s,e)=>s+(+e.amount||0),0);
-}
-function supplierPendingCheques(supplier){
-  const sup = String(supplier||"").trim(); if(!sup) return 0;
-  return (state.treasuryEntries||[])
-    .filter(e=>e.direction==="out" && String(e.supplier||"").trim()===sup && e.method==="bank" && ["receivable","pending","deposited","guarantee"].includes(e.status))
-    .reduce((s,e)=>s+(+e.amount||0),0);
 }
 // إجمالي ما تم تحصيله وتخصيصه على فواتير العميل
 function settlementCustomerPaid(customer){
@@ -11654,13 +11519,8 @@ function renderSalesInstallments(){
   const rows=salesInstallmentFilteredRows(),sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0),currency=state.settings.currency||"ج.م",M=salesInstallmentMoney;
   const orderCount=new Set(rows.map(r=>txOrderKey(r.orderNo))).size;
   const lateRows=rows.filter(r=>r.status==="متأخر"), nearRows=rows.filter(r=>r.near);
-  // إجمالي الشيكات تحت التحصيل للعملاء الظاهرين فقط (بتتفلتر مع نفس الفلاتر)
-  const visibleCustomers = [...new Set(rows.map(r=>r.customer).filter(Boolean))];
-  const pendingChequesTotal = visibleCustomers.reduce((s,c)=>s+customerPendingCheques(c),0);
-  const pendingChequesCount = visibleCustomers.reduce((n,c)=>n+(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&String(e.customer||"").trim()===c&&e.method==="bank"&&["receivable","pending","deposited","guarantee"].includes(e.status)).length,0);
   const cards=[["عدد الأقساط",rows.length,"قسط",""],["عدد أوامر البيع",orderCount,"أمر",""],["إجمالي الأقساط",M(sum("amount")),currency,""],["إجمالي المسدد",M(sum("paid")),currency,"ok"],["إجمالي المتبقي",M(sum("remaining")),currency,""],
-    ["المتأخر",M(sum("lateRemaining")),lateRows.length+" قسط · "+currency,"late"],["قريب الاستحقاق (7 أيام)",M(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط · "+currency,"near"],
-    ["🧾 تحت التحصيل (شيكات)",M(pendingChequesTotal),pendingChequesCount+" شيك · "+currency,"near"]];
+    ["المتأخر",M(sum("lateRemaining")),lateRows.length+" قسط · "+currency,"late"],["قريب الاستحقاق (7 أيام)",M(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط · "+currency,"near"]];
   summary.innerHTML=`<div class="sales-inst-kpis">${cards.map(([l,v,u,c])=>`<div class="sales-inst-kpi ${c?'si-kpi-'+c:''}"><span>${l}</span><b>${v}</b><small>${u}</small></div>`).join("")}</div>`;
   const us=salesInstallmentUI;
   const cols=siColumns(rows).filter(c=>!(us.hidePays&&(c.pay!==undefined||c.k==="diff")));
@@ -11722,33 +11582,33 @@ function salesInstallmentsExport(format){
     }).join("")}</tr>`;
   }).join("");
   const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left;font-size:13px">💰 الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  // شريط KPI أفقي من سطر واحد — احترافي ومضغوط للغاية
-  const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
-  const kpiLine = (lbl,val,sub,accent)=>`<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:#fff;border-right:3px solid ${accent};border-radius:0 4px 4px 0;white-space:nowrap">
-    <span style="color:#6b7280;font-size:10px;font-weight:700">${lbl}:</span>
-    <b style="color:#111;font-size:11.5px;direction:ltr;font-variant-numeric:tabular-nums">${val}</b>
-    ${sub?`<span style="color:#9ca3af;font-size:9px">${sub}</span>`:''}
-  </span>`;
-  const kpis = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0;padding:5px 8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px">
-    ${kpiLine("عدد الأقساط",rows.length+" قسط","","#64748b")}
-    ${kpiLine("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
-    ${kpiLine("المسدد",n(total("paid")),paidRows.length+" مسدد","#16a34a")}
-    ${kpiLine("المتبقي",n(total("remaining")),cur,"#d97706")}
-    ${kpiLine("المتأخر",n(total("lateRemaining")),lateRows.length+" متأخر","#dc2626")}
-    ${nearRows.length?kpiLine("قريب (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308"):""}
+  // بطاقات KPI احترافية — مطابقة لتصميم الشاشة
+  const kpi = (lbl,val,sub,accent)=>`<div style="background:#fff;border:1px solid #e5e7eb;border-top:4px solid ${accent};border-radius:10px;padding:12px 14px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center">
+    <div style="font-size:10.5px;color:#6b7280;font-weight:700;margin-bottom:5px;letter-spacing:.3px">${lbl}</div>
+    <div style="font-size:19px;font-weight:900;color:#111;line-height:1.1;direction:ltr">${val}</div>
+    <div style="font-size:10px;color:#9ca3af;margin-top:3px">${sub}</div>
   </div>`;
-  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:3px 0;justify-content:center">
-    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:12px;font-size:9.5px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
+  const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
+  const kpis = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 10px">
+    ${kpi("عدد الأقساط",rows.length+" قسط","&nbsp;","#64748b")}
+    ${kpi("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
+    ${kpi("المسدد",n(total("paid")),paidRows.length+" قسط مسدد","#16a34a")}
+    ${kpi("المتبقي",n(total("remaining")),cur,"#d97706")}
+    ${kpi("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#dc2626")}
+    ${nearRows.length?kpi("قريب الاستحقاق",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط (7 أيام)","#eab308"):""}
+  </div>`;
+  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;justify-content:center">
+    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:14px;font-size:11px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
     *{box-sizing:border-box}
-    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0}
-    .doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
-    .hdr{text-align:center;padding:5px 10px 6px;background:linear-gradient(90deg,#fffbea 0%,#fff 50%,#fffbea 100%);border-bottom:2px solid #d4a017;border-radius:6px 6px 0 0;margin:-8px -12px 5px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
-    .hdr .emoji{font-size:16px;margin:0}
-    .hdr h1{margin:0;font-size:15px;color:#1a1a1a;font-weight:900}
-    .hdr .en{color:#d4a017;font-size:10px;letter-spacing:2px;font-weight:800}
-    .hdr .sub{color:#6b7280;font-size:10px;margin:0}
+    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:14px 18px;background:#f8fafc;margin:0}
+    .doc{background:#fff;padding:18px 20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
+    .hdr{text-align:center;padding:14px 10px 16px;background:linear-gradient(180deg,#fffbea 0%,#fff 100%);border-bottom:3px solid #d4a017;border-radius:10px 10px 0 0;margin:-18px -20px 10px}
+    .hdr .emoji{font-size:28px;margin-bottom:4px}
+    .hdr h1{margin:4px 0 2px;font-size:22px;color:#1a1a1a;font-weight:900}
+    .hdr .en{color:#d4a017;font-size:13px;letter-spacing:3px;font-weight:800}
+    .hdr .sub{color:#6b7280;font-size:11px;margin-top:4px}
     .meta{text-align:center;color:#374151;font-size:11.5px;background:#f9fafb;padding:9px 14px;border-radius:6px;margin:10px 0;border:1px solid #e5e7eb}
     .meta b{color:#111}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
@@ -11760,14 +11620,11 @@ function salesInstallmentsExport(format){
     tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
     .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
     @media print{
-      @page{size:A4 landscape;margin:5mm}
+      @page{size:A4 landscape;margin:6mm}
       body{padding:0;background:#fff}
-      .doc{box-shadow:none;border-radius:0;padding:4px 6px}
-      .hdr{border-radius:0;margin:-4px -6px 3px;padding:3px 10px 4px}
-      .hdr h1{font-size:13px}.hdr .en{font-size:9px}.hdr .sub{font-size:9px}
+      .doc{box-shadow:none;border-radius:0;padding:10px}
+      .hdr{border-radius:0;margin:-10px -10px 10px}
       tr{break-inside:avoid}
-      thead{display:table-header-group}
-      tfoot{display:table-footer-group}
       *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     }
   </style></head><body>
