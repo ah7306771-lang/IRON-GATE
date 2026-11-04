@@ -8432,6 +8432,7 @@ function saveShipment(){
   if(viewOnly) return;
   const rec=buildRecord(editingSrc==="shipments"); if(!rec) return;
   const prevSoNo=(allRecords().find(({r})=>r.id===rec.id)||{r:{}}).r.saleOrderNo||"";
+  if(supLockCheck(prevSoNo,rec.saleOrderNo)) return;
   const list=editingSrc==="shipments"?state.shipments:state.policies;
   const idx=list.findIndex(s=>s.id===rec.id);
   if(idx>=0) list[idx]=rec; else list.push(rec);
@@ -9332,6 +9333,7 @@ function supOrderTermsBaseTotal(orderNo, docs, imported){
 }
 function supOpenOrderTermsEdit(orderNo){
   const no=String(orderNo||'').trim(); if(!no) return;
+  if(supLockCheck(no)) return;
   const docs=supOrderDocsForEdit(no);
   const imp=supImportedPaymentPlan(no);
   const current=termsFromOrder(no);
@@ -9501,15 +9503,15 @@ async function supPostAccounts(key){
   const bad=chk.filter(r=>!r[2]).length;
   const gname=gid=>{ const ig=(state.itemGroups||[]).find(x=>String(x.id)===String(gid)); return ig?ig.name:"بدون مجموعة"; };
   const amt=[...c.byGroup.values()].map(g=>`<tr><td>${escapeHtml(gname(g.gid))}</td><td class="num">${fmt(g.buy)}</td><td class="num">${fmt(g.sub)}</td><td class="num">${fmt(g.tax)}</td><td class="num">${fmt(g.dis)}</td><td class="num"><strong>${fmt(g.total)}</strong></td></tr>`).join("");
-  const body=`<div style="margin-bottom:10px">أمر البيع <strong>${escapeHtml(c.orderNo)}</strong> — ${c.count} صنف${posted?` — <span class="chip ok">مُرحَّل بتاريخ ${escapeHtml(String(posted.posted_at||"").slice(0,10))}</span>`:""}</div>
+  const body=`<div style="margin-bottom:10px">أمر البيع <strong>${escapeHtml(c.orderNo)}</strong> — ${c.count} صنف${posted?` — <span class="chip ok">مُرحَّل بقيد ${escapeHtml(String(posted.entry_no||""))} بتاريخ ${escapeHtml(String(posted.posted_at||"").slice(0,10))}</span>`:""}</div>
   <div class="tbl-wrap"><table style="width:100%"><thead><tr><th>البند</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>${chk.map(r=>`<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(r[1])}</td><td style="color:${r[2]?"var(--ok)":"var(--danger)"}">${r[2]?"✓":"⚠ "+escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table></div>
   <div class="tbl-wrap" style="margin-top:12px"><table style="width:100%"><thead><tr><th>المجموعة</th><th>الشراء</th><th>البيع قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الصافي</th></tr></thead><tbody>${amt}</tbody></table></div>
   <p style="margin-top:12px;font-weight:700;color:${bad?"var(--danger)":"var(--ok)"}">${bad?`في ${bad} بند محتاج تصليح قبل الترحيل.`:"كل الحسابات جاهزة."}${postingsOk?"":" ⚠ جدول sale_order_postings مش موجود — شغّل ملف irongate_order_posting.sql الأول."} قيد المبيعات لسه متوقف لحد ما قواعده تتحدد.</p>
   ${supPurchasePreview(c,{sup,wh,ind})}`;
   window._supPostCtx={c,sup,wh,ind,journals,accs,bad,postingsOk,posted};
-  openModal("ترحيل حسابات — أمر بيع "+c.orderNo,body,()=>{ supDoPostPurchase(); return false; });
+  openModal("ترحيل حسابات — أمر بيع "+c.orderNo,body,()=>{ (window._supPostCtx&&window._supPostCtx.posted?supUnpostPurchase:supDoPostPurchase)(); return false; });
   const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)");
-  if(okb){ if(posted||bad||!postingsOk){ okb.remove(); } else okb.textContent="ترحيل قيد المشتريات"; }
+  if(okb){ if(posted){ okb.textContent="إلغاء الترحيل"; okb.style.background="var(--danger)"; okb.style.color="#fff"; } else if(bad||!postingsOk){ okb.remove(); } else okb.textContent="ترحيل قيد المشتريات"; }
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
 }
 
@@ -9587,6 +9589,45 @@ async function supEnsurePostMap(force){
     if(changed&&currentPage==="supply") go("supply");
   }catch(e){}
 }
+
+
+// ---- إلغاء الترحيل: يفك القيد ويمسحه من القيود المرحّلة ويرجع الأمر كأنه ما اترحّلش ----
+async function supUnpostPurchase(){
+  const X=window._supPostCtx; if(!X||!X.posted) return;
+  if(!can("supply","post")) return toast("لا تملك صلاحية إلغاء الترحيل","err");
+  const orderNo=X.c.orderNo, p=X.posted;
+  const ok=await askConfirm(`إلغاء ترحيل قيد المشتريات رقم ${p.entry_no||""} لأمر البيع ${orderNo}؟\n\nالقيد هيتمسح من القيود المرحّلة، والأمر يرجع غير مُرحَّل وتقدر تعدّل عليه وتعيد الترحيل.`,{title:"إلغاء ترحيل الحسابات",ok:"نعم، ألغِ الترحيل",cancel:"رجوع",danger:true});
+  if(!ok) return;
+  try{
+    const id=p.entry_id;
+    let r=await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id});
+    let chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+    if(chk.data&&chk.data.status==="posted"){
+      const u=await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted").select();
+      chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+      if(chk.data&&chk.data.status==="posted") throw new Error("تعذر فك ترحيل القيد في قاعدة البيانات"+((r.error||u.error)?" ("+((r.error||u.error).message||"")+")":""));
+    }
+    if(chk.data){
+      const dl=await sb.from("gl_entry_lines").delete().eq("entry_id",id); if(dl.error) throw dl.error;
+      const de=await sb.from("gl_entries").delete().eq("id",id).eq("status","draft"); if(de.error) throw de.error;
+    }
+    try{ await sb.from("gl_posting_sources").delete().eq("entry_id",id); }catch(e){}
+    const dp=await sb.from("sale_order_postings").delete().eq("order_no",orderNo).eq("kind","purchase"); if(dp.error) throw dp.error;
+    toast("✓ تم إلغاء الترحيل — الأمر رجع غير مُرحَّل","ok"); closeModal();
+    window._supPostMapAt=0; await supEnsurePostMap(true);
+  }catch(e){ toast("تعذر إلغاء الترحيل: "+(e.message||e),"err"); }
+}
+// ---- قفل التعديل بعد ترحيل الحسابات ----
+function supOrderLocked(orderNo){
+  const no=String(orderNo||"").trim(); if(!no) return false;
+  const m=window.supPostMap||{}; return !!(m[no+"|purchase"]||m[no+"|sales"]);
+}
+function supLockCheck(...nos){
+  const bad=nos.find(n=>supOrderLocked(n));
+  if(bad){ toast("أمر البيع "+bad+" اترحّلت حساباته — مفيش تعديل عليه. ألغِ الترحيل الأول من بيانات التوريد (تجميع حسب أمر البيع).","err"); return true; }
+  return false;
+}
+setTimeout(()=>{ try{ supEnsurePostMap(true); setInterval(()=>supEnsurePostMap(),30000); }catch(e){} },4000);
 
 // فتح / تعديل البوليصة من تاب "تجميع حسب أمر البيع":
 // لو الأمر فيه بوليصة واحدة تتفتح علطول، ولو أكتر من بوليصة تظهر قائمة اختيار.
@@ -9847,6 +9888,7 @@ async function editShipment(id){
 }
 async function delShipment(id){
   const s=state.shipments.find(x=>x.id===id); if(!s) return;
+  if(supLockCheck(s.saleOrderNo)) return;
   if(!await askConfirm(`حذف البوليصة ${s.policyNo} نهائيًا؟`)) return;
   state.shipments=state.shipments.filter(x=>x.id!==id); syncOrderDate(s.saleOrderNo); saveState(); renderSupply(); toast("تم الحذف","ok");
   if(editingId===id){ draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; }
@@ -10450,6 +10492,7 @@ async function igRunSaveConfirmed(label,noGetter,fn,statusFn){
 function soSaveConfirmed(){ return igRunSaveConfirmed('أمر البيع',()=>soDraft&&soDraft.orderNo,soSave,'soStatus'); }
 function qtSaveConfirmed(){ return igRunSaveConfirmed('عرض السعر',()=>qtDraft&&qtDraft.quoteNo,qtSave,'qtStatus'); }
 function soSave(){
+  if(supLockCheck(soDraft&&soDraft.orderNo)){ return; }
   if(!docsReady){ soStatus("لا يمكن حفظ أمر البيع: قاعدة البيانات غير متاحة. لم يتم الحفظ محليًا.",true); return; }
   if(soVirtualMode){
     const err=soTermsCheck(); if(err){ soStatus(err,true); return; }
@@ -10477,6 +10520,7 @@ function soSave(){
 }
 async function soDelete(){
   if(!soLoadedId) return;
+  if(supLockCheck(soDraft&&soDraft.orderNo)) return;
   // تحذير لو مرتبط ببوالص
   const linked = [...state.shipments,...state.policies].filter(s=>s.saleOrderId===soLoadedId);
   if(linked.length>0){ toast(`لا يمكن الحذف — مرتبط بـ ${linked.length} بوليصة. فك الربط أولًا.`,"err"); return; }
@@ -10489,6 +10533,7 @@ async function soDelete(){
 async function soClose(){
   if(!soLoadedId) return;
   const so = state.saleOrders.find(x=>x.id===soLoadedId); if(!so) return;
+  if(supLockCheck(so.orderNo)) return;
   const r = soComputeRemaining(so);
   const msg = r.totalRemaining>0.0005
     ? `هذا الأمر فيه كمية متبقية ${r.totalRemaining.toFixed(3)} طن.\n\nإقفاله الآن سيمنع استدعاءه في بوالص جديدة.\n\nمتأكد؟`
