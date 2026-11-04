@@ -303,6 +303,11 @@ tbody tr:last-child td{border-bottom:none}
 
 /* page header */
 .page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+/* شريط الحفظ/الإجراءات ثابت فوق في شاشة البوليصة وأمر البيع */
+body.page-shipments .page-head,body.page-saleOrder .page-head{position:sticky!important;top:-24px;z-index:50;background:var(--bg);padding:14px 10px 12px;margin:-24px -24px 14px;border-bottom:3px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.25),0 0 0 1px rgba(212,160,23,.3)}
+body.page-shipments .page-head h2,body.page-saleOrder .page-head h2{font-size:16px;margin:0}
+body.page-shipments .page-head .btn,body.page-saleOrder .page-head .btn{min-height:34px;padding:7px 13px;font-size:12.5px;font-weight:700}
+body.page-shipments .page-head .chip,body.page-saleOrder .page-head .chip{font-size:11px;padding:3px 10px}
 .page-head h2{font-size:20px;color:var(--text)}
 .page-head .spacer{flex:1}
 
@@ -3418,6 +3423,7 @@ function go(page){
   currentPage = page;
   try{ tbClose(); }catch(e){}
   closeSidebar();
+  try{ document.body.className = String(document.body.className||"").replace(/\bpage-[a-zA-Z0-9_]+\b/g,"").trim()+" page-"+page; }catch(e){}
   renderNav();
   const titles = {
     dashboard:["لوحة التحكم","نظرة عامة على النظام"],
@@ -9789,9 +9795,11 @@ function viewSaleOrder(){
     <h2>${loaded?"أمر بيع رقم "+escapeHtml(d.orderNo):"أمر بيع جديد"}</h2>
     ${loaded?(d.closed?'<span class="chip warn">مقفول</span>':'<span class="chip ok">مفتوح</span>'):'<span class="chip">جديد</span>'}
     <div class="spacer"></div>
-    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال الأمر</button>`):""}
+    <button class="btn" onclick="soSave()" style="background:var(--gold);color:#1a1a1a;font-weight:800">💾 حفظ الأمر</button>
+    ${loaded?`<button class="btn ghost" onclick="soDownloadPdf()">⬇ PDF</button>`:''}
+    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال</button>`):""}
     <button class="btn ghost sm" onclick="soNew()">+ جديد</button>
-    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة السابقة</button>':''}
+    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
@@ -12871,33 +12879,33 @@ function salesInstallmentsExport(format){
     }).join("")}</tr>`;
   }).join("");
   const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left;font-size:13px">💰 الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  // بطاقات KPI احترافية — مطابقة لتصميم الشاشة
-  const kpi = (lbl,val,sub,accent)=>`<div style="background:#fff;border:1px solid #e5e7eb;border-top:4px solid ${accent};border-radius:10px;padding:12px 14px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.05);text-align:center">
-    <div style="font-size:10.5px;color:#6b7280;font-weight:700;margin-bottom:5px;letter-spacing:.3px">${lbl}</div>
-    <div style="font-size:19px;font-weight:900;color:#111;line-height:1.1;direction:ltr">${val}</div>
-    <div style="font-size:10px;color:#9ca3af;margin-top:3px">${sub}</div>
-  </div>`;
+  // شريط KPI أفقي من سطر واحد — احترافي ومضغوط للغاية
   const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
-  const kpis = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 10px">
-    ${kpi("عدد الأقساط",rows.length+" قسط","&nbsp;","#64748b")}
-    ${kpi("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
-    ${kpi("المسدد",n(total("paid")),paidRows.length+" قسط مسدد","#16a34a")}
-    ${kpi("المتبقي",n(total("remaining")),cur,"#d97706")}
-    ${kpi("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#dc2626")}
-    ${nearRows.length?kpi("قريب الاستحقاق",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط (7 أيام)","#eab308"):""}
+  const kpiLine = (lbl,val,sub,accent)=>`<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:#fff;border-right:3px solid ${accent};border-radius:0 4px 4px 0;white-space:nowrap">
+    <span style="color:#6b7280;font-size:10px;font-weight:700">${lbl}:</span>
+    <b style="color:#111;font-size:11.5px;direction:ltr;font-variant-numeric:tabular-nums">${val}</b>
+    ${sub?`<span style="color:#9ca3af;font-size:9px">${sub}</span>`:''}
+  </span>`;
+  const kpis = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0;padding:5px 8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px">
+    ${kpiLine("عدد الأقساط",rows.length+" قسط","","#64748b")}
+    ${kpiLine("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
+    ${kpiLine("المسدد",n(total("paid")),paidRows.length+" مسدد","#16a34a")}
+    ${kpiLine("المتبقي",n(total("remaining")),cur,"#d97706")}
+    ${kpiLine("المتأخر",n(total("lateRemaining")),lateRows.length+" متأخر","#dc2626")}
+    ${nearRows.length?kpiLine("قريب (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308"):""}
   </div>`;
-  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;justify-content:center">
-    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:14px;font-size:11px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
+  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:3px 0;justify-content:center">
+    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:12px;font-size:9.5px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
   const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
     *{box-sizing:border-box}
-    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:14px 18px;background:#f8fafc;margin:0}
-    .doc{background:#fff;padding:18px 20px;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
-    .hdr{text-align:center;padding:14px 10px 16px;background:linear-gradient(180deg,#fffbea 0%,#fff 100%);border-bottom:3px solid #d4a017;border-radius:10px 10px 0 0;margin:-18px -20px 10px}
-    .hdr .emoji{font-size:28px;margin-bottom:4px}
-    .hdr h1{margin:4px 0 2px;font-size:22px;color:#1a1a1a;font-weight:900}
-    .hdr .en{color:#d4a017;font-size:13px;letter-spacing:3px;font-weight:800}
-    .hdr .sub{color:#6b7280;font-size:11px;margin-top:4px}
+    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0}
+    .doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
+    .hdr{text-align:center;padding:5px 10px 6px;background:linear-gradient(90deg,#fffbea 0%,#fff 50%,#fffbea 100%);border-bottom:2px solid #d4a017;border-radius:6px 6px 0 0;margin:-8px -12px 5px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
+    .hdr .emoji{font-size:16px;margin:0}
+    .hdr h1{margin:0;font-size:15px;color:#1a1a1a;font-weight:900}
+    .hdr .en{color:#d4a017;font-size:10px;letter-spacing:2px;font-weight:800}
+    .hdr .sub{color:#6b7280;font-size:10px;margin:0}
     .meta{text-align:center;color:#374151;font-size:11.5px;background:#f9fafb;padding:9px 14px;border-radius:6px;margin:10px 0;border:1px solid #e5e7eb}
     .meta b{color:#111}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
@@ -12909,11 +12917,14 @@ function salesInstallmentsExport(format){
     tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
     .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
     @media print{
-      @page{size:A4 landscape;margin:6mm}
+      @page{size:A4 landscape;margin:5mm}
       body{padding:0;background:#fff}
-      .doc{box-shadow:none;border-radius:0;padding:10px}
-      .hdr{border-radius:0;margin:-10px -10px 10px}
+      .doc{box-shadow:none;border-radius:0;padding:4px 6px}
+      .hdr{border-radius:0;margin:-4px -6px 3px;padding:3px 10px 4px}
+      .hdr h1{font-size:13px}.hdr .en{font-size:9px}.hdr .sub{font-size:9px}
       tr{break-inside:avoid}
+      thead{display:table-header-group}
+      tfoot{display:table-footer-group}
       *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     }
   </style></head><body>
@@ -14889,9 +14900,62 @@ function render(){
 function set(s){ st=s; render(); }
 window.igSyncClick=function(){
   const s=($("igSync")||{}).dataset&&$("igSync").dataset.s;
-  if((s==="error"||s==="pending")&&navigator.onLine){ try{ syncMaster(); }catch(e){} return; }
-  try{ toast($("igSync").title,s==="error"?"err":"ok"); }catch(e){}
+  if(s==="error"){ showSyncErrorDialog(); return; }
+  if(s==="pending"&&navigator.onLine){ try{ syncMaster(); }catch(e){} return; }
+  try{ toast($("igSync").title,s==="offline"?"":""); }catch(e){}
 };
+window.showSyncErrorDialog=function(){
+  const err = String(window.igSyncErr||"سبب غير معروف");
+  const user = (typeof currentUser!=="undefined" && currentUser) ? currentUser : "—";
+  const isRLS = /policy|rls|permission|row.?level|violates|forbidden|not.?authorized|401|403/i.test(err);
+  const isNetwork = /network|fetch|timeout|ECONN|offline|disconnected/i.test(err);
+  const isColumn = /column|does not exist|schema cache/i.test(err);
+  let diagnosis = "", fixSql = "";
+  if(isRLS){
+    diagnosis = "🔒 سبب الخطأ الأرجح: صلاحيات RLS على Supabase ترفض الكتابة من حساب هذا المستخدم. الأدمن لا يرى هذه البيانات لأنها لم تصل للسيرفر أصلاً — محفوظة محلياً فقط على جهاز المستخدم.";
+    fixSql = `-- IRON GATE — فتح صلاحيات الكتابة لكل المستخدمين الموثّقين
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'customers','suppliers','employees','drivers','trucks','banks','safes',
+    'shipments','shipment_items','sale_orders','sale_order_items',
+    'treasury_entries','sale_order_payment_plans','sale_order_payment_schedule',
+    'quotes','opening_balances','order_terms','app_counters','settings'
+  ] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t) THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+      EXECUTE format('DROP POLICY IF EXISTS "ig_all_authenticated" ON public.%I', t);
+      EXECUTE format('CREATE POLICY "ig_all_authenticated" ON public.%I FOR ALL TO authenticated USING (true) WITH CHECK (true)', t);
+      EXECUTE format('GRANT ALL ON public.%I TO authenticated, anon', t);
+    END IF;
+  END LOOP;
+END $$;
+NOTIFY pgrst, 'reload schema';`;
+  } else if(isColumn){ diagnosis = "📋 عمود مفقود في جدول Supabase. راجع رسالة الخطأ وأضف العمود."; }
+  else if(isNetwork){ diagnosis = "🌐 مشكلة في الاتصال بالإنترنت. ستُعاد المحاولة تلقائياً."; }
+  else { diagnosis = "ℹ راجع رسالة الخطأ الكاملة أدناه للتشخيص."; }
+  const diagText = `المستخدم: ${user}\nالوقت: ${new Date().toLocaleString("ar-EG")}\nالخطأ: ${err}`;
+  const body = `<div style="padding:4px 0">
+    <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:14px;color:#991b1b;font-weight:700;font-size:13px;line-height:1.7">⚠ فشل رفع البيانات للسيرفر. شغلك محفوظ على جهازك فقط حاليًا.</div>
+    <div style="background:#fffbea;border:1px solid #e8d7ad;border-radius:8px;padding:14px;margin-bottom:12px;color:#1a1a1a;font-weight:600;line-height:1.7">${diagnosis}</div>
+    <div style="margin-bottom:10px"><b style="color:#92400e">تفاصيل الخطأ:</b></div>
+    <pre dir="ltr" style="background:#1a1a1a;color:#fef3c7;padding:14px;border-radius:8px;font-size:11px;line-height:1.6;overflow:auto;max-height:200px;white-space:pre-wrap;word-break:break-word;margin:0 0 12px">${escapeHtml(diagText)}</pre>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn" onclick="_copySyncDiag()">📋 نسخ التفاصيل</button>
+      <button class="btn primary" onclick="(async()=>{try{await syncMaster();toast('✓ تمت إعادة المحاولة','ok');closeModal();}catch(e){toast('لسه فيه مشكلة','err');}})()" style="background:#d4a017;color:#1a1a1a;font-weight:800">🔄 إعادة محاولة الرفع</button>
+      ${fixSql?`<button class="btn" onclick="_copySyncSql()">📋 نسخ سكربت الإصلاح (SQL)</button><button class="btn" onclick="window.open('https://supabase.com/dashboard/project/_/sql/new','_blank')">🔗 Supabase SQL Editor</button>`:""}
+    </div>
+    ${fixSql?`<details><summary style="cursor:pointer;color:#92400e;font-weight:700;padding:6px 0">عرض سكربت الإصلاح</summary>
+    <pre dir="ltr" style="background:#1a1a1a;color:#fef3c7;padding:14px;border-radius:8px;font-size:11px;line-height:1.6;overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-word;margin-top:8px">${escapeHtml(fixSql)}</pre></details>`:""}
+  </div>`;
+  window.__syncDiagText=diagText; window.__syncFixSql=fixSql;
+  openModal("⚠ تشخيص فشل المزامنة",body,()=>true);
+  const bd=document.getElementById('modalBackdrop'); if(bd){const foot=bd.querySelector('.mfoot');if(foot){foot.innerHTML=`<button class="btn" onclick="closeModal()">إغلاق</button>`;}}
+};
+window._copySyncDiag=function(){const t=window.__syncDiagText||"";if(!t)return;if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(()=>toast("✓ تم النسخ","ok"),()=>_copyFB(t));else _copyFB(t);};
+window._copySyncSql=function(){const t=window.__syncFixSql||"";if(!t)return;if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(()=>toast("✓ تم نسخ السكربت — الصقه في Supabase","ok"),()=>_copyFB(t));else _copyFB(t);};
+function _copyFB(t){const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast("✓ تم النسخ","ok");}catch(e){toast("انسخ يدويًا","err");}document.body.removeChild(ta);}
 const _sched=window.scheduleSync;
 window.scheduleSync=function(){
   const before=syncTimer, r=_sched.apply(this,arguments);
