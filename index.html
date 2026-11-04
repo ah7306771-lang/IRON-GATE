@@ -303,6 +303,11 @@ tbody tr:last-child td{border-bottom:none}
 
 /* page header */
 .page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+/* شريط الحفظ/الإجراءات بيلزق فوق في شاشة البوليصة وأمر البيع لما تنزل */
+body.page-shipments .page-head,body.page-saleOrder .page-head{position:sticky!important;top:-24px;z-index:50;background:var(--bg);padding:14px 10px 12px;margin:-24px -24px 14px;border-bottom:3px solid var(--gold);box-shadow:0 8px 16px rgba(0,0,0,.25),0 0 0 1px rgba(212,160,23,.3)}
+body.page-shipments .page-head h2,body.page-saleOrder .page-head h2{font-size:16px;margin:0}
+body.page-shipments .page-head .btn,body.page-saleOrder .page-head .btn{min-height:34px;padding:7px 13px;font-size:12.5px;font-weight:700}
+body.page-shipments .page-head .chip,body.page-saleOrder .page-head .chip{font-size:11px;padding:3px 10px}
 .page-head h2{font-size:20px;color:var(--text)}
 .page-head .spacer{flex:1}
 
@@ -1942,27 +1947,6 @@ table.qs-table.qs-overdue td:nth-child(3){color:#b91c1c;font-weight:800}
   #igViewer .igv-page img{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
 </style>
-<style id="md-acc-css">
-.md-acc{position:relative}
-.md-acc-row{display:grid;grid-template-columns:minmax(110px,.8fr) 38px minmax(140px,1.4fr) 34px;gap:6px;align-items:center}
-.md-acc-code{direction:ltr;text-align:right;font-family:monospace;font-weight:800;color:#92400e}
-.md-acc-btn,.md-acc-clear{height:38px;border:1px solid #e5d7b1;border-radius:8px;background:linear-gradient(180deg,#fffbea,#fef3c7);color:#92400e;font-size:16px;cursor:pointer;font-weight:800}
-.md-acc-btn:hover{background:linear-gradient(180deg,#fef3c7,#fde68a);border-color:#d4a017}
-.md-acc-clear{background:#fff;color:#b91c1c;border-color:#e5e7eb;font-size:13px}
-.md-acc-pop{position:fixed;z-index:2147483000;background:#fff;border:2px solid #d4a017;border-radius:10px;box-shadow:0 10px 28px rgba(212,160,23,.35);padding:8px}
-.md-acc-pop[hidden]{display:none}
-.md-acc-search{width:100%;margin-bottom:6px;border:2px solid #d4a017!important;background:#fff!important;color:#1a1a1a!important}
-.md-acc-results{max-height:min(300px,calc(100vh - 140px));overflow:auto}
-.md-acc-item{display:flex;width:100%;gap:14px;align-items:center;padding:9px 12px;border:0;border-bottom:1px solid #f1ead6;background:#fff;color:#1a1a1a;text-align:right;cursor:pointer;font-weight:600;font-family:inherit}
-.md-acc-item:hover{background:linear-gradient(90deg,#fffbea,#fef3c7)}
-.md-acc-item b{min-width:125px;text-align:left;color:#92400e;font-weight:900}
-.md-acc-empty{padding:12px;color:#9ca3af;text-align:center}
-@media(max-width:560px){.md-acc-row{grid-template-columns:1fr 38px 34px}.md-acc-name{grid-column:1/-1;order:5}}
-</style>
-<style id="so-save-bottom-css">
-.so-save-bottom{display:flex;margin:18px 0 10px}
-.so-save-bottom .btn{flex:1;min-height:50px;font-size:15px;font-weight:800;letter-spacing:.2px}
-</style>
 </head>
 <body>
 
@@ -2228,7 +2212,7 @@ const defaults = {
     { code: "MAIN", name: "الخزنة الرئيسية" },
     { code: "CHK", name: "خزنة الشيكات" }
   ],
-  settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م", warehouses: [] },
+  settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م" },
   // placeholders for next phases
   shipments: [],
   policies: [],
@@ -2775,15 +2759,11 @@ async function syncDocs(){
     for(let i=0;i<d.up.length;i+=100){
       const heads=[], items=[], ids=[];
       d.up.slice(i,i+100).forEach(([r,p])=>{ const k=(g==="ship")?packShipment(r,p):packSO(r); heads.push(k.row); items.push(...k.items); ids.push(k.row.id); });
-      window.igSyncStep=cfg.t+" (حفظ الرأس)";
       let r=await sb.from(cfg.t).upsert(heads,{ onConflict:"id" }); if(r.error) throw r.error;
-      window.igSyncStep=cfg.it+" (مسح البنود القديمة)";
       r=await sb.from(cfg.it).delete().in(cfg.fk,ids); if(r.error) throw r.error;
-      window.igSyncStep=cfg.it+" (إضافة البنود)";
       for(let j=0;j<items.length;j+=500){ r=await sb.from(cfg.it).insert(items.slice(j,j+500)); if(r.error) throw r.error; }
     }
     for(let i=0;i<d.del.length;i+=100){
-      window.igSyncStep=cfg.t+" (حذف)";
       const r=await sb.from(cfg.t).delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
     }
     if(!docMeta.has(g)){
@@ -2796,7 +2776,6 @@ async function syncDocs(){
   clearLocalSaleOrderCache();
   const cn=counterNow();
   if(cn!==counterSnap){
-    window.igSyncStep="app_counters (عدّاد أوامر البيع)";
     const r=await sb.from("app_counters").upsert({ name:"soNextNum", value:Number(cn) },{ onConflict:"name" }); if(r.error) throw r.error;
     counterSnap=cn;
   }
@@ -2835,18 +2814,12 @@ async function syncMaster(){
       }
       lastSnaps[k] = snap;
     }
-    window.igSyncStep="أوامر البيع/البوالص"; await syncDocs();
-    window.igSyncStep="الخزينة"; await syncTreasury();
-    window.igSyncStep="عروض الأسعار"; await syncQuotes();
-    window.igSyncStep="أرصدة أول المدة"; await syncOpeningBalances();
-    window.igSyncStep="شروط السداد"; await syncOrderTerms(); window.igSyncErr=null; window.igSyncStep="";
-  }catch(e){
-    const det=[e&&e.code?("كود: "+e.code):"", e&&e.details?("تفاصيل: "+e.details):"", e&&e.hint?("تلميح: "+e.hint):""].filter(Boolean).join(" | ");
-    const full=String((e&&e.message)||e)+(det?" — "+det:"")+(window.igSyncStep?" — الخطوة: "+window.igSyncStep:"");
-    window.igSyncErr=full; try{ console.error("sync failed:",e,"step:",window.igSyncStep); }catch(_){}
-    toast("فشل الحفظ على السيرفر: "+full,"err");
-    if(window.igLastErrShown!==full){ window.igLastErrShown=full; try{ _igDialog({title:"فشل الرفع — سبب الخطأ",msg:full,ok:"حسنًا",single:true,danger:true}); }catch(_){} }
-  }
+    await syncDocs();
+    await syncTreasury();
+    await syncQuotes();
+    await syncOpeningBalances();
+    await syncOrderTerms(); window.igSyncErr=null;
+  }catch(e){ window.igSyncErr=String((e&&e.message)||e); toast("فشل الحفظ على السيرفر: "+(e.message||e),"err"); }
   finally{ syncBusy = false; if(syncAgain){ syncAgain = false; scheduleSync(); } }
 }
 // تحديث تلقائي من الأجهزة الأخرى عبر Supabase Realtime.
@@ -2908,7 +2881,7 @@ const SCREENS = [
     {id:"diameters",label:"الأقطار"},{id:"types",label:"الأنواع"},
     {id:"factories",label:"المصانع"},{id:"quoteDescs",label:"أوصاف عرض السعر"},
     {id:"cementTypes",label:"أنواع الاسمنت"},{id:"statuses",label:"حالات التعتيق"},
-    {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"},{id:"warehouses",label:"المخازن"}
+    {id:"banks",label:"البنوك"},{id:"safes",label:"الخزائن"}
   ]},
   { id:"settings",  label:"الإعدادات العامة",  icon:"⚙",  acts:["edit"] },
   { id:"quote",     label:"عرض السعر",         icon:"💲", acts:["add","edit","delete","print"] },
@@ -2964,9 +2937,6 @@ function permsGrant(p, scr, acts){
   (acts||[]).forEach(a=>{ if(a==="*") s.acts.forEach(x=>{ p.screens[scr][x]=true; }); else p.screens[scr][a]=true; });
   return p;
 }
-// بنود قائمة "+ جديد" في الشريط العلوي (كل بند يحتاج صلاحية "إضافة" في شاشته + السماح له من نموذج المستخدم)
-const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
-const quickOn=(p,id)=>!p||!p.quick||typeof p.quick!=="object"||p.quick[id]!==false;
 const ROLE_PRESETS = {
   admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
   manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
@@ -3004,7 +2974,6 @@ function normalizePerms(p){
     if(s.prices){ const h = p.hide[s.id] = p.hide[s.id]||{}; h.buy = h.buy===true; h.sell = h.sell===true; }
   });
   p.sys.backup = p.sys.backup===true;
-  if(p.quick&&typeof p.quick==="object"){ const q={}; QUICK_NEW_ITEMS.forEach(x=>{ q[x[2]]=p.quick[x[2]]!==false; }); p.quick=q; } else delete p.quick;
   return p;
 }
 
@@ -3326,11 +3295,7 @@ const navGroups = [
     { id:"gl", tab:"accounts", icon:"🌳", label:"دليل الحسابات" },
     { id:"gl", tab:"centers", icon:"🎯", label:"مراكز التكلفة" },
     { id:"gl", tab:"years", icon:"📅", label:"السنوات والفترات" },
-    { id:"gl", tab:"journals", icon:"📚", label:"اليوميات" },
-    { sep:"التقارير" },
-    { id:"gl", tab:"rpt_posted", icon:"📑", label:"تقرير القيود المرحّلة" },
-    { id:"gl", tab:"rpt_acct", icon:"📋", label:"كشف حساب لكل الحسابات" },
-    { id:"gl", tab:"rpt_tb", icon:"⚖️", label:"ميزان المراجعة" }
+    { id:"gl", tab:"journals", icon:"📚", label:"اليوميات" }
   ]}
 ];
 
@@ -3418,6 +3383,8 @@ function go(page){
   currentPage = page;
   try{ tbClose(); }catch(e){}
   closeSidebar();
+  // ضع كلاس على الـbody لتفعيل تنسيقات خاصة بكل شاشة (مثلاً sticky page-head)
+  try{ document.body.className = String(document.body.className||"").replace(/\bpage-[a-zA-Z0-9_]+\b/g,"").trim()+" page-"+page; }catch(e){}
   renderNav();
   const titles = {
     dashboard:["لوحة التحكم","نظرة عامة على النظام"],
@@ -3497,7 +3464,7 @@ const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt
 const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const glDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const glCan=a=>can("gl",a);
-const glTabs=[ ["entries","قيود يومية"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"],["rpt_posted","تقرير القيود المرحّلة"],["rpt_acct","كشف حساب لكل الحسابات"],["rpt_tb","ميزان المراجعة"],["rpt_exp","تحليل المصروفات الشهري"],["rpt_cc","موقف مركز تكلفة"] ];
+const glTabs=[ ["entries","قيود يومية"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"] ];
 // مؤشرات النظام (System Indicators) — تحدد الأب الرئيسي لكل مجموعة حسابات حتى يتعرف النظام تلقائيًا
 const GL_IND_KEY = "ig_gl_indicators_v1";
 const GL_INDICATORS_DEF = [
@@ -3529,9 +3496,9 @@ function glIndicatorAccount(key){
 }
 function viewGL(){
   const title=glTabs.find(([k])=>k===glState.tab)?.[1]||"المحاسبة العامة";
-  const descs = {entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية",indicators:"تحديد أب الإيرادات/المصروفات والحسابات الرئيسية",rpt_posted:"تقرير تفصيلي بالقيود المُرحّلة (عرض / طباعة / Excel)",rpt_acct:"كشف حساب تفصيلي أو إجمالي لكل الحسابات بأرصدة أول المدة",rpt_tb:"ميزان مراجعة على مستوى الحسابات بأرصدة أول المدة والحركة وآخر المدة",rpt_exp:"مصروفات كل شهر لكل حساب من مؤشر المصروفات — مع الإجمالي والتغير ونسبته (عرض / طباعة / Excel)",rpt_cc:"مصروفات مركز تكلفة: إجمالي على مستوى الحساب وتفصيل ببيانات القيود (عرض / طباعة / Excel)"};
-  const icons = {entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚",rpt_posted:"📑",rpt_acct:"📋",rpt_tb:"⚖️",rpt_exp:"💸",rpt_cc:"🎯"};
-  const tabColors = {entries:"#d4a017",posted:"#059669",accounts:"#1e40af",centers:"#8b5cf6",years:"#d97706",journals:"#dc2626",indicators:"#92400e",rpt_posted:"#059669",rpt_acct:"#1e40af",rpt_tb:"#17606f",rpt_exp:"#dc2626",rpt_cc:"#8b5cf6"};
+  const descs = {entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية",indicators:"تحديد أب الإيرادات/المصروفات والحسابات الرئيسية"};
+  const icons = {entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚"};
+  const tabColors = {entries:"#d4a017",posted:"#059669",accounts:"#1e40af",centers:"#8b5cf6",years:"#d97706",journals:"#dc2626",indicators:"#92400e"};
   const cards = glTabs.map(([k,n])=>{
     const c = tabColors[k] || "#64748b";
     return `<button type="button" class="gl-home-card" onclick="glSetTab('${k}')" style="--c:${c}">
@@ -3600,386 +3567,7 @@ function glNavTab(t){glState.tab=t;glState.home=false;if(currentPage!=="gl"){go(
 function glSetTab(t){glState.tab=t;glState.home=false;const c=document.getElementById("content");if(c&&currentPage==="gl"){c.innerHTML=viewGL();glRender();}}
 function glGoHome(){glState.home=true;const c=document.getElementById("content");if(c&&currentPage==="gl")c.innerHTML=viewGL();}
 async function glLoad(){if(currentPage!=="gl")return;glState.loading=true;glState.error="";let el=document.getElementById("glBody");if(el)el.textContent="جاري تحميل بيانات المحاسبة…";try{const specs=[ ["accounts","gl_accounts","account_code"],["centers","gl_cost_centers","center_code"],["years","gl_fiscal_years","start_date"],["periods","gl_periods","period_no"],["journals","gl_journals","journal_code"],["entries","gl_entries","entry_date"] ];const out=await Promise.all(specs.map(async([k,t,o])=>{const r=await sb.from(t).select("*").order(o,{ascending:true});if(r.error)throw new Error(t+": "+r.error.message);return [k,r.data||[]]}));out.forEach(([k,v])=>glState[k]=v);const lr=await sb.from("gl_entry_lines").select("*").order("line_no");if(lr.error)throw lr.error;glState.lines=lr.data||[];const sr=await sb.from("gl_posting_sources").select("*");glState.sources=sr.error?[]:(sr.data||[]);glState.loading=false;glRender();}catch(e){glState.loading=false;glState.error=e.message||String(e);glRender();}}
-function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
-
-// ============== موقف مركز تكلفة (Cost Center Position) ==============
-// المصدر: القيود المُرحّلة فقط — الحسابات من مؤشر «حساب المصروفات الرئيسي» (expense_root) وكل فروعه
-// مركز التكلفة مخزّن في بيان السطر بصيغة «— [مركز: الاسم]» (نفس طريقة باقي التقارير)
-const GL_CC_CSS=`.glcc-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid #bdd7ee;border-radius:12px;background:linear-gradient(180deg,#f7fbff,#fff)}
-.glcc-f label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glcc-f label.ck{flex-direction:row;align-items:center;gap:6px;cursor:pointer;padding:9px 12px;border:1px solid #d6e4f2;border-radius:10px;background:#fff}
-.glcc-run{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px;padding:12px 14px;border:1px solid #bdd7ee;border-radius:12px;background:#f7fbff}
-.glcc-run label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glcc-warn{margin-bottom:12px;padding:10px 14px;border:1px solid #f3d38a;background:#fff8e1;color:#7a5c0b;border-radius:10px;font-size:12.5px;font-weight:700}
-#glCcOut{background:#fff;border:1px solid #bdd7ee;border-radius:12px;padding:16px;overflow:auto}
-.glcc-sec{background:#2e75b6;color:#fff;font-weight:900;text-align:center;padding:8px;font-size:14px;margin-top:14px;border-radius:6px 6px 0 0}
-.glcc-wrap td.nm{text-align:right}.glcc-wrap td.tx{text-align:right}
-.glcc-wrap tr.ah td{background:#ddebf7;color:#1f4e79;font-weight:900;border-top:2px solid #9dc3e6}
-.glcc-wrap tr.sb td{background:#f1f5f9;font-weight:900;color:#1f4e79}
-.glcc-wrap tbody tr:nth-child(even){background:transparent}`;
-function glCcState(){
-  if(!glState.cc){const t=glDate();glState.cc={from:t.slice(0,8)+'01',to:t,dim:'2',center:'',mode:'both',noZero:true,dest:'preview'};}
-  return glState.cc;
-}
-function glCcCenterOptions(dim,sel){
-  const list=glState.centers.filter(c=>c.is_active!==false&&(!dim||String(c.dimension_no)===String(dim)))
-    .slice().sort((a,b)=>(Number(a.dimension_no)||0)-(Number(b.dimension_no)||0)||String(a.center_code).localeCompare(String(b.center_code),'en',{numeric:true}));
-  return `<option value="">— كل المراكز${dim?' (البُعد '+dim+')':''} —</option>`+list.map(c=>`<option value="${glEsc(c.id)}" ${String(sel)===String(c.id)?'selected':''}>${dim?'':'['+glEsc(c.dimension_no)+'] '}${glEsc(c.center_code)} — ${glEsc(c.center_name)}${c.is_group?' (تجميعي)':''}</option>`).join('');
-}
-function glRenderRptCc(){
-  const f=glCcState();
-  const ind=glIndicatorAccount('expense_root');
-  const warn=ind?'':`<div class="glcc-warn">⚠️ مؤشر «حساب المصروفات الرئيسي» غير محدد في «مؤشرات النظام» — التقرير هيعرض كل حسابات النوع «مصروف» تلقائيًا.</div>`;
-  return `<style>${GL_TB_CSS}\n${GL_CC_CSS}</style>${warn}
-  <div class="glcc-f">
-    <label>من تاريخ<input class="input" id="glCcFrom" type="date" value="${glEsc(f.from)}" onchange="glCcSave()"></label>
-    <label>إلى تاريخ<input class="input" id="glCcTo" type="date" value="${glEsc(f.to)}" onchange="glCcSave()"></label>
-    <label>بُعد مركز التكلفة<select class="input" id="glCcDim" onchange="glCcDimChanged()"><option value="" ${f.dim===''?'selected':''}>الكل</option><option value="1" ${f.dim==='1'?'selected':''}>مركز تكلفة 1</option><option value="2" ${f.dim==='2'?'selected':''}>مركز تكلفة 2</option></select></label>
-    <label>مركز التكلفة<select class="input" id="glCcCenter" onchange="glCcSave()">${glCcCenterOptions(f.dim,f.center)}</select></label>
-    <label>نوع العرض<select class="input" id="glCcMode" onchange="glCcSave()"><option value="both" ${f.mode==='both'?'selected':''}>إجمالي على مستوى الحساب + تفصيل القيود</option><option value="sum" ${f.mode==='sum'?'selected':''}>إجمالي على مستوى الحساب فقط</option><option value="det" ${f.mode==='det'?'selected':''}>تفصيل القيود فقط</option></select></label>
-    <label class="ck"><input type="checkbox" id="glCcNoZero" ${f.noZero?'checked':''} onchange="glCcSave()"> إخفاء الحسابات بدون حركة</label>
-  </div>
-  <div class="glcc-run">
-    <label>جهة التقرير<select class="input" id="glCcDest" onchange="glCcSave()"><option value="preview" ${f.dest==='preview'?'selected':''}>Preview — عرض على الشاشة</option><option value="print" ${f.dest==='print'?'selected':''}>Print / PDF — طباعة</option><option value="excel" ${f.dest==='excel'?'selected':''}>Excel — ملف إكسيل</option></select></label>
-    <button class="btn primary" type="button" onclick="glCcRun()">▶ تنفيذ</button>
-    <span style="font-size:11.5px;color:#6b7280;align-self:center">مصدر البيانات: القيود المُرحّلة فقط — الحسابات من مؤشر المصروفات</span>
-  </div>
-  <div id="glCcOut"><div class="gltb-empty">حدد الفترة ومركز التكلفة ثم اضغط «تنفيذ»</div></div>`;
-}
-function glCcSave(){
-  const f=glCcState(),g=id=>document.getElementById(id);
-  f.from=g('glCcFrom')?.value||f.from||'';f.to=g('glCcTo')?.value||f.to||'';
-  if(g('glCcDim'))f.dim=g('glCcDim').value;
-  if(g('glCcCenter'))f.center=g('glCcCenter').value;
-  f.mode=g('glCcMode')?.value||f.mode||'both';
-  if(g('glCcNoZero'))f.noZero=!!g('glCcNoZero').checked;
-  f.dest=g('glCcDest')?.value||f.dest||'preview';
-}
-function glCcDimChanged(){
-  const f=glCcState(),g=id=>document.getElementById(id);
-  f.dim=g('glCcDim')?.value||'';f.center='';
-  const sel=g('glCcCenter');if(sel)sel.innerHTML=glCcCenterOptions(f.dim,'');
-}
-function glCcBuild(){
-  glCcSave();const f=glCcState();
-  if(!f.from||!f.to){toast('حدد من تاريخ وإلى تاريخ','err');return null;}
-  if(f.from>f.to){toast('تاريخ البداية أكبر من تاريخ النهاية','err');return null;}
-  const acc={};glState.accounts.forEach(a=>acc[a.id]=a);
-  // شجرة المصروفات من مؤشر النظام
-  const ind=glIndicatorAccount('expense_root'),viaInd=!!ind;
-  const roots=ind?[ind]:glState.accounts.filter(a=>a.account_type==='expense'&&(!a.parent_id||!acc[a.parent_id]||acc[a.parent_id].account_type!=='expense'));
-  const rootSet=new Set(roots.map(r=>r.id)),cc={};
-  const chainOf=a=>{
-    if(cc[a.id]!==undefined)return cc[a.id];
-    const out=[];let c=a,g=0;
-    while(c&&g++<15){out.push(c);if(rootSet.has(c.id))return cc[a.id]=out;c=c.parent_id?acc[c.parent_id]:null;}
-    return cc[a.id]=null;
-  };
-  // مراكز التكلفة المطلوبة (بالاسم لأن السطر بيخزّن اسم المركز في البيان)
-  let names=null,ccLabel='كل المراكز';
-  const centers=glState.centers;
-  if(f.center){
-    const sel=centers.find(c=>String(c.id)===String(f.center));
-    if(!sel){toast('مركز التكلفة غير موجود','err');return null;}
-    const ids=new Set([sel.id]);let grew=true,g=0;
-    while(grew&&g++<10){grew=false;centers.forEach(c=>{if(c.parent_id&&ids.has(c.parent_id)&&!ids.has(c.id)){ids.add(c.id);grew=true;}});}
-    names=new Set();centers.forEach(c=>{if(ids.has(c.id))names.add(String(c.center_name||'').trim());});
-    ccLabel=`${sel.center_code} — ${sel.center_name}`;
-  }else if(f.dim){
-    names=new Set();centers.forEach(c=>{if(String(c.dimension_no)===String(f.dim))names.add(String(c.center_name||'').trim());});
-    ccLabel=`كل مراكز التكلفة ${f.dim}`;
-  }
-  const ccRe1=/\s*—\s*\[مركز:\s*([^\]]+)\]\s*$/,ccRe2=/^\[مركز:\s*([^\]]+)\]\s*$/;
-  const eMap={};
-  glState.entries.forEach(e=>{if(e.status!=='posted')return;const d=String(e.entry_date||'').slice(0,10);if(d>=f.from&&d<=f.to)eMap[e.id]={e,d};});
-  const per={};
-  const mk=a=>per[a.id]||(per[a.id]={a,rows:[],dr:0,cr:0});
-  if(!f.noZero){
-    glState.accounts.forEach(a=>{
-      if(a.is_active===false||!chainOf(a))return;
-      if(glState.accounts.some(c=>c.parent_id===a.id&&chainOf(c)))return;
-      mk(a);
-    });
-  }
-  glState.lines.forEach(l=>{
-    const m0=eMap[l.entry_id];if(!m0)return;
-    const a=acc[l.account_id];if(!a||!chainOf(a))return;
-    let d=String(l.description||''),ccName='';
-    const m=d.match(ccRe1)||d.match(ccRe2);
-    if(m){ccName=m[1].trim();d=d.replace(m[0],'').trim();}
-    if(names&&!names.has(ccName))return;
-    let hdr=String(m0.e.description||'').replace(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/,'').trim();
-    if(hdr==='قيد بدون بيان')hdr='';
-    const dr=Number(l.debit||0),cr=Number(l.credit||0);
-    const o=mk(a);o.dr+=dr;o.cr+=cr;
-    o.rows.push({date:m0.d,no:m0.e.entry_no||String(m0.e.id).slice(0,8),desc:d||hdr,cc:ccName,dr,cr,ln:l.line_no||0});
-  });
-  const list=Object.values(per).map(o=>{
-    o.rows.sort((x,y)=>x.date.localeCompare(y.date)||String(x.no).localeCompare(String(y.no),'en',{numeric:true})||x.ln-y.ln);
-    o.net=o.dr-o.cr;return o;
-  }).sort((x,y)=>String(x.a.account_code).localeCompare(String(y.a.account_code),'en',{numeric:true}));
-  const tot={dr:0,cr:0,net:0,cnt:0};
-  list.forEach(o=>{tot.dr+=o.dr;tot.cr+=o.cr;tot.net+=o.net;tot.cnt+=o.rows.length;});
-  return {f,list,tot,ccLabel,viaInd,rootNames:roots.map(r=>r.account_name)};
-}
-function glCcBody(d){
-  const {f,list,tot,ccLabel,viaInd,rootNames}=d;
-  const chips=`<span>الفترة: <b dir="ltr">${glAcDmy(f.from)} ← ${glAcDmy(f.to)}</b></span><span>مركز التكلفة: <b>${glEsc(ccLabel)}</b></span><span>الأب: <b>${glEsc(rootNames.join(' + ')||'—')}${viaInd?'':' (تلقائي)'}</b></span><span>عدد الحسابات: <b>${list.length}</b></span><span>عدد الحركات: <b>${tot.cnt}</b></span><span>المصدر: <b>القيود المرحّلة</b></span>`;
-  const head=`<div class="gltb-head"><div class="top"><span class="co">IRON GATE SUPPLIES</span><span class="rn">موقف مركز تكلفة &nbsp; ${glEsc(ccLabel)}</span></div><div class="gltb-chips">${chips}</div></div>`;
-  if(!list.length)return `<div class="gltb-wrap glcc-wrap">${head}<div class="gltb-empty">لا توجد حركات مصروفات على هذا المركز في الفترة المحددة</div></div>`;
-  const val=v=>`<td class="m ${Math.abs(v)<0.005?'z':''}">${glNum(v)}</td>`;
-  let h=head;
-  if(f.mode!=='det'){
-    const rows=list.map(o=>`<tr><td class="c"><b>${glEsc(o.a.account_code)}</b></td><td class="nm">${glEsc(o.a.account_name)}</td>${val(o.net)}</tr>`).join('');
-    h+=`<div class="glcc-sec">المصروفات — إجمالي على مستوى الحساب</div><table><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>القيمة</th></tr></thead><tbody>${rows}</tbody><tfoot><tr class="grand"><td colspan="2">إجمالي المصروفات</td>${val(tot.net)}</tr></tfoot></table>`;
-  }
-  if(f.mode!=='sum'){
-    const withRows=list.filter(o=>o.rows.length);
-    const body=withRows.map(o=>{
-      const lines=o.rows.map(r=>`<tr><td class="c">${glAcDmy(r.date)}</td><td class="c">${glEsc(r.no)}</td><td class="tx">${glEsc(r.desc)}</td><td class="tx">${glEsc(r.cc)}</td>${val(r.dr)}${val(r.cr)}</tr>`).join('');
-      return `<tr class="ah"><td colspan="6">${glEsc(o.a.account_code)} — ${glEsc(o.a.account_name)}</td></tr>${lines}<tr class="sb"><td colspan="4">إجمالي الحساب — الصافي: ${glNum(o.net)}</td>${val(o.dr)}${val(o.cr)}</tr>`;
-    }).join('');
-    h+=`<div class="glcc-sec">تفصيل القيود</div><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>مركز التكلفة</th><th>مدين</th><th>دائن</th></tr></thead><tbody>${body}</tbody><tfoot><tr class="grand"><td colspan="4">الإجمالي العام — الصافي: ${glNum(tot.net)}</td>${val(tot.dr)}${val(tot.cr)}</tr></tfoot></table>`;
-  }
-  return `<div class="gltb-wrap glcc-wrap">${h}</div>`;
-}
-function glCcPrint(d){
-  const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>موقف مركز تكلفة</title><style>@page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:11px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_TB_CSS}\n${GL_CC_CSS}</style></head><body>${glCcBody(d)}</body></html>`;
-  w.document.open();w.document.write(html);w.document.close();w.focus();
-  setTimeout(()=>{try{w.print();}catch(e){}},400);
-}
-async function glCcRun(){
-  const d=glCcBuild();if(!d)return;
-  const box=document.getElementById('glCcOut');if(box)box.innerHTML=glCcBody(d);
-  if(d.f.dest==='print')glCcPrint(d);
-  else if(d.f.dest==='excel')await glCcExcel(d);
-}
-async function glCcExcel(d){
-  const {f,list,tot,ccLabel,rootNames}=d;
-  const fname=`موقف_مركز_تكلفة_${f.from}_${f.to}.xlsx`;
-  const withRows=list.filter(o=>o.rows.length);
-  let ok=true;try{await glAcLoadExcelJS();}catch(e){ok=false;}
-  if(!ok||!window.ExcelJS){
-    if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');
-    const wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};
-    const info=['موقف مركز تكلفة',ccLabel,'من',glAcDmy(f.from),'إلى',glAcDmy(f.to)];
-    if(f.mode!=='det'){const a=[info,[],['رقم الحساب','اسم الحساب','القيمة']];list.forEach(o=>a.push([o.a.account_code,o.a.account_name,o.net]));a.push(['','إجمالي المصروفات',tot.net]);XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),'إجمالي');}
-    if(f.mode!=='sum'){const a=[info,[],['التاريخ','رقم القيد','البيان','مركز التكلفة','مدين','دائن','رقم الحساب','اسم الحساب']];withRows.forEach(o=>o.rows.forEach(r=>a.push([glAcDmy(r.date),r.no,r.desc,r.cc,r.dr,r.cr,o.a.account_code,o.a.account_name])));a.push(['','','الإجمالي العام','',tot.dr,tot.cr]);XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(a),'تفصيلي');}
-    XLSX.writeFile(wb,fname);
-    return toast('تعذر تحميل مكتبة التنسيق — تم تصدير نسخة بسيطة','err');
-  }
-  const NAVY='FF1F4E79',MID='FF2E75B6',LIGHT='FFDDEBF7',TOTBG='FFE3ECF7',SUB='FFF1F5F9',WHITE='FFFFFFFF';
-  const thin={style:'thin',color:{argb:'FFBFBFBF'}},bd={top:thin,left:thin,bottom:thin,right:thin};
-  const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
-  const NUM='#,##0.00;-#,##0.00;0.00';
-  const wb=new ExcelJS.Workbook();wb.creator='IRON GATE SUPPLIES';
-  const mkSheet=(name,widths)=>{const ws=wb.addWorksheet(name,{views:[{rightToLeft:true,showGridLines:false}],pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0}});widths.forEach((w,i)=>ws.getColumn(i+1).width=w);return ws;};
-  const bar=(ws,nc,text,bg,fg,size,h)=>{const r=ws.addRow([text]);ws.mergeCells(r.number,1,r.number,nc);const c=r.getCell(1);c.fill=fill(bg);c.font={name:'Arial',bold:true,size,color:{argb:fg}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};r.height=h;};
-  const top=(ws,nc)=>{
-    bar(ws,nc,'IRON GATE SUPPLIES — موقف مركز تكلفة',NAVY,WHITE,15,28);
-    bar(ws,nc,`من ${glAcDmy(f.from)}  إلى ${glAcDmy(f.to)}   |   مركز التكلفة: ${ccLabel}   |   الأب: ${rootNames.join(' + ')||'—'}   |   المصدر: القيود المرحّلة`,LIGHT,'FF1F3B57',10.5,22);
-    ws.addRow([]);
-  };
-  const hdr=(ws,labels)=>{const r=ws.addRow(labels);r.height=22;labels.forEach((_,i)=>{const c=r.getCell(i+1);c.fill=fill(MID);c.font={name:'Arial',bold:true,size:11,color:{argb:WHITE}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};c.border=bd;});};
-  if(f.mode!=='det'){
-    const ws=mkSheet('إجمالي الحسابات',[20,50,20]);top(ws,3);
-    bar(ws,3,'المصروفات',MID,WHITE,13,24);hdr(ws,['رقم الحساب','اسم الحساب','القيمة']);
-    list.forEach(o=>{const r=ws.addRow([o.a.account_code,o.a.account_name,o.net]);r.eachCell(c=>{c.border=bd;c.font={name:'Arial',size:10.5};});r.getCell(1).font={name:'Arial',size:10.5,bold:true};r.getCell(1).alignment={horizontal:'center'};r.getCell(2).alignment={horizontal:'right',readingOrder:'rtl'};r.getCell(3).numFmt=NUM;r.getCell(3).alignment={horizontal:'center'};});
-    const t=ws.addRow(['','إجمالي المصروفات',tot.net]);t.eachCell(c=>{c.fill=fill(TOTBG);c.border=bd;c.font={name:'Arial',bold:true,size:11,color:{argb:NAVY}};});t.getCell(3).numFmt=NUM;t.getCell(3).alignment={horizontal:'center'};
-  }
-  if(f.mode!=='sum'){
-    const ws=mkSheet('تفصيل القيود',[13,14,48,26,17,17]);top(ws,6);
-    bar(ws,6,'تفصيل القيود',MID,WHITE,13,24);hdr(ws,['التاريخ','رقم القيد','البيان','مركز التكلفة','مدين','دائن']);
-    withRows.forEach(o=>{
-      const ah=ws.addRow([`${o.a.account_code} — ${o.a.account_name}`]);ws.mergeCells(ah.number,1,ah.number,6);const c0=ah.getCell(1);c0.fill=fill(LIGHT);c0.font={name:'Arial',bold:true,size:11,color:{argb:NAVY}};c0.alignment={horizontal:'right',readingOrder:'rtl'};
-      o.rows.forEach(r=>{const x=ws.addRow([glAcDmy(r.date),r.no,r.desc,r.cc,r.dr,r.cr]);x.eachCell(c=>{c.border=bd;c.font={name:'Arial',size:10};});x.getCell(1).alignment={horizontal:'center'};x.getCell(2).alignment={horizontal:'center'};x.getCell(3).alignment={horizontal:'right',wrapText:true,readingOrder:'rtl'};x.getCell(4).alignment={horizontal:'right',readingOrder:'rtl'};[5,6].forEach(i=>{x.getCell(i).numFmt=NUM;x.getCell(i).alignment={horizontal:'center'};});});
-      const s=ws.addRow([`إجمالي الحساب — الصافي: ${glNum(o.net)}`,'','','',o.dr,o.cr]);ws.mergeCells(s.number,1,s.number,4);s.eachCell(c=>{c.fill=fill(SUB);c.border=bd;c.font={name:'Arial',bold:true,size:10.5,color:{argb:NAVY}};});s.getCell(1).alignment={horizontal:'right',readingOrder:'rtl'};[5,6].forEach(i=>{s.getCell(i).numFmt=NUM;s.getCell(i).alignment={horizontal:'center'};});
-    });
-    const t=ws.addRow([`الإجمالي العام — الصافي: ${glNum(tot.net)}`,'','','',tot.dr,tot.cr]);ws.mergeCells(t.number,1,t.number,4);t.eachCell(c=>{c.fill=fill(TOTBG);c.border=bd;c.font={name:'Arial',bold:true,size:11,color:{argb:NAVY}};});t.getCell(1).alignment={horizontal:'right',readingOrder:'rtl'};[5,6].forEach(i=>{t.getCell(i).numFmt=NUM;t.getCell(i).alignment={horizontal:'center'};});
-  }
-  const buf=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
-  toast('تم تصدير ملف Excel','ok');
-}
-
-// ============== تحليل المصروفات الشهري (Monthly Expense Analysis) ==============
-// المصدر: القيود المُرحّلة فقط — الحسابات تُجلب من مؤشر النظام «حساب المصروفات الرئيسي» (expense_root) وكل فروعه
-const GL_EXP_MN=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
-const GL_EXP_CSS=`.glexp-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid #bdd7ee;border-radius:12px;background:linear-gradient(180deg,#f7fbff,#fff)}
-.glexp-f label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glexp-f label.ck{flex-direction:row;align-items:center;gap:6px;cursor:pointer;padding:9px 12px;border:1px solid #d6e4f2;border-radius:10px;background:#fff}
-.glexp-run{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px;padding:12px 14px;border:1px solid #bdd7ee;border-radius:12px;background:#f7fbff}
-.glexp-run label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glexp-warn{margin-bottom:12px;padding:10px 14px;border:1px solid #f3d38a;background:#fff8e1;color:#7a5c0b;border-radius:10px;font-size:12.5px;font-weight:700}
-#glExpOut{background:#fff;border:1px solid #bdd7ee;border-radius:12px;padding:16px;overflow:auto}
-.glexp-wrap th.mth{background:#2e75b6}.glexp-wrap th.tot{background:#17606f}.glexp-wrap th.chg{background:#7a3e00}
-.glexp-wrap td.up{color:#c00000;font-weight:700}.glexp-wrap td.dn{color:#1b6e3c;font-weight:700}
-.glexp-wrap td.nm{text-align:right}`;
-function glExpState(){
-  if(!glState.exp){const t=glDate();glState.exp={from:t.slice(0,4)+'-01-01',to:t,level:6,noZero:false,dest:'preview'};}
-  return glState.exp;
-}
-function glExpMonths(from,to){
-  const out=[];let y=+from.slice(0,4),m=+from.slice(5,7);const ey=+to.slice(0,4),em=+to.slice(5,7);
-  while((y<ey||(y===ey&&m<=em))&&out.length<60){out.push({k:y+'-'+String(m).padStart(2,'0'),label:GL_EXP_MN[m-1]+'-'+String(y).slice(2)});m++;if(m>12){m=1;y++;}}
-  return out;
-}
-function glRenderRptExp(){
-  const f=glExpState();
-  const ind=glIndicatorAccount('expense_root');
-  const warn=ind?'':`<div class="glexp-warn">⚠️ مؤشر «حساب المصروفات الرئيسي» غير محدد في «مؤشرات النظام» — التقرير هيعرض كل حسابات النوع «مصروف» تلقائيًا. الأفضل تحدد المؤشر عشان التقرير يمشي على الأب الصحيح.</div>`;
-  return `<style>${GL_TB_CSS}\n${GL_EXP_CSS}</style>${warn}
-  <div class="glexp-f">
-    <label>من تاريخ<input class="input" id="glExpFrom" type="date" value="${glEsc(f.from)}" onchange="glExpSave()"></label>
-    <label>حتى تاريخ<input class="input" id="glExpTo" type="date" value="${glEsc(f.to)}" onchange="glExpSave()"></label>
-    <label>المستوى المطلوب (من الأب)<select class="input" id="glExpLevel" onchange="glExpSave()">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${f.level===n?'selected':''}>حتى المستوى ${n}</option>`).join('')}</select></label>
-    <label class="ck"><input type="checkbox" id="glExpNoZero" ${f.noZero?'checked':''} onchange="glExpSave()"> إخفاء الحسابات الصفرية</label>
-  </div>
-  <div class="glexp-run">
-    <label>جهة التقرير<select class="input" id="glExpDest" onchange="glExpSave()"><option value="preview" ${f.dest==='preview'?'selected':''}>Preview — عرض على الشاشة</option><option value="print" ${f.dest==='print'?'selected':''}>Print / PDF — طباعة</option><option value="excel" ${f.dest==='excel'?'selected':''}>Excel — ملف إكسيل</option></select></label>
-    <button class="btn primary" type="button" onclick="glExpRun()">▶ تنفيذ</button>
-    <span style="font-size:11.5px;color:#6b7280;align-self:center">مصدر البيانات: القيود المُرحّلة فقط — الحسابات من مؤشر المصروفات</span>
-  </div>
-  <div id="glExpOut"><div class="gltb-empty">حدد الفترة (من تاريخ / حتى تاريخ) ثم اضغط «تنفيذ»</div></div>`;
-}
-function glExpSave(){
-  const f=glExpState(),g=id=>document.getElementById(id);
-  f.from=g('glExpFrom')?.value||f.from||'';f.to=g('glExpTo')?.value||f.to||'';
-  f.level=Number(g('glExpLevel')?.value)||6;f.noZero=!!g('glExpNoZero')?.checked;f.dest=g('glExpDest')?.value||'preview';
-}
-function glExpBuild(){
-  glExpSave();const f=glExpState();
-  if(!f.from||!f.to){toast('حدد من تاريخ وحتى تاريخ','err');return null;}
-  if(f.from>f.to){toast('تاريخ البداية أكبر من تاريخ النهاية','err');return null;}
-  const months=glExpMonths(f.from,f.to),mi={};months.forEach((m,i)=>mi[m.k]=i);
-  const acc={};glState.accounts.forEach(a=>acc[a.id]=a);
-  const ind=glIndicatorAccount('expense_root');
-  const viaInd=!!ind;
-  const roots=ind?[ind]:glState.accounts.filter(a=>a.account_type==='expense'&&(!a.parent_id||!acc[a.parent_id]||acc[a.parent_id].account_type!=='expense'));
-  const rootSet=new Set(roots.map(r=>r.id));
-  const cc={};
-  // سلسلة الحساب حتى أقرب جذر (شاملة الجذر) — null لو الحساب خارج شجرة المصروفات
-  const chainOf=a=>{
-    if(cc[a.id]!==undefined)return cc[a.id];
-    const out=[];let c=a,g=0;
-    while(c&&g++<15){out.push(c);if(rootSet.has(c.id))return cc[a.id]=out;c=c.parent_id?acc[c.parent_id]:null;}
-    return cc[a.id]=null;
-  };
-  const n=months.length,zeros=()=>months.map(()=>0);
-  const agg={};
-  const mk=x=>agg[x.id]||(agg[x.id]={a:x,depth:chainOf(x).length-1,v:zeros()});
-  glState.accounts.forEach(a=>{if(a.is_active===false)return;if(chainOf(a))mk(a);});
-  const eDate={};
-  glState.entries.forEach(e=>{if(e.status!=='posted')return;const d=String(e.entry_date||'').slice(0,10);if(d>=f.from&&d<=f.to)eDate[e.id]=d;});
-  const grand=zeros();
-  glState.lines.forEach(l=>{
-    const d=eDate[l.entry_id];if(!d)return;
-    const a=acc[l.account_id];if(!a)return;
-    const ch=chainOf(a);if(!ch)return;
-    const i=mi[d.slice(0,7)];if(i==null)return;
-    const v=Number(l.debit||0)-Number(l.credit||0);
-    ch.forEach(x=>{mk(x).v[i]+=v;});
-    grand[i]+=v;
-  });
-  const z=v=>Math.abs(v)<0.005;
-  const calc=v=>{
-    const total=v.reduce((s,x)=>s+x,0);
-    let chg=null,pct=null;
-    if(n>=2){const last=v[n-1],prev=v[n-2];chg=last-prev;pct=z(prev)?null:chg/Math.abs(prev);}
-    return {total,chg,pct};
-  };
-  const hideRoot=roots.length===1;
-  let rows=Object.values(agg).filter(o=>{
-    if(hideRoot&&o.depth===0)return false;
-    if(o.depth>f.level)return false;
-    return true;
-  }).map(o=>({a:o.a,depth:o.depth,v:o.v,isParent:glState.accounts.some(c=>c.parent_id===o.a.id&&chainOf(c)),...calc(o.v)}));
-  if(f.noZero)rows=rows.filter(r=>!(z(r.total)&&r.v.every(z)));
-  rows.sort((x,y)=>String(x.a.account_code).localeCompare(String(y.a.account_code),'en',{numeric:true}));
-  const g=calc(grand);
-  return {f,months,rows,grand:{v:grand,...g},viaInd,rootNames:roots.map(r=>r.account_name)};
-}
-function glExpPctTxt(p){return p==null?'-':(p*100).toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1})+'%';}
-function glExpBody(d){
-  const {f,months,rows,grand,viaInd,rootNames}=d,n=months.length;
-  const chips=`<span>الفترة: <b dir="ltr">${glAcDmy(f.from)} ← ${glAcDmy(f.to)}</b></span><span>عدد الشهور: <b>${n}</b></span><span>العملة: <b>جنيه مصري</b></span><span>المصدر: <b>القيود المرحّلة</b></span><span>الأب: <b>${glEsc(rootNames.join(' + ')||'—')}${viaInd?'':' (تلقائي)'}</b></span><span>عدد الحسابات: <b>${rows.length}</b></span>`;
-  const head=`<div class="gltb-head"><div class="top"><span class="co">IRON GATE SUPPLIES</span><span class="rn">تحليل المصروفات الشهري &nbsp; من ${glAcDmy(f.from)} &nbsp; حتى ${glAcDmy(f.to)}</span></div><div class="gltb-chips">${chips}</div></div>`;
-  if(!rows.length)return `<div class="gltb-wrap glexp-wrap">${head}<div class="gltb-empty">لا توجد حسابات مصروفات أو حركات في هذه الفلاتر</div></div>`;
-  const num=v=>`<td class="m ${Math.abs(v)<0.005?'z':''}">${glTbFmt(v)}</td>`;
-  const chgCell=(c)=>c==null?`<td class="m z">-</td>`:`<td class="m ${Math.abs(c)<0.005?'z':c>0?'up':'dn'}">${glTbFmt(c)}</td>`;
-  const pctCell=(p,c)=>p==null?`<td class="m z">-</td>`:`<td class="m ${c>0?'up':c<0?'dn':'z'}">${glExpPctTxt(p)}</td>`;
-  const body=rows.map(r=>{
-    const cls=r.isParent?(r.depth<=1?'l1':'l2'):'';
-    return `<tr class="${cls}"><td class="c">${glEsc(r.a.account_code)}</td><td class="nm i${Math.min(Math.max(r.depth-1,0),5)}">${glEsc(r.a.account_name)}</td>${r.v.map(num).join('')}<td class="m cl ${Math.abs(r.total)<0.005?'z':''}">${glTbFmt(r.total)}</td>${chgCell(r.chg)}${pctCell(r.pct,r.chg)}</tr>`;
-  }).join('');
-  const gr=`<tr class="grand"><td colspan="2">إجمالي المصروفات</td>${grand.v.map(num).join('')}<td class="m">${glTbFmt(grand.total)}</td>${chgCell(grand.chg)}${pctCell(grand.pct,grand.chg)}</tr>`;
-  const th=`<tr><th>الكود</th><th>البيان</th>${months.map(m=>`<th class="mth">${m.label}</th>`).join('')}<th class="tot">الإجمالي</th><th class="chg">التغير (آخر شهرين)</th><th class="chg">نسبة التغير</th></tr>`;
-  return `<div class="gltb-wrap glexp-wrap">${head}<table><thead>${th}</thead><tbody>${body}</tbody><tfoot>${gr}</tfoot></table></div>`;
-}
-function glExpPrint(d){
-  const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تحليل المصروفات الشهري</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:11px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_TB_CSS}\n${GL_EXP_CSS}</style></head><body>${glExpBody(d)}</body></html>`;
-  w.document.open();w.document.write(html);w.document.close();w.focus();
-  setTimeout(()=>{try{w.print();}catch(e){}},400);
-}
-async function glExpRun(){
-  const d=glExpBuild();if(!d)return;
-  const box=document.getElementById('glExpOut');if(box)box.innerHTML=glExpBody(d);
-  if(d.f.dest==='print')glExpPrint(d);
-  else if(d.f.dest==='excel')await glExpExcel(d);
-}
-async function glExpExcel(d){
-  const {f,months,rows,grand}=d,n=months.length,ncol=2+n+3;
-  const fname=`تحليل_المصروفات_${f.from}_${f.to}.xlsx`;
-  let ok=true;try{await glAcLoadExcelJS();}catch(e){ok=false;}
-  if(!ok||!window.ExcelJS){
-    if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');
-    const aoa=[['تحليل المصروفات الشهري','من',glAcDmy(f.from),'حتى',glAcDmy(f.to)],[],['الكود','البيان',...months.map(m=>m.label),'الإجمالي','التغير (آخر شهرين)','نسبة التغير']];
-    rows.forEach(r=>aoa.push([r.a.account_code,r.a.account_name,...r.v,r.total,r.chg==null?'':r.chg,r.pct==null?'':r.pct]));
-    aoa.push(['','إجمالي المصروفات',...grand.v,grand.total,grand.chg==null?'':grand.chg,grand.pct==null?'':grand.pct]);
-    const ws=XLSX.utils.aoa_to_sheet(aoa),wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};
-    XLSX.utils.book_append_sheet(wb,ws,'تحليل المصروفات');XLSX.writeFile(wb,fname);
-    return toast('تعذر تحميل مكتبة التنسيق — تم تصدير نسخة بسيطة','err');
-  }
-  const NAVY='FF1F4E79',MID='FF2E75B6',TEAL='FF17606F',BRN='FF7A3E00',LIGHT='FFDDEBF7',TOTBG='FFE3ECF7',L1='FFEAF2FB',WHITE='FFFFFFFF',RED='FFC00000',GRN='FF1B6E3C';
-  const thin={style:'thin',color:{argb:'FFBFBFBF'}},bd={top:thin,left:thin,bottom:thin,right:thin};
-  const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
-  const NUM='#,##0.00;-#,##0.00;"-"',PCT='0.0%;-0.0%;"-"';
-  const wb=new ExcelJS.Workbook();wb.creator='IRON GATE SUPPLIES';
-  const ws=wb.addWorksheet('تحليل المصروفات',{views:[{rightToLeft:true,showGridLines:false,state:'frozen',xSplit:0,ySplit:4}],pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'4:4'}});
-  ws.getColumn(1).width=16;ws.getColumn(2).width=44;
-  for(let i=0;i<n;i++)ws.getColumn(3+i).width=15;
-  ws.getColumn(3+n).width=17;ws.getColumn(4+n).width=19;ws.getColumn(5+n).width=14;
-  const bar=(text,bg,fg,size,h)=>{const r=ws.addRow([text]);ws.mergeCells(r.number,1,r.number,ncol);const c=r.getCell(1);c.fill=fill(bg);c.font={name:'Arial',bold:true,size,color:{argb:fg}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};r.height=h;};
-  bar('IRON GATE SUPPLIES — تحليل المصروفات الشهري',NAVY,WHITE,15,28);
-  bar(`من ${glAcDmy(f.from)}  حتى ${glAcDmy(f.to)}   |   العملة: جنيه مصري   |   المصدر: القيود المرحّلة   |   الأب: ${d.rootNames.join(' + ')||'—'}`,LIGHT,'FF1F3B57',10.5,22);
-  ws.addRow([]);
-  const h=ws.addRow(['الكود','البيان',...months.map(m=>m.label),'الإجمالي','التغير (آخر شهرين)','نسبة التغير']);
-  h.height=24;
-  for(let i=1;i<=ncol;i++){const c=h.getCell(i);c.fill=fill(i<=2?NAVY:i<=2+n?MID:i===3+n?TEAL:BRN);c.font={name:'Arial',bold:true,size:11,color:{argb:WHITE}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};c.border=bd;}
-  const put=(r,isParent,isTot)=>{
-    const row=ws.addRow([r.a?r.a.account_code:'',r.a?r.a.account_name:'إجمالي المصروفات',...r.v,r.total,r.chg==null?'-':r.chg,r.pct==null?'-':r.pct]);
-    for(let i=1;i<=ncol;i++){
-      const c=row.getCell(i);c.border=bd;c.font={name:'Arial',size:10.5,bold:isParent||isTot};
-      if(isTot){c.fill=fill(TOTBG);c.font={name:'Arial',size:11,bold:true,color:{argb:NAVY}};}
-      else if(isParent)c.fill=fill(L1);
-      if(i===1)c.alignment={horizontal:'center',readingOrder:'ltr'};
-      else if(i===2)c.alignment={horizontal:'right',indent:r.depth?Math.min(r.depth-1,5)*2:0,readingOrder:'rtl'};
-      else{c.alignment={horizontal:'center'};c.numFmt=i===ncol?PCT:NUM;}
-    }
-    if(r.chg!=null&&Math.abs(r.chg)>=0.005){const col=r.chg>0?RED:GRN;[ncol-1,ncol].forEach(i=>{const c=row.getCell(i);c.font={...c.font,color:{argb:col},bold:true};});}
-  };
-  rows.forEach(r=>put(r,r.isParent,false));
-  put({v:grand.v,total:grand.total,chg:grand.chg,pct:grand.pct},false,true);
-  const buf=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
-  toast('تم تصدير ملف Excel','ok');
-}
+function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():glRenderEntries();}
 
 // ============== مؤشرات النظام (System Indicators) ==============
 function glRenderIndicators(){
@@ -4232,593 +3820,6 @@ function glPrintPostedEntry(id){
 }
 function glApplyPostedFilters(){const from=document.getElementById('glPostedFrom')?.value||'',to=document.getElementById('glPostedTo')?.value||'',sys=document.getElementById('glPostedSystem')?.value||'',q=(document.getElementById('glPostedSearch')?.value||'').trim().toLowerCase();let list=glState.entries.filter(e=>e.status==='posted');list=list.filter(e=>(!from||String(e.entry_date)>=from)&&(!to||String(e.entry_date)<=to)&&(!sys||glSourceSystem(e)===sys)&&(!q||String(e.entry_no||'').toLowerCase().includes(q)||String(e.description||'').toLowerCase().includes(q)));const box=document.getElementById('glPostedTable');if(box)box.innerHTML=glPostedRows(list);}
 function glClearPostedFilters(){['glPostedFrom','glPostedTo','glPostedSystem','glPostedSearch'].forEach(id=>{const x=document.getElementById(id);if(x)x.value='';});glApplyPostedFilters();}
-
-/* ================= كشف حساب لكل الحسابات ================= */
-const GL_AC_CSS=`.glra-wrap{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a}
-.glra-acc{margin-bottom:22px;page-break-inside:auto}
-.glra-acc.pb{page-break-after:always;break-after:page}
-.glra-acc.pb:last-child{page-break-after:auto;break-after:auto}
-.glra-master{border:1px solid #1f4e79;border-radius:8px 8px 0 0;overflow:hidden;margin-bottom:0}
-.glra-master .top{background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff;padding:9px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.glra-master .top .co{font-size:11px;opacity:.9;font-weight:700;letter-spacing:.3px}
-.glra-master .top .rn{font-size:13px;font-weight:800}
-.glra-master .ttl{background:#ddebf7;padding:9px 14px;font-size:16px;font-weight:900;color:#1f4e79;border-bottom:1px solid #bdd7ee}
-.glra-master .ttl .cd{direction:ltr;display:inline-block;margin-left:8px;background:#fff;border:1px solid #9dc3e6;border-radius:6px;padding:0 8px;font-size:13px}
-.glra-chips{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px;background:#f7fbff}
-.glra-chips span{background:#fff;border:1px solid #bdd7ee;border-radius:14px;padding:2px 11px;font-size:11.5px;font-weight:700;color:#1f3b57}
-.glra-chips span b{color:#1f4e79}
-.glra-chips span.op{background:#e8f0fa;border-color:#9dc3e6;color:#1f4e79}
-.glra-wrap table{width:100%;border-collapse:collapse;font-size:12px}
-.glra-wrap th{background:#1f4e79;color:#fff;padding:8px 6px;border:1px solid #16385a;white-space:nowrap;font-weight:800}
-.glra-wrap td{padding:6px 7px;border:1px solid #cfd8e3;vertical-align:middle}
-.glra-wrap tbody tr:nth-child(even){background:#f5f9fd}
-.glra-wrap tr.open td{background:#ddebf7!important;font-weight:800;color:#1f4e79}
-.glra-wrap td.c{text-align:center;white-space:nowrap}
-.glra-wrap td.m{text-align:center;direction:ltr;white-space:nowrap;font-variant-numeric:tabular-nums}
-.glra-wrap td.red{color:#c00000;font-weight:700}
-.glra-wrap td.bal{font-weight:800;color:#1a1a1a}
-.glra-wrap td.ty{text-align:center;font-weight:800;white-space:nowrap}
-.glra-wrap tfoot td{background:#e3ecf7;font-weight:900;color:#1f4e79;border-top:2px solid #1f4e79}
-.glra-wrap tfoot td.red{color:#c00000}
-.glra-empty{padding:30px;text-align:center;color:#6b7280}`;
-function glAcState(){
-  if(!glState.ac){const t=new Date();glState.ac={from:t.getFullYear()+'-01-01',to:t.toISOString().slice(0,10),accFrom:'',accTo:'',detail:true,noCc2:false,ccDetail:false,showDesc:true,sysMode:'all',sys:'',dest:'preview',pagePer:false};}
-  return glState.ac;
-}
-function glAcDmy(d){d=String(d||'').slice(0,10);return d?d.slice(8,10)+'/'+d.slice(5,7)+'/'+d.slice(0,4):'';}
-function glAcSystems(){return [...new Set(glState.entries.filter(e=>e.status==='posted').map(glSourceSystem))].sort((a,b)=>a.localeCompare(b,'ar'));}
-function glRenderRptAcct(){
-  const f=glAcState();
-  const leafs=glState.accounts.filter(a=>{try{return glIsPostingLeafAccount(a);}catch(e){return false;}}).sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),'en',{numeric:true}));
-  const dl=leafs.map(a=>`<option value="${glEsc(a.account_code)}">${glEsc(a.account_name)}</option>`).join('');
-  const systems=glAcSystems();
-  const ck=v=>v?'checked':'';
-  return `<style>${GL_AC_CSS}
-.glra-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid #bdd7ee;border-radius:12px;background:linear-gradient(180deg,#f7fbff,#fff)}
-.glra-f label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glra-f .grp{grid-column:1/-1;display:flex;gap:16px;flex-wrap:wrap;align-items:center;padding:9px 12px;border:1px solid #d6e4f2;border-radius:10px;background:#fff}
-.glra-f .grp>b{color:#1f4e79;font-size:12.5px;min-width:90px}
-.glra-f .grp label{flex-direction:row;align-items:center;gap:6px;cursor:pointer}
-.glra-f .grp select{min-width:200px}
-.glra-run{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px;padding:12px 14px;border:1px solid #bdd7ee;border-radius:12px;background:#f7fbff}
-.glra-run label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-#glAcOut{background:#fff;border:1px solid #bdd7ee;border-radius:12px;padding:16px;overflow:auto}</style>
-  <datalist id="glAcList">${dl}</datalist>
-  <div class="glra-f">
-    <label>من تاريخ<input class="input" id="glAcFrom" type="date" value="${glEsc(f.from)}" onchange="glAcSave()"></label>
-    <label>إلى تاريخ<input class="input" id="glAcTo" type="date" value="${glEsc(f.to)}" onchange="glAcSave()"></label>
-    <label>من حساب تحليلي<input class="input" id="glAcAccFrom" list="glAcList" dir="ltr" placeholder="كود الحساب (فارغ = الكل)" value="${glEsc(f.accFrom)}" onchange="glAcSave()"></label>
-    <label>إلى حساب تحليلي<input class="input" id="glAcAccTo" list="glAcList" dir="ltr" placeholder="كود الحساب (فارغ = الكل)" value="${glEsc(f.accTo)}" onchange="glAcSave()"></label>
-    <div class="grp"><b>العملة</b>
-      <label><input type="radio" checked disabled> عملة واحدة — الجنيه المصري (EGP)</label>
-      <label title="النظام يعمل بعملة واحدة حاليًا"><input type="radio" disabled> عملات متعددة (غير مفعّلة)</label>
-    </div>
-    <div class="grp"><b>خيارات العرض</b>
-      <label><input type="checkbox" id="glAcDetail" ${ck(f.detail)} onchange="glAcSave()"> تفصيلي (حركة كل حساب)</label>
-      <label><input type="checkbox" id="glAcShowDesc" ${ck(f.showDesc)} onchange="glAcSave()"> طباعة الشرح</label>
-      <label><input type="checkbox" id="glAcCcDetail" ${ck(f.ccDetail)} onchange="glAcSave()"> مراكز تكلفة تفصيلي</label>
-      <label><input type="checkbox" id="glAcNoCc2" ${ck(f.noCc2)} onchange="glAcSave()"> بدون مركز تكلفة 2</label>
-      <label id="glAcPbLbl"><input type="checkbox" id="glAcPb" ${ck(f.pagePer)} onchange="glAcSave()"> كل حساب في صفحة مستقلة</label>
-    </div>
-    <div class="grp"><b>النظام</b>
-      <label><input type="radio" name="glAcSysMode" value="all" ${f.sysMode==='all'?'checked':''} onchange="glAcSave()"> كل الأنظمة</label>
-      <label><input type="radio" name="glAcSysMode" value="one" ${f.sysMode==='one'?'checked':''} onchange="glAcSave()"> نظام واحد</label>
-      <select class="input" id="glAcSys" ${f.sysMode==='one'?'':'disabled'} onchange="glAcSave()"><option value="">— اختر النظام —</option>${systems.map(x=>`<option value="${glEsc(x)}" ${f.sys===x?'selected':''}>${glEsc(x)}</option>`).join('')}</select>
-    </div>
-  </div>
-  <div class="glra-run">
-    <label>جهة التقرير<select class="input" id="glAcDest" onchange="glAcSave()"><option value="preview" ${f.dest==='preview'?'selected':''}>Preview — عرض على الشاشة</option><option value="print" ${f.dest==='print'?'selected':''}>Print — طباعة</option><option value="excel" ${f.dest==='excel'?'selected':''}>Excel — ملف إكسيل</option></select></label>
-    <button class="btn primary" type="button" onclick="glAcRun()">▶ تنفيذ</button>
-    <span style="font-size:11.5px;color:#6b7280;align-self:center">مصدر البيانات: القيود المُرحّلة فقط</span>
-  </div>
-  <div id="glAcOut"><div class="glra-empty">حدد الفلاتر ثم اضغط «تنفيذ»</div></div>`;
-}
-function glAcSave(){
-  const f=glAcState(),g=id=>document.getElementById(id);
-  const code=v=>String(v||'').trim().split(/[\s—]/)[0];
-  f.from=g('glAcFrom')?.value||'';f.to=g('glAcTo')?.value||'';
-  f.accFrom=code(g('glAcAccFrom')?.value);f.accTo=code(g('glAcAccTo')?.value);
-  f.detail=!!g('glAcDetail')?.checked;f.showDesc=!!g('glAcShowDesc')?.checked;
-  f.ccDetail=!!g('glAcCcDetail')?.checked;f.noCc2=!!g('glAcNoCc2')?.checked;f.pagePer=!!g('glAcPb')?.checked;
-  f.sysMode=document.querySelector('input[name="glAcSysMode"]:checked')?.value||'all';
-  f.sys=g('glAcSys')?.value||'';f.dest=g('glAcDest')?.value||'preview';
-  const sel=g('glAcSys');if(sel)sel.disabled=f.sysMode!=='one';
-  const pb=g('glAcPbLbl');if(pb)pb.style.display=f.detail?'':'none';
-}
-function glAcBuild(){
-  glAcSave();const f=glAcState();
-  if(!f.from||!f.to){toast('حدد من تاريخ وإلى تاريخ','err');return null;}
-  if(f.from>f.to){toast('تاريخ البداية أكبر من تاريخ النهاية','err');return null;}
-  if(f.sysMode==='one'&&!f.sys){toast('اختر النظام أو اختر كل الأنظمة','err');return null;}
-  const day=e=>String(e.entry_date||'').slice(0,10);
-  const eMap={};
-  glState.entries.forEach(e=>{if(e.status!=='posted')return;if(f.sysMode==='one'&&glSourceSystem(e)!==f.sys)return;eMap[e.id]=e;});
-  const fy=glState.years.find(y=>String(y.start_date).slice(0,10)<=f.from&&String(y.end_date).slice(0,10)>=f.from);
-  const fyStart=fy?String(fy.start_date).slice(0,10):'';
-  const acc={};glState.accounts.forEach(a=>acc[a.id]=a);
-  const cByName={};glState.centers.forEach(c=>{const k=String(c.center_name||'').trim();if(!(k in cByName))cByName[k]=c;});
-  const ccRe1=/\s*—\s*\[مركز:\s*([^\]]+)\]\s*$/,ccRe2=/^\[مركز:\s*([^\]]+)\]\s*$/;
-  const per={};
-  glState.lines.forEach(l=>{
-    const e=eMap[l.entry_id];if(!e)return;
-    const a=acc[l.account_id];if(!a)return;
-    const code=String(a.account_code||'');
-    if(f.accFrom&&code<f.accFrom)return;
-    if(f.accTo&&code.slice(0,f.accTo.length)>f.accTo)return;
-    let d=String(l.description||''),ccName='';
-    const m=d.match(ccRe1)||d.match(ccRe2);
-    if(m){ccName=m[1].trim();d=d.replace(m[0],'').trim();}
-    const c=ccName?cByName[ccName]:null;
-    if(f.noCc2&&c&&Number(c.dimension_no)===2)return;
-    const dt=day(e);if(dt>f.to)return;
-    const dr=Number(l.debit||0),cr=Number(l.credit||0);
-    const o=per[a.id]||(per[a.id]={a,open:0,rows:[]});
-    if(dt<f.from){
-      const pl=a.account_type==='revenue'||a.account_type==='expense';
-      if(pl&&fyStart&&dt<fyStart)return;
-      o.open+=dr-cr;
-    }else{
-      let hdr=String(e.description||'').replace(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/,'').trim();if(hdr==='قيد بدون بيان')hdr='';
-      o.rows.push({no:e.entry_no||String(e.id).slice(0,8),date:dt,ln:l.line_no||0,desc:d||hdr,ccCode:c?c.center_code:'',ccName,debit:dr,credit:cr});
-    }
-  });
-  const accounts=Object.values(per).filter(o=>o.rows.length||Math.abs(o.open)>0.004)
-    .sort((x,y)=>String(x.a.account_code).localeCompare(String(y.a.account_code),'en',{numeric:true}));
-  accounts.forEach(o=>{
-    o.rows.sort((x,y)=>x.date.localeCompare(y.date)||String(x.no).localeCompare(String(y.no),'en',{numeric:true})||x.ln-y.ln);
-    let bal=o.open;o.totD=0;o.totC=0;
-    o.rows.forEach(r=>{bal+=r.debit-r.credit;r.bal=bal;o.totD+=r.debit;o.totC+=r.credit;});
-    o.close=bal;
-  });
-  return {f,accounts};
-}
-const glAcTy=v=>v>=0?'مدين':'دائن';
-function glAcChips(f,o){
-  const sysTxt=f.sysMode==='one'?f.sys:'كل الأنظمة';
-  let h=`<span>الفترة: من <b>${glAcDmy(f.from)}</b> إلى <b>${glAcDmy(f.to)}</b></span><span>العملة: <b>جنيه مصري</b></span><span>النظام: <b>${glEsc(sysTxt)}</b></span><span>المصدر: <b>القيود المرحّلة</b></span>`;
-  if(f.accFrom||f.accTo)h+=`<span>نطاق الحسابات: <b dir="ltr">${glEsc(f.accFrom||'…')} ← ${glEsc(f.accTo||'…')}</span></b>`.replace('</span></b>','</b></span>');
-  if(f.noCc2)h+=`<span><b>بدون مركز تكلفة 2</b></span>`;
-  if(o)h+=`<span class="op">رصيد أول المدة: <b>${glNum(Math.abs(o.open))} ${glAcTy(o.open)}</b></span>`;
-  return h;
-}
-function glAcBody(d){
-  const {f,accounts}=d;
-  const hd=(t)=>`<div class="top"><span class="co">IRON GATE SUPPLIES</span><span class="rn">${t}</span></div>`;
-  if(!accounts.length)return `<div class="glra-wrap"><div class="glra-master">${hd('كشف حساب لكل الحسابات')}<div class="glra-chips">${glAcChips(f,null)}</div></div><div class="glra-empty">لا توجد حركات أو أرصدة في هذه الفلاتر</div></div>`;
-  if(!f.detail){
-    const rows=accounts.map(o=>`<tr><td class="c" dir="ltr">${glEsc(o.a.account_code)}</td><td>${glEsc(o.a.account_name)}</td><td class="m">${glNum(Math.abs(o.open))}</td><td class="ty">${glAcTy(o.open)}</td><td class="m red">${glNum(o.totD)}</td><td class="m red">${glNum(o.totC)}</td><td class="m bal">${glNum(Math.abs(o.close))}</td><td class="ty">${glAcTy(o.close)}</td></tr>`).join('');
-    const tD=accounts.reduce((s,o)=>s+o.totD,0),tC=accounts.reduce((s,o)=>s+o.totC,0);
-    return `<div class="glra-wrap"><div class="glra-master">${hd('كشف حساب لكل الحسابات — إجمالي')}<div class="glra-chips">${glAcChips(f,null)}<span>عدد الحسابات: <b>${accounts.length}</b></span></div></div><table><thead><tr><th>رقم الحساب</th><th>اسم الحساب</th><th>رصيد أول المدة</th><th>النوع</th><th>مدين</th><th>دائن</th><th>الرصيد</th><th>النوع</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="4">إجمالي الحركة</td><td class="m red">${glNum(tD)}</td><td class="m red">${glNum(tC)}</td><td colspan="2"></td></tr></tfoot></table></div>`;
-  }
-  const lead=2+(f.showDesc?1:0)+(f.ccDetail?2:0);
-  const head=`<tr><th>رقم القيد</th><th>التاريخ</th>${f.showDesc?'<th>البيان</th>':''}${f.ccDetail?'<th>رقم المركز</th><th>اسم المركز</th>':''}<th>مدين</th><th>دائن</th><th>الرصيد</th><th>النوع</th></tr>`;
-  return `<div class="glra-wrap">`+accounts.map(o=>{
-    const rows=o.rows.map(r=>`<tr><td class="c" dir="ltr">${glEsc(r.no)}</td><td class="c">${glAcDmy(r.date)}</td>${f.showDesc?`<td>${glEsc(r.desc)}</td>`:''}${f.ccDetail?`<td class="c" dir="ltr">${glEsc(r.ccCode)}</td><td>${glEsc(r.ccName)}</td>`:''}<td class="m red">${glNum(r.debit)}</td><td class="m red">${glNum(r.credit)}</td><td class="m bal">${glNum(Math.abs(r.bal))}</td><td class="ty">${glAcTy(r.bal)}</td></tr>`).join('');
-    return `<section class="glra-acc ${f.pagePer?'pb':''}"><div class="glra-master">${hd('كشف حساب')}<div class="ttl"><span class="cd">${glEsc(o.a.account_code)}</span>${glEsc(o.a.account_name)}</div><div class="glra-chips">${glAcChips(f,o)}</div></div><table><thead>${head}</thead><tbody><tr class="open"><td colspan="${lead}">رصيد أول المدة</td><td class="m red">0.00</td><td class="m red">0.00</td><td class="m bal">${glNum(Math.abs(o.open))}</td><td class="ty">${glAcTy(o.open)}</td></tr>${rows}</tbody><tfoot><tr><td colspan="${lead}">إجمالي الحركة / الرصيد الختامي</td><td class="m red">${glNum(o.totD)}</td><td class="m red">${glNum(o.totC)}</td><td class="m">${glNum(Math.abs(o.close))}</td><td class="ty">${glAcTy(o.close)}</td></tr></tfoot></table></section>`;
-  }).join('')+`</div>`;
-}
-function glAcPrint(d){
-  const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>كشف حساب لكل الحسابات</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:12px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_AC_CSS}</style></head><body>${glAcBody(d)}</body></html>`;
-  w.document.open();w.document.write(html);w.document.close();w.focus();
-  setTimeout(()=>{try{w.print();}catch(e){}},400);
-}
-async function glAcRun(){
-  const d=glAcBuild();if(!d)return;
-  const box=document.getElementById('glAcOut');if(box)box.innerHTML=glAcBody(d);
-  const dest=d.f.dest;
-  if(dest==='print')glAcPrint(d);
-  else if(dest==='excel')await glAcExcel(d);
-}
-function glAcLoadExcelJS(){
-  return new Promise((res,rej)=>{
-    if(window.ExcelJS)return res();
-    const sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
-    sc.onload=()=>res();sc.onerror=()=>rej(new Error('exceljs'));document.head.appendChild(sc);
-  });
-}
-async function glAcExcel(d){
-  let ok=true;try{await glAcLoadExcelJS();}catch(e){ok=false;}
-  if(!ok||!window.ExcelJS){toast('تعذر تحميل مكتبة التنسيق — تم تصدير نسخة بسيطة بدون ألوان','err');return glAcExcelPlain(d);}
-  const {f,accounts}=d;
-  const NAVY='FF1F4E79',LIGHT='FFDDEBF7',RED='FFC00000',TOTBG='FFE3ECF7',STRIPE='FFF5F9FD',WHITE='FFFFFFFF';
-  const thin={style:'thin',color:{argb:'FFBFBFBF'}},bd={top:thin,left:thin,bottom:thin,right:thin};
-  const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
-  const wb=new ExcelJS.Workbook();wb.creator='IRON GATE SUPPLIES';
-  const ws=wb.addWorksheet('كشف حساب',{views:[{rightToLeft:true,showGridLines:false}],pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0}});
-  const detail=f.detail;
-  const cols=detail?[{w:14},{w:13}].concat(f.showDesc?[{w:42}]:[]).concat(f.ccDetail?[{w:14},{w:26}]:[]).concat([{w:16},{w:16},{w:17},{w:9}]):[{w:18},{w:38},{w:18},{w:9},{w:17},{w:17},{w:18},{w:9}];
-  const n=cols.length;cols.forEach((c,i)=>{ws.getColumn(i+1).width=c.w;});
-  const NUM='#,##0.00';
-  const bar=(text,bg,fg,size,h)=>{const r=ws.addRow([text]);ws.mergeCells(r.number,1,r.number,n);const c=r.getCell(1);c.fill=fill(bg);c.font={name:'Arial',bold:true,size:size,color:{argb:fg}};c.alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl'};r.height=h;return r;};
-  const style=(r,o)=>{for(let i=1;i<=n;i++){const c=r.getCell(i);c.border=bd;if(o.bg)c.fill=fill(o.bg);const red=o.redCols&&o.redCols.includes(i);c.font={name:'Arial',size:o.size||11,bold:!!o.bold,color:{argb:red?RED:(o.color||'FF1A1A1A')}};}};
-  const sysTxt=f.sysMode==='one'?f.sys:'كل الأنظمة';
-  const info=(o)=>`الفترة: من ${glAcDmy(f.from)} إلى ${glAcDmy(f.to)}   |   العملة: جنيه مصري   |   النظام: ${sysTxt}   |   المصدر: القيود المرحّلة`+((f.accFrom||f.accTo)?`   |   الحسابات: ${f.accFrom||'…'} ← ${f.accTo||'…'}`:'')+(f.noCc2?'   |   بدون مركز تكلفة 2':'')+(o?`   |   رصيد أول المدة: ${glNum(Math.abs(o.open))} ${glAcTy(o.open)}`:'');
-  bar('IRON GATE SUPPLIES — '+(detail?'كشف حساب لكل الحسابات (تفصيلي)':'كشف حساب لكل الحسابات (إجمالي)'),NAVY,WHITE,15,28);
-  if(!detail)bar(info(null),LIGHT,'FF1F3B57',11,22);
-  ws.addRow([]);
-  const dI=n-3,cI=n-2,bI=n-1,tI=n;
-  const money=(r,idx)=>{r.getCell(idx).numFmt=NUM;r.getCell(idx).alignment={horizontal:'center',vertical:'middle'};};
-  if(!detail){
-    const h=ws.addRow(['رقم الحساب','اسم الحساب','رصيد أول المدة','النوع','مدين','دائن','الرصيد','النوع']);style(h,{bg:NAVY,bold:true,color:WHITE});h.eachCell(c=>{c.alignment={horizontal:'center',vertical:'middle'};});h.height=22;
-    ws.views=[{rightToLeft:true,showGridLines:false,state:'frozen',ySplit:h.number}];
-    accounts.forEach((o,i)=>{const r=ws.addRow([String(o.a.account_code),o.a.account_name,Math.abs(o.open),glAcTy(o.open),o.totD,o.totC,Math.abs(o.close),glAcTy(o.close)]);
-      style(r,{bg:i%2?STRIPE:null,redCols:[5,6]});[3,5,6,7].forEach(k=>money(r,k));[1,4,8].forEach(k=>{r.getCell(k).alignment={horizontal:'center',vertical:'middle'};});r.getCell(7).font={name:'Arial',size:11,bold:true};r.getCell(2).alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl'};});
-    const tr=ws.addRow(['إجمالي الحركة','','','',accounts.reduce((s,o)=>s+o.totD,0),accounts.reduce((s,o)=>s+o.totC,0),'','']);
-    ws.mergeCells(tr.number,1,tr.number,4);style(tr,{bg:TOTBG,bold:true,color:NAVY,redCols:[5,6]});money(tr,5);money(tr,6);
-  }else{
-    accounts.forEach(o=>{
-      bar(`${o.a.account_code}  —  ${o.a.account_name}`,NAVY,WHITE,13,24);
-      bar(info(o),LIGHT,'FF1F3B57',10.5,20);
-      const hv=['رقم القيد','التاريخ'];if(f.showDesc)hv.push('البيان');if(f.ccDetail)hv.push('رقم المركز','اسم المركز');hv.push('مدين','دائن','الرصيد','النوع');
-      const h=ws.addRow(hv);style(h,{bg:NAVY,bold:true,color:WHITE});h.eachCell(c=>{c.alignment={horizontal:'center',vertical:'middle'};});h.height=22;
-      const lead=n-4;
-      const op=ws.addRow(['رصيد أول المدة'].concat(Array(lead-1).fill('')).concat([0,0,Math.abs(o.open),glAcTy(o.open)]));
-      if(lead>1)ws.mergeCells(op.number,1,op.number,lead);
-      style(op,{bg:LIGHT,bold:true,color:NAVY,redCols:[dI,cI]});money(op,dI);money(op,cI);money(op,bI);op.getCell(1).alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl'};op.getCell(tI).alignment={horizontal:'center',vertical:'middle'};
-      o.rows.forEach((x,i)=>{
-        const v=[x.no,glAcDmy(x.date)];if(f.showDesc)v.push(x.desc);if(f.ccDetail)v.push(x.ccCode,x.ccName);v.push(x.debit,x.credit,Math.abs(x.bal),glAcTy(x.bal));
-        const r=ws.addRow(v);style(r,{bg:i%2?STRIPE:null,redCols:[dI,cI]});money(r,dI);money(r,cI);money(r,bI);
-        r.getCell(bI).font={name:'Arial',size:11,bold:true};
-        for(let k=1;k<=lead;k++)r.getCell(k).alignment={horizontal:(f.showDesc&&k===3)||(f.ccDetail&&k===lead)?'right':'center',vertical:'middle',wrapText:true,readingOrder:'rtl'};
-        r.getCell(tI).alignment={horizontal:'center',vertical:'middle'};
-      });
-      const t=ws.addRow(['إجمالي الحركة / الرصيد الختامي'].concat(Array(lead-1).fill('')).concat([o.totD,o.totC,Math.abs(o.close),glAcTy(o.close)]));
-      if(lead>1)ws.mergeCells(t.number,1,t.number,lead);
-      style(t,{bg:TOTBG,bold:true,color:NAVY,redCols:[dI,cI]});money(t,dI);money(t,cI);money(t,bI);t.getCell(1).alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl'};t.getCell(tI).alignment={horizontal:'center',vertical:'middle'};
-      ws.addRow([]);
-    });
-  }
-  const buf=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`كشف_حساب_${f.from}_${f.to}.xlsx`;
-  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
-}
-function glAcExcelPlain(d){
-  if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');
-  const {f,accounts}=d;const aoa=[['IRON GATE SUPPLIES'],['كشف حساب لكل الحسابات'],['من تاريخ',glAcDmy(f.from),'إلى تاريخ',glAcDmy(f.to)],[]];
-  if(!f.detail){aoa.push(['رقم الحساب','اسم الحساب','رصيد أول المدة','النوع','مدين','دائن','الرصيد','النوع']);accounts.forEach(o=>aoa.push([o.a.account_code,o.a.account_name,Math.abs(o.open),glAcTy(o.open),o.totD,o.totC,Math.abs(o.close),glAcTy(o.close)]));}
-  else accounts.forEach(o=>{aoa.push([o.a.account_code,o.a.account_name]);aoa.push(['رقم القيد','التاريخ','البيان','رقم المركز','اسم المركز','مدين','دائن','الرصيد','النوع']);aoa.push(['رصيد أول المدة','','','','',0,0,Math.abs(o.open),glAcTy(o.open)]);o.rows.forEach(x=>aoa.push([x.no,glAcDmy(x.date),x.desc,x.ccCode,x.ccName,x.debit,x.credit,Math.abs(x.bal),glAcTy(x.bal)]));aoa.push(['إجمالي','','','','',o.totD,o.totC,Math.abs(o.close),glAcTy(o.close)]);aoa.push([]);});
-  const ws=XLSX.utils.aoa_to_sheet(aoa),wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};
-  XLSX.utils.book_append_sheet(wb,ws,'كشف حساب');XLSX.writeFile(wb,`كشف_حساب_${f.from}_${f.to}.xlsx`);
-}
-
-/* ================= ميزان المراجعة على مستوى الحسابات ================= */
-const GL_TB_CSS=`.gltb-wrap{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a}
-.gltb-head{border:1px solid #1f4e79;border-radius:10px 10px 0 0;overflow:hidden}
-.gltb-head .top{background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-.gltb-head .co{font-size:11px;opacity:.9;font-weight:700;letter-spacing:.3px}
-.gltb-head .rn{font-size:15px;font-weight:900}
-.gltb-head .st{padding:3px 14px;border-radius:14px;font-size:12px;font-weight:900;background:#e6f4ea;color:#1b6e3c;border:1px solid #9ad0ac}
-.gltb-head .st.bad{background:#fdecea;color:#b3261e;border-color:#f0a6a0}
-.gltb-chips{display:flex;gap:8px;flex-wrap:wrap;padding:8px 14px;background:#f7fbff;border-top:1px solid #bdd7ee}
-.gltb-chips span{background:#fff;border:1px solid #bdd7ee;border-radius:14px;padding:2px 11px;font-size:11.5px;font-weight:700;color:#1f3b57}
-.gltb-chips span b{color:#1f4e79}
-.gltb-wrap table{width:100%;border-collapse:collapse;font-size:12px}
-.gltb-wrap th{padding:7px 6px;border:1px solid #16385a;white-space:nowrap;font-weight:800;color:#fff;background:#1f4e79}
-.gltb-wrap th.g1{background:#1f4e79}.gltb-wrap th.g2{background:#2e75b6}.gltb-wrap th.g3{background:#17606f}
-.gltb-wrap thead tr.sub th{background:#ddebf7;color:#1f4e79;border-color:#9dc3e6}
-.gltb-wrap td{padding:5px 7px;border:1px solid #cfd8e3;vertical-align:middle}
-.gltb-wrap tbody tr:nth-child(even){background:#f5f9fd}
-.gltb-wrap td.c{text-align:center;white-space:nowrap;direction:ltr;font-variant-numeric:tabular-nums}
-.gltb-wrap td.m{text-align:center;direction:ltr;white-space:nowrap;font-variant-numeric:tabular-nums}
-.gltb-wrap td.red{color:#c00000;font-weight:700}
-.gltb-wrap td.cl{font-weight:800}
-.gltb-wrap td.z{color:#9aa5b1}
-.gltb-wrap tr.grand td{background:#e3ecf7;color:#1f4e79;font-weight:900;border-top:2px solid #1f4e79;border-bottom:2px solid #1f4e79}
-.gltb-wrap tr.l1 td{font-weight:900;background:#eaf2fb}
-.gltb-wrap tr.l2 td{font-weight:800}
-.gltb-wrap td.nm.i1{padding-right:20px}.gltb-wrap td.nm.i2{padding-right:34px}.gltb-wrap td.nm.i3{padding-right:48px}.gltb-wrap td.nm.i4{padding-right:62px}.gltb-wrap td.nm.i5{padding-right:76px}
-.gltb-empty{padding:30px;text-align:center;color:#6b7280}`;
-function glTbState(){
-  if(!glState.tb){const t=new Date();glState.tb={level:6,only:false,accFrom:'',accTo:'',from:t.getFullYear()+'-01-01',to:t.toISOString().slice(0,10),noZero:false,dest:'preview'};}
-  return glState.tb;
-}
-function glRenderRptTb(){
-  const f=glTbState();
-  const accs=glState.accounts.slice().sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),'en',{numeric:true}));
-  const dl=accs.map(a=>`<option value="${glEsc(a.account_code)}">${glEsc(a.account_name)}</option>`).join('');
-  return `<style>${GL_TB_CSS}
-.gltb-f{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;align-items:end;margin-bottom:12px;padding:14px;border:1px solid #bdd7ee;border-radius:12px;background:linear-gradient(180deg,#f7fbff,#fff)}
-.gltb-f label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.gltb-f label.ck{flex-direction:row;align-items:center;gap:6px;cursor:pointer;padding:9px 12px;border:1px solid #d6e4f2;border-radius:10px;background:#fff}
-.gltb-run{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:14px;padding:12px 14px;border:1px solid #bdd7ee;border-radius:12px;background:#f7fbff}
-.gltb-run label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-#glTbOut{background:#fff;border:1px solid #bdd7ee;border-radius:12px;padding:16px;overflow:auto}</style>
-  <datalist id="glTbList">${dl}</datalist>
-  <div class="gltb-f">
-    <label>المستوى المطلوب<select class="input" id="glTbLevel" onchange="glTbSave()">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${f.level===n?'selected':''}>المستوى ${n}</option>`).join('')}</select></label>
-    <label class="ck"><input type="checkbox" id="glTbOnly" ${f.only?'checked':''} onchange="glTbSave()"> هذا المستوى فقط</label>
-    <label>من حساب رقم<input class="input" id="glTbAccFrom" list="glTbList" dir="ltr" placeholder="فارغ = من أول حساب" value="${glEsc(f.accFrom)}" onchange="glTbSave()"></label>
-    <label>إلى حساب رقم<input class="input" id="glTbAccTo" list="glTbList" dir="ltr" placeholder="فارغ = إلى آخر حساب" value="${glEsc(f.accTo)}" onchange="glTbSave()"></label>
-    <label>من تاريخ<input class="input" id="glTbFrom" type="date" value="${glEsc(f.from)}" onchange="glTbSave()"></label>
-    <label>إلى تاريخ<input class="input" id="glTbTo" type="date" value="${glEsc(f.to)}" onchange="glTbSave()"></label>
-    <label class="ck"><input type="checkbox" id="glTbNoZero" ${f.noZero?'checked':''} onchange="glTbSave()"> بدون الأرصدة الصفرية</label>
-  </div>
-  <div class="gltb-run">
-    <label>جهة التقرير<select class="input" id="glTbDest" onchange="glTbSave()"><option value="preview" ${f.dest==='preview'?'selected':''}>Preview — عرض على الشاشة</option><option value="print" ${f.dest==='print'?'selected':''}>Print / PDF — طباعة</option><option value="excel" ${f.dest==='excel'?'selected':''}>Excel — ملف إكسيل</option></select></label>
-    <button class="btn primary" type="button" onclick="glTbRun()">▶ تنفيذ</button>
-    <span style="font-size:11.5px;color:#6b7280;align-self:center">مصدر البيانات: القيود المُرحّلة فقط</span>
-  </div>
-  <div id="glTbOut"><div class="gltb-empty">حدد الفلاتر ثم اضغط «تنفيذ»</div></div>`;
-}
-function glTbSave(){
-  const f=glTbState(),g=id=>document.getElementById(id);
-  const code=v=>String(v||'').trim().split(/[\s—]/)[0];
-  f.level=Number(g('glTbLevel')?.value)||6;f.only=!!g('glTbOnly')?.checked;
-  f.accFrom=code(g('glTbAccFrom')?.value);f.accTo=code(g('glTbAccTo')?.value);
-  f.from=g('glTbFrom')?.value||'';f.to=g('glTbTo')?.value||'';
-  f.noZero=!!g('glTbNoZero')?.checked;f.dest=g('glTbDest')?.value||'preview';
-}
-function glTbBuild(){
-  glTbSave();const f=glTbState();
-  if(!f.from||!f.to){toast('حدد من تاريخ وإلى تاريخ','err');return null;}
-  if(f.from>f.to){toast('تاريخ البداية أكبر من تاريخ النهاية','err');return null;}
-  const day=e=>String(e.entry_date||'').slice(0,10);
-  const eMap={};glState.entries.forEach(e=>{if(e.status==='posted')eMap[e.id]=e;});
-  const fy=glState.years.find(y=>String(y.start_date).slice(0,10)<=f.from&&String(y.end_date).slice(0,10)>=f.from);
-  const fyStart=fy?String(fy.start_date).slice(0,10):'';
-  const acc={};glState.accounts.forEach(a=>acc[a.id]=a);
-  const chainCache={};
-  const chain=a=>{if(chainCache[a.id])return chainCache[a.id];const out=[];let c=a,g=0;while(c&&g++<12){out.push(c);c=c.parent_id?acc[c.parent_id]:null;}return chainCache[a.id]=out;};
-  const inRange=a=>{const code=String(a.account_code||'');if(f.accFrom&&code<f.accFrom)return false;if(f.accTo&&code.slice(0,f.accTo.length)>f.accTo)return false;return true;};
-  const agg={};let tOD=0,tOC=0,tMD=0,tMC=0;
-  glState.lines.forEach(l=>{
-    const e=eMap[l.entry_id];if(!e)return;const a=acc[l.account_id];if(!a)return;
-    const dt=day(e);if(dt>f.to)return;
-    const dr=Number(l.debit||0),cr=Number(l.credit||0);
-    const pl=a.account_type==='revenue'||a.account_type==='expense';
-    let open=0,md=0,mc=0;
-    if(dt<f.from){open=dr-cr;}else{md=dr;mc=cr;}
-    if(inRange(a)){if(open>0)tOD+=open;else tOC-=open;tMD+=md;tMC+=mc;}
-    chain(a).forEach(x=>{const o=agg[x.id]||(agg[x.id]={a:x,open:0,dr:0,cr:0});o.open+=open;o.dr+=md;o.cr+=mc;});
-  });
-  // إجماليات الأرصدة تُحسب بالصافي لكل حساب نهائي لضمان دقة الاتزان
-  let sOD=0,sOC=0,sCD=0,sCC=0;
-  Object.values(agg).forEach(o=>{
-    if(glState.accounts.some(c=>c.parent_id===o.a.id))return;
-    if(!inRange(o.a))return;
-    const cl=o.open+o.dr-o.cr;
-    if(o.open>=0)sOD+=o.open;else sOC-=o.open;
-    if(cl>=0)sCD+=cl;else sCC-=cl;
-  });
-  const lvl=a=>Number(a.level_no)||1;
-  let rows=Object.values(agg).filter(o=>{
-    if(!inRange(o.a))return false;
-    const L=lvl(o.a);
-    if(f.only?L!==f.level:L>f.level)return false;
-    return true;
-  }).map(o=>{
-    const cl=o.open+o.dr-o.cr;
-    return {a:o.a,lv:lvl(o.a),oD:o.open>0?o.open:0,oC:o.open<0?-o.open:0,mD:o.dr,mC:o.cr,cD:cl>0?cl:0,cC:cl<0?-cl:0,open:o.open,cl};
-  });
-  const z=v=>Math.abs(v)<0.005;
-  rows=rows.filter(r=>!(z(r.open)&&z(r.mD)&&z(r.mC)&&z(r.cl)));
-  if(f.noZero)rows=rows.filter(r=>!z(r.cl));
-  rows.sort((x,y)=>String(x.a.account_code).localeCompare(String(y.a.account_code),'en',{numeric:true}));
-  const tot={oD:sOD,oC:sOC,mD:tMD,mC:tMC,cD:sCD,cC:sCC};
-  tot.balanced=Math.abs(tot.oD-tot.oC)<0.005&&Math.abs(tot.mD-tot.mC)<0.005&&Math.abs(tot.cD-tot.cC)<0.005;
-  return {f,rows,tot};
-}
-const glTbFmt=v=>Math.abs(v)<0.005?'-':glNum(v);
-function glTbChips(f){
-  let h=`<span>المستوى: <b>${f.level}${f.only?' (فقط)':''}</b></span><span>العملة: <b>جنيه مصري</b></span><span>المصدر: <b>القيود المرحّلة</b></span>`;
-  if(f.accFrom||f.accTo)h+=`<span>الحسابات: <b dir="ltr">${glEsc(f.accFrom||'…')} ← ${glEsc(f.accTo||'…')}</b></span>`;
-  if(f.noZero)h+=`<span><b>بدون الأرصدة الصفرية</b></span>`;
-  return h;
-}
-function glTbBody(d){
-  const {f,rows,tot}=d;
-  const st=`<span class="st ${tot.balanced?'':'bad'}">${tot.balanced?'متزن ✓':'غير متزن ✗'}</span>`;
-  const head=`<div class="gltb-head"><div class="top"><span class="co">IRON GATE SUPPLIES</span><span class="rn">ميزان المراجعة على مستوى الحسابات &nbsp; من ${glAcDmy(f.from)} &nbsp; إلى ${glAcDmy(f.to)}</span>${st}</div><div class="gltb-chips">${glTbChips(f)}<span>عدد الحسابات: <b>${rows.length}</b></span></div></div>`;
-  if(!rows.length)return `<div class="gltb-wrap">${head}<div class="gltb-empty">لا توجد أرصدة أو حركات في هذه الفلاتر</div></div>`;
-  const cell=(v,red,cl)=>`<td class="m ${red?'red':''} ${cl?'cl':''} ${Math.abs(v)<0.005?'z':''}">${glTbFmt(v)}</td>`;
-  const body=rows.map(r=>`<tr class="l${Math.min(r.lv,3)}"><td class="c">${glEsc(r.a.account_code)}</td><td class="nm i${Math.min(r.lv-1,5)}">${glEsc(r.a.account_name)}</td>${cell(r.oD)}${cell(r.oC)}${cell(r.mD,1)}${cell(r.mC,1)}${cell(r.cD,0,1)}${cell(r.cC,0,1)}</tr>`).join('');
-  const gr=`<tr class="grand"><td colspan="2">الإجماليات</td>${cell(tot.oD)}${cell(tot.oC)}${cell(tot.mD,1)}${cell(tot.mC,1)}${cell(tot.cD)}${cell(tot.cC)}</tr>`;
-  return `<div class="gltb-wrap">${head}<table><thead><tr><th rowspan="2">رقم الحساب</th><th rowspan="2">اسم الحساب</th><th class="g1" colspan="2">رصيد أول المدة</th><th class="g2" colspan="2">حركة خلال المدة</th><th class="g3" colspan="2">رصيد آخر المدة</th></tr><tr class="sub"><th>مدين أول</th><th>دائن أول</th><th>مدين حركة</th><th>دائن حركة</th><th>مدين آخر</th><th>دائن آخر</th></tr></thead><tbody>${gr}${body}</tbody><tfoot>${gr}</tfoot></table></div>`;
-}
-function glTbPrint(d){
-  const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>ميزان المراجعة</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:12px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_TB_CSS}</style></head><body>${glTbBody(d)}</body></html>`;
-  w.document.open();w.document.write(html);w.document.close();w.focus();
-  setTimeout(()=>{try{w.print();}catch(e){}},400);
-}
-async function glTbRun(){
-  const d=glTbBuild();if(!d)return;
-  const box=document.getElementById('glTbOut');if(box)box.innerHTML=glTbBody(d);
-  if(d.f.dest==='print')glTbPrint(d);
-  else if(d.f.dest==='excel')await glTbExcel(d);
-}
-async function glTbExcel(d){
-  let ok=true;try{await glAcLoadExcelJS();}catch(e){ok=false;}
-  const {f,rows,tot}=d;
-  if(!ok||!window.ExcelJS){
-    if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');
-    const aoa=[['ميزان المراجعة على مستوى الحسابات','من',glAcDmy(f.from),'إلى',glAcDmy(f.to)],[],['رقم الحساب','اسم الحساب','مدين أول','دائن أول','مدين حركة','دائن حركة','مدين آخر','دائن آخر'],['الإجماليات','',tot.oD,tot.oC,tot.mD,tot.mC,tot.cD,tot.cC]];
-    rows.forEach(r=>aoa.push([r.a.account_code,r.a.account_name,r.oD,r.oC,r.mD,r.mC,r.cD,r.cC]));
-    const ws=XLSX.utils.aoa_to_sheet(aoa),wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};
-    XLSX.utils.book_append_sheet(wb,ws,'ميزان المراجعة');XLSX.writeFile(wb,`ميزان_مراجعة_${f.from}_${f.to}.xlsx`);
-    return toast('تعذر تحميل مكتبة التنسيق — تم تصدير نسخة بسيطة','err');
-  }
-  const NAVY='FF1F4E79',MID='FF2E75B6',TEAL='FF17606F',LIGHT='FFDDEBF7',RED='FFC00000',TOTBG='FFE3ECF7',STRIPE='FFF5F9FD',WHITE='FFFFFFFF',L1='FFEAF2FB';
-  const thin={style:'thin',color:{argb:'FFBFBFBF'}},bd={top:thin,left:thin,bottom:thin,right:thin};
-  const fill=c=>({type:'pattern',pattern:'solid',fgColor:{argb:c}});
-  const NUM='#,##0.00;-#,##0.00;"-"';
-  const wb=new ExcelJS.Workbook();wb.creator='IRON GATE SUPPLIES';
-  const ws=wb.addWorksheet('ميزان المراجعة',{views:[{rightToLeft:true,showGridLines:false}],pageSetup:{orientation:'landscape',paperSize:9,fitToPage:true,fitToWidth:1,fitToHeight:0,printTitlesRow:'5:6'}});
-  [16,46,17,17,17,17,17,17].forEach((w,i)=>ws.getColumn(i+1).width=w);
-  const bar=(text,bg,fg,size,h)=>{const r=ws.addRow([text]);ws.mergeCells(r.number,1,r.number,8);const c=r.getCell(1);c.fill=fill(bg);c.font={name:'Arial',bold:true,size,color:{argb:fg}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};r.height=h;return r;};
-  bar('IRON GATE SUPPLIES — ميزان المراجعة على مستوى الحسابات',NAVY,WHITE,15,28);
-  bar(`من ${glAcDmy(f.from)}  إلى ${glAcDmy(f.to)}   |   المستوى: ${f.level}${f.only?' (فقط)':''}   |   العملة: جنيه مصري   |   المصدر: القيود المرحّلة`+((f.accFrom||f.accTo)?`   |   الحسابات: ${f.accFrom||'…'} ← ${f.accTo||'…'}`:'')+(f.noZero?'   |   بدون الأرصدة الصفرية':''),LIGHT,'FF1F3B57',10.5,22);
-  bar(tot.balanced?'متزن ✓':'غير متزن ✗',tot.balanced?'FFE6F4EA':'FFFDECEA',tot.balanced?'FF1B6E3C':'FFB3261E',12,22);
-  ws.addRow([]);
-  const g=ws.addRow(['رقم الحساب','اسم الحساب','رصيد أول المدة','','حركة خلال المدة','','رصيد آخر المدة','']);
-  const h=ws.addRow(['','','مدين أول','دائن أول','مدين حركة','دائن حركة','مدين آخر','دائن آخر']);
-  ws.mergeCells(g.number,1,h.number,1);ws.mergeCells(g.number,2,h.number,2);ws.mergeCells(g.number,3,g.number,4);ws.mergeCells(g.number,5,g.number,6);ws.mergeCells(g.number,7,g.number,8);
-  const gcol=[NAVY,NAVY,NAVY,NAVY,MID,MID,TEAL,TEAL];
-  for(let i=1;i<=8;i++){const c=g.getCell(i);c.fill=fill(gcol[i-1]);c.font={name:'Arial',bold:true,size:11,color:{argb:WHITE}};c.alignment={horizontal:'center',vertical:'middle',readingOrder:'rtl'};c.border=bd;
-    const c2=h.getCell(i);if(i>2){c2.fill=fill(LIGHT);c2.font={name:'Arial',bold:true,size:10.5,color:{argb:NAVY}};c2.alignment={horizontal:'center',vertical:'middle'};}c2.border=bd;}
-  g.height=22;h.height=20;
-  ws.views=[{rightToLeft:true,showGridLines:false,state:'frozen',ySplit:h.number}];
-  const put=(r,o)=>{for(let i=1;i<=8;i++){const c=r.getCell(i);c.border=bd;if(o.bg)c.fill=fill(o.bg);const red=i>=5&&i<=6;c.font={name:'Arial',size:11,bold:!!o.bold||(i>=7&&o.cl),color:{argb:red?RED:(o.color||'FF1A1A1A')}};if(i>=3){c.numFmt=NUM;c.alignment={horizontal:'center',vertical:'middle'};}}
-    r.getCell(1).alignment={horizontal:'center',vertical:'middle'};};
-  const gr=()=>{const r=ws.addRow(['الإجماليات','',tot.oD,tot.oC,tot.mD,tot.mC,tot.cD,tot.cC]);ws.mergeCells(r.number,1,r.number,2);put(r,{bg:TOTBG,bold:true,color:NAVY});r.getCell(1).alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl'};r.height=22;};
-  gr();
-  const first=ws.rowCount+1;
-  rows.forEach((x,i)=>{
-    const r=ws.addRow([String(x.a.account_code),x.a.account_name,x.oD,x.oC,x.mD,x.mC,x.cD,x.cC]);
-    put(r,{bg:x.lv===1?L1:(i%2?STRIPE:null),bold:x.lv<=2,cl:true});
-    r.getCell(2).alignment={horizontal:'right',vertical:'middle',readingOrder:'rtl',indent:Math.min(x.lv-1,5)};
-  });
-  if(rows.length)ws.autoFilter={from:{row:h.number,column:1},to:{row:ws.rowCount,column:8}};
-  gr();
-  const buf=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`ميزان_مراجعة_${f.from}_${f.to}.xlsx`;
-  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1500);
-}
-
-/* ================= تقرير القيود المرحّلة ================= */
-const GL_RPT_CSS=`.glr-wrap{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a}
-.glr-master{text-align:center;border-bottom:3px solid #d4a017;padding:0 0 10px;margin-bottom:14px}
-.glr-master .co{font-size:13px;color:#92400e;font-weight:800;margin-bottom:3px}
-.glr-master h1{font-size:20px;margin:0 0 6px;color:#1a1a1a;font-weight:900}
-.glr-master .per{font-size:13px;font-weight:700}
-.glr-master .per b{color:#92400e}
-.glr-master .cnt{font-size:11px;color:#6b7280;margin-top:4px}
-.glr-wrap table{width:100%;border-collapse:collapse;font-size:12px}
-.glr-wrap th{background:#1a1a1a;color:#fef3c7;padding:7px 6px;border:1px solid #1a1a1a;white-space:nowrap}
-.glr-wrap td{padding:6px;border:1px solid #e5d7b1;vertical-align:top}
-.glr-wrap tbody tr:nth-child(even){background:#fffbea}
-.glr-wrap td.c{text-align:center;white-space:nowrap}
-.glr-wrap td.m{text-align:left;direction:ltr;white-space:nowrap;font-variant-numeric:tabular-nums}
-.glr-wrap tfoot td{background:#fef3c7;font-weight:800;border-top:2px solid #d4a017}
-.glr-entry{margin-bottom:16px;page-break-inside:avoid;break-inside:avoid}
-.glr-entry.pb{page-break-after:always;break-after:page}
-.glr-entry.pb:last-child{page-break-after:auto;break-after:auto}
-.glr-ehead{display:flex;gap:18px;flex-wrap:wrap;background:#fffbea;border:1px solid #e5d7b1;border-bottom:0;border-radius:6px 6px 0 0;padding:7px 10px;font-size:12px}
-.glr-ehead b{color:#92400e}
-.glr-empty{padding:30px;text-align:center;color:#6b7280}`;
-function glRptState(){
-  if(!glState.rpt){const t=new Date();const d=x=>x.toISOString().slice(0,10);glState.rpt={from:d(new Date(t.getFullYear(),t.getMonth(),1)).slice(0,8)+'01',to:d(t),mode:'separate',pagePer:false};}
-  return glState.rpt;
-}
-function glRenderRptPosted(){
-  const r=glRptState();
-  return `<style>${GL_RPT_CSS}
-.glr-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;margin-bottom:14px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
-.glr-filters label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px}
-.glr-radio{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:#fff;grid-column:span 2}
-.glr-radio label{flex-direction:row;align-items:center;gap:6px;font-weight:700;cursor:pointer}
-.glr-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-#glRptOut{background:#fff;border:1px solid #e8d7ad;border-radius:12px;padding:16px;overflow:auto}</style>
-  <div class="glr-filters">
-    <label>من تاريخ<input class="input" id="glRptFrom" type="date" value="${glEsc(r.from)}" onchange="glRptSave()"></label>
-    <label>إلى تاريخ<input class="input" id="glRptTo" type="date" value="${glEsc(r.to)}" onchange="glRptSave()"></label>
-    <div class="glr-radio" role="radiogroup" aria-label="طريقة العرض">
-      <label><input type="radio" name="glRptMode" value="separate" ${r.mode==='separate'?'checked':''} onchange="glRptSave()"> كل قيد لوحده (بإجمالي القيد)</label>
-      <label><input type="radio" name="glRptMode" value="continuous" ${r.mode==='continuous'?'checked':''} onchange="glRptSave()"> متصل (بدون إجماليات)</label>
-      <label id="glRptPbLbl" style="${r.mode==='separate'?'':'display:none'}"><input type="checkbox" id="glRptPb" ${r.pagePer?'checked':''} onchange="glRptSave()"> كل قيد في صفحة مستقلة عند الطباعة</label>
-    </div>
-  </div>
-  <div class="glr-actions">
-    <button class="btn primary" type="button" onclick="glRptShow()">👁 عرض التقرير</button>
-    <button class="btn" type="button" onclick="glRptPrint()">🖨 طباعة</button>
-    <button class="btn" type="button" onclick="glRptExcel()">📊 تصدير Excel</button>
-  </div>
-  <div id="glRptOut"><div class="glr-empty">اختر الفترة وطريقة العرض ثم اضغط «عرض التقرير»</div></div>`;
-}
-function glRptSave(){
-  const r=glRptState();
-  r.from=document.getElementById('glRptFrom')?.value||'';
-  r.to=document.getElementById('glRptTo')?.value||'';
-  r.mode=document.querySelector('input[name="glRptMode"]:checked')?.value||'separate';
-  r.pagePer=!!document.getElementById('glRptPb')?.checked;
-  const l=document.getElementById('glRptPbLbl');if(l)l.style.display=r.mode==='separate'?'':'none';
-}
-function glRptBuild(){
-  glRptSave();
-  const r=glRptState();
-  if(!r.from||!r.to){toast('حدد من تاريخ وإلى تاريخ','err');return null;}
-  if(r.from>r.to){toast('تاريخ البداية أكبر من تاريخ النهاية','err');return null;}
-  const day=e=>String(e.entry_date||'').slice(0,10);
-  const list=glState.entries.filter(e=>e.status==='posted'&&day(e)>=r.from&&day(e)<=r.to)
-    .sort((a,b)=>day(a).localeCompare(day(b))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));
-  const ccRe1=/\s*—\s*\[مركز:\s*([^\]]+)\]\s*$/,ccRe2=/^\[مركز:\s*([^\]]+)\]\s*$/;
-  const entries=list.map(e=>{
-    let hdr=String(e.description||'').replace(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/,'').trim();
-    if(hdr==='قيد بدون بيان')hdr='';
-    const rows=glState.lines.filter(x=>x.entry_id===e.id).sort((a,b)=>(a.line_no||0)-(b.line_no||0)).map(l=>{
-      const a=glState.accounts.find(x=>x.id===l.account_id)||{};
-      let d=String(l.description||''),ccName='';
-      const m=d.match(ccRe1)||d.match(ccRe2);
-      if(m){ccName=m[1].trim();d=d.replace(m[0],'').trim();}
-      const c=ccName?glState.centers.find(x=>String(x.center_name||'').trim()===ccName):null;
-      return {no:e.entry_no||String(e.id).slice(0,8),date:day(e),code:a.account_code||'',name:a.account_name||'',
-        debit:Number(l.debit||0),credit:Number(l.credit||0),ccCode:c?c.center_code:'',ccName,desc:d||hdr};
-    });
-    return {no:e.entry_no||String(e.id).slice(0,8),date:day(e),hdr,rows};
-  });
-  return {r,entries};
-}
-function glRptBody(data){
-  const {r,entries}=data;
-  const fmt=v=>v?glNum(v):'';
-  const head='<tr><th>رقم القيد</th><th>تاريخ القيد</th><th>رقم الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>رقم مركز التكلفة</th><th>اسم مركز التكلفة</th><th>الشرح</th></tr>';
-  const tr=x=>`<tr><td class="c" dir="ltr">${glEsc(x.no)}</td><td class="c">${glEsc(x.date)}</td><td class="c" dir="ltr">${glEsc(x.code)}</td><td>${glEsc(x.name)}</td><td class="m">${fmt(x.debit)}</td><td class="m">${fmt(x.credit)}</td><td class="c" dir="ltr">${glEsc(x.ccCode)}</td><td>${glEsc(x.ccName)}</td><td>${glEsc(x.desc)}</td></tr>`;
-  const nRows=entries.reduce((s,e)=>s+e.rows.length,0);
-  const master=`<div class="glr-master"><div class="co">IRON GATE SUPPLIES</div><h1>تقرير القيود المرحّلة</h1><div class="per">من تاريخ <b>${glEsc(r.from)}</b> إلى تاريخ <b>${glEsc(r.to)}</b></div><div class="cnt">${r.mode==='separate'?'عرض كل قيد على حدة':'عرض متصل'} · عدد القيود: ${entries.length} · عدد السطور: ${nRows}</div></div>`;
-  if(!entries.length)return `<div class="glr-wrap">${master}<div class="glr-empty">لا توجد قيود مُرحّلة في هذه الفترة</div></div>`;
-  let body='';
-  if(r.mode==='continuous'){
-    body=`<table><thead>${head}</thead><tbody>${entries.map(e=>e.rows.map(tr).join('')).join('')}</tbody></table>`;
-  }else{
-    body=entries.map(e=>{
-      const td=e.rows.reduce((s,x)=>s+x.debit,0),tc=e.rows.reduce((s,x)=>s+x.credit,0);
-      return `<div class="glr-entry ${r.pagePer?'pb':''}"><div class="glr-ehead"><span>رقم القيد: <b dir="ltr">${glEsc(e.no)}</b></span><span>التاريخ: <b>${glEsc(e.date)}</b></span>${e.hdr?`<span>البيان: <b>${glEsc(e.hdr)}</b></span>`:''}</div><table><thead>${head}</thead><tbody>${e.rows.map(tr).join('')}</tbody><tfoot><tr><td colspan="4">إجمالي القيد</td><td class="m">${glNum(td)}</td><td class="m">${glNum(tc)}</td><td colspan="3"></td></tr></tfoot></table></div>`;
-    }).join('');
-  }
-  return `<div class="glr-wrap">${master}${body}</div>`;
-}
-function glRptShow(){
-  const d=glRptBuild();if(!d)return;
-  const box=document.getElementById('glRptOut');if(box)box.innerHTML=glRptBody(d);
-}
-function glRptPrint(){
-  const d=glRptBuild();if(!d)return;
-  const box=document.getElementById('glRptOut');if(box)box.innerHTML=glRptBody(d);
-  const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>تقرير القيود المرحّلة</title><style>@page{size:A4 landscape;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:12px}thead{display:table-header-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_RPT_CSS}</style></head><body>${glRptBody(d)}</body></html>`;
-  w.document.open();w.document.write(html);w.document.close();w.focus();
-  setTimeout(()=>{try{w.print();}catch(e){}},400);
-}
-function glRptExcel(){
-  const d=glRptBuild();if(!d)return;
-  if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');
-  const box=document.getElementById('glRptOut');if(box)box.innerHTML=glRptBody(d);
-  const {r,entries}=d;
-  const head=['رقم القيد','تاريخ القيد','رقم الحساب','اسم الحساب','مدين','دائن','رقم مركز التكلفة','اسم مركز التكلفة','الشرح'];
-  const row=x=>[x.no,x.date,x.code,x.name,x.debit,x.credit,x.ccCode,x.ccName,x.desc];
-  const aoa=[['IRON GATE SUPPLIES'],['تقرير القيود المرحّلة'],['من تاريخ',r.from,'إلى تاريخ',r.to],[]];
-  if(r.mode==='continuous'){
-    aoa.push(head);
-    entries.forEach(e=>e.rows.forEach(x=>aoa.push(row(x))));
-  }else{
-    entries.forEach(e=>{
-      aoa.push(['رقم القيد',e.no,'التاريخ',e.date,'البيان',e.hdr]);
-      aoa.push(head);
-      e.rows.forEach(x=>aoa.push(row(x)));
-      aoa.push(['','','','إجمالي القيد',e.rows.reduce((s,x)=>s+x.debit,0),e.rows.reduce((s,x)=>s+x.credit,0)]);
-      aoa.push([]);
-    });
-  }
-  const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols']=[{wch:14},{wch:13},{wch:16},{wch:32},{wch:15},{wch:15},{wch:16},{wch:24},{wch:40}];
-  const wb=XLSX.utils.book_new();
-  wb.Workbook={Views:[{RTL:true}]};
-  XLSX.utils.book_append_sheet(wb,ws,'القيود المرحلة');
-  XLSX.writeFile(wb,`تقرير_القيود_المرحلة_${r.from}_${r.to}.xlsx`);
-}
 function glShowPostedDetails(id){const e=glState.entries.find(x=>x.id===id);if(!e)return;const box=document.getElementById('glPostedDetails');if(!box)return;const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);const rows=ls.map(l=>{const a=glState.accounts.find(x=>x.id===l.account_id)||{};return `<tr><td>${l.line_no}</td><td dir="ltr">${glEsc(a.account_code||'')}</td><td>${glEsc(a.account_name||'')}</td><td>${glEsc(l.description||'')}</td><td>${glNum(l.debit)}</td><td>${glNum(l.credit)}</td></tr>`;}).join('');box.innerHTML=`<section class="card" style="padding:14px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap"><h3 style="margin:0">تفاصيل القيد ${glEsc(e.entry_no||e.id.slice(0,8))}</h3><button class="btn sm" onclick="document.getElementById('glPostedDetails').innerHTML=''">إغلاق</button></div><p>التاريخ: ${glEsc(e.entry_date||'')} · النظام المُرحِّل: <b>${glEsc(glSourceSystem(e))}</b></p>${glTable(['م','رقم الحساب','اسم الحساب','البيان','مدين','دائن'],rows)}</section>`;}
 function glShowLines(id){const e=glState.entries.find(x=>x.id===id);if(!e)return;const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);const rows=ls.map(l=>{const a=glState.accounts.find(x=>x.id===l.account_id)||{};return `<tr><td>${l.line_no}</td><td dir="ltr">${glEsc(a.account_code||"")}</td><td>${glEsc(a.account_name||"")}</td><td>${glEsc(l.description||"")}</td><td>${glNum(l.debit)}</td><td>${glNum(l.credit)}</td></tr>`}).join("");const el=document.getElementById("glEntryDetails");if(el)el.innerHTML=`<section class="card"><h3>تفاصيل القيد ${glEsc(e.entry_no||e.id.slice(0,8))}</h3>${glTable(["م","كود الحساب","اسم الحساب","البيان","مدين","دائن"],rows)}<div style="margin-top:10px"><button class="btn" onclick="glShowAudit('gl_entries','${e.id}')">سجل تعديلات القيد</button></div><div id="glAuditDetails"></div></section>`;}
 async function glShowAudit(tableName,recordId){const box=document.getElementById("glAuditDetails");if(!box)return;box.textContent="جاري تحميل سجل المراجعة…";try{const r=await sb.from("gl_audit_log").select("*").eq("table_name",tableName).eq("record_id",recordId).order("performed_at",{ascending:false});if(r.error)throw r.error;const rows=(r.data||[]).map(a=>`<tr><td>${glEsc(a.action)}</td><td>${glEsc(a.performed_by||"—")}</td><td>${glEsc(new Date(a.performed_at).toLocaleString("ar-EG"))}</td><td><details><summary>عرض الفرق</summary><pre style="white-space:pre-wrap;max-width:650px;direction:ltr;text-align:left">${glEsc(JSON.stringify({before:a.old_data,after:a.new_data},null,2))}</pre></details></td></tr>`).join("");box.innerHTML=`<h4>سجل المراجعة</h4>${glTable(["العملية","معرّف المستخدم","التوقيت","التفاصيل"],rows)}`;}catch(err){box.textContent="تعذر تحميل سجل المراجعة: "+(err.message||err);}}
@@ -5481,18 +4482,6 @@ function renderManagementReports(){
  el.innerHTML=`<section class="card"><div class="head"><h3>👥 موقف كل عميل</h3><span class="count">بيع وتوريد وتحصيل ومتأخرات</span></div><div class="body">${table(['العميل','إجمالي أوامر البيع/التوريد ('+cur+')','الكمية الموردة (طن)','التحصيل ('+cur+')','المتبقي ('+cur+')','الأقساط المتأخرة ('+cur+')'],clientRows)}</div></section><section class="card"><div class="head"><h3>🏭 موقف كل مورد</h3><span class="count">مشتريات ومدفوعات وشيكات</span></div><div class="body">${table(['المورد','إجمالي المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي ('+cur+')','شيكات مستحقة/تحت التحصيل ('+cur+')'],supplierRows)}</div></section><section class="card"><div class="head"><h3>📊 ربحية أوامر البيع</h3><span class="count">هامش فعلي على التوريد المسجل</span></div><div class="body"><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">الربح هنا = صافي قيمة البيع المحسوبة في بيانات التوريد − تكلفة الشراء الفعلية (الوزن الفعلي × سعر الشراء). لا تتوفر في النموذج الحالي قيمة مستقلة موثوقة للربح المتوقع.</div>${table(['أمر البيع','العميل','قيمة البيع ('+cur+')','تكلفة الشراء ('+cur+')','الربح المحسوب ('+cur+')','هامش الربح/طن ('+cur+')'],profitRows)}</div></section><section class="card"><div class="head"><h3>⏳ تقرير أعمار الديون</h3><span class="count">من تاريخ الاستحقاق حتى اليوم</span></div><div class="body">${table(['مدة التأخير','عدد الأقساط','إجمالي المتأخر ('+cur+')'],age)}</div></section>`;
 }
 
-// صافي أرصدة العملاء/الموردين الحالية (من بداية التعامل حتى الآن) — نفس طريقة إشعار "أرصدة العملاء والموردين"
-function dxPartyNets(){
-  const sumOf=kind=>{
-    const saved={...tbFilters[kind]};
-    try{ tbFilters[kind]={from:"",to:"",partyFrom:"",partyTo:"",hideZero:false,filtersOpen:true}; return r2(tbCompute(kind).rows.reduce((a,r)=>a+(Number(r.closeNat)||0),0)); }
-    finally{ tbFilters[kind]=saved; }
-  };
-  const out={c:null,v:null};
-  try{ if(canView("clientTB")) out.c=sumOf("clientTB"); }catch(e){}
-  try{ if(canView("supplierTB")) out.v=sumOf("supplierTB"); }catch(e){}
-  return out;
-}
 function viewDashboard(){
   const arr = key => Array.isArray(state[key]) ? state[key] : [];
   const cur = (state.settings&&state.settings.currency)||"ج.م";
@@ -5577,8 +4566,7 @@ function viewDashboard(){
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),'receipts')}
       ${kpi('k-blue','▥','أقساط غير مسددة (متأخر + قادم)',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط = '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا','salesInstallments','مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),'salesInstallments')}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
-      ${(()=>{ const n=dxPartyNets(); return (n.c===null?'':kpi('k-blue','♙','رصيد العملاء الصافي',money(n.c)+' <em>'+cur+'</em>',n.c>=0?'مستحق لنا عند العملاء':'رصيد دائن للعملاء (علينا)','clientTB','صافي أرصدة كل العملاء حتى الآن (أول المدة + المبيعات − التحصيلات)'))+(n.v===null?'':kpi('k-slate','♧','رصيد الموردين الصافي',money(n.v)+' <em>'+cur+'</em>',n.v>=0?'مستحق للموردين (علينا)':'رصيد مدين لدى الموردين (لنا)','supplierTB','صافي أرصدة كل الموردين حتى الآن (أول المدة + المشتريات − المدفوعات)')); })()}` :
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل','master')}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل','master')}`;
 
   const lateList = lateTop.map(r=>`<tr><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
@@ -6029,7 +5017,7 @@ function tbOpenStatement(kind,name){
   const sk=kind==='clientTB'?'clientStatement':'supplierStatement', f=tbFilters[kind];
   const row=tbCompute(kind).rows.find(r=>r.name===name);
   const nat=row?(kind==='clientTB'?(row.od-row.oc):(row.oc-row.od)):0;
-  partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{from:f.from,to:f.to,party:'',parties:[],partyFrom:name,partyTo:name,q:''});
+  partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{from:f.from,to:f.to,party:'',parties:[],partyFrom:name,partyTo:name,opening:String(r2(nat)),q:''});
   go(sk);
 }
 function tbEditOpening(kind){
@@ -6078,8 +5066,8 @@ function tbExport(kind,format){
 
 // ========== كشوف حساب العملاء والموردين ==========
 const partyStatementFilters = {
-  clientStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true},
-  supplierStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true}
+  clientStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true},
+  supplierStatement:{from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true}
 };
 function viewPartyStatement(kind){
   const customer=kind==='clientStatement', f=partyStatementFilters[kind], title=customer?'كشف حساب عميل':'كشف حساب مورد';
@@ -6092,7 +5080,8 @@ function viewPartyStatement(kind){
       <div class="fld statement-filter-field"><label>طريقة عرض الكشف</label><select class="inp" onchange="partyStatementFilters['${kind}'].view=this.value;renderPartyStatement()"><option value="detail" ${f.view==='detail'?'selected':''}>تفصيلي — كل قطر/صنف</option><option value="summary" ${f.view==='summary'?'selected':''}>إجمالي — أمر البيع سطر واحد</option></select></div>
       <div class="fld statement-filter-field"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="partyStatementFilters['${kind}'].from=this.value;renderPartyStatement()"></div>
       <div class="fld statement-filter-field"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="partyStatementFilters['${kind}'].to=this.value;renderPartyStatement()"></div>
-            <div class="fld statement-filter-field"><label>بحث في الحركة</label><input class="inp" placeholder="ابحث بأمر البيع أو البيان" value="${escapeAttr(f.q)}" oninput="partyStatementFilters['${kind}'].q=this.value;renderPartyStatement()"></div>
+      <div class="fld statement-filter-field"><label>رصيد أول المدة (${customer?'مدين موجب / دائن سالب':'دائن موجب / مدين سالب'})</label><input class="inp" type="number" step="0.01" value="${escapeAttr(f.opening)}" oninput="partyStatementFilters['${kind}'].opening=this.value;renderPartyStatement()"></div>
+      <div class="fld statement-filter-field"><label>بحث في الحركة</label><input class="inp" placeholder="ابحث بأمر البيع أو البيان" value="${escapeAttr(f.q)}" oninput="partyStatementFilters['${kind}'].q=this.value;renderPartyStatement()"></div>
       <div class="fld statement-filter-actions" style="justify-content:end"><label>&nbsp;</label><button type="button" class="btn ghost" onclick="fpClear('${kind}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button></div>
     </div><div style="font-size:12px;color:var(--text-dim);margin-top:10px">يتم اختيار جميع الأسماء الواقعة بين البداية والنهاية حسب ترتيب الأسماء. عند اختيار أكثر من طرف، تتم معاينة وطباعة كشف مستقل لكل طرف. تشمل النتائج حركات التوريد والتحصيلات أو المدفوعات المسجلة بالخزينة.</div></div></div><div id="partyStatementResults"></div></div>`;
 }
@@ -6112,11 +5101,10 @@ function partyStatementSelected(kind){
   }
   return [...new Set((f.parties&&f.parties.length)?f.parties:(f.party?[f.party]:[]))];
 }
-function partyStatementRows(kind,opts){
-  opts=opts||{};
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), q=opts.pre?'':(f.q||'').trim().toLowerCase(), rows=[], seen=new Set();
+function partyStatementRows(kind){
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), q=(f.q||'').trim().toLowerCase(), rows=[], seen=new Set();
   if(!parties.length) return [];
-  const dateOk=d=>opts.pre?(!!f.from&&d<f.from):((!f.from||d>=f.from)&&(!f.to||d<=f.to));
+  const dateOk=d=>(!f.from||d>=f.from)&&(!f.to||d<=f.to);
   const orderOf=s=>String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'بدون أمر بيع');
   (state.shipments||[]).forEach(s=>{
     const party=customer?s.customer:s.supplier;
@@ -6158,7 +5146,7 @@ function partyStatementRows(kind,opts){
     rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id,diameter:'—',type:'—',factory:'—',desc,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0),inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',sortRef:String(e.no||e.id||''),unique});
   });
   let result=rows;
-  if(f.view==='summary'&&!opts.pre){
+  if(f.view==='summary'){
     const grouped=new Map(), other=[];
     rows.forEach(r=>{
       if(r.source!=='supply'){other.push(r);return;}
@@ -6170,39 +5158,38 @@ function partyStatementRows(kind,opts){
   }
   return result.sort((a,b)=>a.date.localeCompare(b.date)||String(a.order||'').localeCompare(String(b.order||''),'ar',{numeric:true})||String(a.sortRef||'').localeCompare(String(b.sortRef||''),'ar',{numeric:true}));
 }
-// رصيد أول المدة = الرصيد اليدوي + صافي كل الحركات السابقة لتاريخ "من تاريخ" (لكل طرف)
-function partyStatementOpenings(kind){
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind);
-  const m=new Map(parties.map(p=>[p,0]));
-  if(f.from) partyStatementRows(kind,{pre:true}).forEach(r=>{const k=r.party||'—'; if(!m.has(k)) return; m.set(k,m.get(k)+(customer?((+r.debit||0)-(+r.credit||0)):((+r.credit||0)-(+r.debit||0))));});
-  return m;
-}
 function renderPartyStatement(){
   const kind=currentPage; if(!['clientStatement','supplierStatement'].includes(kind)) return;
   const el=document.getElementById('partyStatementResults'); if(!el)return;
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), rows=partyStatementRows(kind), openMap=partyStatementOpenings(kind), openTotal=[...openMap.values()].reduce((a,b)=>a+b,0);
-  const balances=new Map(openMap); rows.forEach(r=>{const k=r.party||'—';let b=balances.has(k)?balances.get(k):0;b+=customer?(r.debit-r.credit):(r.credit-r.debit);balances.set(k,b);r.balance=b;});
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', parties=partyStatementSelected(kind), rows=partyStatementRows(kind), opening=Number(f.opening)||0;
+  const balances=new Map(parties.map(p=>[p,opening])); rows.forEach(r=>{const k=r.party||'—';let b=balances.has(k)?balances.get(k):opening;b+=customer?(r.debit-r.credit):(r.credit-r.debit);balances.set(k,b);r.balance=b;});
   const finalBalance=[...balances.values()].reduce((a,b)=>a+b,0);
   const sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0), money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), qty=v=>Number(v||0).toLocaleString('en-US',{maximumFractionDigits:3}), cur=state.settings.currency||'ج.م';
   const deb=sum('debit'), cred=sum('credit'), inclusive=sum('inclusiveTotal'), final=finalBalance;
   const balanceLabel=customer?(final>=0?'رصيد مدين مستحق على العميل':'رصيد دائن للعميل'):(final>=0?'رصيد دائن مستحق للمورد':'رصيد مدين لدى المورد');
-  const openRows=parties.map(p=>`<tr class="statement-open-row"><td>${escapeHtml(f.from||'—')}</td><td>—</td><td class="statement-desc"><b>رصيد أول المدة</b>${parties.length>1?' — '+escapeHtml(p):''}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(openMap.get(p)||0)}</b></td></tr>`).join('');
-  const body=openRows+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td class="statement-desc">${escapeHtml(r.desc)}</td><td class="num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join('');
+  const body=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.order||'—'))}</td><td class="statement-desc">${escapeHtml(r.desc)}</td><td class="num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td><td class="num"><b>${money(r.balance)}</b></td></tr>`).join('');
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', partyMaster=parties.length?parties.join('، '):(customer?'لم يتم اختيار عميل':'لم يتم اختيار مورد');
   el.innerHTML=`<style>.party-statement-view .statement-master{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:8px;padding:13px 16px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-radius:12px;margin-bottom:12px;text-align:center}.party-statement-view .statement-master .master-label{color:#8a6a19;font-size:12px;font-weight:700}.party-statement-view .statement-master .master-name{font-size:17px;font-weight:900;color:#172b49}.party-statement-view .trade-report-table{width:100%;min-width:980px;text-align:center}.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{text-align:center!important;vertical-align:middle}.party-statement-view .trade-report-table .statement-desc{white-space:normal;min-width:280px;line-height:1.7}.party-statement-view .trade-report-table .num{direction:ltr;text-align:center!important;font-variant-numeric:tabular-nums}.party-statement-view .statement-meta{text-align:center;color:var(--text-dim);font-size:12px;margin:0 0 12px}.party-statement-view .statement-card-head{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:14px}.party-statement-view .kpis .kpi{text-align:center}
-/* الموبيل: إظهار كل الأعمدة (كان فيه قاعدة عامة بتخفي عمود دائن والرصيد) مع سكرول أفقي */
-.party-statement-view .tbl-wrap{overflow-x:auto;position:relative;-webkit-overflow-scrolling:touch}
-.party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{display:table-cell!important}
-.party-statement-view .trade-report-table tfoot{position:static!important}
-.party-statement-view .statement-open-row td{background:#e2f0d9!important;font-weight:800;color:#14532d}
+/* الموبيل: عمود "الرصيد الجاري" يفضل ثابت على اليسار علشان ما يختفيش مع السكرول الأفقي */
+.party-statement-view .tbl-wrap{overflow-x:auto;position:relative}
 @media(max-width:900px){
-  .party-statement-view .trade-report-table{min-width:700px;font-size:11.5px}
-  .party-statement-view .trade-report-table .statement-desc{min-width:150px;font-size:11px}
+  .party-statement-view .trade-report-table{min-width:720px;font-size:11.5px}
+  .party-statement-view .trade-report-table th:last-child,
+  .party-statement-view .trade-report-table td:last-child{
+    position:sticky;left:0;z-index:3;
+    background:#fef3c7;border-right:2px solid #d4a017;
+    box-shadow:4px 0 6px rgba(0,0,0,.08);
+    min-width:110px
+  }
+  .party-statement-view .trade-report-table thead th:last-child{background:#1a1a1a;color:#fef3c7;border-right:2px solid #d4a017}
+  .party-statement-view .trade-report-table tfoot td:last-child{background:#d4a017;color:#111;font-weight:800;border-right:2px solid #92400e}
+  .party-statement-view .trade-report-table .statement-desc{min-width:160px;font-size:11px}
 }
 @media(max-width:600px){
-  .party-statement-view .trade-report-table{min-width:660px;font-size:11px}
-  .party-statement-view .trade-report-table th,.party-statement-view .trade-report-table td{padding:6px 4px}
-}}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(openTotal)}</div><div class="sub">${cur}${f.from?' · قبل '+escapeHtml(f.from):''}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
+  .party-statement-view .trade-report-table{min-width:620px;font-size:11px}
+  .party-statement-view .trade-report-table th,
+  .party-statement-view .trade-report-table td{padding:6px 4px}
+}</style><div class="party-statement-view"><div class="statement-master"><span class="master-label">${customer?'العميل':'المورد'}</span><span class="master-name">${escapeHtml(partyMaster)}</span></div><div class="statement-meta">${rows.length} حركة · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · الفترة: ${f.from||'بداية غير محددة'} — ${f.to||'نهاية غير محددة'}</div><div class="kpis compact"><div class="kpi"><div class="lbl">رصيد أول المدة</div><div class="val small">${money(opening*parties.length)}</div><div class="sub">${cur} · لكل طرف ${money(opening)}</div></div><div class="kpi"><div class="lbl">إجمالي السعر شامل</div><div class="val small">${money(inclusive)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي المدين</div><div class="val small">${money(deb)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">إجمالي الدائن</div><div class="val small">${money(cred)}</div><div class="sub">${cur}</div></div><div class="kpi"><div class="lbl">الرصيد الختامي</div><div class="val small">${money(Math.abs(final))}</div><div class="sub">${balanceLabel} · ${cur}</div></div></div><div class="card"><div class="head statement-card-head"><h3>${title}</h3><span class="count">كشف حساب ${customer?'العميل':'المورد'} — ${escapeHtml(partyMaster)}</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>إجمالي السعر شامل (${cur})</th><th>مدين (${cur})</th><th>دائن (${cur})</th><th>الرصيد الجاري (${cur})</th></tr></thead><tbody>${body||`<tr><td colspan="7"><div class="empty" style="padding:28px">${parties.length?'لا توجد حركات مطابقة للفترة والفلاتر':'اختر '+(customer?'عميلًا أو أكثر':'موردًا أو أكثر')+' لعرض كشف الحساب'}</div></td></tr>`}</tbody><tfoot><tr><td colspan="3">الإجمالي والحركة</td><td class="num">${money(inclusive)}</td><td class="num">${money(deb)}</td><td class="num">${money(cred)}</td><td class="num">${money(final)}</td></tr></tfoot></table></div></div></div></div>`;
 }
 function openPartyStatementQueue(reports,title){
   const w=window.open('','_blank');
@@ -6279,12 +5266,11 @@ table.rprt-tbl tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color
 }
 
 function partyStatementHtmlFor(kind,partyName,allParties){
-  const f=partyStatementFilters[kind], customer=kind==='clientStatement', opening=partyStatementOpenings(kind).get(partyName)||0;
+  const f=partyStatementFilters[kind], customer=kind==='clientStatement', opening=Number(f.opening)||0;
   const rows=partyStatementRows(kind).filter(r=>(r.party||'')===partyName); let running=opening;
   rows.forEach(r=>{running+=customer?(r.debit-r.credit):(r.credit-r.debit);r.balance=running;});
   const title=customer?'كشف حساب عميل':'كشف حساب مورد', money=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}), cur=state.settings.currency||'ج.م', inclusive=rows.reduce((a,r)=>a+(+r.inclusiveTotal||0),0);
-  const openRow=`<tr style="background:#e2f0d9"><td>${escapeHtml(f.from||'—')}</td><td>—</td><td style="text-align:right;font-weight:900">رصيد أول المدة</td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n c-bal" style="background:#e2f0d9">${money(opening)}</td></tr>`;
-  const body=openRow+rows.map((r,i)=>`<tr>
+  const body=rows.map((r,i)=>`<tr>
     <td>${escapeHtml(r.date)}</td>
     <td class="c-order">${escapeHtml(String(r.order||'—'))}</td>
     <td style="white-space:normal;min-width:180px;text-align:right;line-height:1.6">${escapeHtml(r.desc)}</td>
@@ -6315,7 +5301,7 @@ function partyStatementHtmlFor(kind,partyName,allParties){
       <span class="name">${escapeHtml(partyName)}</span>
       <span class="rprt-badge" style="background:${running>=0?'#fee2e2':'#dcfce7'};color:${balanceColor}">${balanceLabel}: ${money(Math.abs(running))} ${escapeHtml(cur)}</span>
     </div>
-    <div style="overflow-x:auto"><table class="rprt-tbl" style="min-width:640px">
+    <table class="rprt-tbl">
       <thead><tr>
         <th>التاريخ</th><th>أمر البيع</th><th>البيان</th>
         <th>إجمالي شامل (${escapeHtml(cur)})</th>
@@ -6331,7 +5317,7 @@ function partyStatementHtmlFor(kind,partyName,allParties){
         <td class="n">${money(totalCredit)}</td>
         <td class="n">${money(running)}</td>
       </tr></tfoot>
-    </table></div>`;
+    </table>`;
   return igProReportHtml({
     emoji: customer?"🧑‍💼":"🏭",
     title: title,
@@ -6381,8 +5367,7 @@ const masterTabs = [
   { id:"cementTypes", key:"cementTypes", label:"أنواع الاسمنت", icon:"◉" },
   { id:"statuses", key:"statuses", label:"حالات التعتيق", icon:"◉" },
   { id:"banks", key:"banks", label:"البنوك", icon:"🏦" },
-  { id:"safes", key:"safes", label:"الخزائن", icon:"🗄" },
-  { id:"warehouses", key:"warehouses", label:"المخازن", icon:"🏬" }
+  { id:"safes", key:"safes", label:"الخزائن", icon:"🗄" }
 ];
 
 const isPartyKey = k => k==="customers" || k==="suppliers";
@@ -6401,7 +5386,6 @@ function viewMaster(){
   `).join("");
 
   const tab = allowed.find(t=>t.id===currentTab) || allowed[0];
-  if(tab.id==="warehouses") return whMasterHtml(tabs);
   const items = state[tab.key] || [];
   const isParty = isPartyKey(tab.key);
   const isTreasury = isTreasuryKey(tab.key);
@@ -6410,14 +5394,12 @@ function viewMaster(){
 
   let header, rows;
   if(isBank || isSafe){
-    header = `<tr><th>#</th><th>الكود *</th><th>الاسم *</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
+    header = `<tr><th>#</th><th>الكود *</th><th>الاسم *</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((item,i)=>`
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
         <td><strong style="font-family:monospace;color:var(--gold-text)">${escapeHtml(item.code||"")}</strong></td>
         <td>${escapeHtml(item.name||"")}</td>
-        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(mdAccShow(item).code)}</td>
-        <td>${escapeHtml(mdAccShow(item).name)}</td>
         <td style="width:140px">
           <div class="td-actions">
             <button onclick="editItem('${tab.key}',${i})">تعديل</button>
@@ -6425,7 +5407,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="6"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
+    `).join("") : `<tr><td colspan="4"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isTreasury){
     header = `<tr><th>#</th><th>الاسم</th><th>النوع</th><th>ملاحظات</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((t,i)=>`
@@ -6443,7 +5425,7 @@ function viewMaster(){
       </tr>
     `).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isParty){
-    header = `<tr><th>#</th><th>الاسم</th><th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
+    header = `<tr><th>#</th><th>الاسم</th><th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((p,i)=>`
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
@@ -6452,8 +5434,6 @@ function viewMaster(){
         <td style="direction:ltr;text-align:right">${escapeHtml(p.taxCard||"—")}</td>
         <td style="direction:ltr;text-align:right">${escapeHtml(p.commercialReg||"—")}</td>
         <td style="font-size:12px;color:var(--text-dim);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.address||"—")}</td>
-        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(mdAccShow(p).code)}</td>
-        <td>${escapeHtml(mdAccShow(p).name)}</td>
         <td style="width:140px">
           <div class="td-actions">
             <button onclick="editItem('${tab.key}',${i})">تعديل</button>
@@ -6461,7 +5441,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="9"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
+    `).join("") : `<tr><td colspan="7"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
   } else {
     header = `<tr><th>#</th><th>${tab.label}</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((v,i) => `
@@ -6497,196 +5477,7 @@ function viewMaster(){
   `;
 }
 
-// ================= اختيار حساب من دليل الحسابات (آخر مستوى) للبيانات الأساسية =================
-async function mdAccEnsure(){
-  if(glState.accounts&&glState.accounts.length) return true;
-  try{
-    const r=await sb.from('gl_accounts').select('*').order('account_code',{ascending:true});
-    if(r.error) throw r.error;
-    glState.accounts=r.data||[];
-    return glState.accounts.length>0 || (toast('دليل الحسابات فارغ','err'),false);
-  }catch(e){ toast('تعذر تحميل دليل الحسابات','err'); return false; }
-}
-function mdAccShow(item){
-  item=item||{};
-  const a=(item.accountId&&glState.accounts||[]).find(x=>String(x.id)===String(item.accountId));
-  return {code:a?a.account_code:(item.accountCode||''), name:a?a.account_name:(item.accountName||'')};
-}
-function mdAccHtml(id,item){
-  const a=mdAccShow(item), v=escapeAttr;
-  return `<div class="fld md-acc" style="grid-column:span 2"><label>الحساب في دليل الحسابات</label>
-    <input type="hidden" id="${id}_id" value="${v(item&&item.accountId||'')}">
-    <div class="md-acc-row">
-      <input class="inp md-acc-code" id="${id}_code" readonly placeholder="رقم الحساب" value="${v(a.code)}">
-      <button type="button" class="md-acc-btn" title="بحث في دليل الحسابات" aria-label="بحث في دليل الحسابات" onclick="mdAccToggle('${id}')">🔍</button>
-      <input class="inp md-acc-name" id="${id}_name" readonly placeholder="اسم الحساب" value="${v(a.name)}">
-      <button type="button" class="md-acc-clear" title="مسح الحساب" aria-label="مسح الحساب" onclick="mdAccClear('${id}')">✕</button>
-    </div>
-    <div class="md-acc-pop" id="${id}_pop" hidden>
-      <input class="inp md-acc-search" id="${id}_q" placeholder="ابحث برقم الحساب أو اسمه (آخر مستوى فقط)..." oninput="mdAccFilter('${id}')" autocomplete="off">
-      <div class="md-acc-results" id="${id}_res"></div>
-    </div></div>`;
-}
-function mdAccRead(id){
-  const g=k=>(document.getElementById(id+'_'+k)?.value||'').trim();
-  return {accountId:g('id'),accountCode:g('code'),accountName:g('name')};
-}
-function mdAccCloseAll(){ document.querySelectorAll('.md-acc-pop').forEach(x=>x.hidden=true); }
-async function mdAccToggle(id){
-  const pop=document.getElementById(id+'_pop'); if(!pop) return;
-  const wasOpen=!pop.hidden; mdAccCloseAll(); if(wasOpen) return;
-  if(!await mdAccEnsure()) return;
-  const r=document.getElementById(id+'_code').closest('.md-acc-row').getBoundingClientRect();
-  const w=Math.min(560,window.innerWidth-24), right=Math.max(12,window.innerWidth-r.right-(w>r.width?0:0));
-  const top=Math.max(8,Math.min(window.innerHeight-340,r.bottom+4));
-  pop.style.top=top+'px'; pop.style.right=Math.min(right,Math.max(12,window.innerWidth-w-12))+'px'; pop.style.width=w+'px';
-  pop.hidden=false;
-  const q=document.getElementById(id+'_q'); q.value=''; mdAccFilter(id); q.focus();
-}
-function mdAccFilter(id){
-  const q=String(document.getElementById(id+'_q').value||'').trim().toLowerCase(), list=document.getElementById(id+'_res');
-  const m=glPostingLeafAccounts().filter(a=>String(a.account_code||'').toLowerCase().includes(q)||String(a.account_name||'').toLowerCase().includes(q)).slice(0,80);
-  list.innerHTML=m.map(a=>`<button type="button" class="md-acc-item" onclick="mdAccChoose('${id}','${String(a.id).replace(/'/g,"")}')"><b dir="ltr">${escapeHtml(String(a.account_code||''))}</b><span>${escapeHtml(String(a.account_name||''))}</span></button>`).join('')||'<div class="md-acc-empty">لا توجد حسابات مطابقة</div>';
-}
-function mdAccChoose(id,accId){
-  const a=glState.accounts.find(x=>String(x.id)===String(accId)); if(!a) return;
-  document.getElementById(id+'_id').value=a.id;
-  document.getElementById(id+'_code').value=a.account_code||'';
-  document.getElementById(id+'_name').value=a.account_name||'';
-  mdAccCloseAll();
-}
-function mdAccClear(id){ ['id','code','name'].forEach(k=>{const e=document.getElementById(id+'_'+k); if(e) e.value='';}); mdAccCloseAll(); }
-document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccCloseAll(); });
-
 function bindMaster(){}
-
-// ================= المخازن: شجرة مخازن بنفس أسلوب دليل الحسابات + ربط كل مخزن بحساب (آخر مستوى) =================
-// التخزين داخل settings.warehouses (بيتزامن مع السيرفر مع الإعدادات بدون جدول جديد).
-let whQ = "", whCollapsed = new Set();
-function whList(){ if(!state.settings) state.settings={}; if(!Array.isArray(state.settings.warehouses)) state.settings.warehouses=[]; return state.settings.warehouses; }
-const whById = id => whList().find(x=>x.id===id);
-const whCodeCmp = (a,b)=>String(a.code||"").localeCompare(String(b.code||""),"en",{numeric:true});
-const whKids = pid => whList().filter(x=>(x.parentId||"")===(pid||"")).sort(whCodeCmp);
-const whHasKids = id => whList().some(x=>x.parentId===id);
-function whLevel(w){ let n=1, g=0; while(w&&w.parentId&&g++<50){ w=whById(w.parentId); if(w) n++; } return n; }
-function whNextCode(pid){
-  const kids=whKids(pid), par=pid?whById(pid):null;
-  if(!par){ const mx=Math.max(0,...kids.map(k=>parseInt(k.code,10)||0)); return String(mx+1); }
-  const pre=String(par.code||""); let mx=0;
-  kids.forEach(k=>{ const c=String(k.code||""); if(c.startsWith(pre)){ const n=parseInt(c.slice(pre.length),10); if(Number.isFinite(n)&&n>mx) mx=n; } });
-  return pre+String(mx+1).padStart(2,"0");
-}
-function whMatches(w,q){ return [w.code,w.name,w.accountCode,w.accountName].some(v=>String(v||"").toLowerCase().includes(q)); }
-function whVisibleSet(q){
-  const keep=new Set(); if(!q) return null;
-  whList().forEach(w=>{ if(whMatches(w,q)){ let x=w,g=0; while(x&&g++<50){ keep.add(x.id); x=x.parentId?whById(x.parentId):null; } } });
-  return keep;
-}
-function whTreeHtml(){
-  const q=String(whQ||"").trim().toLowerCase(), vis=whVisibleSet(q), canA=can("master","add"), canE=can("master","edit"), canD=can("master","delete");
-  const acc=w=>{ const a=mdAccShow(w); return a; };
-  let rows="", n=0;
-  const walk=(pid)=>{
-    whKids(pid).forEach(w=>{
-      if(vis&&!vis.has(w.id)) return;
-      n++;
-      const kids=whHasKids(w.id), lvl=whLevel(w), open=q?true:!whCollapsed.has(w.id), a=acc(w);
-      const tg=kids?`<button type="button" class="wh-tg" onclick="whToggle('${w.id}')" aria-label="طي/فتح">${open?"▾":"▸"}</button>`:`<span class="wh-tg wh-dot">•</span>`;
-      const hit=q&&whMatches(w,q)?" wh-hit":"";
-      rows+=`<tr class="wh-r wh-l${Math.min(lvl,5)}${kids?" wh-grp":""}${hit}">
-        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text);white-space:nowrap">${escapeHtml(w.code||"")}</td>
-        <td><div class="wh-name" style="padding-inline-start:${(lvl-1)*22}px">${tg}<strong>${escapeHtml(w.name||"")}</strong><span class="wh-badge">${kids?"مجموعة":"مخزن"}</span></div></td>
-        <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(kids?"":a.code)}</td>
-        <td>${escapeHtml(kids?"":a.name)}</td>
-        <td style="width:210px"><div class="td-actions">
-          <button onclick="whAdd('${w.id}')" title="إضافة مخزن فرعي">＋ فرعي</button>
-          <button onclick="whEdit('${w.id}')">تعديل</button>
-          <button class="del" onclick="whDel('${w.id}')">حذف</button></div></td></tr>`;
-      if(open) walk(w.id);
-    });
-  };
-  walk("");
-  if(!rows) rows=`<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>${q?"لا توجد نتائج مطابقة.":"لا توجد مخازن بعد — اضغط \"+ إضافة مخزن رئيسي\"."}</p></div></td></tr>`;
-  return `<table class="wh-tree"><thead><tr><th style="width:130px">الكود</th><th>اسم المخزن</th><th style="width:150px">رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-function whMasterHtml(tabs){
-  const total=whList().length, leaf=whList().filter(w=>!whHasKids(w.id)).length;
-  return `<style>
-    .wh-tree{width:100%;border-collapse:collapse}
-    .wh-tree th{background:var(--panel-2,#f6f1e4);text-align:right;padding:9px 10px;font-size:12px;color:var(--text-dim);border-bottom:2px solid var(--gold)}
-    .wh-tree td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
-    .wh-name{display:flex;align-items:center;gap:6px}
-    .wh-tg{width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line);background:transparent;border-radius:5px;cursor:pointer;font-size:12px;color:var(--gold-text);padding:0}
-    .wh-dot{border:none;color:var(--text-dim);cursor:default}
-    .wh-badge{font-size:10px;padding:1px 7px;border-radius:9px;background:rgba(212,160,23,.14);color:var(--gold-text)}
-    .wh-grp td{background:rgba(212,160,23,.05);font-weight:600}
-    .wh-l1 td strong{font-size:14px}
-    .wh-hit td{background:#fef3c7!important}
-    .wh-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-    .wh-bar .inp{max-width:320px}
-  </style>
-  <div class="page-head"><h2>البيانات الأساسية</h2><div class="spacer"></div>
-    <button class="btn" onclick="whAdd('')">+ إضافة مخزن رئيسي</button></div>
-  <div class="tabs">${tabs}</div>
-  <div class="wh-bar">
-    <input class="inp" id="whSearch" placeholder="بحث بكود المخزن أو اسمه أو رقم/اسم الحساب..." value="${escapeAttr(whQ)}" oninput="whSearchSet(this.value)" autocomplete="off">
-    <button class="btn ghost" onclick="whExpandAll()">فتح الكل</button>
-    <button class="btn ghost" onclick="whCollapseAll()">طي الكل</button>
-    <span style="color:var(--text-dim);font-size:12px">عدد المخازن: <strong style="color:var(--gold-text)">${leaf}</strong> · إجمالي العقد: ${total}</span>
-  </div>
-  <div class="tbl-wrap" id="whTree">${whTreeHtml()}</div>`;
-}
-function whRefresh(){ const el=document.getElementById("whTree"); if(el) el.innerHTML=whTreeHtml(); }
-function whSearchSet(v){ whQ=v; whRefresh(); }
-function whToggle(id){ if(whCollapsed.has(id)) whCollapsed.delete(id); else whCollapsed.add(id); whRefresh(); }
-function whExpandAll(){ whCollapsed.clear(); whRefresh(); }
-function whCollapseAll(){ whList().forEach(w=>{ if(whHasKids(w.id)) whCollapsed.add(w.id); }); whRefresh(); }
-function whFormHtml(w,parent){
-  const v=escapeAttr, grp=w.id&&whHasKids(w.id);
-  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-    <div class="fld"><label>كود المخزن *</label><input class="inp" id="wh_code" value="${v(w.code||"")}" style="direction:ltr;text-align:right" autocomplete="off"></div>
-    <div class="fld"><label>اسم المخزن *</label><input class="inp" id="wh_name" value="${v(w.name||"")}" placeholder="مثال: مخزن بدر" autocomplete="off"></div>
-    <div class="fld" style="grid-column:span 2"><label>يتبع</label><input class="inp" readonly value="${v(parent?parent.code+" — "+parent.name:"— مخزن رئيسي —")}"></div>
-    ${grp?`<div style="grid-column:span 2;font-size:12px;color:var(--text-dim)">هذا المخزن مجموعة (له مخازن فرعية) — الربط بحساب يكون على المخزن الفرعي الأخير فقط.</div>`:mdAccHtml('wh_acc',w)}
-    <div class="fld" style="grid-column:span 2"><label>ملاحظات</label><input class="inp" id="wh_notes" value="${v(w.notes||"")}" autocomplete="off"></div>
-  </div>`;
-}
-function whRead(){ const g=k=>(document.getElementById(k)?.value||"").trim(); return {code:g("wh_code"),name:g("wh_name"),notes:g("wh_notes"),...(document.getElementById("wh_acc_id")?mdAccRead("wh_acc"):{})}; }
-function whCheck(r,selfId){
-  if(!r.code){ toast("كود المخزن مطلوب","err"); return false; }
-  if(!r.name){ toast("اسم المخزن مطلوب","err"); return false; }
-  if(whList().some(x=>x.id!==selfId&&String(x.code)===r.code)){ toast("كود المخزن مستخدم بالفعل","err"); return false; }
-  if(r.accountId){ const o=whList().find(x=>x.id!==selfId&&String(x.accountId)===String(r.accountId)); if(o){ toast(`الحساب ده مربوط بالفعل بالمخزن: ${o.name}`,"err"); return false; } }
-  return true;
-}
-async function whAdd(parentId){
-  const par=parentId?whById(parentId):null;
-  if(par&&par.accountId&&!await askConfirm(`المخزن "${par.name}" مربوط بحساب. إضافة مخزن فرعي تحته هتحوّله لمجموعة وتشيل ربطه بالحساب. تكمل؟`)) return;
-  openModal(par?`إضافة مخزن فرعي تحت: ${escapeHtml(par.name)}`:"إضافة مخزن رئيسي", whFormHtml({code:whNextCode(parentId||"")},par), ()=>{
-    const r=whRead(); if(!whCheck(r,null)) return false;
-    if(par){ par.accountId=""; par.accountCode=""; par.accountName=""; whCollapsed.delete(par.id); }
-    whList().push({id:"wh_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),parentId:parentId||"",...r});
-    saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
-  });
-  setTimeout(()=>{ const el=document.getElementById("wh_name"); if(el) el.focus(); },50);
-}
-function whEdit(id){
-  const w=whById(id); if(!w) return;
-  const par=w.parentId?whById(w.parentId):null;
-  openModal("تعديل المخزن", whFormHtml(w,par), ()=>{
-    const r=whRead(); if(!whCheck(r,w.id)) return false;
-    Object.assign(w,{code:r.code,name:r.name,notes:r.notes});
-    if(whHasKids(w.id)){ w.accountId=""; w.accountCode=""; w.accountName=""; } else Object.assign(w,{accountId:r.accountId||"",accountCode:r.accountCode||"",accountName:r.accountName||""});
-    saveState(); go("master"); toast("تم التعديل","ok"); return true;
-  });
-  setTimeout(()=>{ const el=document.getElementById("wh_name"); if(el){ el.focus(); el.select(); } },50);
-}
-async function whDel(id){
-  const w=whById(id); if(!w) return;
-  if(whHasKids(id)){ toast("لا يمكن حذف مخزن له مخازن فرعية — احذف الفرعية أولًا","err"); return; }
-  if(!await askConfirm(`حذف المخزن "${w.code} — ${w.name}" ؟`)) return;
-  state.settings.warehouses=whList().filter(x=>x.id!==id); saveState(); go("master"); toast("تم الحذف","ok");
-}
 
 function partyFormHtml(p){
   const v = (x)=>escapeAttr(x||"");
@@ -6714,7 +5505,6 @@ function partyFormHtml(p){
         <input class="inp" id="pf_address" value="${v(p.address)}" placeholder="العنوان الكامل">
       </div>
       ${currentTab==="customers" ? `<div class="fld" style="grid-column:span 2;padding:10px;border:1px solid var(--border);border-radius:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="pf_applyDiscount1Pct" ${p.applyDiscount1Pct?"checked":""}> تطبيق خصم 1% على هذا العميل (من السعر قبل الضريبة)</label></div>` : ""}
-      ${mdAccHtml('pf_acc',p)}
       <div class="fld" style="grid-column:span 2"><label>ملاحظات</label>
         <textarea class="inp" id="pf_notes" rows="2" placeholder="ملاحظات...">${escapeHtml(p.notes||"")}</textarea>
       </div>
@@ -6731,8 +5521,7 @@ function partyFormRead(){
     contactPerson: (document.getElementById("pf_contactPerson")?.value||"").trim(),
     address: (document.getElementById("pf_address")?.value||"").trim(),
     notes: (document.getElementById("pf_notes")?.value||"").trim(),
-    applyDiscount1Pct: !!document.getElementById("pf_applyDiscount1Pct")?.checked,
-    ...mdAccRead('pf_acc')
+    applyDiscount1Pct: !!document.getElementById("pf_applyDiscount1Pct")?.checked
   };
 }
 
@@ -6771,15 +5560,13 @@ function bankFormHtml(b){
       <div class="fld"><label>الاسم *</label>
         <input class="inp" id="bk_name" value="${escapeAttr(b.name||"")}" placeholder="بنك Credit Agricole">
       </div>
-      ${mdAccHtml('bk_acc',b)}
     </div>
   `;
 }
 function bankFormRead(){
   return {
     code: (document.getElementById("bk_code")?.value||"").trim().toUpperCase(),
-    name: (document.getElementById("bk_name")?.value||"").trim(),
-    ...mdAccRead('bk_acc')
+    name: (document.getElementById("bk_name")?.value||"").trim()
   };
 }
 
@@ -6792,15 +5579,13 @@ function safeFormHtml(s){
       <div class="fld"><label>الاسم *</label>
         <input class="inp" id="sf_name" value="${escapeAttr(s.name||"")}" placeholder="الخزنة الرئيسية">
       </div>
-      ${mdAccHtml('sf_acc',s)}
     </div>
   `;
 }
 function safeFormRead(){
   return {
     code: (document.getElementById("sf_code")?.value||"").trim().toUpperCase(),
-    name: (document.getElementById("sf_name")?.value||"").trim(),
-    ...mdAccRead('sf_acc')
+    name: (document.getElementById("sf_name")?.value||"").trim()
   };
 }
 
@@ -7136,7 +5921,7 @@ function _cmdkBuild(q){
   const party=(label,list,sk,ic)=>{
     if(!toks.length||!canView(sk)) return;
     let names=[]; try{ names=partyNames(list); }catch(e){}
-    const r=names.filter(n=>match(_nrm(n))).slice(0,6).map(n=>({ic,t:n,s:"فتح كشف الحساب",run:()=>{ partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{party:"",parties:[],partyFrom:n,partyTo:n,q:""}); go(sk); }}));
+    const r=names.filter(n=>match(_nrm(n))).slice(0,6).map(n=>({ic,t:n,s:"فتح كشف الحساب",run:()=>{ partyStatementFilters[sk]=Object.assign({},partyStatementFilters[sk],{party:"",parties:[],partyFrom:n,partyTo:n,opening:"0",q:""}); go(sk); }}));
     if(r.length) groups.push([label,r]);
   };
   party("العملاء",state.customers,"clientStatement","🧑‍💼"); party("الموردون",state.suppliers,"supplierStatement","🏭");
@@ -7301,7 +6086,7 @@ async function importData(e){
 const fmt=(n,d=2)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const r2=n=>Math.round((n+Number.EPSILON)*100)/100;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
-const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:0,sellPrice:0,agingStatus:"",notes:""});
+const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:"",sellPrice:"",agingStatus:"",notes:""});
 const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:"",site:"",
   saleOrderId:"", saleOrderNo:"",
   terms:{cashPct:0,installments:0,periodDays:0}, paySchedule:null, payScheduleReset:false, payScheduleResetImported:false, payScheduleResetOrderNo:"",
@@ -7364,7 +6149,6 @@ function migrateState(s){
   if(!Array.isArray(s.cementTypes)) s.cementTypes=["بني سويف","حلوان"];
   if(!s.settings) s.settings = { tax:14, profitTax:1, discount1pct:true, currency:"ج.م" };
   if(s.settings.profitTax===undefined) s.settings.profitTax = 1;
-  if(!Array.isArray(s.settings.warehouses)) s.settings.warehouses = [];
   // الخزائن والبنوك
   if(!Array.isArray(s.treasuries)) s.treasuries = [];
   s.treasuries = s.treasuries.map(t=>typeof t==="string"?{name:t,kind:"safe",notes:""}:({name:t.name||"",kind:t.kind||"safe",notes:t.notes||""}));
@@ -7485,6 +6269,7 @@ function viewShipments(){
     ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
     ${B("حفظ","saveShipment()","",!viewOnly)}
     ${B("ترحيل","postShipment()","",!posted)}
+    ${!isNew?B("🧾 فاتورة ضريبية","printPolicyTaxInvoice()","ghost",true):""}
     ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
   </div>
   ${posted&&!viewOnly?'<p style="color:var(--warn);font-size:12px;margin:-8px 0 14px">تنبيه: دي بوليصة مرحّلة — الحفظ هنا هيعدّل صفوفها في بيانات التوريد مباشرة.</p>':""}
@@ -7717,7 +6502,7 @@ async function pickSO(id){
       factory:"", diameter, type, agingStatus:"",
       supplyQty: remaining.toString(),
       actualWeight: remaining.toString(),  // المتبقي كافتراضي (المستخدم يعدّل)
-      buyPrice:0, sellPrice:0,
+      buyPrice:"", sellPrice:"",
       notes: soNoteMap[key] || ""
     });
   }
@@ -8103,7 +6888,7 @@ function toDraft(r){
     applyProfitTax: r.applyProfitTax ?? !!r.applyDiscount,
     profitTaxPct: r.profitTaxPct ?? (+state.settings.profitTax||1),
     notes:r.notes||"",
-    items:r.items.map(it=>({factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??0,sellPrice:it.sellPrice??0,notes:it.notes||""}))};
+    items:r.items.map(it=>({factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??"",sellPrice:it.sellPrice??"",notes:it.notes||""}))};
 }
 function loadRecord(src,id,editMode){
   const r=(src==="shipments"?state.shipments:state.policies).find(x=>x.id===id); if(!r) return;
@@ -8127,14 +6912,14 @@ async function deletePolicy(){
 
 // ---------- حفظ ----------
 function termsBlank(t){ const cp=t.cashPct, n=t.installments, days=t.periodDays; return [cp,n,days].every(v=>v===""||v==null) || ((+cp||0)===0 && (+n||0)===0 && (+days||0)===0); }
-const rowUsed=it=>it.diameter||it.type||it.supplyQty||it.actualWeight||(+it.sellPrice>0)||(+it.buyPrice>0);
+const rowUsed=it=>it.diameter||it.type||it.supplyQty||it.actualWeight||it.sellPrice||it.buyPrice;
 // الناقص قبل الترحيل: الوزن الفعلي + الأسعار + شروط الدفع
 function missingList(d){
   const m=[], add=(label,line,key)=>{ let e=m.find(x=>x.key===key); if(!e){e={label,key,lines:[]};m.push(e);} if(line) e.lines.push(line); };
   d.items.forEach((it,i)=>{ if(!rowUsed(it)) return;
     if(!(+it.actualWeight>0)) add("الوزن الفعلي",i+1,"actualWeight");
-    // سعر الشراء وسعر البيع اختياريان — لو فاضيين يتحفظوا ويترحّلوا بصفر
-  });
+    // سعر الشراء اختياري — لو فاضي يترحّل بصفر
+    if(!(+it.sellPrice>0)) add("سعر البيع",i+1,"sellPrice"); });
   // شروط السداد اختيارية عند حفظ/ترحيل البوليصة؛ تُراجع وتُستكمل لاحقًا من أمر البيع.
   return m;
 }
@@ -8171,7 +6956,7 @@ function buildRecord(strict){
     if(!it.diameter||!it.type) return err("اختر القطر والنوع لكل صنف");
     if(!(+it.supplyQty>0)) return err("اكتب كمية التوريد (أكبر من صفر)");
     if(has(it.actualWeight)&&!(+it.actualWeight>0)) return err("الوزن الفعلي لازم يكون أكبر من صفر");
-    if(has(it.sellPrice)&&!(+it.sellPrice>=0)) return err("سعر البيع لا يمكن أن يكون أقل من صفر");
+    if(has(it.sellPrice)&&!(+it.sellPrice>0)) return err("سعر البيع لازم يكون أكبر من صفر");
     if(has(it.buyPrice)&&+it.buyPrice<0) return err("سعر الشراء لا يمكن أن يكون أقل من صفر");
   }
   if(strict){ const m=missingList(d); if(m.length){ showMissing(m); return null; } }
@@ -8179,7 +6964,7 @@ function buildRecord(strict){
   const items=rows.map(it=>{
     const c=calcItem(it,opts);
     return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
-      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:(has(it.sellPrice)?+it.sellPrice:0),
+      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:num(it.sellPrice),
       tax:c.tax,discount:c.discount,total:c.total,notes:(it.notes||"").trim()};
   });
   const t=draftTotals();
@@ -8230,6 +7015,109 @@ function commitOrderTerms(rec){
     state.orderTerms[k]=ot;
     orderDocs(rec.saleOrderNo, rec.id).forEach(x=>{ x.terms={cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}; });
   } else if(Array.isArray(rec.paymentSchedule)||rec.paymentScheduleReset) state.orderTerms[k]=ot;
+}
+function printPolicyTaxInvoice(){
+  const d = draft; if(!d) return toast("لا توجد بوليصة","err");
+  const items = d.items||[]; if(!items.length) return toast("لا توجد أصناف","err");
+  const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const money = n => Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const cur = state.settings.currency||"ج.م";
+  // احتساب: ممكن تطبّق الضريبة أم لا
+  const vatPct = (d.vatPct==null||d.vatPct==="") ? (+state.settings.tax||14) : +d.vatPct;
+  const applyVat = d.applyVat!==false;
+  let subTotal=0, vatTotal=0, grandTotal=0, totalWeight=0;
+  const rows = items.map((it,i)=>{
+    const w=+it.actualWeight||0, price=+it.sellPrice||0, line=w*price;
+    const vat = applyVat ? line*vatPct/100 : 0;
+    const lineTotal = line + vat - (+it.discount||0);
+    subTotal += line; vatTotal += vat; grandTotal += lineTotal; totalWeight += w;
+    return `<tr>
+      <td class="c">${i+1}</td>
+      <td>${esc(it.diameter||'')} مم ${esc(it.type||'')}</td>
+      <td class="c">طن</td>
+      <td class="n">${money(w)}</td>
+      <td class="n">${money(price)}</td>
+      <td class="n">${money(line)}</td>
+      <td class="n">${applyVat?money(vat):'—'}</td>
+      <td class="n">${money(lineTotal)}</td>
+    </tr>`;
+  }).join('');
+  const w=window.open('','_blank','width=1100,height=850');
+  if(!w) return toast('اسمح بفتح النوافذ المنبثقة','err');
+  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>فاتورة ضريبية ${esc(d.policyNo||'')}</title><style>
+    @page{size:A4;margin:12mm}*{box-sizing:border-box}
+    body{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a;margin:0;font-size:12px;background:#fff}
+    .wrap{padding:0 2mm}
+    .head{display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #d4a017;padding:8px 0 12px;margin-bottom:14px}
+    .brand h1{margin:0;font-size:24px;color:#92400e;letter-spacing:.5px}.brand p{margin:3px 0 0;font-size:11px;color:#6b7280}
+    .doctitle{text-align:center;background:linear-gradient(135deg,#fef3c7,#fcd34d);border:1px solid #d4a017;border-radius:10px;padding:8px 26px}
+    .doctitle h2{margin:0;font-size:19px;color:#92400e}.doctitle small{font-size:10.5px;color:#92400e;font-weight:700}
+    .meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+    .field{border:1px solid #e5d7b1;border-radius:7px;padding:8px 10px;background:#fffbea;min-height:48px}
+    .field b{display:block;color:#92400e;font-size:10.5px;margin-bottom:4px;font-weight:800}
+    .field span{font-weight:700;font-size:13px}
+    .parties{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+    .party{border:2px solid #d4a017;border-radius:9px;padding:10px 12px;background:#fff}
+    .party b{display:block;color:#92400e;font-size:11px;margin-bottom:6px}
+    .party .pname{font-size:15px;font-weight:800}
+    table{width:100%;border-collapse:collapse;table-layout:fixed}
+    th{background:#1a1a1a;color:#fef3c7;padding:10px 6px;border:1px solid #1a1a1a;font-size:12px}
+    td{padding:8px 6px;border:1px solid #e5d7b1;vertical-align:middle;font-size:12px}
+    tbody tr:nth-child(even){background:#fffbea}.c{text-align:center}.n{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}
+    tfoot td{background:#fef3c7;font-weight:bold;border-top:2px solid #d4a017}
+    .totals{display:flex;justify-content:flex-end;margin-top:12px}
+    .totals-box{min-width:300px;border:2px solid #d4a017;border-radius:9px;overflow:hidden}
+    .totals-box .trow{display:flex;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #e5d7b1;background:#fff}
+    .totals-box .trow:last-child{border-bottom:0;background:linear-gradient(135deg,#1a1a1a,#262626);color:#fef3c7;font-size:16px;font-weight:900}
+    .totals-box .trow b{color:#92400e}
+    .amount-words{margin-top:10px;padding:10px 14px;background:#fffbea;border:1px dashed #d4a017;border-radius:8px;font-weight:700;color:#1a1a1a}
+    .signs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:40px;text-align:center}
+    .sign{padding-top:9px;border-top:1px solid #92400e;font-weight:bold;color:#92400e}
+    .foot{margin-top:18px;text-align:center;color:#6b7280;font-size:10px;border-top:1px solid #e5d7b1;padding-top:10px}
+    .notes{margin-top:10px;padding:8px 10px;background:#fff;border:1px dashed #cbd5e1;border-radius:6px;font-size:11px;color:#6b7280}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><div class="wrap">
+    <header class="head">
+      <div class="brand"><h1>IRON GATE SUPPLIES</h1><p>توريد حديد التسليح — ${esc(cur)}</p></div>
+      <div class="doctitle"><h2>فاتورة ضريبية</h2><small>Tax Invoice</small></div>
+    </header>
+    <section class="meta">
+      <div class="field"><b>رقم الفاتورة</b><span>${esc(d.policyNo||'')}</span></div>
+      <div class="field"><b>التاريخ</b><span>${esc(d.date||'')}</span></div>
+      <div class="field"><b>أمر البيع</b><span>${esc(d.saleOrderNo||'—')}</span></div>
+      <div class="field"><b>العملة</b><span>${esc(cur)}</span></div>
+    </section>
+    <section class="parties">
+      <div class="party"><b>العميل (المُشتري)</b><div class="pname">${esc(d.customer||'—')}</div>${d.company?`<div style="color:#6b7280;margin-top:3px">${esc(d.company)}</div>`:''}${d.site?`<div style="color:#6b7280;font-size:11px">الموقع: ${esc(d.site)}</div>`:''}</div>
+      <div class="party"><b>المورد (البائع)</b><div class="pname">${esc(d.supplier||'—')}</div><div style="color:#6b7280;margin-top:3px">IRON GATE SUPPLIES</div></div>
+    </section>
+    <table>
+      <thead><tr>
+        <th style="width:4%">م</th>
+        <th style="width:28%">الصنف</th>
+        <th style="width:7%">الوحدة</th>
+        <th style="width:11%">الكمية</th>
+        <th style="width:12%">سعر الوحدة</th>
+        <th style="width:12%">المبلغ</th>
+        <th style="width:12%">ض.ق.م ${applyVat?vatPct+'%':''}</th>
+        <th style="width:14%">الإجمالي</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="3" class="c">الإجمالي</td><td class="n">${money(totalWeight)}</td><td></td><td class="n">${money(subTotal)}</td><td class="n">${applyVat?money(vatTotal):'—'}</td><td class="n">${money(grandTotal)}</td></tr></tfoot>
+    </table>
+    <div class="totals">
+      <div class="totals-box">
+        <div class="trow"><b>إجمالي قبل الضريبة</b><span class="n">${money(subTotal)} ${esc(cur)}</span></div>
+        <div class="trow"><b>ض.ق.م ${applyVat?'('+vatPct+'%)':'(معفاة)'}</b><span class="n">${money(vatTotal)} ${esc(cur)}</span></div>
+        <div class="trow"><b>الإجمالي النهائي</b><span class="n">${money(grandTotal)} ${esc(cur)}</span></div>
+      </div>
+    </div>
+    ${d.notes?`<div class="notes"><b>ملاحظات:</b> ${esc(d.notes)}</div>`:''}
+    <section class="signs"><div class="sign">إعداد</div><div class="sign">المستلم</div><div class="sign">اعتماد</div></section>
+    <div class="foot">IRON GATE SUPPLIES — فاتورة ضريبية رقم ${esc(d.policyNo||'')} — طُبعت بتاريخ ${esc(new Date().toLocaleDateString('ar-EG'))}</div>
+    </div>
+    <script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`;
+  w.document.open(); w.document.write(html); w.document.close(); w.focus();
 }
 function saveShipment(){
   if(viewOnly) return;
@@ -9778,7 +8666,7 @@ function viewSaleOrder(){
         <div class="fld"><label>عدد الأقساط</label><div class="inp" aria-readonly="true">${escapeHtml(d.terms.installments??'—')}</div></div>
         <div class="fld"><label>فترة القسط (يوم)</label><div class="inp" aria-readonly="true">${escapeHtml(d.terms.periodDays??'—')}</div></div>
       </div>${locked?'<p class="so-virtual-hint" style="color:var(--warn)">لا يمكن تعديل الشروط لوجود تحصيلات مسجلة على الأمر.</p>':''}</div></div>
-      <div class="so-actions"><button class="btn" onclick="soSaveConfirmed()" ${locked?'disabled':''}>💾 حفظ شروط السداد</button><button class="btn ghost" onclick="soReturnToPolicy()">إلغاء والرجوع للبوليصة</button></div><div class="so-status-msg" id="soStatusMsg"></div>`;
+      <div class="so-actions"><button class="btn" onclick="soSave()" ${locked?'disabled':''}>💾 حفظ شروط السداد</button><button class="btn ghost" onclick="soReturnToPolicy()">إلغاء والرجوع للبوليصة</button></div><div class="so-status-msg" id="soStatusMsg"></div>`;
   }
   if(!d._termsEdited) d.terms = termsFromOrder(d.orderNo);
   const lastD = orderLastDate(d.orderNo); if(lastD) d.date = lastD;
@@ -9789,16 +8677,18 @@ function viewSaleOrder(){
     <h2>${loaded?"أمر بيع رقم "+escapeHtml(d.orderNo):"أمر بيع جديد"}</h2>
     ${loaded?(d.closed?'<span class="chip warn">مقفول</span>':'<span class="chip ok">مفتوح</span>'):'<span class="chip">جديد</span>'}
     <div class="spacer"></div>
-    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال الأمر</button>`):""}
+    <button class="btn" onclick="soSave()" style="background:var(--gold);color:#1a1a1a;font-weight:800">💾 حفظ الأمر</button>
+    ${loaded?`<button class="btn ghost" onclick="soDownloadPdf()">⬇ PDF</button>`:''}
+    ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال</button>`):""}
     <button class="btn ghost sm" onclick="soNew()">+ جديد</button>
-    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة السابقة</button>':''}
+    ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
   </div>
 
   <button class="btn ghost so-search-btn" onclick="soOpenSearch()">🔍 البحث عن أمر بيع سابق</button>
 
   <div class="so-actions">
     ${soReturnContext?'<button class="btn ghost" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
-    <button class="btn ghost" onclick="soSaveConfirmed()">💾 حفظ الأمر</button>
+    <button class="btn ghost" onclick="soSave()">💾 حفظ الأمر</button>
     <button class="btn" onclick="soDownloadPdf()">⬇ تحميل PDF</button>
     <button class="btn ghost" onclick="soSharePdf()">↗ مشاركة</button>
     <button class="btn ghost" onclick="soView()">👁 عرض</button>
@@ -9867,8 +8757,6 @@ function viewSaleOrder(){
   <div class="card" style="margin-top:16px"><div class="head"><h3>ملاحظات عامة</h3></div><div class="body">
     <textarea class="inp" id="soNotes" rows="3" oninput="soDraft.notes=this.value;soRenderPreview()" placeholder="ملاحظات (اختياري)">${escapeHtml(d.notes)}</textarea>
   </div></div>
-
-  <div class="so-save-bottom"><button class="btn" onclick="soSaveConfirmed()">💾 حفظ أمر البيع</button></div>
   `;
 }
 
@@ -10054,32 +8942,6 @@ function soStatus(msg,isErr){
   el.textContent = msg||""; el.className = "so-status-msg"+(isErr?" err":"");
   if(msg && !isErr) setTimeout(()=>{ if(el.textContent===msg) el.textContent=""; }, 3500);
 }
-// ===== حفظ مع تأكيد: بعد الحفظ ينتظر وصول البيانات لقاعدة البيانات ثم يعرض رسالة تأكيد =====
-function igWaitSynced(ms){
-  return new Promise(res=>{
-    const t0=Date.now();
-    (function tick(){
-      let pending=true;
-      try{ pending=!!syncBusy||hasPendingLocalChanges(); }catch(e){ pending=false; }
-      if(!pending) return res(true);
-      if(Date.now()-t0>ms) return res(false);
-      setTimeout(tick,250);
-    })();
-  });
-}
-async function igRunSaveConfirmed(label,noGetter,fn,statusFn){
-  const no=String(noGetter()||'').trim();
-  const orig=window[statusFn]; let r=null;
-  window[statusFn]=function(m,e){ r={m:m,e:!!e}; return orig.apply(this,arguments); };
-  try{ fn(); }finally{ window[statusFn]=orig; }
-  if(!r||r.e) return;   // رسالة الخطأ ظهرت من الدالة الأصلية ولا يوجد حفظ
-  toast('جارٍ الحفظ على قاعدة البيانات…');
-  const ok=await igWaitSynced(10000);
-  if(ok) _igDialog({title:'تم الحفظ ✓',msg:'تم حفظ '+label+(no?' رقم '+no:'')+' على قاعدة البيانات بنجاح.',ok:'حسنًا',single:true});
-  else _igDialog({title:'لم يتأكد الحفظ',msg:'لم يصل '+label+(no?' رقم '+no:'')+' إلى قاعدة البيانات بعد. تأكد من الاتصال بالإنترنت وأعد الضغط على حفظ.',ok:'حسنًا',single:true});
-}
-function soSaveConfirmed(){ return igRunSaveConfirmed('أمر البيع',()=>soDraft&&soDraft.orderNo,soSave,'soStatus'); }
-function qtSaveConfirmed(){ return igRunSaveConfirmed('عرض السعر',()=>qtDraft&&qtDraft.quoteNo,qtSave,'qtStatus'); }
 function soSave(){
   if(!docsReady){ soStatus("لا يمكن حفظ أمر البيع: قاعدة البيانات غير متاحة. لم يتم الحفظ محليًا.",true); return; }
   if(soVirtualMode){
@@ -10510,7 +9372,7 @@ function viewQuote(){
   </div>
   <button class="btn ghost so-search-btn" onclick="qtOpenSearch()">🔍 البحث عن عرض سعر سابق</button>
   <div class="so-actions">
-    <button class="btn ghost" onclick="qtSaveConfirmed()">💾 حفظ العرض</button>
+    <button class="btn ghost" onclick="qtSave()">💾 حفظ العرض</button>
     <button class="btn" onclick="qtDownloadPdf()">⬇ تحميل PDF</button>
     <button class="btn ghost" onclick="qtSharePdf()">↗ مشاركة</button>
     <button class="btn ghost" onclick="qtPreview()">👁 عرض</button>
@@ -10538,8 +9400,7 @@ function viewQuote(){
   </div></div>
   <div class="card qt-items-card" style="margin-top:16px"><div class="head"><h3>تفاصيل الأصناف</h3>
     <button class="btn sm" style="margin-right:auto" onclick="qtAddItem()">+ إضافة صنف جديد</button>
-  </div><div class="body"><div class="so-items-wrap" id="qtItemsWrap"></div></div></div>
-  <div class="so-save-bottom"><button class="btn" onclick="qtSaveConfirmed()">💾 حفظ عرض السعر</button></div>`;
+  </div><div class="body"><div class="so-items-wrap" id="qtItemsWrap"></div></div></div>`;
 }
 function bindQuote(){ qtRenderItems(); qtRenderPreview(); if(typeof igQtSnapReset==="function") igQtSnapReset(); }
 
@@ -11838,6 +10699,8 @@ async function txDel(id, direction){
   // ملاحظة: التسكينات مخزّنة داخل كائن الحركة نفسها (e.allocations) — بمجرد حذف السجل من state.treasuryEntries،
   // كل الحسابات المعتمدة عليها (txInvoiceRowsForCustomer، settlementCustomerPaid، كشوف الحساب) هتلقائيًا
   // تتجاهل تسكيناته لأنها بتـfilter على الحركات الموجودة فقط. مفيش جدول منفصل للتسكينات.
+  // سجل مراجعة قبل الحذف
+  audit("tx_del",`حذف ${e.direction==="in"?"تحصيل":"دفعة"} #${e.no} (${fmt(e.amount)} ${state.settings.currency})${allocs.length?` — أُلغيت ${allocs.length} تسكينة بإجمالي ${fmt(allocsSum)}`:""}${linked?` + حذف السجل المرتبط #${linked.no}`:""}`);
   state.treasuryEntries = state.treasuryEntries.filter(x=>!toDelete.has(x.id));
   saveState(); renderTreasury(direction);
   const msg = allocs.length
@@ -12025,6 +10888,13 @@ function openTxForm(direction, existing){
     } else if(!d.treasury){ toast(method==="cash"?"الخزينة مطلوبة":"البنك مطلوب","err"); return false; }
 
     if(existing){
+      // سجل مراجعة: قارن القيم القديمة بالجديدة
+      const diffs=[];
+      if(+existing.amount !== +d.amount) diffs.push(`القيمة: ${fmt(existing.amount)} ← ${fmt(d.amount)}`);
+      if(existing.date !== d.date) diffs.push(`التاريخ: ${existing.date} ← ${d.date}`);
+      if(existing.method !== d.method) diffs.push(`الطريقة: ${existing.method} ← ${d.method}`);
+      if(existing.status !== d.status) diffs.push(`الحالة: ${existing.status} ← ${d.status}`);
+      if(diffs.length) audit("tx_edit",`تعديل ${d.direction==="in"?"تحصيل":"دفعة"} #${d.no}: ${diffs.join(" · ")}`);
       const i = state.treasuryEntries.findIndex(x=>x.id===existing.id);
       if(i>=0) state.treasuryEntries[i] = d;
       // مزامنة ثنائية الاتجاه مع السجل المرتبط (تحصيل ↔ دفعة تحويل لمورد)
@@ -12281,7 +11151,7 @@ function settlementCustomerCredit(customer){
       return sum + Math.max(0, amt-used);
     },0);
 }
-// إجمالي فواتير العميل (مجموع total للأصناف)
+// إجمالي فواتير العميل (مجموع total للأصناف) + التسويات المدينة
 function settlementCustomerInvoiceTotal(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   let total=0;
@@ -12289,7 +11159,26 @@ function settlementCustomerInvoiceTotal(customer){
     if(String(s.customer||"").trim()!==cust) return;
     (s.items||[]).forEach(it=>{ total += +supplyAmounts(s,it).total || 0; });
   });
+  // التسويات المدينة تضاف كفاتورة افتراضية (لاتساق مع شاشة الأقساط)
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.direction!=="in" || e.method!=="adjustment" || e.adjustmentKind!=="debit") return;
+    if(String(e.customer||"").trim()!==cust) return;
+    total += +e.amount||0;
+  });
   return total;
+}
+// الشيكات تحت التحصيل للعميل (مجموع قيمة الشيكات اللي لسه مش collected ولا returned)
+function customerPendingCheques(customer){
+  const cust = String(customer||"").trim(); if(!cust) return 0;
+  return (state.treasuryEntries||[])
+    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && e.method==="bank" && ["receivable","pending","deposited","guarantee"].includes(e.status))
+    .reduce((s,e)=>s+(+e.amount||0),0);
+}
+function supplierPendingCheques(supplier){
+  const sup = String(supplier||"").trim(); if(!sup) return 0;
+  return (state.treasuryEntries||[])
+    .filter(e=>e.direction==="out" && String(e.supplier||"").trim()===sup && e.method==="bank" && ["receivable","pending","deposited","guarantee"].includes(e.status))
+    .reduce((s,e)=>s+(+e.amount||0),0);
 }
 // إجمالي ما تم تحصيله وتخصيصه على فواتير العميل
 function settlementCustomerPaid(customer){
@@ -12765,8 +11654,13 @@ function renderSalesInstallments(){
   const rows=salesInstallmentFilteredRows(),sum=k=>rows.reduce((a,r)=>a+(+r[k]||0),0),currency=state.settings.currency||"ج.م",M=salesInstallmentMoney;
   const orderCount=new Set(rows.map(r=>txOrderKey(r.orderNo))).size;
   const lateRows=rows.filter(r=>r.status==="متأخر"), nearRows=rows.filter(r=>r.near);
+  // إجمالي الشيكات تحت التحصيل للعملاء الظاهرين فقط (بتتفلتر مع نفس الفلاتر)
+  const visibleCustomers = [...new Set(rows.map(r=>r.customer).filter(Boolean))];
+  const pendingChequesTotal = visibleCustomers.reduce((s,c)=>s+customerPendingCheques(c),0);
+  const pendingChequesCount = visibleCustomers.reduce((n,c)=>n+(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&String(e.customer||"").trim()===c&&e.method==="bank"&&["receivable","pending","deposited","guarantee"].includes(e.status)).length,0);
   const cards=[["عدد الأقساط",rows.length,"قسط",""],["عدد أوامر البيع",orderCount,"أمر",""],["إجمالي الأقساط",M(sum("amount")),currency,""],["إجمالي المسدد",M(sum("paid")),currency,"ok"],["إجمالي المتبقي",M(sum("remaining")),currency,""],
-    ["المتأخر",M(sum("lateRemaining")),lateRows.length+" قسط · "+currency,"late"],["قريب الاستحقاق (7 أيام)",M(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط · "+currency,"near"]];
+    ["المتأخر",M(sum("lateRemaining")),lateRows.length+" قسط · "+currency,"late"],["قريب الاستحقاق (7 أيام)",M(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط · "+currency,"near"],
+    ["🧾 تحت التحصيل (شيكات)",M(pendingChequesTotal),pendingChequesCount+" شيك · "+currency,"near"]];
   summary.innerHTML=`<div class="sales-inst-kpis">${cards.map(([l,v,u,c])=>`<div class="sales-inst-kpi ${c?'si-kpi-'+c:''}"><span>${l}</span><b>${v}</b><small>${u}</small></div>`).join("")}</div>`;
   const us=salesInstallmentUI;
   const cols=siColumns(rows).filter(c=>!(us.hidePays&&(c.pay!==undefined||c.k==="diff")));
@@ -13153,7 +12047,6 @@ function noAccessHtml(){
   }
   const S=(scr,act)=>()=>({scr,act});
   guard("addItem",S("master","add")); guard("editItem",S("master","edit")); guard("delItem",S("master","delete"));
-  guard("whAdd",S("master","add")); guard("whEdit",S("master","edit")); guard("whDel",S("master","delete"));
   guard("saveSettings",S("settings","edit"));
   guard("resetAll",()=>({admin:true}),{type:"reset",counter:()=>state,info:()=>"إعادة تعيين كامل للبيانات"});
   guard("exportData",()=>({sys:"backup"}),{type:"backup_export",always:true,info:()=>"تصدير نسخة احتياطية"});
@@ -13208,7 +12101,6 @@ function noAccessHtml(){
   // 3) إخفاء الأزرار اللي المستخدم مالوش صلاحية عليها (بيتطبق تلقائي على أي رسم جديد للشاشة)
   const RULES=[
     [/\baddItem\(/,()=>can("master","add")], [/\beditItem\(/,()=>can("master","edit")], [/\bdelItem\(/,()=>can("master","delete")],
-    [/\bwhAdd\(/,()=>can("master","add")], [/\bwhEdit\(/,()=>can("master","edit")], [/\bwhDel\(/,()=>can("master","delete")],
     [/\bsaveSettings\(/,()=>can("settings","edit")], [/\bresetAll\(/,()=>isAdmin()],
     [/\bexportData\(|importFile|\bimportData\(/,()=>canSys("backup")],
     [/\bsoNew\(/,()=>can("saleOrder","add")], [/\bsoSave\(/,()=>can("saleOrder",soLoadedId?"edit":"add")],
@@ -13331,8 +12223,7 @@ function permMatrixHtml(p){
     }
     return tr;
   }).join("");
-  const quick=`<div class="pm-quick" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">➕ بنود زر "+ جديد" في الشريط العلوي</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${QUICK_NEW_ITEMS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pq_${x[2]}" ${quickOn(p,x[2])?"checked":""}> ${x[0]} ${escapeHtml(x[1])}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">البند بيظهر للمستخدم لو متعلّم هنا <b>و</b> عنده صلاحية "إضافة" في شاشته. لو شلت التعليم من الكل، الزر بيختفي.</div></div>`;
-  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}`;
+  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function pmChange(scr,act){
   if(act!=="view") return;
@@ -13351,7 +12242,6 @@ function readPermForm(){
     if(s.prices){ ["buy","sell"].forEach(k=>{ p.hide[s.id][k]=vw&&!!document.getElementById(`ph_${s.id}_${k}`)?.checked; }); }
   });
   p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
-  if(document.getElementById("pq_"+QUICK_NEW_ITEMS[0][2])){ p.quick={}; QUICK_NEW_ITEMS.forEach(x=>{ p.quick[x[2]]=!!document.getElementById("pq_"+x[2])?.checked; }); }
   return p;
 }
 function pmRender(p){
@@ -13423,7 +12313,6 @@ function permDiff(a,b){
     if(ch.length) out.push(`${s.label}: ${ch.join("، ")}`);
   });
   if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
-  { const ch=QUICK_NEW_ITEMS.filter(x=>quickOn(a,x[2])!==quickOn(b,x[2])).map(x=>(quickOn(b,x[2])?"+":"−")+x[1]); if(ch.length) out.push("بنود + جديد: "+ch.join("، ")); }
   return out;
 }
 function saveUserForm(){
@@ -13962,7 +12851,8 @@ if('serviceWorker' in navigator){
 <script>
 // ===== الشريط العلوي: "+ جديد" وقائمة المستخدم (بتفتح على مستوى الصفحة، وعلى الموبايل Bottom Sheet) =====
 function tbQuickItems(){
-  return QUICK_NEW_ITEMS.filter(x=>{ try{ const u=curU(); return can(x[2],"add") && (isAdmin(u)||quickOn(u&&u.perms,x[2])); }catch(e){ return false; } });
+  const L=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
+  return L.filter(x=>{ try{ return can(x[2],"add"); }catch(e){ return false; } });
 }
 function renderQuickNew(){ const b=document.getElementById("tbNew"); if(b) b.style.display=tbQuickItems().length?"":"none"; }
 function tbMenuHtml(kind){
@@ -14159,7 +13049,7 @@ const OBJ={
   quoteList:()=>qlF
 };
 const trDef=()=>({from:igYearStart(),to:igYearEnd(),customer:"",supplier:"",q:""});
-const stDef=()=>({from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",q:"",view:"detail",filtersOpen:true});
+const stDef=()=>({from:igYearStart(),to:igYearEnd(),party:"",parties:[],partyFrom:"",partyTo:"",opening:"0",q:"",view:"detail",filtersOpen:true});
 const DEF={
   supply:()=>({q:"",supplier:"",customer:"",factory:"",status:"",from:igYearStart(),to:igYearEnd(),grouped:!!supFilter.grouped}),
   salesReport:trDef, purchaseReport:trDef,
@@ -14302,7 +13192,7 @@ document.addEventListener("keydown",function(e){
   // عناوين الأعمدة والصفوف القابلة للنقر
   if((e.key==="Enter"||e.key===" ")&&t&&t.matches&&t.matches("th[tabindex],tr[tabindex]")){ e.preventDefault(); t.click(); return; }
   // Ctrl+S في أمر البيع
-  if((e.ctrlKey||e.metaKey)&&e.code==="KeyS"&&currentPage==="saleOrder"&&document.getElementById("soOrderNo")){ e.preventDefault(); try{ soSaveConfirmed(); }catch(_){} return; }
+  if((e.ctrlKey||e.metaKey)&&e.code==="KeyS"&&currentPage==="saleOrder"&&document.getElementById("soOrderNo")){ e.preventDefault(); try{ soSave(); }catch(_){} return; }
   if(document.querySelector(".ig-dlg-bg")) return;                       // نوافذ التأكيد بتدير مفاتيحها بنفسها
   const ck=document.getElementById("cmdk"); if(ck&&ck.classList.contains("on")) return;
   const bd=topModal();
@@ -14846,9 +13736,87 @@ function render(){
 function set(s){ st=s; render(); }
 window.igSyncClick=function(){
   const s=($("igSync")||{}).dataset&&$("igSync").dataset.s;
-  if((s==="error"||s==="pending")&&navigator.onLine){ try{ syncMaster(); }catch(e){} return; }
-  try{ toast($("igSync").title,s==="error"?"err":"ok"); }catch(e){}
+  if(s==="error"){
+    // اعرض نافذة تشخيص بدل مجرد toast
+    showSyncErrorDialog();
+    return;
+  }
+  if(s==="pending"&&navigator.onLine){ try{ syncMaster(); }catch(e){} return; }
+  try{ toast($("igSync").title,s==="offline"?"":""); }catch(e){}
 };
+window.showSyncErrorDialog=function(){
+  const err = String(window.igSyncErr||"سبب غير معروف");
+  const user = (typeof currentUser!=="undefined" && currentUser) ? currentUser : "—";
+  const isRLS = /policy|rls|permission|row.?level|violates|forbidden|not.?authorized|401|403/i.test(err);
+  const isNetwork = /network|fetch|timeout|ECONN|offline|disconnected/i.test(err);
+  const isColumn = /column|does not exist|schema cache/i.test(err);
+  let diagnosis = "";
+  let fixSql = "";
+  if(isRLS){
+    diagnosis = "🔒 سبب الخطأ الأرجح: صلاحيات RLS على Supabase ترفض الكتابة من حساب هذا المستخدم. الأدمن لا يرى هذه البيانات لأنها لم تصل للسيرفر أصلاً — محفوظة محلياً فقط على جهاز المستخدم.";
+    fixSql = `-- ============================================================
+-- IRON GATE — فتح صلاحيات الكتابة لكل المستخدمين الموثّقين
+-- شغّل هذا السكربت مرة واحدة على Supabase → SQL Editor
+-- ============================================================
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'customers','suppliers','employees','drivers','trucks','banks','safes',
+    'shipments','shipment_items','sale_orders','sale_order_items',
+    'treasury_entries','sale_order_payment_plans','sale_order_payment_schedule',
+    'quotes','opening_balances','order_terms','app_counters','settings'
+  ] LOOP
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=t) THEN
+      EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+      EXECUTE format('DROP POLICY IF EXISTS "ig_all_authenticated" ON public.%I', t);
+      EXECUTE format('CREATE POLICY "ig_all_authenticated" ON public.%I FOR ALL TO authenticated USING (true) WITH CHECK (true)', t);
+      EXECUTE format('GRANT ALL ON public.%I TO authenticated, anon', t);
+    END IF;
+  END LOOP;
+END $$;
+NOTIFY pgrst, 'reload schema';`;
+  } else if(isColumn){
+    diagnosis = "📋 سبب الخطأ الأرجح: عمود مفقود في جدول Supabase. راجع رسالة الخطأ الكاملة وأضف العمود في المحرر.";
+  } else if(isNetwork){
+    diagnosis = "🌐 سبب الخطأ الأرجح: مشكلة في الاتصال بالإنترنت أو السيرفر. تحقق من الشبكة، وأعد المحاولة تلقائيًا بعد ثوانٍ.";
+  } else {
+    diagnosis = "ℹ راجع رسالة الخطأ الكاملة أدناه للتشخيص.";
+  }
+  const diagText = `المستخدم: ${user}\nالوقت: ${new Date().toLocaleString("ar-EG")}\nالخطأ: ${err}`;
+  const body = `
+    <div style="padding:4px 0">
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:14px;color:#991b1b;font-weight:700;font-size:13px;line-height:1.7">
+        ⚠ فشل رفع البيانات للسيرفر. شغلك محفوظ على جهازك فقط حاليًا.
+      </div>
+      <div style="background:#fffbea;border:1px solid #e8d7ad;border-radius:8px;padding:14px;margin-bottom:12px;color:#1a1a1a;font-weight:600;line-height:1.7">${diagnosis}</div>
+      <div style="margin-bottom:10px"><b style="color:#92400e">تفاصيل الخطأ:</b></div>
+      <pre id="syncErrBox" dir="ltr" style="background:#1a1a1a;color:#fef3c7;padding:14px;border-radius:8px;font-size:11px;line-height:1.6;overflow:auto;max-height:200px;white-space:pre-wrap;word-break:break-word;margin:0 0 12px">${escapeHtml(diagText)}</pre>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <button class="btn" onclick="_copySyncDiag()">📋 نسخ التفاصيل</button>
+        <button class="btn primary" onclick="(async()=>{try{await syncMaster();toast('✓ تمت إعادة المحاولة','ok');closeModal();}catch(e){toast('لسه فيه مشكلة','err');}})()" style="background:#d4a017;color:#1a1a1a;font-weight:800">🔄 إعادة محاولة الرفع</button>
+        ${fixSql?`<button class="btn" onclick="_copySyncSql()">📋 نسخ سكربت الإصلاح (SQL)</button><button class="btn" onclick="window.open('https://supabase.com/dashboard/project/_/sql/new','_blank')">🔗 فتح Supabase SQL Editor</button>`:""}
+      </div>
+      ${fixSql?`<details><summary style="cursor:pointer;color:#92400e;font-weight:700;padding:6px 0">عرض سكربت الإصلاح</summary>
+      <pre id="syncFixSqlBox" dir="ltr" style="background:#1a1a1a;color:#fef3c7;padding:14px;border-radius:8px;font-size:11px;line-height:1.6;overflow:auto;max-height:260px;white-space:pre-wrap;word-break:break-word;margin-top:8px">${escapeHtml(fixSql)}</pre>
+      </details>`:""}
+    </div>`;
+  window.__syncDiagText = diagText;
+  window.__syncFixSql = fixSql;
+  openModal("⚠ تشخيص فشل المزامنة", body, ()=>true);
+  const bd=document.getElementById('modalBackdrop'); if(bd){const foot=bd.querySelector('.mfoot');if(foot){foot.innerHTML=`<button class="btn" onclick="closeModal()">إغلاق</button>`;}}
+};
+window._copySyncDiag=function(){
+  const t=window.__syncDiagText||""; if(!t)return;
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>toast("✓ تم النسخ","ok"),()=>_copyFallback(t));
+  else _copyFallback(t);
+};
+window._copySyncSql=function(){
+  const t=window.__syncFixSql||""; if(!t)return;
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(()=>toast("✓ تم نسخ السكربت — الصقه في Supabase","ok"),()=>_copyFallback(t));
+  else _copyFallback(t);
+};
+function _copyFallback(t){const ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.left='-9999px';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');toast("✓ تم النسخ","ok");}catch(e){toast("انسخ يدويًا","err");}document.body.removeChild(ta);}
 const _sched=window.scheduleSync;
 window.scheduleSync=function(){
   const before=syncTimer, r=_sched.apply(this,arguments);
@@ -15601,31 +14569,4 @@ function renderManagementReports(){
 <style id="tx-settlement-professional-v2">
 #txDetailsTabBtn:disabled,.tx-tab-locked{opacity:.42!important;filter:grayscale(1);cursor:not-allowed!important;pointer-events:none!important}#tx_amount.tx-next-required{border:2px solid var(--gold)!important;box-shadow:0 0 0 4px rgba(218,170,35,.14)!important;background:#fffdf4!important}#txSettlementTable{border-collapse:separate!important;border-spacing:0!important;width:100%;font-size:12px}#txSettlementTable thead th{position:sticky;top:0;background:#102b52!important;color:#fff!important;padding:11px 9px!important;border-bottom:3px solid #d5a72b!important;z-index:1}#txSettlementTable tbody td{padding:10px 9px!important;border-bottom:1px solid #e1e9f4!important;background:#fff}#txSettlementTable tbody tr:nth-child(even) td{background:#f5f8fd}#txSettlementTable tbody tr:hover td{background:#fff8df!important}#txSettlementTable tbody td:nth-child(8){color:#16834b;font-weight:700}#txSettlementTable tbody td:nth-child(9){color:#c17a08;font-weight:800;background:#fff8e8}#txSettlementTable .tx-alloc-amount,#txSettlementTable .tx-auto-alloc{font-weight:800;color:#1557a2}#txSettlementSummary{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;margin:10px 0 14px;border:1px solid #d7e2f1;border-radius:12px;background:linear-gradient(110deg,#f7faff,#fffdf4)}#txSettlementSummary span{padding:8px 12px;border-radius:8px;background:#eaf1fb;color:#17365f}#txSettlementSummary span:last-child{background:#fff2d8;color:#9b6500}#txSettlementSummary b{font-size:14px}#txSettlementDetails .tbl-wrap{max-height:55vh;overflow:auto;border:1px solid #d9e3f0;border-radius:10px}
 @media(max-width:700px){.tx-head-grid{grid-template-columns:1fr 1fr!important}.tx-form-grid{grid-template-columns:1fr!important}.tx-head-grid [style*="grid-column:span 2"]{grid-column:span 2!important}#txSettlementTable{min-width:900px}}
-</style>
-
-<style id="dx-compact">
-@media(min-width:641px){
-.dx-hero{padding:11px 20px!important;border-radius:14px!important;margin-bottom:10px!important;gap:10px!important}
-.dx-hero:after{width:170px!important;height:170px!important;top:-90px!important}
-.dx-hero h1{font-size:clamp(17px,1.6vw,21px)!important;margin-bottom:2px!important}
-.dx-hero p{font-size:11.5px!important;line-height:1.5!important}
-.dx-eyebrow{font-size:11px!important;margin-bottom:3px!important}
-.dx-bar{margin-bottom:8px!important}
-.dx-periods button{min-height:30px!important;padding:4px 12px!important;font-size:11.5px!important}
-.dx-stamp{font-size:11px!important}
-.dx-stamp button{width:30px!important;height:30px!important;font-size:15px!important}
-.dx-kpis{grid-template-columns:repeat(auto-fit,minmax(175px,1fr))!important;gap:9px!important;margin-bottom:10px!important}
-.dx-kpis>*{grid-column:auto!important}
-.dx-kpi{padding:9px 11px!important;gap:9px!important;border-radius:12px!important}
-.dx-kpi-ic{width:30px!important;height:30px!important;font-size:15px!important;border-radius:9px!important}
-.dx-kpi-lbl{font-size:11px!important}
-.dx-kpi strong{font-size:clamp(14px,1.15vw,17px)!important}
-.dx-kpi strong em{font-size:10px!important}
-.dx-kpi small{font-size:10px!important}
-.dx-note{margin:-2px 2px 10px!important;font-size:10.5px!important}
-.dx-followup-summaries{gap:9px!important;margin-bottom:12px!important}
-.dx-followup-card{padding:9px 12px!important;gap:9px!important;border-radius:12px!important}
-.dx-followup-card .dx-followup-icon{flex-basis:30px!important;height:30px!important;font-size:16px!important;border-radius:9px!important}
-.dx-followup-content>strong{font-size:clamp(15px,1.3vw,18px)!important}
-}
 </style>
