@@ -641,6 +641,7 @@ aside{transition:opacity .2s ease}
 #invPaper table.inv-tbl thead th{background:#1a1a1a;color:#fff;padding:9px 6px;text-align:center;font-weight:800;font-size:12px}
 #invPaper table.inv-tbl tbody td{padding:8px 6px;text-align:center;border-bottom:1px solid #ddd;color:#111}
 #invPaper table.inv-tbl tbody tr:nth-child(even) td{background:#fafafa}
+#invPaper table.inv-tbl tfoot td{padding:9px 6px;text-align:center;font-weight:800;background:#f3f3f3;border-top:2px solid #1a1a1a;border-bottom:1px solid #ddd;color:#111}
 #invPaper .inv-totals{margin-top:0;width:65%;margin-right:auto;margin-left:0;font-size:13px}
 #invPaper .inv-totals .row{display:grid;grid-template-columns:1fr 80px 160px;align-items:center;padding:7px 10px;border-bottom:1px solid #ddd}
 #invPaper .inv-totals .row.sub{background:#fff5e6}
@@ -6643,8 +6644,8 @@ async function inventoryBackfillSupplies(){
  const box=document.getElementById("invBackfillResult");if(box)box.innerHTML="<b>جاري التسوية…</b>";
  let done=0,added=0,skipped=0,errors=[];
  for(const sh of docs){
-  const so=(state.saleOrders||[]).find(o=>String(o.id)===String(sh.saleOrderId))||{};
-  const warehouseId=sh.warehouseId||so.warehouseId||"";
+  const so=(state.saleOrders||[]).find(o=>String(o.id)===String(sh.saleOrderId))||(state.saleOrders||[]).find(o=>sh.saleOrderNo&&String(o.orderNo)===String(sh.saleOrderNo))||{};
+  const warehouseId=whDefaultId()||""; // تسوية مؤقتة: كل البوالص على المخزن الافتراضي 10201 ويُربط لاحقًا من قاعدة البيانات
   const wh=whList().find(w=>String(w.id)===String(warehouseId))||null;
   const movementDate=sh.date||sh.movementDate||sh.createdAt||sh.created_at||"";
   const policyNo=sh.policyNo||sh.policy_no||sh.id||"";
@@ -6662,7 +6663,7 @@ async function inventoryBackfillSupplies(){
   if(!movementDate)missing.push("التاريخ");
   if(!wh)missing.push("المخزن");
   if(!items.length)missing.push("الأصناف");
-  items.forEach((x,i)=>{const m=[];if(!x.factory)m.push("المصنع");if(!x.diameter)m.push("القطر");if(!x.item_type)m.push("النوع");if(!(x.qty>0))m.push("الوزن الفعلي");if(!(x.unit_cost>0))m.push("تكلفة الشراء");if(m.length)missing.push(`الصنف ${i+1}: ${m.join("، ")}`);});
+  items.forEach((x,i)=>{const m=[];if(!x.diameter)m.push("القطر");if(!x.item_type)m.push("النوع");if(!(x.qty>0))m.push("الوزن الفعلي");if(!(x.unit_cost>0))m.push("تكلفة الشراء");if(m.length)missing.push(`الصنف ${i+1}: ${m.join("، ")}`);});
   if(missing.length){skipped++;errors.push(`${policyNo}: ${missing.join("؛ ")}`);continue;}
   const payload={id:String(sh.id),policy_no:String(policyNo),movement_date:movementDate,warehouse_id:String(wh.id),warehouse_code:String(wh.code||""),warehouse_name:String(wh.name||""),supplier:sh.supplier||"",customer:sh.customer||"",sale_order_no:sh.saleOrderNo||so.orderNo||"",items};
   try{const res=await sb.rpc("inventory_backfill_supply_policy",{p_policy:payload});if(res.error)throw res.error;done++;added+=Number(res.data?.inserted_movements||0);if(!Number(res.data?.inserted_movements||0))skipped++;}
@@ -10190,6 +10191,7 @@ function supInvoiceHtml(inv){
     <table class="inv-tbl">
       <thead><tr><th>م</th><th>القطر</th><th>النوع</th><th>الكمية (طن)</th><th>سعر الطن (قبل الضريبة)</th><th>الإجمالي</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
+      <tfoot><tr><td colspan="3">إجمالي الكمية</td><td>${inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td><td></td><td></td></tr></tfoot>
     </table>
     <div class="inv-totals">
       <div class="row sub"><div class="lbl">الإجمالي قبل الضريبة</div><div class="pct"></div><div class="amt">${inv.totals.sub.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
