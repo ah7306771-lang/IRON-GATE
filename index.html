@@ -5953,18 +5953,23 @@ function openReportPreview(html,title){
       if(!window.html2canvas||!window.jspdf||!window.jspdf.jsPDF) throw new Error('مكتبات إنشاء PDF غير متاحة');
       if(btn){btn.disabled=true;btn.textContent='جارٍ تجهيز PDF…';}
       const target=document.querySelector('.doc')||Array.from(document.body.children).find(el=>!el.classList.contains('report-preview-toolbar'))||document.body;
-      const canvas=await html2canvas(target,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false,windowWidth:Math.max(target.scrollWidth,1200),scrollX:0,scrollY:0});
+      const secs=Array.from(document.querySelectorAll('[data-share-page]'));
+      const targets=secs.length>1?secs:[target];
       const {jsPDF}=window.jspdf; const pdf=new jsPDF('l','mm','a4');
       const pageW=297,pageH=210,margin=5,usableW=pageW-margin*2,usableH=pageH-margin*2;
-      const pxPerMm=canvas.width/usableW, sliceH=Math.floor(usableH*pxPerMm);
-      let y=0,page=0;
-      while(y<canvas.height){
-        const h=Math.min(sliceH,canvas.height-y),part=document.createElement('canvas');part.width=canvas.width;part.height=h;
-        part.getContext('2d').drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
-        const img=part.toDataURL('image/jpeg',0.94),drawH=h/pxPerMm;
-        if(page++)pdf.addPage();pdf.addImage(img,'JPEG',margin,margin,usableW,drawH,undefined,'FAST');y+=h;
+      let page=0;
+      for(const tg of targets){
+        const canvas=await html2canvas(tg,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false,windowWidth:Math.max(tg.scrollWidth,1200),scrollX:0,scrollY:0});
+        const pxPerMm=canvas.width/usableW, sliceH=Math.floor(usableH*pxPerMm);
+        let y=0;
+        while(y<canvas.height){
+          const h=Math.min(sliceH,canvas.height-y),part=document.createElement('canvas');part.width=canvas.width;part.height=h;
+          part.getContext('2d').drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
+          const img=part.toDataURL('image/jpeg',0.94),drawH=h/pxPerMm;
+          if(page++)pdf.addPage();pdf.addImage(img,'JPEG',margin,margin,usableW,drawH,undefined,'FAST');y+=h;
+        }
       }
-      const blob=pdf.output('blob'),file=new File([blob],(title.replace(/[\\/:*?"<>|]/g,'_')||'report')+'.pdf',{type:'application/pdf'});
+      const blob=pdf.output('blob'),file=new File([blob],((title.replace(/[\\/:*?"<>|]/g,'_').trim()||'تقرير')+' - '+new Date().toISOString().slice(0,10))+'.pdf',{type:'application/pdf'});
       if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title,text:title});}
       else {pdf.save(file.name);alert('المشاركة المباشرة غير مدعومة في هذا المتصفح؛ تم تنزيل التقرير PDF بنفس تنسيق الطباعة لتتمكن من إرساله.');}
     }catch(e){if(e&&e.name!=='AbortError')alert('تعذّر تجهيز ملف المشاركة: '+(e.message||e));}
@@ -6405,7 +6410,7 @@ function openPartyStatementQueue(reports,title){
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
   const safeReports=JSON.stringify(reports).replace(/</g,'\\u003c');
   w.document.open();
-  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#e8edf3}.toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#172337;color:#fff;box-shadow:0 2px 10px #0002}.toolbar strong{flex:1}.toolbar button{border:0;border-radius:7px;padding:9px 13px;font-weight:bold;cursor:pointer}.print{background:#d9ad3b;color:#172337}.nav{background:#fff;color:#172337}.close{background:transparent;color:#fff;border:1px solid #ffffff66!important}#counter{font-size:12px;color:#e8c968}iframe{display:block;width:100%;height:calc(100vh - 54px);border:0;background:white}</style></head><body><div class="toolbar"><strong>${title}</strong><span id="counter"></span><button id="previousReportBtn" class="nav" onclick="move(-1)">السابق</button><button class="print" onclick="printCurrent()">🖨 طباعة هذا الكشف</button><button class="nav" onclick="shareCurrent()">↗ مشاركة</button><button id="nextReportBtn" class="nav" onclick="move(1)">الكشف التالي ⟵</button><button class="close" onclick="window.close()">إغلاق</button></div><iframe id="report"></iframe><script>const reports=${safeReports};let index=0;const frame=document.getElementById('report');function show(){frame.srcdoc=reports[index];document.getElementById('counter').textContent='الكشف '+(index+1)+' من '+reports.length;document.getElementById('previousReportBtn').disabled=index===0;document.getElementById('nextReportBtn').disabled=index===reports.length-1;document.getElementById('nextReportBtn').textContent=index===reports.length-1?'انتهت الكشوف ✓':'الكشف التالي ⟵';}function move(step){if(index+step<0||index+step>=reports.length){if(step>0&&index===reports.length-1)alert('تم الوصول إلى آخر كشف.');return;}index+=step;show();}function printCurrent(){frame.contentWindow.focus();frame.contentWindow.print();}async function shareCurrent(){const d=frame.contentDocument;const text=(d&&d.body?d.body.innerText:'').slice(0,12000);try{if(navigator.share){await navigator.share({title:d.title||'كشف حساب',text});return;}await navigator.clipboard.writeText(text);alert('تم نسخ محتوى الكشف للمشاركة.');}catch(e){alert('تعذرت المشاركة المباشرة؛ يمكنك نسخ محتوى الكشف أو طباعته PDF.');}}show();<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
+  w.document.write(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>body{margin:0;font-family:Tahoma,Arial,sans-serif;background:#e8edf3}.toolbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;background:#172337;color:#fff;box-shadow:0 2px 10px #0002}.toolbar strong{flex:1}.toolbar button{border:0;border-radius:7px;padding:9px 13px;font-weight:bold;cursor:pointer}.print{background:#d9ad3b;color:#172337}.nav{background:#fff;color:#172337}.close{background:transparent;color:#fff;border:1px solid #ffffff66!important}#counter{font-size:12px;color:#e8c968}iframe{display:block;width:100%;height:calc(100vh - 54px);border:0;background:white}</style></head><body><div class="toolbar"><strong>${title}</strong><span id="counter"></span><button id="previousReportBtn" class="nav" onclick="move(-1)">السابق</button><button class="print" onclick="printAll()">🖨 طباعة الكل — كل عميل في صفحة</button><button class="print" onclick="printCurrent()">🖨 طباعة هذا الكشف</button><button class="nav" onclick="shareCurrent()">↗ مشاركة</button><button id="nextReportBtn" class="nav" onclick="move(1)">الكشف التالي ⟵</button><button class="close" onclick="window.close()">إغلاق</button></div><iframe id="report"></iframe><script>const reports=${safeReports};let index=0;const frame=document.getElementById('report');function show(){frame.srcdoc=reports[index];document.getElementById('counter').textContent='الكشف '+(index+1)+' من '+reports.length;document.getElementById('previousReportBtn').disabled=index===0;document.getElementById('nextReportBtn').disabled=index===reports.length-1;document.getElementById('nextReportBtn').textContent=index===reports.length-1?'انتهت الكشوف ✓':'الكشف التالي ⟵';}function move(step){if(index+step<0||index+step>=reports.length){if(step>0&&index===reports.length-1)alert('تم الوصول إلى آخر كشف.');return;}index+=step;show();}function printCurrent(){frame.contentWindow.focus();frame.contentWindow.print();}async function shareCurrent(){const d=frame.contentDocument;const text=(d&&d.body?d.body.innerText:'').slice(0,12000);try{if(navigator.share){await navigator.share({title:d.title||'كشف حساب',text});return;}await navigator.clipboard.writeText(text);alert('تم نسخ محتوى الكشف للمشاركة.');}catch(e){alert('تعذرت المشاركة المباشرة؛ يمكنك نسخ محتوى الكشف أو طباعته PDF.');}}function printAll(){var f=document.createElement('iframe');f.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0';document.body.appendChild(f);var seen={},css='',body='';reports.forEach(function(h,i){var d=new DOMParser().parseFromString(h,'text/html');d.querySelectorAll('style').forEach(function(s){if(!seen[s.textContent]){seen[s.textContent]=1;css+='<style>'+s.textContent+'</style>';}});body+='<section style="'+(i<reports.length-1?'page-break-after:always;break-after:page;':'')+'">'+d.body.innerHTML+'</section>';});var doc=f.contentDocument;doc.open();doc.write('<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>'+document.title+'</title>'+css+'</head><body>'+body+'</body></html>');doc.close();setTimeout(function(){f.contentWindow.focus();f.contentWindow.print();setTimeout(function(){f.remove();},3000);},500);}show();<\/script><style id="cr-register-pro-ui">.cr-table th,.cr-table td{text-align:center!important;vertical-align:middle!important;white-space:nowrap}.cr-table th,.cr-table td{padding:7px 8px!important}.cr-sort{border:0;background:transparent;color:inherit;font:inherit;font-weight:800;cursor:pointer;white-space:nowrap}.cr-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px!important}.cr-stat{min-width:0!important;padding:8px 10px!important;display:flex;align-items:center;justify-content:space-between;gap:7px;min-height:62px}.cr-stat-title,.cr-stat-meta{font-size:10px!important;white-space:nowrap}.cr-stat-value{font-size:16px!important;white-space:nowrap}.cr-report-tools,.cr-preview-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:8px 0}.cr-preview{max-height:70vh;overflow:auto;transform-origin:top right}.cr-preview .cr-table{min-width:1100px}@media(max-width:900px){.cr-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.cr-stat{display:block;text-align:center;min-height:55px}}@media(max-width:560px){.cr-stat-title,.cr-stat-meta{white-space:normal}.cr-report-tools .btn{flex:1}.cr-table{font-size:11px!important}}</style></body></html>`);
   w.document.close();
 }
 // ============== قالب التقارير الاحترافي الموحَّد (IRON GATE Pro Report) ==============
@@ -6598,32 +6603,20 @@ function viewInventory(){
  if(inventoryTab==="items")return `<div class="tabs">${tabs}</div>${itemsMasterHtml("")}`;
  if(inventoryError)return `<div class="tabs">${tabs}</div><div class="card"><div class="body"><b>قاعدة بيانات حركات المخزون غير مهيأة أو تعذر الاتصال.</b><p>${escapeHtml(inventoryError)}</p><p>شغّل ملف <b>irongate_inventory_setup.sql</b> في SQL Editor داخل Supabase ثم أعد فتح الشاشة.</p><button class="btn" onclick="inventoryLoad().then(()=>go('inventory'))">إعادة المحاولة</button></div></div>`;
  if(inventoryLoading)return `<div class="tabs">${tabs}</div><div class="empty">جاري تحميل سجل المخزون…</div>`;
- const bal=invBalances();
- if(inventoryTab==="balances"||inventoryTab==="valuation"){
-  const rows=bal.map(x=>`<tr><td>${escapeHtml(x.warehouse_code)} — ${escapeHtml(x.warehouse_name)}</td><td>${escapeHtml(x.factory)}</td><td>${escapeHtml(x.diameter)}</td><td>${escapeHtml(x.item_type)}</td><td class="num">${invNum(x.balance)}</td><td class="num">${invNum(x.avgCost)}</td><td class="num">${invNum(x.value)}</td></tr>`).join("");
-  return `<div class="tabs">${tabs}</div><div class="card"><div class="head"><h3>${inventoryTab==="balances"?"أرصدة المخزون حسب المخزن والصنف":"تقييم المخزون بالتكلفة المتوسطة المتحركة"}</h3><span class="chip">${bal.length} صنف/مخزن</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>المخزن</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>الرصيد بالطن</th><th>متوسط التكلفة/طن</th><th>قيمة المخزون</th></tr></thead><tbody>${rows||'<tr><td colspan="7">لا توجد حركات مخزنية بعد.</td></tr>'}</tbody></table></div></div></div>`;
- }
- if(inventoryTab==="movements"){
-  const rows=inventoryRows.slice().reverse().map(r=>`<tr><td>${escapeHtml(r.movement_date||"")}</td><td>${r.movement_type==="receipt"?'<span class="chip ok">وارد</span>':'<span class="chip warn">منصرف</span>'}</td><td>${escapeHtml(r.source_no||"")}</td><td>${escapeHtml(r.sale_order_no||"")}</td><td>${escapeHtml(r.note||"")}<div class="muted" style="font-size:11px">عميل: ${escapeHtml(r.customer||"—")} | مورد: ${escapeHtml(r.supplier||"—")}</div></td><td>${escapeHtml(r.warehouse_code||"")} — ${escapeHtml(r.warehouse_name||"")}</td><td>${escapeHtml(r.factory||"")}</td><td>${escapeHtml(r.diameter||"")}</td><td>${escapeHtml(r.item_type||"")}</td><td class="num">${invNum(r.qty)}</td><td class="num">${invNum(r.unit_cost)}</td><td class="num">${invNum(r.total_cost)}</td><td>${r.source_type==="policy"?`<button class="btn ghost sm" onclick="inventoryOpenSupply('${escapeAttr(String(r.source_id||""))}')">فتح التوريد ↗</button>`:"—"}</td></tr>`).join("");
-  return `<div class="tabs">${tabs}</div><div class="card"><div class="head"><h3>دفتر حركة المخزون التفصيلي</h3><span class="chip">${inventoryRows.length} حركة</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>الحركة</th><th>رقم البوليصة</th><th>أمر البيع</th><th>البيان / الأطراف</th><th>المخزن</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>الكمية</th><th>تكلفة الوحدة</th><th>الإجمالي</th><th>المصدر</th></tr></thead><tbody>${rows||'<tr><td colspan="13">لا توجد حركات مخزنية.</td></tr>'}</tbody></table></div></div></div>`;
- }
- if(inventoryTab==="itemCard"){
-  const rows=inventoryRows.slice().reverse().map(r=>`<tr><td>${escapeHtml(r.movement_date||"")}</td><td>${r.movement_type==="receipt"?"وارد":"منصرف"}</td><td>${escapeHtml(r.source_no||"")}</td><td>${escapeHtml(r.note||"")}</td><td>${escapeHtml(r.warehouse_code||"")} — ${escapeHtml(r.warehouse_name||"")}</td><td class="num">${invNum(r.qty)}</td><td class="num">${invNum(r.unit_cost)}</td><td class="num">${invNum(r.total_cost)}</td></tr>`).join("");
-  return `<div class="tabs">${tabs}</div><div class="card"><div class="head"><h3>كارت الصنف — سجل زمني للحركات والتكلفة</h3></div><div class="body"><div class="fgrid"><div class="fld"><label>المصنع</label><select class="inp" id="inv_card_factory" onchange="inventoryCardRender()"><option value="">كل المصانع</option>${(state.factories||[]).map(x=>{const n=typeof x==="string"?x:x.name;return `<option>${escapeHtml(n)}</option>`}).join("")}</select></div><div class="fld"><label>القطر</label><select class="inp" id="inv_card_diameter" onchange="inventoryCardRender()"><option value="">كل الأقطار</option>${(state.diameters||[]).map(x=>`<option>${escapeHtml(x)}</option>`).join("")}</select></div><div class="fld"><label>النوع</label><select class="inp" id="inv_card_type" onchange="inventoryCardRender()"><option value="">كل الأنواع</option>${(state.types||[]).map(x=>`<option>${escapeHtml(typeof x==="string"?x:x.name)}</option>`).join("")}</select></div><div class="fld"><label>المخزن</label><select class="inp" id="inv_card_wh" onchange="inventoryCardRender()"><option value="">كل المخازن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}">${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select></div></div><div class="tbl-wrap" id="invCardRows"><table><thead><tr><th>التاريخ</th><th>الحركة</th><th>المستند</th><th>البيان</th><th>المخزن</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th></tr></thead><tbody>${rows||'<tr><td colspan="8">لا توجد حركات.</td></tr>'}</tbody></table></div></div></div>`;
- }
+  if(["balances","valuation","movements","itemCard"].includes(inventoryTab)) return `<div class="tabs">${tabs}</div>${invScreenHtml(inventoryTab)}`;
  if(inventoryTab==="reports"){
   const totalIn=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.total_cost||0),0), totalOut=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.total_cost||0),0);
   const inQty=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.qty||0),0), outQty=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.qty||0),0);
   const pending=(state.shipments||[]).filter(sh=>!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="receipt")||!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="issue"));
   return `<div class="tabs">${tabs}</div><div class="grid cols-4" style="margin-bottom:14px"><div class="card"><div class="body"><small>إجمالي الوارد</small><h2>${invNum(inQty)} طن</h2><b>${invNum(totalIn)} ج.م</b></div></div><div class="card"><div class="body"><small>إجمالي المنصرف</small><h2>${invNum(outQty)} طن</h2><b>${invNum(totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>صافي الكمية</small><h2>${invNum(inQty-outQty)} طن</h2><b>${invNum(totalIn-totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>بوالص توريد تحتاج مراجعة</small><h2>${pending.length}</h2><small>حسب سجل حركات المخزون</small></div></div></div>
   <div class="card"><div class="head"><h3>تسوية الحركات التاريخية</h3><span class="chip warn">وارد + منصرف بنفس التاريخ والتكلفة</span></div><div class="body"><p>يتم فحص كل بوليصة مرحلة، وتسجيل الوزن الفعلي واردًا ثم صرف نفس الوزن بنفس تكلفة الشراء، بتاريخ البوليصة، مع حفظ رقم أمر البيع والعميل والمورد. التسوية لا تكرر الحركات المسجلة، وتعرض السجلات الناقصة أو غير الصالحة.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="inventoryBackfillSupplies()" ${can("inventory","post")?"":"disabled"}>بدء تسوية كل بوالص التوريد</button><button class="btn ghost" onclick="inventoryExportExcel()">تصدير تقرير المخازن Excel</button></div><div id="invBackfillResult" style="margin-top:12px">${inventoryBackfillSummary}</div></div></div>
-  <div class="card"><div class="head"><h3>ملخص الحركات حسب المخزن</h3></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>المخزن</th><th>الوارد طن</th><th>المنصرف طن</th><th>الرصيد طن</th><th>قيمة الوارد</th><th>قيمة المنصرف</th><th>الصافي</th></tr></thead><tbody>${[...new Set(inventoryRows.map(x=>String(x.warehouse_id)))].map(id=>{const a=inventoryRows.filter(x=>String(x.warehouse_id)===id),w=a[0]||{};const iq=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.qty||0),0),oq=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.qty||0),0),iv=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.total_cost||0),0),ov=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.total_cost||0),0);return `<tr><td>${escapeHtml(w.warehouse_code||"")} — ${escapeHtml(w.warehouse_name||"")}</td><td>${invNum(iq)}</td><td>${invNum(oq)}</td><td>${invNum(iq-oq)}</td><td>${invNum(iv)}</td><td>${invNum(ov)}</td><td>${invNum(iv-ov)}</td></tr>`}).join("")||'<tr><td colspan="7">لا توجد بيانات</td></tr>'}</tbody></table></div></div></div>`;
+  <div class="card"><div class="head"><h3>ملخص الحركات حسب المخزن</h3></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>المخزن</th><th>الوارد طن</th><th>المنصرف طن</th><th>الرصيد طن</th><th>قيمة الوارد</th><th>قيمة المنصرف</th><th>الصافي</th></tr></thead><tbody>${[...new Set(inventoryRows.map(x=>String(x.warehouse_id)))].map(id=>{const a=inventoryRows.filter(x=>String(x.warehouse_id)===id),w=a[0]||{};const iq=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.qty||0),0),oq=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.qty||0),0),iv=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.total_cost||0),0),ov=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.total_cost||0),0);return `<tr><td>${escapeHtml(w.warehouse_name||w.warehouse_code||"")}</td><td>${invNum(iq)}</td><td>${invNum(oq)}</td><td>${invNum(iq-oq)}</td><td>${invNum(iv)}</td><td>${invNum(ov)}</td><td>${invNum(iv-ov)}</td></tr>`}).join("")||'<tr><td colspan="7">لا توجد بيانات</td></tr>'}</tbody></table></div></div></div>`;
  }
  if(inventoryTab==="issue"){
   const leaf=whList().filter(w=>!whHasKids(w.id));
   return `<div class="tabs">${tabs}</div><div class="card"><div class="head"><h3>مستند صرف مخزني</h3><span class="chip warn">الصرف مستقل عن وجود عميل في البوليصة</span></div><div class="body"><div class="fgrid">
    <div class="fld"><label>تاريخ الصرف</label><input class="inp" id="inv_issue_date" type="date" value="${today()}"></div>
-   <div class="fld"><label>المخزن</label><select class="inp" id="inv_issue_wh"><option value="">اختر المخزن</option>${leaf.map(w=>`<option value="${escapeAttr(String(w.id))}">${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select></div>
+   <div class="fld"><label>المخزن</label><select class="inp" id="inv_issue_wh"><option value="">اختر المخزن</option>${leaf.map(w=>`<option value="${escapeAttr(String(w.id))}">${escapeHtml(w.name||w.code||"")}</option>`).join("")}</select></div>
    <div class="fld"><label>المصنع</label><select class="inp" id="inv_issue_factory"><option value="">اختر المصنع</option>${(state.factories||[]).map(x=>`<option>${escapeHtml(typeof x==="string"?x:x.name)}</option>`).join("")}</select></div>
    <div class="fld"><label>القطر</label><select class="inp" id="inv_issue_diameter"><option value="">اختر القطر</option>${(state.diameters||[]).map(x=>`<option>${escapeHtml(x)}</option>`).join("")}</select></div>
    <div class="fld"><label>النوع</label><select class="inp" id="inv_issue_type"><option value="">اختر النوع</option>${(state.types||[]).map(x=>`<option>${escapeHtml(typeof x==="string"?x:x.name)}</option>`).join("")}</select></div>
@@ -6635,7 +6628,7 @@ function viewInventory(){
  return `<div class="tabs">${tabs}</div>`;
 }
 function inventoryOpenSupply(id){const r=(state.shipments||[]).find(x=>String(x.id)===String(id));if(!r){toast("بوليصة التوريد المرتبطة بالحركة غير موجودة", "err");return;}loadRecord("shipments",r.id,false);}
-function inventoryExportExcel(){const cols=["التاريخ","نوع الحركة","رقم البوليصة","رقم أمر البيع","اسم العميل","اسم المورد","البيان","المخزن","المصنع","القطر","النوع","الكمية طن","تكلفة الوحدة","إجمالي التكلفة"];const esc=v=>'"'+String(v??"").replace(/"/g,'""')+'"';const lines=[cols.map(esc).join(","),...inventoryRows.map(r=>[r.movement_date,r.movement_type==="receipt"?"وارد":"منصرف",r.source_no,r.sale_order_no,r.customer,r.supplier,r.note,[r.warehouse_code,r.warehouse_name].filter(Boolean).join(" - "),r.factory,r.diameter,r.item_type,r.qty,r.unit_cost,r.total_cost].map(esc).join(","))];const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="تقرير_حركات_المخازن_"+today()+".csv";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}
+function inventoryExportExcel(){const cols=["التاريخ","نوع الحركة","رقم البوليصة","رقم أمر البيع","اسم العميل","اسم المورد","البيان","المخزن","المصنع","القطر","النوع","الكمية طن","تكلفة الوحدة","إجمالي التكلفة"];const esc=v=>'"'+String(v??"").replace(/"/g,'""')+'"';const lines=[cols.map(esc).join(","),...inventoryRows.map(r=>[r.movement_date,r.movement_type==="receipt"?"وارد":"منصرف",r.source_no,r.sale_order_no,r.customer,r.supplier,invNoteClean(r.note),(r.warehouse_name||r.warehouse_code||""),r.factory,r.diameter,r.item_type,r.qty,r.unit_cost,r.total_cost].map(esc).join(","))];const blob=new Blob(["\uFEFF"+lines.join("\r\n")],{type:"text/csv;charset=utf-8;"});const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="تقرير_حركات_المخازن_"+today()+".csv";document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);}
 async function inventoryBackfillSupplies(){
  if(!can("inventory","post")){toast("ليس لديك صلاحية تسوية المخزون", "err");return;}
  const docs=state.shipments||[];
@@ -6676,11 +6669,118 @@ async function inventoryBackfillSupplies(){
  const c=document.getElementById("content");if(c&&currentPage==="inventory")c.innerHTML=viewInventory();
 }
 
-function inventoryCardRender(){
- const get=id=>document.getElementById(id)?.value||"",f=get("inv_card_factory"),d=get("inv_card_diameter"),t=get("inv_card_type"),w=get("inv_card_wh");
- const rows=inventoryRows.slice().reverse().filter(r=>(!f||r.factory===f)&&(!d||r.diameter===d)&&(!t||r.item_type===t)&&(!w||String(r.warehouse_id)===String(w))).map(r=>`<tr><td>${escapeHtml(r.movement_date||"")}</td><td>${r.movement_type==="receipt"?"وارد":"منصرف"}</td><td>${escapeHtml(r.source_no||"")}</td><td>${escapeHtml(r.warehouse_code||"")} — ${escapeHtml(r.warehouse_name||"")}</td><td class="num">${invNum(r.qty)}</td><td class="num">${invNum(r.unit_cost)}</td><td class="num">${invNum(r.total_cost)}</td></tr>`).join("");
- const el=document.getElementById("invCardRows");if(el)el.innerHTML=`<table><thead><tr><th>التاريخ</th><th>الحركة</th><th>المستند</th><th>المخزن</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th></tr></thead><tbody>${rows||'<tr><td colspan="7">لا توجد حركات مطابقة.</td></tr>'}</tbody></table>`;
+// ---------- شاشات المخزون الموحدة: أرصدة / تقييم / حركة / كارت الصنف (بنفس شكل شاشة الأقساط) ----------
+let invSort={mov:"desc",card:"desc"};
+const invSortArrow=w=>invSort[w]==="desc"?" ▼":" ▲";
+function invToggleSort(w){ const v=invSort[w]==="desc"?"asc":"desc"; invSort.mov=v; invSort.card=v; invScreenRefresh(); }
+function invSetSort(v){ invSort.mov=v; invSort.card=v; invScreenRefresh(); }
+function invSorted(rows,w){ const a=rows.slice(); return invSort[w]==="asc"?a:a.reverse(); }   // inventoryRows مرتبة تصاعديًا بالتاريخ
+// البيان: نشيل جزء العميل/المورد (متكرر في السطر الصغير تحته) + كلمة "تسوية تاريخية"
+function invNoteClean(n){
+  return String(n||"")
+    .replace(/(?:ال)?تسوية(?:\s+(?:ال)?حركات)?\s+(?:ال)?تاريخي(?:ة|ه)/g," ")
+    .split(/\n/).join(" — ").split(/\s[—–]\s/)
+    .map(s=>s.trim().replace(/^[\s:：\-–—]+|[\s:：\-–—]+$/g,""))
+    .filter(s=>s&&!/^(العميل|المورد)(\s|:|$)/.test(s)).join(" — ");
 }
+const invMoney=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const invGidOf=r=>{ const id=igMap()[r.diameter]||""; return igById(id)?id:""; };
+const invWhName=r=>String((r&&(r.warehouse_name||r.warehouse_code))||"");
+let invF={f:"",grp:"",d:"",t:"",w:""};
+function invCardState(){ return invF; }
+function invMatch(r){ const F=invF; return (!F.f||r.factory===F.f)&&(!F.grp||invGidOf(r)===(F.grp==="__none"?"":F.grp))&&(!F.d||r.diameter===F.d)&&(!F.t||r.item_type===F.t)&&(!F.w||String(r.warehouse_id)===String(F.w)); }
+function invCardDiameterOptions(g,sel){
+  const names=!g?(state.diameters||[]):(g==="__none"?igItemsOf("").map(x=>x.n):igItemsOf(g).map(x=>x.n));
+  return `<option value="">كل الأقطار</option>`+names.map(x=>`<option value="${escapeAttr(x)}" ${sel===x?"selected":""}>${escapeHtml(x)}</option>`).join("");
+}
+function invTitleOf(tab){ return {balances:"📦 أرصدة المخزون حسب المخزن والصنف",valuation:"💰 تقييم المخزون بالتكلفة المتوسطة المتحركة",movements:"🔄 حركة الوارد والمنصرف",itemCard:"📒 كارت الصنف — سجل زمني للحركات والتكلفة"}[tab]||"المخزون"; }
+function invFilterHtml(){
+  const F=invF, nm=x=>typeof x==="string"?x:(x&&x.name)||"";
+  const opt=(v,l,sel)=>`<option value="${escapeAttr(v)}" ${String(sel)===String(v)?"selected":""}>${escapeHtml(l)}</option>`;
+  const facs=(state.factories||[]).map(nm).filter(Boolean), types=(state.types||[]).map(nm).filter(Boolean);
+  const grpOpts=`<option value="">كل المجموعات</option>`+igList().map(g=>opt(String(g.id),g.name||"",F.grp)).join("")+(igItemsOf("").length?opt("__none","بدون مجموعة",F.grp):"");
+  const whOpts=`<option value="">كل المخازن</option>`+whList().filter(w=>!whHasKids(w.id)).map(w=>opt(String(w.id),w.name||w.code||"",F.w)).join("");
+  const showSort=(inventoryTab==="movements"||inventoryTab==="itemCard");
+  return `<div class="sales-inst-filter-card"><div class="sales-inst-filter-head"><div style="flex:1"><h3>فلاتر البحث والتصفية</h3><small>اختَر الفلتر ثم اطبع أو شارك أو صدّر Excel — التقرير يطلع بنفس الفلتر المختار</small></div><button class="btn ghost" type="button" onclick="invResetFilters()">↺ مسح الكل</button></div>
+  <div class="sales-inst-filter-grid">
+    <div class="fld"><label>المصنع</label><select class="inp" onchange="invFilterChange('f',this.value)"><option value="">كل المصانع</option>${facs.map(x=>opt(x,x,F.f)).join("")}</select></div>
+    <div class="fld"><label>مجموعة الصنف</label><select class="inp" onchange="invFilterChange('grp',this.value)">${grpOpts}</select></div>
+    <div class="fld"><label>القطر</label><select class="inp" onchange="invFilterChange('d',this.value)">${invCardDiameterOptions(F.grp,F.d)}</select></div>
+    <div class="fld"><label>النوع</label><select class="inp" onchange="invFilterChange('t',this.value)"><option value="">كل الأنواع</option>${types.map(x=>opt(x,x,F.t)).join("")}</select></div>
+    <div class="fld"><label>المخزن</label><select class="inp" onchange="invFilterChange('w',this.value)">${whOpts}</select></div>
+    ${showSort?`<div class="fld"><label>ترتيب التاريخ</label><select class="inp" onchange="invSetSort(this.value)"><option value="desc" ${invSort.card==="desc"?"selected":""}>الأحدث أولًا ▼</option><option value="asc" ${invSort.card==="asc"?"selected":""}>الأقدم أولًا ▲</option></select></div>`:""}
+  </div></div>`;
+}
+function invScreenData(tab){
+  if(tab==="balances"||tab==="valuation"){
+    const rows=invBalances().filter(invMatch).sort((a,b)=>invWhName(a).localeCompare(invWhName(b),"ar")||String(a.factory).localeCompare(String(b.factory),"ar")||String(a.diameter).localeCompare(String(b.diameter),"ar",{numeric:true}));
+    return {kind:"bal",rows,tot:{n:rows.length,bq:rows.reduce((a,x)=>a+x.balance,0),bv:rows.reduce((a,x)=>a+x.value,0)}};
+  }
+  const asc=inventoryRows.map((r,i)=>[r,i]).filter(x=>invMatch(x[0])).sort((a,b)=>String(a[0].movement_date||"").localeCompare(String(b[0].movement_date||""))||a[1]-b[1]).map(x=>x[0]);
+  let bq=0,bv=0,iq=0,iv=0,oq=0,ov=0;
+  const withBal=asc.map(r=>{ const q=+r.qty||0, v=+r.total_cost||0; if(r.movement_type==="receipt"){bq+=q;bv+=v;iq+=q;iv+=v;}else{bq-=q;bv-=v;oq+=q;ov+=v;} return {...r,_bq:bq,_bv:bv}; });
+  return {kind:"mov",rows:invSort.card==="asc"?withBal:withBal.slice().reverse(),tot:{iq,iv,oq,ov,bq,bv}};
+}
+function invKpis(tab,d){
+  const cur=state.settings.currency||"ج.م", T=d.tot;
+  if(d.kind==="bal") return [{lbl:"عدد الأصناف / المخازن",val:T.n+"",sub:"صنف",color:"#64748b"},{lbl:"إجمالي الرصيد",val:invNum(T.bq),sub:"طن",color:"#6366f1"},{lbl:"قيمة المخزون",val:invMoney(T.bv),sub:cur,color:"#d97706"},{lbl:"متوسط التكلفة / طن",val:invMoney(T.bq>0?T.bv/T.bq:0),sub:cur,color:"#059669"}];
+  return [{lbl:"عدد الحركات",val:d.rows.length+"",sub:"حركة",color:"#64748b"},{lbl:"إجمالي الوارد",val:invNum(T.iq),sub:"طن · "+invMoney(T.iv)+" "+cur,color:"#059669"},{lbl:"إجمالي المنصرف",val:invNum(T.oq),sub:"طن · "+invMoney(T.ov)+" "+cur,color:"#b91c1c"},{lbl:"الرصيد",val:invNum(T.bq),sub:"طن",color:"#6366f1"},{lbl:"قيمة الرصيد",val:invMoney(T.bv),sub:cur,color:"#d97706"}];
+}
+const invMovTag=rc=>`<span style="display:inline-block;padding:3px 12px;border-radius:4px;font-weight:900;background:${rc?"#c6efce":"#ffc7ce"};color:${rc?"#006100":"#9c0006"}">${rc?"وارد":"منصرف"}</span>`;
+function invTableHtml(tab,d,rep){
+  const n=rep?"n":"inv-num", T=d.tot, cls=rep?` class="rprt-tbl" style="min-width:900px"`:` class="sales-inst-table"`;
+  if(d.kind==="bal"){
+    const body=d.rows.map(x=>`<tr><td>${escapeHtml(invWhName(x))}</td><td>${escapeHtml(x.factory)}</td><td>${escapeHtml(x.diameter)}</td><td>${escapeHtml(x.item_type)}</td><td class="${n}">${invNum(x.balance)}</td><td class="${n}">${invMoney(x.avgCost)}</td><td class="${n}"><b>${invMoney(x.value)}</b></td></tr>`).join("");
+    const foot=d.rows.length?`<tfoot><tr><td colspan="4">الإجمالي</td><td class="${n}">${invNum(T.bq)}</td><td></td><td class="${n}">${invMoney(T.bv)}</td></tr></tfoot>`:"";
+    return `<table${cls}><thead><tr><th>المخزن</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>الرصيد (طن)</th><th>متوسط التكلفة / طن</th><th>قيمة المخزون</th></tr></thead><tbody>${body||'<tr><td colspan="7">لا توجد أرصدة مطابقة.</td></tr>'}</tbody>${foot}</table>`;
+  }
+  const w=tab==="movements"?"mov":"card";
+  const th=rep?`<th>التاريخ</th>`:`<th class="si-sortable" style="cursor:pointer;user-select:none" title="اضغط لترتيب الحركات حسب التاريخ" onclick="invToggleSort('${w}')">التاريخ${invSortArrow(w)}</th>`;
+  const noteCell=r=>`<td style="white-space:normal;text-align:right;min-width:190px;color:#000">${escapeHtml(invNoteClean(r.note))}${tab==="movements"?`<div style="font-size:11px;color:#6b7280;font-weight:600">عميل: ${escapeHtml(r.customer||"—")} | مورد: ${escapeHtml(r.supplier||"—")}</div>`:""}</td>`;
+  const body=d.rows.map(r=>{ const rc=r.movement_type==="receipt", q=+r.qty||0;
+    const common=`<td>${escapeHtml(r.movement_date||"")}</td><td>${invMovTag(rc)}</td><td>${escapeHtml(String(r.source_no||""))}</td><td>${escapeHtml(String(r.sale_order_no||""))}</td>${noteCell(r)}<td>${escapeHtml(invWhName(r))}</td><td>${escapeHtml(r.factory||"")}</td><td>${escapeHtml(r.diameter||"")}</td><td>${escapeHtml(r.item_type||"")}</td>`;
+    if(tab==="movements") return `<tr>${common}<td class="${n}">${invNum(q)}</td><td class="${n}">${invMoney(r.unit_cost)}</td><td class="${n}">${invMoney(r.total_cost)}</td>${rep?"":`<td>${r.source_type==="policy"?`<button class="btn ghost sm" onclick="inventoryOpenSupply('${escapeAttr(String(r.source_id||""))}')">فتح التوريد ↗</button>`:"—"}</td>`}</tr>`;
+    return `<tr>${common}<td class="${n}">${rc?invNum(q):""}</td><td class="${n}">${rc?"":invNum(q)}</td><td class="${n}"><b>${invNum(r._bq)}</b></td><td class="${n}">${invMoney(r.unit_cost)}</td><td class="${n}">${invMoney(r.total_cost)}</td></tr>`; }).join("");
+  if(tab==="movements") return `<table${cls}><thead><tr>${th}<th>الحركة</th><th>رقم البوليصة</th><th>أمر البيع</th><th>البيان</th><th>المخزن</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>الكمية (طن)</th><th>تكلفة الوحدة</th><th>الإجمالي</th>${rep?"":"<th>المصدر</th>"}</tr></thead><tbody>${body||`<tr><td colspan="${rep?12:13}">لا توجد حركات مطابقة.</td></tr>`}</tbody></table>`;
+  const foot=d.rows.length?`<tfoot><tr><td colspan="9">الإجمالي</td><td class="${n}">${invNum(T.iq)}</td><td class="${n}">${invNum(T.oq)}</td><td class="${n}">${invNum(T.bq)}</td><td></td><td class="${n}">${invMoney(T.bv)}</td></tr></tfoot>`:"";
+  return `<table${cls}><thead><tr>${th}<th>الحركة</th><th>المستند</th><th>أمر البيع</th><th>البيان</th><th>المخزن</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>وارد (طن)</th><th>منصرف (طن)</th><th>الرصيد (طن)</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody>${body||'<tr><td colspan="14">لا توجد حركات مطابقة.</td></tr>'}</tbody>${foot}</table>`;
+}
+function invResultsHtml(tab,d){
+  const cur=state.settings.currency||"ج.م", cnt=d.kind==="bal"?d.rows.length+" صنف/مخزن":d.rows.length+" حركة";
+  return `<div class="sales-inst-table-card"><div class="sales-inst-table-head"><h3>${escapeHtml(invTitleOf(tab).replace(/^\S+\s/,""))}</h3><span class="count">${cnt} مطابق للفلاتر · العملة ${escapeHtml(cur)}</span></div><div class="sales-inst-table-wrap">${invTableHtml(tab,d,false)}</div></div>`;
+}
+function invKpiHtml(tab,d){ return `<div class="sales-inst-kpis">${invKpis(tab,d).map(k=>`<div class="sales-inst-kpi"><span>${escapeHtml(k.lbl)}</span><b>${escapeHtml(k.val)}</b><small>${escapeHtml(k.sub)}</small></div>`).join("")}</div>`; }
+function invScreenHtml(tab){
+  const d=invScreenData(tab);
+  return `<style>.inv-num{font-variant-numeric:tabular-nums;direction:ltr}#content .sales-inst-table td,#content .sales-inst-table tfoot td{color:#000!important}#content .sales-inst-table .inv-num{direction:ltr}</style>
+  <div class="sales-inst-page"><div class="sales-inst-head"><div><h2 style="margin:0">${escapeHtml(invTitleOf(tab))}</h2><div class="si-note">المخزن يظهر بالاسم فقط · الفلاتر تنطبق على الشاشة والطباعة والمشاركة والإكسيل</div></div><div class="spacer"></div><div class="sales-inst-actions"><button class="btn" type="button" onclick="inventoryScreenExport('pdf')" style="background:var(--gold,#d4a017);color:#111;font-weight:700">🖨 طباعة / ↗ مشاركة PDF</button><button class="btn ghost" type="button" onclick="inventoryScreenExport('excel')">⬇ تصدير Excel</button></div></div>
+  <div id="invFilterHost">${invFilterHtml()}</div>
+  <div class="sales-inst-totals-card"><div class="sales-inst-filter-head"><div style="flex:1"><h3>الإجماليات</h3><small>تتغير حسب الفلاتر المختارة</small></div></div><div id="invKpiHost">${invKpiHtml(tab,d)}</div></div>
+  <div id="invResultsHost">${invResultsHtml(tab,d)}</div></div>`;
+}
+function invResultsRender(){
+  const d=invScreenData(inventoryTab), k=document.getElementById("invKpiHost"), r=document.getElementById("invResultsHost");
+  if(k) k.innerHTML=invKpiHtml(inventoryTab,d); if(r) r.innerHTML=invResultsHtml(inventoryTab,d);
+}
+function invScreenRefresh(){ const h=document.getElementById("invFilterHost"); if(h) h.innerHTML=invFilterHtml(); invResultsRender(); }
+function invFilterChange(k,v){ invF[k]=v||""; if(k==="grp") invF.d=""; invScreenRefresh(); }
+function invResetFilters(){ invF={f:"",grp:"",d:"",t:"",w:""}; invScreenRefresh(); }
+function inventoryCardRender(){ invResultsRender(); }
+function inventoryScreenExport(format){
+  const tab=inventoryTab, d=invScreenData(tab);
+  if(!d.rows.length){ toast("لا توجد بيانات مطابقة للتصدير","err"); return; }
+  const F=invF, cur=state.settings.currency||"ج.م";
+  const grpName=!F.grp?"":(F.grp==="__none"?"بدون مجموعة":(igById(F.grp)||{}).name||"");
+  const wh=F.w?whList().find(w=>String(w.id)===String(F.w)):null;
+  const filters=[F.f?"المصنع: "+F.f:"كل المصانع",grpName?"المجموعة: "+grpName:"كل المجموعات",F.d?"القطر: "+F.d:"كل الأقطار",F.t?"النوع: "+F.t:"كل الأنواع",wh?"المخزن: "+(wh.name||wh.code||""):"كل المخازن"];
+  if(d.kind==="mov") filters.push(invSort.card==="asc"?"الترتيب: الأقدم أولًا":"الترتيب: الأحدث أولًا");
+  const names={balances:["أرصدة المخزون","STOCK BALANCES","📦"],valuation:["تقييم المخزون","STOCK VALUATION","💰"],movements:["حركة الوارد والمنصرف","STOCK MOVEMENTS","🔄"],itemCard:["كارت الصنف","ITEM CARD — STOCK LEDGER","📒"]}[tab]||["المخزون","INVENTORY","📦"];
+  const html=igProReportHtml({emoji:names[2],title:names[0],titleEn:names[1],sub:(d.kind==="bal"?d.rows.length+" صنف/مخزن":d.rows.length+" حركة"),filters,kpis:invKpis(tab,d),tableHtml:`<div style="overflow-x:auto">${invTableHtml(tab,d,true)}</div>`});
+  if(format==="excel"){ igSaveXlsx(html,igSafeFileName(names[0].replace(/\s+/g,"_")+"_"+today())); toast("✓ تم تجهيز ملف Excel","ok"); }
+  else openReportPreview(html,names[0]);
+}
+function inventoryCardExport(format){ inventoryScreenExport(format); }
+
 async function inventoryIssueSave(){
  const get=id=>document.getElementById(id)?.value||"";
  const wh=whList().find(w=>String(w.id)===String(get("inv_issue_wh")));
@@ -12700,7 +12800,8 @@ function igSafeFileName(nameAr, ext){
     "فاتورة_مبيعات":"Sales_Invoice",
     "فاتورة مبيعات":"Sales_Invoice",
     "بوليصة":"Policy",
-    "تقرير_التسويات":"Adjustments_Report"
+    "تقرير_التسويات":"Adjustments_Report",
+    "كارت_الصنف":"Item_Card"
   };
   let s = String(nameAr||"IronGate_Report");
   // استبدال أي كلمة عربية معروفة بمقابلها الإنجليزي
@@ -13568,8 +13669,8 @@ function salesInstallmentBaseRows(){
       const dd=due?new Date(due+"T00:00:00"):null;
       const days=dd&&!Number.isNaN(dd.getTime())?Math.floor((today-dd)/86400000):0;
       if(remaining>0.004&&remaining<SI_SMALL_BALANCE&&due&&days>0){ waived=remaining; remaining=0; }
-      const status=remaining<=0.004?"مسدد":!due?"بدون تاريخ":days>0?"متأخر":days===0?"مستحق اليوم":"قادم";
-      out.push({orderId:g.so?.id||g.orderNo,orderNo:g.orderNo,customer:g.customer,date:invoiceDate,due,label:pt.label,installment:pt.no,amount:+pt.amount||0,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total,pays,near:remaining>0.004&&!!due&&days<=0&&days>=-7});
+      const status=remaining<=0.004?"مسدد":!due?"بدون تاريخ":days>=0?"متأخر":"قادم"; // القسط المستحق اليوم يُحتسب ضمن المتأخر
+      out.push({orderId:g.so?.id||g.orderNo,orderNo:g.orderNo,customer:g.customer,date:invoiceDate,due,label:pt.label,installment:pt.no,amount:+pt.amount||0,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total,pays,near:remaining>0.004&&!!due&&days<0&&days>=-7});
     });
   });
   // التسويات المدينة على العملاء → تدخل كأقساط مستحقة في شاشة الأقساط
@@ -13589,8 +13690,8 @@ function salesInstallmentBaseRows(){
     const dd=due?new Date(due+"T00:00:00"):null;
     const days=dd&&!Number.isNaN(dd.getTime())?Math.floor((today-dd)/86400000):0;
     if(remaining>0.004&&remaining<SI_SMALL_BALANCE&&due&&days>0){ waived=remaining; remaining=0; }
-    const status=remaining<=0.004?"مسدد":!due?"بدون تاريخ":days>0?"متأخر":days===0?"مستحق اليوم":"قادم";
-    out.push({orderId:orderNo,orderNo,customer,date:invoiceDate,due,label:"⚖ تسوية مدينة",installment:1,amount,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total:amount,pays:[paid].filter(v=>v>0),near:remaining>0.004&&!!due&&days<=0&&days>=-7, isAdjustment:true, adjustmentId:e.id});
+    const status=remaining<=0.004?"مسدد":!due?"بدون تاريخ":days>=0?"متأخر":"قادم"; // القسط المستحق اليوم يُحتسب ضمن المتأخر
+    out.push({orderId:orderNo,orderNo,customer,date:invoiceDate,due,label:"⚖ تسوية مدينة",installment:1,amount,paid,remaining,waived,lateRemaining:status==="متأخر"?remaining:0,days:status==="متأخر"?days:0,status,total:amount,pays:[paid].filter(v=>v>0),near:remaining>0.004&&!!due&&days<0&&days>=-7, isAdjustment:true, adjustmentId:e.id});
   });
   return out.sort((a,b)=>{
     const ad=a.due||"9999-12-31",bd=b.due||"9999-12-31";
@@ -13663,7 +13764,7 @@ function viewSalesInstallments(){
       <div class="sales-inst-filter-grid si-collapsible">
         <div class="fld"><label>العميل</label>${siMsBuild("customer","كل العملاء", customers.map(v=>({v,label:v})))}</div>
         <div class="fld"><label>أمر البيع</label>${siMsBuild("order","كل أوامر البيع", orderList.map(v=>({v,label:v})))}</div>
-        <div class="fld"><label>حالة القسط</label>${siMsBuild("status","كل الحالات", ["مسدد","متأخر","مستحق اليوم","قادم","بدون تاريخ"].map(v=>({v,label:v})))}</div>
+        <div class="fld"><label>حالة القسط</label>${siMsBuild("status","كل الحالات", ["مسدد","متأخر","قادم","بدون تاريخ"].map(v=>({v,label:v})))}</div>
         <div class="fld"><label>فرز حسب</label><select class="inp" id="siSortSel" onchange="salesInstallmentUI.sort=this.value;salesInstallmentUI.dir='asc';renderSalesInstallments()">${sorts.map(([v,l])=>`<option value="${v}" ${u.sort===v?"selected":""}>${l}</option>`).join("")}</select></div>
         <div class="fld"><label>استحقاق من</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="salesInstallmentFilters.from=this.value;renderSalesInstallments()"></div>
         <div class="fld"><label>استحقاق إلى</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="salesInstallmentFilters.to=this.value;renderSalesInstallments()"></div>
@@ -13716,19 +13817,21 @@ function renderOverdueSummary(){if(currentPage!=="overdueSummary")return;const q
 function overdueSummaryExport(format){const rows=overdueSummaryRows(),cur=state.settings.currency||"ج.م",m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const body=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td>${m(x.amount)}</td><td>${x.avg.toFixed(1)}</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إجمالي المتأخرات</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63}p{text-align:center}table{width:100%;border-collapse:collapse}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:9px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>إجمالي المتأخرات المستحقة لكل عميل</h1><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")}</p><table><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط</th><th>عدد أوامر البيع</th></tr></thead><tbody>${body}</tbody></table></html>`;if(format==="excel")igSaveXlsx(html,igSafeFileName("إجمالي_المتأخرات_"+new Date().toISOString().slice(0,10)));else openReportPreview(html,"إجمالي المتأخرات");}
 
 function salesInstallmentsExport(format){
-  const rows=salesInstallmentFilteredRows(); if(!rows.length){toast("لا توجد أقساط مطابقة للتصدير","err");return;}
+  const allRows=salesInstallmentFilteredRows(); if(!allRows.length){toast("لا توجد أقساط مطابقة للتصدير","err");return;}
   const title="سجل الأقساط والمستحقات";
-  const total=k=>rows.reduce((a,r)=>a+(+r[k]||0),0),cur=state.settings.currency||"ج.م",n=salesInstallmentMoney;
+  const cur=state.settings.currency||"ج.م",n=salesInstallmentMoney;
   const F=salesInstallmentFilters;
   const asLabel=(arr,one,many,all)=>{ const a=igMsNormArr(arr); if(!a.length) return all; if(a.length===1) return one+": "+a[0]; return many+": ("+a.length+")"; };
   const filtersList=[asLabel(F.customer,"العميل","العملاء","كل العملاء"),asLabel(F.order,"أمر البيع","أوامر البيع","كل الأوامر"),asLabel(F.status,"الحالة","الحالات","كل الحالات"),(F.from||F.to)?"الاستحقاق: "+(F.from||"من البداية")+" إلى "+(F.to||"مفتوح"):"كل التواريخ",F.q?"البحث: "+F.q:""].filter(Boolean);
-  const cols=siColumns(rows).filter(c=>c.pay===undefined&&c.k!=="diff");
   // ألوان مطابقة للشاشة
   const statusColor = s => s==="متأخر"?{bg:"#fee2e2",fg:"#991b1b",rowBg:"#fef2f2"}
                         :s==="مسدد"?{bg:"#dcfce7",fg:"#166534",rowBg:"#f0fdf4"}
                         :s==="مستحق اليوم"?{bg:"#fef08a",fg:"#854d0e",rowBg:"#fefce8"}
                         :s==="قادم"?{bg:"#dbeafe",fg:"#1e40af",rowBg:"#eff6ff"}
                         :{bg:"#e5e7eb",fg:"#374151",rowBg:"#fff"};
+  const docFor=(rows,cust)=>{
+  const total=k=>rows.reduce((a,r)=>a+(+r[k]||0),0);
+  const cols=siColumns(rows).filter(c=>c.pay===undefined&&c.k!=="diff");
   const body=rows.map((r,ri)=>{
     const sc=statusColor(r.status);
     const rowBg = sc.rowBg || (ri%2?"#fafbfc":"#ffffff");
@@ -13762,7 +13865,24 @@ function salesInstallmentsExport(format){
   const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:3px 0;justify-content:center">
     ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:12px;font-size:9.5px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
-  const html=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
+  return `<div class="doc">
+      <div class="hdr">
+        <div class="emoji">💳</div>
+        <h1>${title}</h1>
+        <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
+        <div class="sub">${new Date().toLocaleDateString("en-GB")} · ${rows.length} قسط · ${escapeHtml(cur)}${cust?" · العميل: "+escapeHtml(cust):""}</div>
+      </div>
+      ${filtersBar}
+      ${kpis}
+      <table>
+        <thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot>${foot}</tfoot>
+      </table>
+      <div class="fnote">تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — ${new Date().toLocaleString("en-GB")}</div>
+    </div>`;
+  };
+  const head=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
     *{box-sizing:border-box}
     body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0}
     .doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
@@ -13793,23 +13913,15 @@ function salesInstallmentsExport(format){
       *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
     }
   </style></head><body>
-    <div class="doc">
-      <div class="hdr">
-        <div class="emoji">💳</div>
-        <h1>${title}</h1>
-        <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
-        <div class="sub">${new Date().toLocaleDateString("en-GB")} · ${rows.length} قسط · ${escapeHtml(cur)}</div>
-      </div>
-      ${filtersBar}
-      ${kpis}
-      <table>
-        <thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead>
-        <tbody>${body}</tbody>
-        <tfoot>${foot}</tfoot>
-      </table>
-      <div class="fnote">تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — ${new Date().toLocaleString("en-GB")}</div>
-    </div>
-  </body></html>`;
+    `;
+  // أكثر من عميل في النتائج: كل عميل في صفحة مستقلة (إجماليات وعنوان لكل عميل)
+  const byCust=new Map(); allRows.forEach(r=>{ const k=String(r.customer||"بدون اسم"); if(!byCust.has(k)) byCust.set(k,[]); byCust.get(k).push(r); });
+  const custList=[...byCust.entries()].sort((a,b)=>a[0].localeCompare(b[0],"ar"));
+  const docsHtml=custList.length>1
+    ? custList.map(([c,rs],i)=>`<div data-share-page="1" style="${i<custList.length-1?"page-break-after:always;break-after:page;":""}">${docFor(rs,c)}</div>`).join("")
+    : docFor(allRows,"");
+  const html=head+docsHtml+"</body></html>";
+
   if(format==="excel"){
     igSaveXlsx(html,igSafeFileName("سجل_الأقساط_"+new Date().toISOString().slice(0,10)));toast("✓ تم تجهيز ملف Excel احترافي","ok");
   }else openReportPreview(html,title);
@@ -14937,8 +15049,9 @@ function openMyPassword(first){
       var rows=qsiFiltered(); if(!rows.length){toast("مفيش بيانات للتصدير دلوقتي","ok");return;}
       openReportPreview(qsiPdfHtml(),"الأقساط والمستحقات"); return;
     }
-    var t=document.querySelector("#qsBody tbody tr td:not([colspan])")?qsGenericText():"";
-    if(t){ window.open("https://wa.me/?text="+encodeURIComponent(t),"_blank"); return; }
+    // باقي الإشعارات: نفس قالب الطباعة (PDF) بدل نص خام، والمشاركة تتم من نافذة المعاينة باسم ملف عربي.
+    var h=qsGenericPdf();
+    if(h&&typeof openReportPreview==="function"&&document.querySelector("#qsBody tbody tr td:not([colspan])")){ openReportPreview(h,qsTitlePlain()); return; }
     toast("مفيش بيانات للتصدير دلوقتي","ok");
   });
 })();
