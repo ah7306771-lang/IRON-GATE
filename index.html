@@ -2015,6 +2015,24 @@ table.qs-lp th,table.qs-lp td{font-size:12px!important;padding:6px 7px!important
 .sup-journal-preview th,.sup-journal-preview td{padding:8px 10px}
 @media(max-width:760px){.sup-grouped-toolbar{position:sticky;right:0;z-index:4;background:var(--bg);padding:5px 0}.sup-journal-preview{max-width:100%}}
 </style>
+
+<style id="mobile-report-filter-and-total-tuning">
+/* تحسين فلاتر التقارير على الهاتف */
+@media(max-width:700px){
+  .qsi-filters{gap:4px!important;margin:4px 0 7px!important}
+  .qsi-filters label{padding:4px 6px!important;gap:4px!important;font-size:10px!important;border-radius:8px!important}
+  .qsi-filters select{font-size:11px!important;font-weight:700!important;padding:2px 0!important}
+  .qslp-filter{gap:5px!important;margin:5px 0 7px!important;padding:5px 7px!important;border-radius:8px!important}
+  .qslp-filter span{font-size:10.5px!important}
+  .qslp-filter select{font-size:11.5px!important;padding:5px 6px!important}
+  .qslp-filter button{font-size:11px!important;padding:6px 10px!important}
+  table.qsi-table th:nth-child(6),table.qsi-table td:nth-child(6),
+  table.qsi-table th:nth-child(7),table.qsi-table td:nth-child(7),
+  table.qsi-table th:nth-child(8),table.qsi-table td:nth-child(8){min-width:78px!important}
+  #qslpTable table th:nth-child(7),#qslpTable table td:nth-child(7),
+  #qslpTable table th:nth-child(8),#qslpTable table td:nth-child(8){min-width:92px!important}
+}
+</style>
 </head>
 <body>
 
@@ -6581,7 +6599,7 @@ function viewSoon(){
 // ---------- INVENTORY MODULE ----------
 let inventoryTab="warehouses", inventoryRows=[], inventoryLoading=false, inventoryError="", inventoryBackfillSummary="";
 const invNum=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:3});
-const invItemKey=(r)=>[r.factory||"",r.diameter||"",r.item_type||r.type||""].join(" | ");
+const invItemKey=(r)=>[r.diameter||"",r.item_type||r.type||""].join(" | ");
 // سعر الشراء المسجل شامل الضريبة؛ تكلفة المخزون (وحدة وإجمالي) تُعرض وتُحسب بدون ضريبة المدخلات
 function invVatRate(){ return Math.max(0,+((state.settings||{}).tax)||14); }
 function invSoOf(r){ const no=String((r&&r.sale_order_no)||"").trim(); if(!no) return null; return (state.saleOrders||[]).find(o=>String(o.orderNo).trim()===no)||null; }
@@ -6598,9 +6616,9 @@ async function inventoryLoad(){
   catch(e){ inventoryError=String(e.message||e); inventoryRows=[]; }
   finally{ inventoryLoading=false; }
 }
-function invBalances(){
-  const m=new Map(); inventoryRows.forEach(r=>{const k=[r.warehouse_id,invItemKey(r)].join("::"); if(!m.has(k))m.set(k,{warehouse_id:r.warehouse_id,warehouse_code:r.warehouse_code||"",warehouse_name:r.warehouse_name||"",factory:r.factory||"",diameter:r.diameter||"",item_type:r.item_type||"",inQty:0,outQty:0,inValue:0,outValue:0}); const x=m.get(k),q=Number(r.qty)||0,v=Number(r.total_cost)||0; if(r.movement_type==="receipt"){x.inQty+=q;x.inValue+=v;}else{x.outQty+=q;x.outValue+=v;} });
-  return [...m.values()].map(x=>({...x,balance:x.inQty-x.outQty,value:x.inValue-x.outValue,avgCost:x.inQty-x.outQty>0?(x.inValue-x.outValue)/(x.inQty-x.outQty):0})).filter(x=>Math.abs(x.balance)>0.000001||Math.abs(x.value)>0.01);
+function invBalances(sourceRows=inventoryRows){
+  const m=new Map(); sourceRows.forEach(r=>{const k=[r.warehouse_id,invItemKey(r)].join("::"); if(!m.has(k))m.set(k,{warehouse_id:r.warehouse_id,warehouse_code:r.warehouse_code||"",warehouse_name:r.warehouse_name||"",factories:new Set(),diameter:r.diameter||"",item_type:r.item_type||r.type||"",inQty:0,outQty:0,inValue:0,outValue:0}); const x=m.get(k); if(r.factory)x.factories.add(r.factory); const q=Number(r.qty)||0,v=Number(r.total_cost)||0; if(r.movement_type==="receipt"){x.inQty+=q;x.inValue+=v;}else{x.outQty+=q;x.outValue+=v;} });
+  return [...m.values()].map(x=>({...x,factory:[...x.factories].sort((a,b)=>a.localeCompare(b,"ar")).join("، "),balance:x.inQty-x.outQty,value:x.inValue-x.outValue,avgCost:x.inQty-x.outQty>0?(x.inValue-x.outValue)/(x.inQty-x.outQty):0})).filter(x=>Math.abs(x.balance)>0.000001||Math.abs(x.value)>0.01);
 }
 function inventoryTabDefs(){return [{id:"warehouses",label:"شجرة المخازن وربط الحسابات"},{id:"items",label:"دليل الأصناف"},{id:"balances",label:"أرصدة المخزون"},{id:"movements",label:"حركة الوارد والمنصرف"},{id:"itemCard",label:"كارت الصنف"},{id:"issue",label:"صرف مخزني"},{id:"valuation",label:"تقييم المخزون"},{id:"reports",label:"تقارير المخازن والتسوية"}];}
 function inventoryTabs(){return inventoryTabDefs().filter(t=>canTab("inventory",t.id)).map(t=>`<button class="${inventoryTab===t.id?"active":""}" onclick="inventoryTab='${t.id}';go('inventory')">${t.label}</button>`).join("")}
@@ -6741,7 +6759,7 @@ function invMoveCmp(a,b){
 function invScreenData(tab){
   inventoryRows=inventoryRows.map(invExVat);
   if(tab==="balances"||tab==="valuation"){
-    const rows=invBalances().filter(invMatch).sort((a,b)=>invWhName(a).localeCompare(invWhName(b),"ar")||String(a.factory).localeCompare(String(b.factory),"ar")||String(a.diameter).localeCompare(String(b.diameter),"ar",{numeric:true}));
+    const rows=invBalances(inventoryRows.filter(invMatch)).sort((a,b)=>invWhName(a).localeCompare(invWhName(b),"ar")||String(a.diameter).localeCompare(String(b.diameter),"ar",{numeric:true})||String(a.item_type).localeCompare(String(b.item_type),"ar"));
     return {kind:"bal",rows,tot:{n:rows.length,bq:rows.reduce((a,x)=>a+x.balance,0),bv:rows.reduce((a,x)=>a+x.value,0)}};
   }
   inventoryRows=inventoryRows.map(invExVat);
@@ -6851,10 +6869,26 @@ function invErpCardHtml(d){
   const m2=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
   const now=new Date(), pad=x=>String(x).padStart(2,"0");
   const nowD=pad(now.getDate())+"-"+pad(now.getMonth()+1)+"-"+now.getFullYear(), nowT=pad(now.getHours())+":"+pad(now.getMinutes());
+  // كارتة الصنف لا تُقسّم حسب المصنع: الصنف يُعرّف بالمخزن + المجموعة + النوع + القطر.
   const groups=new Map();
-  d.rows.forEach(r=>{ const k=[r.warehouse_id,invItemKey(r)].join("::"); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(r); });
+  d.rows.forEach(r=>{
+    const k=[r.warehouse_id,invGidOf(r),r.item_type||r.type||"",r.diameter||""].join("::");
+    if(!groups.has(k)) groups.set(k,[]);
+    groups.get(k).push(r);
+  });
   const PER=14, pages=[];
-  groups.forEach(rows=>{ for(let i=0;i<rows.length;i+=PER) pages.push({rows:rows.slice(i,i+PER),first:rows[0],last:i+PER>=rows.length,all:rows}); });
+  groups.forEach(sourceRows=>{
+    const rows=sourceRows.slice().sort((a,b)=>String(a.movement_date||"").localeCompare(String(b.movement_date||"")));
+    const openings=rows.filter(r=>r.movement_type==="opening");
+    const openingQty=openings.reduce((n,r)=>n+(Number(r._bq)||0),0);
+    const openingValue=openings.reduce((n,r)=>n+(Number(r._bv)||0),0);
+    const moves=rows.filter(r=>r.movement_type!=="opening");
+    const all=[];
+    if(openings.length) all.push({...openings[0],_bq:openingQty,_bv:openingValue});
+    let bq=openingQty,bv=openingValue;
+    moves.forEach(r=>{ const receipt=r.movement_type==="receipt",qty=Number(r.qty)||0,val=Number(r.total_cost)||0; bq+=receipt?qty:-qty; bv+=receipt?val:-val; all.push({...r,_bq:bq,_bv:bv}); });
+    for(let i=0;i<all.length;i+=PER) pages.push({rows:all.slice(i,i+PER),first:all[0],last:i+PER>=all.length,all});
+  });
   const N=pages.length, e=escapeHtml, logo=(typeof QT_LOGO!=="undefined")?QT_LOGO:"";
   const pages_html=pages.map((pg,pi)=>{
     const f=pg.first, wh=whList().find(w=>String(w.id)===String(f.warehouse_id)), g=igById(invGidOf(f));
@@ -6873,8 +6907,8 @@ function invErpCardHtml(d){
 <div class="top"><div class="lg">${logo?`<img src="${logo}" alt="">`:""}</div>
 <div class="ttl"><div class="tb">كارتة حركة صنف بالكميات والتكلفة</div><div class="rng"><span>من تاريخ &nbsp; <b>${e(fmtD(from))}</b></span><span>إلى تاريخ &nbsp; <b>${e(fmtD(to))}</b></span></div></div>
 <div class="inf"><div><span>التاريخ :</span><b>${nowD}</b></div><div><span>الوقت :</span><b>${nowT}</b></div><div><span>صفحة :</span><b>${pi+1} / ${N}</b></div></div></div>
-<div class="meta"><div class="m1"><div><span>المخزن :</span><b>${e(((wh&&wh.code)?wh.code+"  ":"")+invWhName(f))}</b></div><div><span>المجموعة :</span><b>${e(g?g.name:"")}</b></div><div><span>الصنف :</span><b>${e([f.diameter,f.item_type,f.factory].filter(Boolean).join(" - "))}</b></div></div>
-<div class="m2"><table class="ub"><tr><th>إسم الوحدة</th></tr><tr><td>طن</td></tr></table><div><span>رقم القطعة :</span><b></b></div><div><span>رقم الموديل :</span><b></b></div></div></div>
+<div class="meta"><div class="m1"><div><span>المخزن :</span><b>${e(((wh&&wh.code)?wh.code+"  ":"")+invWhName(f))}</b></div><div><span>المجموعة :</span><b>${e(g?g.name:"")}</b></div><div><span>النوع :</span><b>${e(f.item_type||f.type||"")}</b></div><div><span>القطر :</span><b>${e(f.diameter||"")}</b></div></div>
+<div class="m2"><table class="ub"><tr><th>إسم الوحدة</th></tr><tr><td>طن</td></tr></table></div></div>
 <table class="ec"><thead>
 <tr><th rowspan="2">التاريخ</th><th rowspan="2">رقم المستند</th><th rowspan="2">رقم الفاتورة</th><th rowspan="2" class="wb">البيان</th><th rowspan="2">تكلفة الوحدة</th><th colspan="2">البضاعة المستلمة</th><th colspan="2">البضاعة المنصرفة</th><th colspan="2">الرصيد</th></tr>
 <tr><th>كمية<br><small>طن</small></th><th>قيمة</th><th>كمية<br><small>طن</small></th><th>قيمة</th><th>كمية<br><small>طن</small></th><th>قيمة</th></tr></thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table>
