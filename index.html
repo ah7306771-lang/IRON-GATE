@@ -8002,9 +8002,9 @@ let lastPostedOrderNoForSupply="";
 // editingSrc: "new" = جديدة | "policies" = محفوظة لم تُرحَّل | "shipments" = مرحّلة لبيانات التوريد
 let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],from:igYearStart(),to:igYearEnd(),grouped:false,order:"",groupWarehouse:"",groupPosting:"",groupOrderStatus:"",groupCollection:""};
 let supBreak="";
-let supKpiOpen=true; try{ supKpiOpen = localStorage.getItem("supKpiOpen")!=="0"; }catch(e){}
+let supKpiOpen=false; try{ supKpiOpen = localStorage.getItem("supKpiOpen2")==="1"; }catch(e){}   // الافتراضي مقفول عشان الجدول ياخد المساحة
 function supToggleKpi(){
-  supKpiOpen=!supKpiOpen; try{ localStorage.setItem("supKpiOpen",supKpiOpen?"1":"0"); }catch(e){}
+  supKpiOpen=!supKpiOpen; try{ localStorage.setItem("supKpiOpen2",supKpiOpen?"1":"0"); }catch(e){}
   const k=document.getElementById("supKpis"), b=document.getElementById("supSumBar");
   if(k) k.style.display=supKpiOpen?"":"none"; if(b) b.classList.toggle("closed",!supKpiOpen);
 }
@@ -8013,17 +8013,17 @@ let supGroupExpanded = {}; // { saleOrderId_or_"none": true/false }
 // الافتراضي في التجميع / حسب العميل / حسب المورد: بالتاريخ من الأقدم للأحدث
 const SUP_SORT_DEFAULT={flat:{key:"date",dir:1},grouped:{key:"date",dir:1},customer:{key:"date",dir:1},supplier:{key:"date",dir:1}};
 let supSorts=JSON.parse(JSON.stringify(SUP_SORT_DEFAULT));
-let supFiltOpen=!window.matchMedia("(max-width: 900px)").matches;   // على الموبايل الفلاتر مقفولة افتراضيًا
+let supFiltOpen=false;   // الافتراضي مقفول (الجدول أولاً)   // على الموبايل الفلاتر مقفولة افتراضيًا
 try{
   const sv=JSON.parse(localStorage.getItem("supUi")||"null");
   if(sv){
     Object.keys(supSorts).forEach(v=>{ const x=sv.sorts&&sv.sorts[v]; if(x&&typeof x.key==="string"&&(x.dir===1||x.dir===-1)) supSorts[v]={key:x.key,dir:x.dir}; });
-    if(sv.filt===false) supFiltOpen=false;
+    if(sv.filt2===true) supFiltOpen=true;
     if(sv.grouped===true) supFilter.grouped=true;
     if(sv.brk==="customer"||sv.brk==="supplier") supBreak=sv.brk;
   }
 }catch(e){}
-function supSaveUi(){ try{ localStorage.setItem("supUi",JSON.stringify({sorts:supSorts,filt:supFiltOpen,grouped:supFilter.grouped,brk:supBreak})); }catch(e){} }
+function supSaveUi(){ try{ localStorage.setItem("supUi",JSON.stringify({sorts:supSorts,filt2:supFiltOpen,grouped:supFilter.grouped,brk:supBreak})); }catch(e){} }
 function supToggleFilt(){
   supFiltOpen=!supFiltOpen; supSaveUi();
   const f=document.getElementById("supFilters"), b=document.getElementById("supFiltBar");
@@ -8166,35 +8166,40 @@ function viewShipments(){
   return `
   <div class="page-head">
     ${typeof igBackBtn==="function"?igBackBtn():""}
-    ${typeof igExitBtn==="function"?igExitBtn():""}
     <h2>${isNew?"إدخال بوليصة جديدة":`بوليصة رقم ${escapeHtml(d.policyNo)}`}</h2>
     ${status}${(!viewOnly&&!isNew)?'<span class="chip gold">وضع التعديل</span>':""}
     <div class="spacer"></div>
-    ${B("جديد","newPolicy()","ghost",true)}
-    ${B("📋 استدعاء أمر بيع","openSOPicker()","ghost",!viewOnly&&!posted)}
-    ${B("بحث","openSearch()","ghost",true)}
-    ${(!viewOnly&&!isNew)?B("إلغاء التعديل","cancelEdit()","ghost",true):""}
-    ${B("تعديل","startEdit()","ghost",viewOnly&&!isNew)}
-    ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
-    ${B("حفظ","saveShipment()","",!viewOnly)}
-    ${B("ترحيل","postShipment()","",!posted)}
-    ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
+    <div class="ig-actions">
+    <div class="ig-act-group">
+      ${B("جديد","newPolicy()","ghost",true)}
+      ${B("📋 استدعاء أمر بيع","openSOPicker()","ghost",!viewOnly&&!posted)}
+      ${B("بحث","openSearch()","ghost",true)}
+      ${(!viewOnly&&!isNew)?B("إلغاء التعديل","cancelEdit()","ghost",true):""}
+      ${B("تعديل","startEdit()","ghost",viewOnly&&!isNew)}
+      ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
+      ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
+    </div>
+    <div class="ig-act-main">
+      ${B("حفظ","saveShipment()","ig-save",!viewOnly)}
+      ${B("ترحيل","postShipment()","ig-post",!posted)}
+    </div>
+    </div>
   </div>
   ${posted&&!viewOnly?'<p style="color:var(--warn);font-size:12px;margin:-8px 0 14px">تنبيه: دي بوليصة مرحّلة — الحفظ هنا هيعدّل صفوفها في بيانات التوريد مباشرة.</p>':""}
-  ${d.saleOrderId?`<div class="card" style="margin-top:16px;border-color:var(--gold)"><div class="body" style="padding:12px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  ${d.saleOrderId?`<div class="card ig-link-banner"><div class="body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <span style="color:var(--gold-text);font-size:14px">🔗 مربوطة بأمر بيع رقم <b>${escapeHtml(d.saleOrderNo)}</b></span>
     <button class="btn ghost sm" onclick="viewLinkedSO()">عرض الأمر</button>
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   ${pendingPanel()}
-  <div class="card ig-pol-head" style="margin-top:16px"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
+  <div class="card ig-pol-head"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
     <div class="fgrid">
       ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
       ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
+      ${F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
       ${F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
       ${F("العميل",`<select class="inp" ${ro} onchange="setF('customer',this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>`)}
-      ${F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
       ${F("الشركة",`<input class="inp" ${ro} list="dlCompany" value="${escapeAttr(d.company)}" oninput="setF('company',this.value)" placeholder="اسم الشركة"><datalist id="dlCompany">${polyHist("company")}</datalist>`)}
       ${F("الموقع",`<input class="inp" ${ro} list="dlSite" value="${escapeAttr(d.site)}" oninput="setF('site',this.value)" placeholder="موقع التوريد / المشروع"><datalist id="dlSite">${polyHist("site")}</datalist>`)}
     </div>
@@ -8204,27 +8209,27 @@ function viewShipments(){
     </div>
   </div></div>
 
-  <details class="card ig-disclosure" style="margin-top:16px;border-color:var(--gold)"><summary class="head"><h3>أصناف أمر البيع والكميات</h3><span class="count" id="soFullTag"></span></summary>
+  <details class="card ig-disclosure"><summary class="head"><h3>أصناف أمر البيع والكميات</h3><span class="count" id="soFullTag"></span></summary>
     <div class="body" id="soFullBox"></div>
   </details>
 
-  <div class="card ig-items-card" style="margin-top:16px"><div class="head"><div><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3><small class="ig-section-hint">أسعار موحّدة أو تعديل كل صنف بشكل مستقل</small></div>
+  <div class="card ig-items-card"><div class="head"><div><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3><small class="ig-section-hint">أسعار موحّدة أو تعديل كل صنف بشكل مستقل</small></div>
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
     <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items">
       <thead>
         <tr class="ig-bulk-price-row"><th colspan="8"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><label for="bulkBuyPrice">تطبيق سعر الشراء على الكل</label><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><label for="bulkSellPrice">تطبيق سعر البيع على الكل</label><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="4"></th>`:""}<th colspan="2"></th></tr>
-        <tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>حالة التعتيق</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th>الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th>سعر البيع شامل الضريبة</th><th>قبل الضريبة</th><th>الضريبة</th><th>الخصم</th><th>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr>
+        <tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>حالة التعتيق</th><th>كمية التوريد (طن)</th><th>الوزن الفعلي (طن)</th><th class="c-calc">الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th>سعر البيع شامل الضريبة</th><th class='c-calc'>قبل الضريبة</th><th class='c-calc'>الضريبة</th><th class='c-calc'>الخصم</th><th class='c-calc c-total'>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr>
       </thead>
       <tbody id="itemsBody">${d.items.map(itemRow).join("")}</tbody>
     </table></div>
     <p class="ig-items-hint">الحساب على <strong>الوزن الفعلي</strong>، وكمية التوريد للمقارنة والتسجيل فقط. يمكن تعديل سعر كل صنف منفردًا أو استخدام التطبيق الجماعي أعلى عمود السعر.</p>
   </div>
 
-  <div class="card ig-totals-card" style="margin-top:16px"><div class="head"><h3>الإجماليات</h3></div><div class="body">
+  <div class="card ig-totals-card"><div class="head"><h3>الإجماليات</h3></div><div class="body">
     <div class="sumbox" id="sumBox"></div>
   </div></div>
 
-  <details class="card ig-disclosure" style="margin-top:16px"><summary class="head"><h3>الضرائب والخصومات</h3></summary><div class="body">
+  <details class="card ig-disclosure"><summary class="head"><h3>الضرائب والخصومات</h3></summary><div class="body">
     <div class="fgrid">
       ${F("القيمة المضافة (VAT)",`<select class="inp" ${ro} onchange="setF('applyVat',this.value==='1');refreshTotals()"><option value="1" ${d.applyVat!==false?"selected":""}>مطبّقة</option><option value="0" ${d.applyVat===false?"selected":""}>غير مطبّقة</option></select>`)}
       ${F("نسبة القيمة المضافة %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.vatPct}" oninput="setF('vatPct',this.value);refreshTotals()">`)}
@@ -8234,7 +8239,7 @@ function viewShipments(){
     <p style="margin-top:10px;color:var(--text-dim);font-size:12px">أسعار الشراء والبيع المدخلة شاملة الضريبة. يتم استخراج الضريبة من سعر البيع دون إضافتها مرة أخرى، ويُخصم 1% من البيع قبل الضريبة للعملاء المحددين فقط من إعدادات العملاء.</p>
   </div></details>
 
-  <div class="card ig-pay-card ig-terms-card" style="margin-top:16px"><div class="head"><div><h3>شروط السداد</h3><small class="ig-section-hint">اختيارية — ويمكن استكمالها لاحقًا</small></div></div><div class="body">
+  <div class="card ig-pay-card ig-terms-card"><div class="head"><div><h3>شروط السداد</h3><small class="ig-section-hint">اختيارية — ويمكن استكمالها لاحقًا</small></div></div><div class="body">
     <div class="ig-terms-grid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct??0}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
       ${F("عدد الأقساط",`<input class="inp num" type="number" min="0" step="1" ${ro} value="${d.terms.installments}" id="t_installments" oninput="setT('installments',this.value)">`)}
@@ -8244,7 +8249,7 @@ function viewShipments(){
     <p id="termsBox" class="ig-terms-preview"></p>
   </div></div>
 
-  <details class="card ig-pay-card ig-schedule-card" style="margin-top:12px"><summary class="head"><div><h3>جدول الاستحقاقات</h3><small class="ig-section-hint">تفاصيل النقدي والأقساط وتواريخ السداد</small></div><span class="count" id="paySchedTag"></span></summary><div class="body"><div id="paySchedBox"></div></div></details>`;
+  <details class="card ig-pay-card ig-schedule-card"><summary class="head"><div><h3>جدول الاستحقاقات</h3><small class="ig-section-hint">تفاصيل النقدي والأقساط وتواريخ السداد</small></div><span class="count" id="paySchedTag"></span></summary><div class="body"><div id="paySchedBox"></div></div></details>`;
 }
 // اقتراحات من القيم المدخلة قبل كده في البوالص (محفوظة ومرحّلة)
 function polyHist(k){ return [...new Set([...state.policies,...state.shipments].map(r=>(r[k]||"").trim()).filter(Boolean))].map(v=>`<option value="${escapeAttr(v)}">`).join(""); }
@@ -8259,11 +8264,11 @@ function itemRow(it,i){
     <td><select class="inp" ${ro} onchange="setI(${i},'agingStatus',this.value)">${opts(state.statuses,it.agingStatus,"الحالة")}</select></td>
     <td><input class="inp num" type="number" min="0" step="0.001" ${ro} value="${v(it.supplyQty)}" oninput="setI(${i},'supplyQty',this.value)"></td>
     <td><input class="inp num" type="number" min="0" step="0.001" ${ro} value="${v(it.actualWeight)}" data-k="actualWeight" oninput="setI(${i},'actualWeight',this.value)"></td>
-    <td class="num" id="rdf${i}"></td>
+    <td class="num c-calc" id="rdf${i}"></td>
     ${showBuy("shipments")?`<td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.buyPrice)}" data-k="buyPrice" oninput="setI(${i},'buyPrice',this.value)"></td>`:""}
     ${showSell("shipments")?`<td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.sellPrice)}" data-k="sellPrice" oninput="setI(${i},'sellPrice',this.value)"></td>`:""}
-    ${showSell("shipments")?`<td class="num" id="rsub${i}"></td><td class="num" id="rtax${i}"></td><td class="num" id="rdis${i}"></td>
-    <td class="num" id="rtot${i}"><strong></strong></td>`:""}
+    ${showSell("shipments")?`<td class="num c-calc" id="rsub${i}"></td><td class="num c-calc" id="rtax${i}"></td><td class="num c-calc" id="rdis${i}"></td>
+    <td class="num c-calc c-total" id="rtot${i}"><strong></strong></td>`:""}
     <td style="text-align:center"><button class="note-icon-btn ${(it.notes||"").trim()?'has-note':''}" ${ro} onclick="openItemNote(${i})" title="${(it.notes||"").trim()?'يوجد ملاحظة — اضغط للتعديل':'إضافة ملاحظة'}">📝</button></td>
     <td>${viewOnly?"":`<div class="td-actions"><button class="btn ghost sm" onclick="copyRow(${i})" title="نسخ الصف">نسخ</button><button class="del" onclick="delRow(${i})">حذف</button></div>`}</td>
   </tr>`;
@@ -9934,8 +9939,9 @@ function renderSupplyGrouped(L){
   });
   groups.forEach(g=>{ const f=[...g.policies.values()][0]||{}; const od=soDateFor(f.saleOrderNo, f.saleOrderId); if(od) g.date=od; });   // تاريخ أمر البيع نفسه (بيتحدّث تلقائيًا من آخر بوليصة)
   const GSORT={order:g=>g.orderNo,pol:g=>g.policies.size,date:g=>g.date,supplier:g=>g.supplier,customer:g=>g.customer,company:g=>g.company,site:g=>g.site,
-    qty:g=>g.totals.sq,weight:g=>g.totals.w,buy:g=>g.totals.buy,sub:g=>g.totals.sub,tax:g=>g.totals.tax,dis:g=>g.totals.dis,total:g=>g.totals.total,status:g=>g.so?.closed?1:0};
-  const GNUM=new Set(["pol","qty","weight","buy","sub","tax","dis","total","status"]);
+    qty:g=>g.totals.sq,weight:g=>g.totals.w,buy:g=>g.totals.buy,sub:g=>g.totals.sub,tax:g=>g.totals.tax,dis:g=>g.totals.dis,total:g=>g.totals.total,paid:g=>g.customerPaid,rem:g=>g.remaining,coll:g=>({collected:2,partial:1,pending:0})[g.collectionStatus],status:g=>g.so?.closed?1:0};
+  const GNUM=new Set(["pol","qty","weight","buy","sub","tax","dis","total","paid","rem","coll","status"]);
+  const allocList=[]; (state.treasuryEntries||[]).forEach(e=>{ if(e.direction==="in"&&e.status!=="returned") (e.allocations||[]).forEach(a=>{ if((+a.amount||0)>0) allocList.push(a); }); });
   groups.forEach(g=>{
     g.totals={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,total:0};
     g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);g.totals.sq+=(+it.supplyQty||0);g.totals.w+=(+it.actualWeight||0);g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
@@ -9945,8 +9951,10 @@ function renderSupplyGrouped(L){
     g.stockAccountCode=g.warehouse?.accountCode||g.warehouse?.account_code||"";
     const postedBuy=!!window.supPostMap[g.orderNo+"|purchase"], postedSell=!!window.supPostMap[g.orderNo+"|sales"];
     g.postingStatus=postedBuy&&postedSell?"posted":postedBuy||postedSell?"partial":"unposted";
-    const paid=(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&String(e.customer||"")===String(g.customer||"")&&SUP_OK.includes(e.status)&&e.status!=="returned").reduce((n,e)=>n+(+e.amount||0),0);
-    g.customerPaid=paid; g.collectionStatus=paid>=g.totals.total-0.005?"collected":paid>0?"partial":"pending";
+    // المسدد = مجموع التسكينات (allocations) المخصّصة لهذا الأمر تحديدًا، مش إجمالي تحصيلات العميل
+    const paid=(g.orderNo||g.so)?allocList.reduce((n,a)=>n+(txAllocMatches(a,g.so,g.orderNo)?(+a.amount||0):0),0):0;
+    g.customerPaid=r2(paid); g.remaining=Math.max(0,r2(g.totals.total-paid));
+    g.collectionStatus=g.totals.total>0.005&&paid>=g.totals.total-0.005?"collected":paid>0.005?"partial":"pending";
     g.payment=supGroupedPaymentInfo(g.items,g.orderNo);
   });
   // الفلاتر الإضافية تخص شاشة التجميع فقط، ولا تغيّر العرض العادي أو حسابات التوريد.
@@ -9975,7 +9983,7 @@ function renderSupplyGrouped(L){
       <td class="num"><bdi dir="ltr">${escapeHtml(String(g.stockAccountCode||"—"))}</bdi></td>
       <td class="num">${fmt(totals.sq,3)}</td><td class="num"><strong>${fmt(totals.w,3)}</strong></td>
       ${SB?`<td class="num">${fmt(totals.buy)}</td>`:""}
-      ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold-text)">${fmt(totals.total)}</strong></td>`:""}
+      ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold-text)">${fmt(totals.total)}</strong></td><td class="num">${fmt(g.customerPaid)}</td><td class="num"><strong style="color:${g.remaining>0.005?'#b91c1c':'#166534'}">${fmt(g.remaining)}</strong></td><td>${g.collectionStatus==="collected"?'<span class="chip" style="background:#dcfce7;color:#166534">محصّل</span>':g.collectionStatus==="partial"?'<span class="chip" style="background:#fef3c7;color:#92400e">جزئي</span>':'<span class="chip" style="background:#fee2e2;color:#991b1b">لم يُحصّل</span>'}</td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
       <td><div class="td-actions" style="flex-wrap:wrap;min-width:190px">
         ${window.supPostMap[orderNo+"|purchase"]?`<button class="sup-post-state" type="button" title="اضغط لعرض وطباعة قيد المشتريات" onclick="supPrintPostedEntry('${escapeAttr(String(orderNo))}','purchase')">🖨 مُرحّل مشتريات ✓</button><button class="icon-btn" type="button" title="إلغاء ترحيل المشتريات فقط" aria-label="إلغاء ترحيل المشتريات" onclick="supPostAccounts('${escapeAttr(String(g.key))}','purchase')">↶</button>`:""}
@@ -9991,13 +9999,14 @@ function renderSupplyGrouped(L){
     </tr>`;
   }).join("");
   const total={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,grand:0};
-  L.forEach(({s,it})=>{const a=supplyAmounts(s,it);total.sq+=(+it.supplyQty||0);total.w+=(+it.actualWeight||0);total.buy+=a.buyTotal;total.sub+=a.subtotal;total.tax+=a.tax;total.dis+=a.discount;total.grand+=a.total;});
+  total.paid=0; total.rem=0;
+  groups.forEach(g=>{const t=g.totals;total.sq+=t.sq;total.w+=t.w;total.buy+=t.buy;total.sub+=t.sub;total.tax+=t.tax;total.dis+=t.dis;total.grand+=t.total;total.paid+=g.customerPaid;total.rem+=g.remaining;});
   const termsHidden=localStorage.getItem("ig_supply_terms_hidden")==="1";
   return `<div class="sup-grouped-toolbar"><button class="btn ghost sm" type="button" onclick="supTogglePaymentColumns(this)">${termsHidden?"إظهار شروط السداد":"إخفاء شروط السداد"} ${termsHidden?"▣":"◧"}</button><span style="font-size:11px;color:var(--text-dim)">يمكن إخفاء الأعمدة من نسبة النقدي حتى آخر قسط</span></div><div class="tbl-wrap sup-grouped-wrap${termsHidden?" is-terms-hidden":""}"><table data-rs-key="supply-grouped"><thead><tr>
     ${["order|أمر البيع","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","warehouse|المخزن","stockAccount|حساب المخزون","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
-    ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
+    ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped")+supTh("paid","المسدد","grouped")+supTh("rem","المتبقي","grouped")+supTh("coll","التحصيل","grouped"):""}${supTh("status","الحالة","grouped")}<th>إجراء</th>
     ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-col pay-terms-head${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}">${escapeHtml(h)}</th>`).join("")}
-    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="9">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td>`:""}<td colspan="2"></td><td class="pay-terms-col pay-cash"></td><td class="pay-terms-col num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="pay-terms-col"></td><td class="pay-terms-col"></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td class="pay-terms-col"></td>`).join("")}</tr></tfoot></table></div>`;
+    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="9">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td><td class="num">${fmt(total.paid)}</td><td class="num"><strong>${fmt(total.rem)}</strong></td><td></td>`:""}<td colspan="2"></td><td class="pay-terms-col pay-cash"></td><td class="pay-terms-col num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="pay-terms-col"></td><td class="pay-terms-col"></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td class="pay-terms-col"></td>`).join("")}</tr></tfoot></table></div>`;
 }
 
 
@@ -17207,4 +17216,462 @@ function renderManagementReports(){
   #qsModal table.qsi-table tfoot td{position:sticky;bottom:0;z-index:2}
   #qsModal i.yy{display:inline!important}
 }
+</style>
+
+<style id="ig-mobile-fix-v13">
+/* ===== v13: تظبيط موبايل — الأقساط / آخر سعر شراء وبيع / شاشة الدخول ===== */
+
+/* ---------- شاشة الدخول: النص بعيد عن الأيقونات ---------- */
+#login .field-icon-input input{
+  box-sizing:border-box!important;
+  min-height:52px!important;
+  padding:14px 52px 14px 50px!important;   /* يمين: مكان أيقونة المستخدم/القفل — يسار: مكان زر العين */
+  text-align:right!important;
+  direction:rtl!important;
+  letter-spacing:normal!important;
+}
+#login #loginPass{letter-spacing:2px!important;text-align:right!important}
+#login #loginUserNo{text-align:right!important}
+#login .field-icon-input .field-icon{right:17px!important;left:auto!important;width:20px!important;height:20px!important;z-index:2}
+#login .eye{left:8px!important;right:auto!important;width:36px!important;height:36px!important;z-index:3;display:flex!important;align-items:center;justify-content:center;font-size:17px!important;line-height:1}
+#login .field-icon-input input::placeholder{text-align:right;opacity:.55}
+
+@media(max-width:700px){
+  /* ---------- نافذة الإشعارات: عرض أكبر ---------- */
+  #qsOverlay{padding:8px 4px!important}
+  #qsModal.qs-wide{width:calc(100vw - 8px)!important;max-width:calc(100vw - 8px)!important;padding:12px 6px!important}
+
+  /* ---------- الأقساط: فلاتر الحالة والعميل أصغر ---------- */
+  #qsModal .qsi-filters{gap:5px!important;margin:4px 0 8px!important}
+  #qsModal .qsi-filters label{padding:2px 7px!important;min-height:0!important;height:28px!important;font-size:10px!important;border-radius:8px!important;gap:4px!important}
+  #qsModal .qsi-filters select{font-size:11px!important;font-weight:700!important;height:22px!important;min-height:0!important;padding:0!important}
+  #qsModal .qsi-chips{margin:6px 0!important;gap:5px!important}
+  #qsModal .qsi-chip{padding:4px 9px!important;font-size:10.5px!important}
+
+  /* ---------- جدولي الأقساط + آخر سعر: أعمدة بعرض المحتوى، من غير قص ---------- */
+  #qsModal .qsi-desktop,
+  #qsModal .qslp-desktop .qs-scroll{
+    overflow:auto!important;-webkit-overflow-scrolling:touch;
+    max-height:calc(100dvh - 300px)!important;
+    container-type:normal!important;
+  }
+  #qsModal table.qsi-table,
+  #qsModal table.qs-lp{
+    table-layout:auto!important;
+    width:max-content!important;
+    min-width:100%!important;
+    border-collapse:collapse!important;
+  }
+  #qsModal table.qsi-table th,#qsModal table.qsi-table td,
+  #qsModal table.qs-lp th,#qsModal table.qs-lp td{
+    overflow:visible!important;
+    white-space:nowrap!important;
+    font-size:12.5px!important;
+    font-weight:700;
+    line-height:1.5!important;
+    padding:10px 14px!important;
+    min-width:84px!important;
+    text-align:center!important;
+    border:1px solid #e5e7eb;
+  }
+  #qsModal table.qsi-table th,#qsModal table.qs-lp th{font-size:12px!important;font-weight:800;background:#f3f4f6;color:#111}
+  #qsModal table.qsi-table td,#qsModal table.qs-lp td{font-variant-numeric:tabular-nums;color:#111}
+
+  /* أعمدة نصية أعرض شوية (العميل) */
+  #qsModal table.qsi-table td.qsi-cust,#qsModal table.qsi-table th:nth-child(2){min-width:130px!important}
+  #qsModal table.qs-lp th:nth-child(4),#qsModal table.qs-lp td:nth-child(4){min-width:130px!important}      /* العميل */
+  #qsModal table.qs-lp th:nth-child(6),#qsModal table.qs-lp td:nth-child(6),
+  #qsModal table.qs-lp th:nth-child(7),#qsModal table.qs-lp td:nth-child(7){min-width:120px!important}       /* سعر شراء / سعر بيع (فيها 900 / 38,000) */
+  #qsModal table.qs-lp th:nth-child(8),#qsModal table.qs-lp td:nth-child(8),
+  #qsModal table.qs-lp th:nth-child(9),#qsModal table.qs-lp td:nth-child(9){min-width:130px!important}       /* الإجماليات */
+  #qsModal table.qsi-table th:nth-child(n+5),#qsModal table.qsi-table td:nth-child(n+5){min-width:110px!important}
+
+  /* صف الإجمالي واضح */
+  #qsModal table.qs-table tr.qs-net td{font-size:13px!important;font-weight:900!important;background:#e9edf3!important}
+
+  /* فلتر العميل في آخر سعر: أصغر */
+  #qsModal .qslp-filter{padding:5px 8px!important;gap:6px!important;margin:4px 0 8px!important}
+  #qsModal .qslp-filter span{font-size:11px!important}
+  #qsModal .qslp-filter select{padding:4px 6px!important;font-size:12px!important}
+  #qsModal .qslp-filter button{padding:5px 14px!important;font-size:12px!important}
+}
+</style>
+
+<style id="ig-mobile-fix-v14">
+@media(max-width:700px){
+  /* أزرار تحديث / موافق أصغر */
+  #qsModal .qsi-refresh{padding:4px 10px!important;font-size:10.5px!important;height:auto!important;min-height:0!important;line-height:1.3!important;vertical-align:middle}
+  #qsModal .qslp-filter button{padding:5px 14px!important;height:auto!important;min-height:0!important;line-height:1.3!important}
+  #qsModal .qslp-filter select{height:auto!important;min-height:0!important}
+  /* حماية عامة لباقي الشاشات */
+  html,body{max-width:100%;overflow-x:hidden}
+  #content img,#content canvas,#content svg{max-width:100%;height:auto}
+  #content input:not([type=checkbox]):not([type=radio]),#content select,#content textarea{font-size:16px!important;max-width:100%;box-sizing:border-box}
+  #content .tbl-wrap,#content .table-wrap,#content .sales-inst-table-wrap,#content .cr-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
+  #content table th,#content table td{white-space:nowrap}
+  .modal,.ig-dlg{max-width:100vw}
+  #content .fgrid{grid-template-columns:1fr!important}
+}
+</style>
+
+<style id="ig-supply-pro-v15">
+/* ===== v15: شاشة بيانات التوريد — شكل احترافي موحّد مع شيت الأقساط + مساحة أكبر للجدول (سطح المكتب) ===== */
+@media(min-width:901px){
+  /* الشريط العلوي أنحف في الشاشة دي */
+  body:has(.supply-page) .topbar{padding:6px 18px!important;gap:10px!important;min-height:0!important}
+  body:has(.supply-page) .topbar h2{font-size:16px!important}
+  body:has(.supply-page) .topbar .btn,body:has(.supply-page) .topbar button:not(.sidebar-toggle):not(.tb-back){padding:4px 12px!important;min-height:0!important;font-size:12px!important;line-height:1.5}
+  #content:has(.supply-page){padding:8px 12px 10px!important}
+
+  /* صف واحد: التابات + (تصدير / طباعة / بوليصة جديدة) في أول الجدول، والعنوان الكبير اتشال */
+  .supply-page{display:flex!important;flex-wrap:wrap;align-items:center;gap:0 8px;padding:0!important}
+  .supply-page>*{flex:0 0 100%;min-width:0}
+  .supply-page>.supply-tabs{order:-2;flex:1 1 0!important;margin:0 0 8px!important;padding:3px!important;border-radius:10px;box-shadow:none}
+  .supply-page>.supply-head{order:-1;flex:0 0 auto!important;margin:0 0 8px!important;padding:0!important;background:none!important;border:0!important;box-shadow:none!important;overflow:visible;gap:6px;flex-wrap:nowrap}
+  .supply-page>.supply-head>div:first-child,.supply-page>.supply-head .spacer{display:none!important}
+  .supply-page .supply-head .btn{padding:7px 14px!important;min-height:0!important;font-size:12px!important;border-radius:8px;white-space:nowrap}
+  .supply-tab{padding:6px 14px!important;min-height:0!important;font-size:12.5px!important}
+  .supply-tab.active{background:#e8f1fb!important;border-color:#2e75b6!important;color:#1f5a91!important;box-shadow:none!important}
+
+  /* شريطا "البحث والفلاتر" و"ملخص المبالغ": نحيفين وجنب بعض */
+  .supply-page>.sup-sum-bar{flex:0 0 auto;display:inline-flex!important;padding:4px 12px!important;margin:0 0 8px!important;border-radius:8px!important;font-size:12px!important;background:#f3f7fc!important;border:1px solid #cfdbe9!important;color:#1f5a91!important;min-height:0}
+  .supply-page>.sup-sum-bar .arr{width:18px!important;height:18px!important;font-size:11px;background:#dbe8f6!important;color:#1f5a91!important;border-radius:5px!important}
+  .supply-page>.sup-sum-bar .hint{display:none!important}
+  .supply-page .filters.sup-filters{padding:8px 10px!important;margin:0 0 8px!important;border-radius:10px!important;background:#f8fafd!important;border:1px solid #d9e3ef!important;box-shadow:none!important;gap:8px!important}
+  .supply-page .kpis{margin:0 0 8px!important;gap:8px!important}
+  .supply-page #supOrderChip:empty{display:none}
+  .supply-page .sup-grouped-toolbar{margin:0 0 6px!important}
+  .supply-page .sup-grouped-toolbar .btn{padding:4px 12px!important;font-size:11.5px!important}
+
+  /* الجدول ياخد باقي الشاشة بهيدر ثابت */
+  .supply-page .tbl-wrap{max-height:calc(100vh - 150px);min-height:320px;overflow:auto!important;border:1px solid #c9d3df!important;border-radius:8px!important;background:#fff}
+}
+
+/* ----- شكل الجدول (كل الأحجام): زي شيت الأقساط — هيدر أزرق + زيبرا هادية + إجمالي أزرق فاتح ----- */
+#content .supply-page .tbl-wrap table{border-collapse:separate!important;border-spacing:0!important;font-size:12.5px}
+#content .supply-page .tbl-wrap table thead th{position:sticky;top:0;z-index:3;background:#2e75b6!important;color:#fff!important;font-weight:800;font-size:12px;padding:10px 10px!important;border-left:1px solid #1f5a91;border-bottom:2px solid #1f5a91!important;text-align:center;white-space:nowrap;text-shadow:none}
+#content .supply-page .tbl-wrap table thead th:hover{background:#255f95!important}
+#content .supply-page .tbl-wrap table tbody td{padding:9px 10px!important;color:#1f2a37!important;font-weight:700;border-left:1px solid #dde5ee;border-bottom:1px solid #dde5ee!important;background:#fff!important;text-align:center}
+#content .supply-page .tbl-wrap table tbody tr:nth-child(even) td{background:#f5f8fc!important}
+#content .supply-page .tbl-wrap table tbody tr:hover td{background:#e8f1fb!important}
+#content .supply-page .tbl-wrap table td.num{font-variant-numeric:tabular-nums}
+#content .supply-page .tbl-wrap table tfoot td{position:sticky;bottom:0;z-index:3;background:#ddebf7!important;color:#14304f!important;font-weight:900;border-top:2px solid #2e75b6!important;border-left:1px solid #b9d0e8;padding:9px 10px!important;text-align:center}
+
+/* أول عمود (أمر البيع) ثابت أثناء السحب الأفقي */
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td:first-child,
+#content .supply-page table[data-rs-key="supply-grouped"] thead th:first-child{position:sticky;right:0}
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td:first-child{z-index:2;box-shadow:-2px 0 0 #c9d3df}
+#content .supply-page table[data-rs-key="supply-grouped"] thead th:first-child{z-index:5}
+#content .supply-page table[data-rs-key="supply-grouped"] tfoot td:first-child{position:sticky;right:0;z-index:4}
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td:first-child strong{color:#1f5a91!important}
+
+/* أعمدة شروط السداد: لون مختلف (أخضر هادي) عشان تتميّز عن بيانات الأمر */
+#content .supply-page table[data-rs-key="supply-grouped"] thead th.pay-terms-col{background:#1f7a63!important;border-bottom-color:#175c4b!important;border-left-color:#175c4b}
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td.pay-cash{background:#eaf7f0!important}
+#content .supply-page table[data-rs-key="supply-grouped"] .pay-terms-start{border-right:2px solid #1f7a63!important}
+
+/* شارات الحالة بألوان هادية */
+.supply-page .chip.warn{background:#fde8e8!important;color:#9b1c1c!important;border:1px solid #f5c2c2!important;font-weight:800}
+
+/* ===== v15b: أزرار الهيدر + تابات في سطر + صفوف مدمجة ===== */
+@media(min-width:901px){
+  .supply-page>.supply-tabs{flex-wrap:nowrap!important;overflow-x:auto}
+  .supply-tab{white-space:nowrap}
+  #content .supply-page .supply-head .btn.ghost{background:#fff!important;color:#1f5a91!important;border:1px solid #2e75b6!important;font-weight:800}
+  #content .supply-page .supply-head .btn.ghost:hover{background:#e8f1fb!important}
+  #content .supply-page .supply-head .btn:not(.ghost){background:linear-gradient(180deg,#f4c542,#d4a017)!important;color:#1a1405!important;border:1px solid #b88a0e!important;font-weight:800}
+}
+/* خانة الإجراءات: صف واحد من غير لف، وأزرار أصغر → ارتفاع الصف ثابت */
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td{white-space:nowrap!important}
+#content .supply-page table[data-rs-key="supply-grouped"] .td-actions{flex-wrap:nowrap!important;min-width:max-content!important;gap:5px!important}
+#content .supply-page table[data-rs-key="supply-grouped"] tbody td:last-child{min-width:0!important;width:auto!important}
+#content .supply-page table[data-rs-key="supply-grouped"] .td-actions .icon-btn,
+#content .supply-page table[data-rs-key="supply-grouped"] .td-actions .sup-post-state{height:30px!important;min-height:30px!important;font-size:11.5px!important;padding:0 9px!important}
+</style>
+<style id="ig-shipments-pro-v16">
+/* =====================================================================
+   v16 — شاشة إدخال البوليصة: تصميم احترافي موحّد
+   - ألوان موحّدة: كحلي (هوية) + ذهبي للتمييز فقط + خلفية رمادية فاتحة
+   - شبكة 12 عمود للبيانات، بدون فراغات
+   - شريط أدوات واحد نظيف، كروت أنحف، جدول أصناف مدمج
+   كل القواعد مقيّدة بـ body.page-shipments ومحمية بـ min-width:901px
+   (الموبايل زي ما هو). body.page-shipments #content:has(#paySchedBox) = body.page-shipments #content:has(#paySchedBox)
+   ===================================================================== */
+body.page-shipments{
+  --ps-navy:#13294b; --ps-navy-2:#24446f; --ps-ink:#1e293b; --ps-mut:#64748b;
+  --ps-line:#e2e8f0; --ps-line-2:#cbd5e1; --ps-bg:#f1f5f9; --ps-soft:#f8fafc;
+  --ps-gold:#c99a1c; --ps-gold-soft:#fdf6e3; --ps-gold-ink:#7a5200;
+  --ps-ok:#15803d; --ps-ok-soft:#e8f6ee; --ps-warn:#b45309; --ps-warn-soft:#fff4dc;
+}
+
+/* الأزرار المجمّعة: على الموبايل تتصرف زي ما كانت (عناصر مباشرة في page-head) */
+.ig-actions,.ig-act-group,.ig-act-main{display:contents}
+
+@media(min-width:901px){
+
+/* ---------- الإطار العام ---------- */
+body.page-shipments main{background:var(--ps-bg)}
+body.page-shipments .topbar{padding-top:8px!important;padding-bottom:8px!important}
+body.page-shipments #content:has(#paySchedBox){padding:16px 24px 32px;color:var(--ps-ink)}
+
+/* ---------- شريط الأدوات (صف واحد، أبيض، ملصوق فوق) ---------- */
+body.page-shipments #content:has(#paySchedBox) .page-head{
+  position:sticky!important;top:-16px;z-index:40;
+  display:flex;align-items:center;flex-wrap:wrap;gap:10px;
+  margin:-16px -24px 16px;padding:10px 24px;
+  background:#fff;background-image:none;
+  border:0;border-bottom:1px solid var(--ps-line);border-radius:0;
+  box-shadow:0 3px 12px rgba(15,23,42,.07);
+}
+body.page-shipments #content:has(#paySchedBox) .page-head h2{
+  display:flex;align-items:center;gap:10px;margin:0;
+  font-size:17px;font-weight:800;color:var(--ps-navy);white-space:nowrap;
+}
+body.page-shipments #content:has(#paySchedBox) .page-head h2::before{
+  content:"🧾";display:inline-grid;place-items:center;width:32px;height:32px;
+  border-radius:9px;background:var(--ps-gold-soft);border:1px solid #f0dfae;font-size:16px;
+}
+body.page-shipments #content:has(#paySchedBox) .page-head .spacer{flex:1}
+body.page-shipments #content:has(#paySchedBox) .page-head .chip{font-size:11.5px;font-weight:800;padding:4px 11px;border-radius:999px;border:1px solid var(--ps-line);background:#f1f5f9;color:#475569}
+body.page-shipments #content:has(#paySchedBox) .page-head .chip.ok{background:var(--ps-ok-soft);color:var(--ps-ok);border-color:#bfe3cd}
+body.page-shipments #content:has(#paySchedBox) .page-head .chip.warn{background:var(--ps-warn-soft);color:var(--ps-warn);border-color:#f3d9a0}
+body.page-shipments #content:has(#paySchedBox) .page-head .chip.gold{background:var(--ps-gold-soft);color:var(--ps-gold-ink);border-color:#efd88f}
+
+body.page-shipments #content:has(#paySchedBox) .ig-actions{display:flex;align-items:center;gap:7px;flex-wrap:nowrap}
+body.page-shipments #content:has(#paySchedBox) .ig-act-group,body.page-shipments #content:has(#paySchedBox) .ig-act-main{display:flex;align-items:center;gap:7px}
+body.page-shipments #content:has(#paySchedBox) .ig-act-group{padding-inline-end:12px;margin-inline-end:5px;border-inline-end:1px solid var(--ps-line)}
+body.page-shipments #content:has(#paySchedBox) .ig-act-group:empty{display:none}
+
+body.page-shipments #content:has(#paySchedBox) .page-head .btn{
+  min-height:36px;height:36px;padding:0 15px;border-radius:9px;
+  font-size:13px;font-weight:700;line-height:1;white-space:nowrap;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  box-shadow:none;transition:background .15s,border-color .15s,transform .15s;
+}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ghost{background:#fff;color:#334155;border:1px solid var(--ps-line-2)}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ghost:hover{background:var(--ps-gold-soft);border-color:var(--ps-gold);color:var(--ps-gold-ink)}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.danger{background:#fff;color:#b42318;border:1px solid #f1b7b0}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.danger:hover{background:#b42318;color:#fff;border-color:#b42318}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-save{background:linear-gradient(180deg,#f2c94c,#d6a21a);color:#2b1d00;border:1px solid #b88a0e;min-width:88px}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-save:hover{filter:brightness(1.05);transform:translateY(-1px)}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-post{background:var(--ps-navy);color:#fff;border:1px solid var(--ps-navy);min-width:88px}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-post:hover{background:var(--ps-navy-2);transform:translateY(-1px)}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn:disabled{opacity:.38;transform:none}
+/* زرار الرجوع: رابط هادي بدل زرار تقيل */
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-back{border-color:transparent;background:transparent;color:var(--ps-mut);padding:0 8px;font-weight:700}
+body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-back:hover{background:#f1f5f9;color:var(--ps-navy);border-color:transparent}
+
+/* ---------- الكروت ---------- */
+body.page-shipments #content:has(#paySchedBox)>.card{
+  margin:0 0 14px!important;background:#fff;
+  border:1px solid var(--ps-line);border-radius:12px;
+  box-shadow:0 1px 3px rgba(15,23,42,.05);overflow:hidden;
+}
+body.page-shipments #content:has(#paySchedBox)>.card>.head,body.page-shipments #content:has(#paySchedBox)>.card>summary.head{
+  padding:11px 18px;min-height:46px;background:#fff;background-image:none;
+  border-bottom:1px solid #edf1f6;
+}
+body.page-shipments #content:has(#paySchedBox)>.card .head h3{font-size:14px;font-weight:800;color:var(--ps-navy);margin:0}
+body.page-shipments #content:has(#paySchedBox)>.card .head h3::before{width:3px;height:15px;border-radius:2px;background:var(--ps-gold);margin-left:9px}
+body.page-shipments #content:has(#paySchedBox)>.card .head .count{
+  background:#eef2f7;color:#475569;border:0;border-radius:999px;
+  padding:2px 10px;font-size:11.5px;font-weight:800;min-width:24px;text-align:center;
+}
+body.page-shipments #content:has(#paySchedBox)>.card .head .count:empty{display:none}
+body.page-shipments #content:has(#paySchedBox)>.card>.body{padding:16px 18px}
+body.page-shipments #content:has(#paySchedBox) .ig-section-hint{color:var(--ps-mut)!important;font-size:11.5px!important;font-weight:500!important;margin-top:2px!important}
+
+/* بوالص لم تُرحَّل: لما تكون فاضية تتحوّل لشريط رفيع بدل كارت كبير */
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)){
+  display:flex;align-items:center;gap:12px;padding:8px 16px;min-height:0;
+  background:var(--ps-soft);border:1px dashed var(--ps-line-2);box-shadow:none;
+}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head{padding:0;min-height:0;border:0;background:transparent}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head h3{font-size:12.5px;font-weight:700;color:#475569}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head h3::before{display:none}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.body{padding:0}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)) .pwrap{max-height:none;padding:0;overflow:visible}
+body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)) .pwrap span{color:var(--ps-ok)!important;font-size:12.5px!important;font-weight:700}
+/* ... ولما فيها بوالص: شرائح نظيفة */
+body.page-shipments #content:has(#paySchedBox)>.card.pend>.body{padding:10px 16px}
+body.page-shipments #content:has(#paySchedBox) .pwrap{gap:8px;max-height:108px}
+body.page-shipments #content:has(#paySchedBox) .pchip{flex-direction:row;align-items:center;gap:8px;background:#fff;border:1px solid var(--ps-line-2);border-radius:9px;padding:6px 12px;min-width:0;transition:border-color .15s,box-shadow .15s}
+body.page-shipments #content:has(#paySchedBox) .pchip b{color:var(--ps-navy);font-size:13.5px}
+body.page-shipments #content:has(#paySchedBox) .pchip small{font-size:11px;color:var(--ps-mut);white-space:nowrap}
+body.page-shipments #content:has(#paySchedBox) .pchip.rdy{border-inline-start:4px solid var(--ps-ok)}
+body.page-shipments #content:has(#paySchedBox) .pchip.inc{border-inline-start:4px solid #e0a31a}
+body.page-shipments #content:has(#paySchedBox) .pchip.cur{background:var(--ps-gold-soft);outline:2px solid var(--ps-gold)}
+body.page-shipments #content:has(#paySchedBox) .pchip:hover{filter:none;box-shadow:0 3px 10px rgba(15,23,42,.1)}
+
+/* الربط بأمر بيع */
+body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner{background:#f2f7ff;border-color:#cfe0f8}
+body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner>.body{padding:9px 16px!important}
+body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner span{color:var(--ps-navy)!important}
+
+/* ---------- بيانات البوليصة: شبكة 12 عمود ---------- */
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px 16px;align-items:start}
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid>.fld{grid-column:span 3;min-width:0}
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid>.fld:nth-child(1){grid-column:span 4}
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid>.fld:nth-child(2){grid-column:span 3}
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid>.fld:nth-child(3){grid-column:span 2}
+body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid>.fld:nth-child(4){grid-column:span 3}
+body.page-shipments #content:has(#paySchedBox) .fld{gap:6px}
+body.page-shipments #content:has(#paySchedBox) .fld>label{font-size:12px;font-weight:700;color:#475569}
+body.page-shipments #content:has(#paySchedBox) .fld small{font-size:11px;color:#94a3b8}
+body.page-shipments #content:has(#paySchedBox) .inp,body.page-shipments #content:has(#paySchedBox) select.inp,body.page-shipments #content:has(#paySchedBox) textarea.inp{
+  min-height:40px;border:1px solid var(--ps-line-2);border-radius:9px;
+  background:#fff;color:var(--ps-ink);font-size:13.5px;box-shadow:none;
+}
+body.page-shipments #content:has(#paySchedBox) .inp:hover{border-color:#94a3b8}
+body.page-shipments #content:has(#paySchedBox) .inp:focus{border-color:var(--ps-gold);box-shadow:0 0 0 3px rgba(201,154,28,.16);outline:none}
+body.page-shipments #content:has(#paySchedBox) .inp:disabled,body.page-shipments #content:has(#paySchedBox) select.inp:disabled{background:#f1f5f9;border-style:solid;color:#475569;opacity:1}
+body.page-shipments #content:has(#paySchedBox) #f_soNo{border-color:var(--ps-line-2)!important;font-weight:700;color:var(--ps-navy)}
+body.page-shipments #content:has(#paySchedBox) .fld .btn.sm{min-height:40px;height:40px;padding:0 12px;border-radius:9px;white-space:nowrap}
+body.page-shipments #content:has(#paySchedBox) .dup{min-height:0;font-size:11.5px}
+body.page-shipments #content:has(#paySchedBox) .dup:empty{display:none}
+
+/* الملاحظات: حقل عادي بعرض كامل بدل صندوق منقّط */
+body.page-shipments #content:has(#paySchedBox) .ig-notes-top{
+  display:flex;flex-direction:column;align-items:stretch;gap:6px;
+  margin-top:14px;padding:0;border:0;background:none;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-notes-top label{font-size:12px;font-weight:700;color:#475569}
+body.page-shipments #content:has(#paySchedBox) .ig-notes-top .inp{
+  flex:none;width:100%;min-height:40px;padding:0 12px;
+  border:1px solid var(--ps-line-2);border-radius:9px;background:#fff;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-notes-top .inp:focus{outline:none}
+
+/* ---------- الأقسام القابلة للطي (accordion) ---------- */
+body.page-shipments #content:has(#paySchedBox)>details.card>summary.head{cursor:pointer;display:flex;align-items:center;gap:12px;border-bottom:0}
+body.page-shipments #content:has(#paySchedBox)>details.card[open]>summary.head{border-bottom:1px solid #edf1f6}
+body.page-shipments #content:has(#paySchedBox)>details.card>summary.head:hover{background:var(--ps-soft)}
+body.page-shipments #content:has(#paySchedBox)>details.card>summary.head::after{
+  content:"⌄";margin-right:auto;display:inline-grid;place-items:center;
+  width:26px;height:26px;border-radius:50%;background:#eef2f7;
+  color:#475569;font-size:15px;font-weight:900;line-height:1;transition:transform .18s;
+}
+body.page-shipments #content:has(#paySchedBox)>details.card[open]>summary.head::after{transform:rotate(180deg)}
+body.page-shipments #content:has(#paySchedBox)>details.card.ig-schedule-card>summary.head::after{content:"⌄";font-size:15px}
+body.page-shipments #content:has(#paySchedBox)>details.card.ig-schedule-card[open]>summary.head::after{content:"⌄"}
+body.page-shipments #content:has(#paySchedBox)>details.card>.body{padding:16px 18px}
+body.page-shipments #content:has(#paySchedBox)>details.card .count{margin-right:0}
+
+/* ---------- جدول الأصناف ---------- */
+body.page-shipments #content:has(#paySchedBox) .ig-items-card>.head{align-items:center;gap:14px}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card>.head .btn.sm{
+  height:36px;min-height:36px;padding:0 16px;border-radius:9px;font-weight:800;
+  background:linear-gradient(180deg,#f2c94c,#d6a21a);color:#2b1d00;border:1px solid #b88a0e;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card .tbl-wrap{
+  max-height:none!important;overflow-x:auto;overflow-y:visible;
+  border:0!important;border-radius:0!important;background:#fff;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items{min-width:1080px;width:100%;border-collapse:separate;border-spacing:0}
+
+/* صف تطبيق السعر الجماعي: شريط هادي فوق الجدول */
+body.page-shipments #content:has(#paySchedBox) .ig-bulk-price-row th{
+  background:var(--ps-soft)!important;border-bottom:1px solid var(--ps-line)!important;
+  padding:8px 6px!important;vertical-align:bottom;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-bulk-price{min-width:104px;gap:4px}
+body.page-shipments #content:has(#paySchedBox) .ig-bulk-price label{font-size:10.5px;color:var(--ps-mut);font-weight:700}
+body.page-shipments #content:has(#paySchedBox) .ig-bulk-price .inp{height:32px;min-height:32px;font-size:12.5px;border-radius:8px}
+body.page-shipments #content:has(#paySchedBox) .ig-apply-price{
+  width:32px;height:32px;min-width:32px;border-radius:8px;
+  border:1px solid #b88a0e;background:#fff6dc;color:#7a5200;font-size:15px;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-apply-price:hover{background:#d6a21a;color:#fff}
+
+/* الهيدر */
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th{
+  position:static;top:auto;background:var(--ps-navy);color:#fff;
+  font-size:12px;font-weight:700;padding:11px 5px;text-align:center;white-space:nowrap;
+  border-bottom:3px solid var(--ps-gold);border-left:1px solid rgba(255,255,255,.08);
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead th.c-calc{background:var(--ps-navy-2)}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead th.c-total{background:#7a5200;color:#fff}
+
+/* الصفوف */
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td{
+  padding:6px 4px;border-bottom:1px solid #eef2f7;background:#fff;vertical-align:middle;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody tr:nth-child(even) td{background:#fbfcfe}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody tr:hover td{background:#f4f8ff}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td:first-child{text-align:center;color:#94a3b8;font-weight:800;width:38px}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items .inp{min-width:80px;height:36px;min-height:36px;padding:0 8px;font-size:13px;border-radius:8px}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items select.inp{min-width:98px}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items td.num{font-variant-numeric:tabular-nums}
+
+/* أعمدة الحساب التلقائي: خلفية مميزة + أرقام واضحة */
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td.c-calc{
+  background:#f4f6fa!important;color:#334155;font-weight:700;font-size:12.5px;white-space:nowrap;
+  text-align:center;direction:ltr;border-inline:1px solid #eaeef5;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td.c-total{background:var(--ps-gold-soft)!important;color:var(--ps-gold-ink);font-weight:800}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td.c-total strong{font-weight:800}
+
+body.page-shipments #content:has(#paySchedBox) .note-icon-btn{width:34px;height:34px;border-radius:8px;border:1px solid var(--ps-line-2);background:#fff}
+body.page-shipments #content:has(#paySchedBox) .note-icon-btn.has-note{background:var(--ps-gold-soft);border-color:var(--ps-gold)}
+body.page-shipments #content:has(#paySchedBox) .td-actions{gap:5px;justify-content:center}
+body.page-shipments #content:has(#paySchedBox) .td-actions button{height:30px;min-height:30px;padding:0 8px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--ps-line-2);background:#fff;color:#475569}
+body.page-shipments #content:has(#paySchedBox) .td-actions button:hover{border-color:var(--ps-gold);color:var(--ps-gold-ink)}
+body.page-shipments #content:has(#paySchedBox) .td-actions button.del{color:#b42318;border-color:#f1c5bf}
+body.page-shipments #content:has(#paySchedBox) .td-actions button.del:hover{background:#b42318;color:#fff;border-color:#b42318}
+body.page-shipments #content:has(#paySchedBox) .ig-items-hint{
+  padding:10px 18px 12px;background:var(--ps-soft);border-top:1px solid var(--ps-line);
+  color:var(--ps-mut);font-size:11.5px;line-height:1.7;margin:0;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-items-hint strong{color:var(--ps-gold-ink)}
+
+/* ---------- الإجماليات: شريط مؤشرات ---------- */
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card>.head{background:#fff}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card>.body{padding:14px 18px}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:10px;margin:0;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox div{
+  background:var(--ps-soft);border:1px solid var(--ps-line);border-radius:10px;padding:10px 13px;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox span{display:block;font-size:11.5px;font-weight:700;color:var(--ps-mut);margin-bottom:3px}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox strong{font-size:16px;font-weight:800;color:#0f172a;font-variant-numeric:tabular-nums;letter-spacing:0}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox .grand{background:var(--ps-navy);border-color:var(--ps-navy)}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox .grand span{color:#b9c8e2}
+body.page-shipments #content:has(#paySchedBox) .ig-totals-card .sumbox .grand strong{color:#f6d26b;font-size:19px}
+
+/* ---------- شروط السداد ---------- */
+body.page-shipments #content:has(#paySchedBox) .ig-terms-card>.head,body.page-shipments #content:has(#paySchedBox) .ig-schedule-card>.head,body.page-shipments #content:has(#paySchedBox) .ig-schedule-card>summary.head{background:#fff}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-grid{grid-template-columns:repeat(3,minmax(150px,210px));gap:14px;align-items:end}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-grid .fld label{font-size:12px;color:#475569;font-weight:700}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-grid .inp{height:40px;min-height:40px}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-note:empty{display:none}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-preview{
+  margin:12px 0 0;padding:9px 13px;border-radius:9px;
+  background:var(--ps-gold-soft);border:1px solid #f1e1ad;color:#6b4e00;font-size:12.5px;line-height:1.7;
+}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-preview:empty{display:none}
+body.page-shipments #content:has(#paySchedBox) .ig-terms-preview strong{color:var(--ps-gold-ink)}
+body.page-shipments #content:has(#paySchedBox) #paySchedBox .tbl-wrap{border:1px solid var(--ps-line);border-radius:10px;max-height:none}
+body.page-shipments #content:has(#paySchedBox) #paySchedBox th{background:var(--ps-soft)!important;color:var(--ps-navy)!important}
+
+} /* /min-width:901px */
+
+/* شاشات متوسطة (لابتوب مع قائمة جانبية مفتوحة): شريط أدوات أنحف */
+@media(min-width:901px) and (max-width:1560px){
+  body.page-shipments #content:has(#paySchedBox) .page-head{padding:8px 18px;gap:6px 8px;margin:-16px -24px 14px}
+  body.page-shipments #content:has(#paySchedBox) .page-head h2{font-size:16px}
+  body.page-shipments #content:has(#paySchedBox) .page-head h2::before{display:none}
+  body.page-shipments #content:has(#paySchedBox) .page-head .btn{height:34px;min-height:34px;padding:0 11px;font-size:12.5px}
+  body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-save,body.page-shipments #content:has(#paySchedBox) .page-head .btn.ig-post{min-width:76px}
+  body.page-shipments #content:has(#paySchedBox) .page-head .chip{font-size:11px;padding:3px 9px}
+  body.page-shipments #content:has(#paySchedBox) .ig-act-group{padding-inline-end:8px;margin-inline-end:2px;gap:6px}
+  body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid{gap:12px 14px}
+}
+
+
+/* الموبايل: أزرار المجموعات ترث ارتفاع اللمس بما إن display:contents شال الـ ">" */
+@media(max-width:900px){
+  .ig-act-group .btn,.ig-act-main .btn{min-height:42px}
+}
+
 </style>
