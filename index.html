@@ -1512,6 +1512,33 @@ main,#content{background:var(--bg)}
 
 /* ----- نوافذ وحوارات ----- */
 .modal-backdrop{background:rgba(6,18,42,.62);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+/* ===== Bio Bottom Sheet — بصمة من تحت ===== */
+.bio-sheet{position:fixed;inset:0;z-index:9999;pointer-events:none}
+.bio-sheet .bs-backdrop{position:absolute;inset:0;background:rgba(6,18,42,.5);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);opacity:0;transition:opacity .25s;pointer-events:auto}
+.bio-sheet.open .bs-backdrop{opacity:1}
+.bio-sheet .bs-panel{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,#0a1a35 0%,#12305c 100%);color:#fff;border-top:3px solid #d4a017;border-radius:22px 22px 0 0;padding:14px 22px 26px;box-shadow:0 -14px 50px rgba(0,0,0,.4);transform:translateY(100%);transition:transform .32s cubic-bezier(.22,1,.36,1);text-align:center;pointer-events:auto;max-width:520px;margin:0 auto}
+.bio-sheet.open .bs-panel{transform:translateY(0)}
+.bio-sheet .bs-handle{width:46px;height:5px;background:rgba(255,255,255,.3);border-radius:3px;margin:0 auto 14px}
+.bio-sheet .bs-icon{display:inline-flex;padding:14px;background:rgba(212,160,23,.12);border-radius:50%;margin-bottom:10px;animation:bsIconPulse 2s ease-in-out infinite}
+@keyframes bsIconPulse{0%,100%{box-shadow:0 0 0 0 rgba(212,160,23,.5)}50%{box-shadow:0 0 0 14px rgba(212,160,23,0)}}
+.bio-sheet h3{font-size:19px;font-weight:800;margin:4px 0 6px;color:#fef3c7}
+.bio-sheet p{font-size:14px;color:#c5cfdd;margin:0 0 4px;line-height:1.6}
+.bio-sheet p b{color:#f0cf7a}
+.bio-sheet small{display:block;font-size:12px;color:#8ea4c7;margin-bottom:18px}
+.bio-sheet .bs-go{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:280px;padding:15px 22px;background:linear-gradient(135deg,#d4a017,#fcd34d);color:#1a1a1a;border:none;border-radius:14px;font:800 15.5px/1 Tahoma,Arial,sans-serif;cursor:pointer;box-shadow:0 10px 28px rgba(212,160,23,.4);transition:transform .15s,box-shadow .15s;overflow:hidden}
+.bio-sheet .bs-go:hover{transform:translateY(-2px);box-shadow:0 14px 34px rgba(212,160,23,.55)}
+.bio-sheet .bs-go:active{transform:scale(.97)}
+.bio-sheet .bs-go .bs-finger{font-size:20px;animation:bsFingerTap 1.4s ease-in-out infinite}
+@keyframes bsFingerTap{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.bio-sheet .bs-pulse{position:absolute;inset:0;border-radius:14px;border:2px solid rgba(255,255,255,.6);animation:bsPulseRing 1.8s ease-out infinite;pointer-events:none}
+@keyframes bsPulseRing{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.12);opacity:0}}
+.bio-sheet .bs-cancel{display:block;margin:14px auto 0;background:none;border:none;color:#9fb0cf;font:600 13px Tahoma;cursor:pointer;padding:6px 10px;text-decoration:underline;text-underline-offset:3px}
+.bio-sheet .bs-cancel:hover{color:#e9cd85}
+@media(max-width:480px){
+  .bio-sheet .bs-panel{padding:12px 16px 22px}
+  .bio-sheet h3{font-size:17px}
+  .bio-sheet .bs-go{padding:13px 18px;font-size:14.5px}
+}
 .modal{border:1px solid rgba(201,151,36,.5);border-radius:16px;box-shadow:0 30px 90px rgba(6,18,42,.55)}
 .modal .mhead{background:linear-gradient(90deg,#0a1a35,#12305c);border-bottom:2px solid var(--gold)}
 .modal .mhead h3{color:var(--gold-hi)}
@@ -3493,6 +3520,7 @@ function doLogout(reason){
   restoreSavedLogin();
   loginErr(reason||"");
   setTimeout(()=>document.getElementById("loginPass")?.focus(),50);
+  setTimeout(()=>{ try{ window._maybeAutoOpenBioSheet&&window._maybeAutoOpenBioSheet(); }catch(e){} }, 400);
 }
 async function logout(){ if(!await askConfirm("تسجيل الخروج؟")) return; doLogout(); }
 
@@ -5849,20 +5877,25 @@ function dxPulseGoto(target, opts){
   opts = opts||{};
   try{
     if(target==="salesInstallments"){
-      // فلتر شاشة الأقساط: العميل + الحالة
+      // فلتر شاشة الأقساط: العميل + الحالة + مسح نطاق التاريخ علشان ما يخفيش صفوف
       if(typeof salesInstallmentFilters!=="undefined"){
         if(opts.customer) salesInstallmentFilters.customer = [opts.customer];
         else salesInstallmentFilters.customer = [];
         salesInstallmentFilters.status = opts.status ? [opts.status] : [];
+        salesInstallmentFilters.order = [];
         salesInstallmentFilters.q = "";
+        salesInstallmentFilters.from = ""; salesInstallmentFilters.to = "";
+        // اطوِ كارت الفلتر والإجماليات علشان البيانات تطلع فوراً
+        if(typeof salesInstallmentUI!=="undefined"){ salesInstallmentUI.hideFilters=true; salesInstallmentUI.hideTotals=true; }
         try{ siSavePrefs(); }catch(_){}
       }
     } else if(target==="chequeRegister"){
-      // فلتر شاشة الشيكات: الاستحقاق (overdue / today / soon)
+      // فلتر شاشة الشيكات: الاستحقاق (overdue / today / soon) + مسح النطاق
       if(typeof chequeRegisterFilter!=="undefined"){
         chequeRegisterFilter.due = opts.due || "";
         chequeRegisterFilter.status = opts.status || "";
         chequeRegisterFilter.q = "";
+        chequeRegisterFilter.from = ""; chequeRegisterFilter.to = "";
         try{ chequeFilterSave(); }catch(_){}
       }
     } else if(target==="receipts"){
@@ -15340,7 +15373,7 @@ async function openBioSetup(){
   });
   setTimeout(()=>document.getElementById("bio_pass")?.focus(),50);
 }
-// إظهار زرار البصمة في شاشة الدخول لما المستخدم يكتب رقمه
+// إظهار زرار البصمة في شاشة الدخول لما المستخدم يكتب رقمه + فتح الـbottom-sheet تلقائياً
 (function(){
   function refreshBioBtn(){
     const btn=document.getElementById("bioLoginBtn"); if(!btn) return;
@@ -15353,6 +15386,70 @@ async function openBioSetup(){
   setTimeout(refreshBioBtn,300);
   window._refreshBioBtn = refreshBioBtn;
 })();
+// ============================================================
+// Bio Bottom-Sheet — بيظهر تلقائياً من تحت لما شاشة الدخول تفتح وفيه بصمة مسجّلة
+// ============================================================
+const BIO_SHEET_DISMISSED_KEY = "ig_bio_sheet_dismiss_ts";
+function bioSheetRecentlyDismissed(){
+  try{ const ts=+localStorage.getItem(BIO_SHEET_DISMISSED_KEY)||0; return (Date.now()-ts) < 10*60*1000; }catch(e){ return false; }
+}
+function bioSheetDismiss(){
+  try{ localStorage.setItem(BIO_SHEET_DISMISSED_KEY, String(Date.now())); }catch(e){}
+  const bs=document.getElementById("bioSheet"); if(bs){ bs.classList.remove("open"); setTimeout(()=>bs.remove(),280); }
+}
+function bioSheetTry(){
+  const bs=document.getElementById("bioSheet"); if(bs) bs.remove();
+  doBiometricLogin();
+}
+function openBioSheet(userNo, userName){
+  if(document.getElementById("bioSheet")) return;
+  const name = userName || "";
+  const sheet = document.createElement("div");
+  sheet.id = "bioSheet";
+  sheet.className = "bio-sheet";
+  sheet.innerHTML = `
+    <div class="bs-backdrop" onclick="bioSheetDismiss()"></div>
+    <div class="bs-panel" role="dialog" aria-label="تسجيل الدخول بالبصمة">
+      <div class="bs-handle"></div>
+      <div class="bs-icon">
+        <svg viewBox="0 0 48 48" width="56" height="56" aria-hidden="true">
+          <path fill="none" stroke="#d4a017" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
+            d="M24 6c-7 0-13 4-16 10m32 0c-2-4-5-7-8-9M8 22v6c0 7 4 13 10 16m22-22v10c0 4-1 7-3 10M16 20c0-5 4-8 8-8s8 3 8 8v8c0 3-1 6-3 8M22 22v10c0 4 1 7 3 9"/>
+        </svg>
+      </div>
+      <h3>الدخول بالبصمة</h3>
+      <p>${name?`أهلاً، <b>${escapeHtml(name)}</b>`:"بصمتك مسجّلة على الجهاز ده"}</p>
+      <small>اضغط على الزرار وحط بصمتك / ادخل بتعرف الوجه</small>
+      <button type="button" class="bs-go" onclick="bioSheetTry()">
+        <span class="bs-pulse"></span>
+        <span class="bs-finger">👆</span>
+        <span>تحقق الآن</span>
+      </button>
+      <button type="button" class="bs-cancel" onclick="bioSheetDismiss()">استخدم كلمة المرور بدلاً من ذلك</button>
+    </div>`;
+  document.body.appendChild(sheet);
+  requestAnimationFrame(()=>sheet.classList.add("open"));
+  // جرّب تلقائياً بعد 400ms (اختياري — ممكن المتصفح يحجبها لو مفيش user gesture)
+  setTimeout(()=>{ if(document.getElementById("bioSheet")) bioSheetTry(); }, 450);
+}
+function maybeAutoOpenBioSheet(){
+  try{
+    if(!bioSupported()) return;
+    if(bioSheetRecentlyDismissed()) return;
+    const login=document.getElementById("login"); if(!login || login.style.display==="none") return;
+    const noStr=(document.getElementById("loginUserNo")?.value||"").trim();
+    const no=parseInt(noStr,10);
+    if(!noStr||isNaN(no)||no<=0) return;
+    if(!bioHasCred(no)) return;
+    // استخرج الاسم المحفوظ لو موجود
+    let name="";
+    try{ const raw=localStorage.getItem(BIO_KEY_PREFIX+no); if(raw){ name=(JSON.parse(raw).name)||""; } }catch(e){}
+    openBioSheet(no, name);
+  }catch(e){}
+}
+// فتح تلقائي عند تحميل الصفحة ولما شاشة الدخول تظهر مرة أخرى
+document.addEventListener("DOMContentLoaded",()=>setTimeout(maybeAutoOpenBioSheet, 600));
+window._maybeAutoOpenBioSheet = maybeAutoOpenBioSheet;
 
 // ============================================================
 // 2FA (TOTP) — Two-Factor Authentication
@@ -18608,6 +18705,20 @@ function txKindChanged(k){
 .si-compact .sales-inst-filter-head{display:none}
 .si-compact .sales-inst-filter-card,.si-compact .sales-inst-totals-card{margin:0 0 8px;border-radius:10px;box-shadow:none}
 .si-compact.si-hide-filters .sales-inst-filter-card,.si-compact.si-hide-totals .sales-inst-totals-card{display:none}
+/* موبايل: اضغط أكتر — اخفي العنوان الطويل، وبين بس الأزرار */
+@media(max-width:720px){
+  .si-compact .si-bar h2{font-size:14px;max-width:38vw;overflow:hidden;text-overflow:ellipsis}
+  .si-compact .si-bar h2 .si-info{display:none}
+  .si-compact .si-chipbtn{height:30px;padding:0 9px;font-size:11.5px}
+  .si-compact .sales-inst-actions .btn{height:30px;padding:0 9px;font-size:11.5px}
+  .si-compact .sales-inst-actions .btn.ghost#siPaysBtn{display:none}
+  /* موبايل: اخفي زرار "جديد" في التوب بار لما نكون في شاشات الأقساط/الشيكات (التركيز على البيانات) */
+  body.page-salesInstallments .topbar .tb-new,
+  body.page-chequeRegister .topbar .tb-new,
+  body.page-overdueSummary .topbar .tb-new{display:none!important}
+  body.page-salesInstallments .topbar h2,
+  body.page-chequeRegister .topbar h2{font-size:14px}
+}
 .si-compact .sales-inst-filter-grid{padding:10px;gap:8px 10px}
 .si-compact .sales-inst-filter-grid .fld label{margin:0 0 4px;font-size:11.5px}
 .si-compact .sales-inst-filter-grid .inp{min-height:34px}
