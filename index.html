@@ -6005,6 +6005,7 @@ const DASH_PERIODS=[
   {k:"6m",l:"آخر 6 شهور",s:"6 شهور",n:6,end:0,cmp:"الفترة السابقة"},
   {k:"12m",l:"آخر 12 شهر",s:"12 شهر",n:12,end:0,cmp:"الفترة السابقة"}];
 function dxSetPeriod(k){ dashPeriod=k; try{ localStorage.setItem("irongate_dash_period",k); }catch(e){} dxRerender(); }
+let _dxRz=null; window.addEventListener("resize",()=>{ clearTimeout(_dxRz); _dxRz=setTimeout(()=>{ try{ if(currentPage==="dashboard") dxRerender(); }catch(_){} },250); });
 function dxRerender(){ if(currentPage!=="dashboard") return; const c=document.getElementById("content"); if(c) c.innerHTML=viewDashboard(); }
 function dxTopGreeting(){
   try{
@@ -6045,11 +6046,22 @@ function dxPulseGoto(target, opts){
       }
     } else if(target==="receipts"){
       // فلتر شاشة التحصيلات: من/إلى تاريخ (اليوم فقط)
+      if(typeof txFilter!=="undefined" && opts.from){
+        txFilter.from = opts.from; txFilter.to = opts.to||opts.from;
+        txFilter.q = ""; txFilter.method=[]; txFilter.status=[]; txFilter.party=[]; txFilter.treasury=[];
+      }
       if(typeof txFilter!=="undefined" && opts.today){
         const pad=n=>String(n).padStart(2,"0");
         const d=new Date(), t=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
         txFilter.from = t; txFilter.to = t;
         txFilter.q = ""; txFilter.method=[]; txFilter.status=[]; txFilter.party=[]; txFilter.treasury=[];
+      }
+    } else if(target==="supply"){
+      // فلتر شاشة التوريد/المبيعات: نفس فترة الداشبورد + مسح باقي الفلاتر
+      if(typeof supFilter!=="undefined" && opts.from){
+        supFilter.q=""; supFilter.supplier=[]; supFilter.customer=[]; supFilter.factory=[]; supFilter.status=[]; supFilter.order="";
+        supFilter.groupWarehouse=""; supFilter.groupPosting=""; supFilter.groupOrderStatus=""; supFilter.groupCollection="";
+        supFilter.from=opts.from; supFilter.to=opts.to||opts.from;
       }
     } else if(target==="shipments"){
       // لو فيه فلتر داخلي، يتظبط هنا (مفيش حاجة خاصة دلوقتي)
@@ -6118,27 +6130,32 @@ function viewDashboard(){
   const mkAt=off=>{ const d=new Date(now.getFullYear(),now.getMonth()-off,1); return d.getFullYear()+"-"+pad(d.getMonth()+1); };
   const periodKeys=new Set(), prevKeys=new Set();
   for(let i=0;i<P.n;i++){ periodKeys.add(mkAt(P.end+i)); prevKeys.add(mkAt(P.end+P.n+i)); }
+  const _pk=[...periodKeys].sort(), _lastY=+_pk[_pk.length-1].slice(0,4), _lastM=+_pk[_pk.length-1].slice(5,7);
+  const periodFrom=_pk[0]+"-01", periodTo=dk(new Date(_lastY,_lastM,0));
+  const periodGo=t=>`dxPulseGoto('${t}',{from:'${periodFrom}',to:'${periodTo}'})`;
   const chartN=Math.max(6,P.n), months=[];
   for(let i=chartN-1;i>=0;i--){ const off=P.end+i, d=new Date(now.getFullYear(),now.getMonth()-off,1); months.push({k:mkAt(off),lbl:new Intl.DateTimeFormat('ar-EG',{month:'short'}).format(d),sales:0,coll:0}); }
   const mIdx=Object.fromEntries(months.map((m,i)=>[m.k,i]));
-  let salesTotal=0, salesMonth=0, salesPrev=0;
+  let salesMonth=0, salesPrev=0;
   const stamp="اليوم، "+new Intl.DateTimeFormat('ar-EG',{hour:'numeric',minute:'2-digit'}).format(now);
   safe(()=>arr("shipments").forEach(sh=>(sh.items||[]).forEach(it=>{
-    const t=+supplyAmounts(sh,it).total||0; salesTotal+=t;
+    const t=+supplyAmounts(sh,it).total||0;
     const k=String(sh.date||"").slice(0,7);
     if(periodKeys.has(k)) salesMonth+=t; if(prevKeys.has(k)) salesPrev+=t;
     if(k in mIdx) months[mIdx[k]].sales+=t;
   })));
-  let collTotal=0, collMonth=0, collPrev=0, chequeSum=0, chequeN=0, chequeSoon=0;
+  let collMonth=0, collPrev=0, chequeSum=0, chequeN=0;
   const soon=dk(new Date(now.getFullYear(),now.getMonth(),now.getDate()+7));
   arr("treasuryEntries").forEach(e=>{
     if(e.direction!=="in"||e.status==="returned"||e.status==="guarantee"||e.entryKind==="gl") return;   // التسويات ليست تحصيل عملاء
     const amt=+e.amount||0, isCheque=e.method==="bank"&&e.status!=="collected";
-    if(isCheque){ chequeSum+=amt; chequeN++; if(e.dueDate&&e.dueDate<=soon) chequeSoon++; return; }
-    collTotal+=amt; const k=String(e.date||"").slice(0,7);
+    if(isCheque) return;   // الشيكات غير المحصّلة لا تُحسب تحصيلًا؛ ويُحسب إجماليها من سجل الشيكات أسفل
+    const k=String(e.date||"").slice(0,7);
     if(periodKeys.has(k)) collMonth+=amt; if(prevKeys.has(k)) collPrev+=amt;
     if(k in mIdx) months[mIdx[k]].coll+=amt;
   });
+  // شيكات تحت التحصيل: نفس مصدر شاشة سجل الشيكات والجدول أدناه علشان الرقم والجدول يتطابقوا
+  try{ const _cr=chequeRegisterAll(); chequeN=_cr.length; chequeSum=_cr.reduce((a,e)=>a+(+e.amount||0),0); }catch(_){}
   // --- dues
   const dues=safe(()=>salesInstallmentBaseRows().filter(r=>r.remaining>0.004).map(r=>({...r,late:r.status==="متأخر"})),[]);
   const dueTotal=dues.reduce((s,r)=>s+(+r.remaining||0),0);
@@ -6153,18 +6170,20 @@ function viewDashboard(){
   const recent=[];
   const recentQty=items=>(items||[]).reduce((n,it)=>n+(+(it.supplyQty??it.qty??it.quantity??0)||0),0);
   const recentAmount=x=>{const direct=+(x.totals&&x.totals.grandTotal)||+(x.total||0);if(direct)return direct;return (x.items||[]).reduce((n,it)=>n+(+(it.total??it.grandTotal??it.amount??0)||0),0);};
-  arr("shipments").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({d:x.date||"",t:"توريد",ic:"▣",c:"green",a:x.customer||x.supplier||"—",b:`${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
-  arr("saleOrders").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({d:x.date||"",t:"أمر بيع",ic:"▤",c:"blue",a:x.customer||"—",b:`${x.orderNo?`أمر بيع ${x.orderNo} · `:""}${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
-  arr("treasuryEntries").forEach(x=>recent.push({d:x.date||"",t:x.direction==="in"?"تحصيل":"دفعة",ic:x.direction==="in"?"↓":"↑",c:x.direction==="in"?"gold":"red",a:x.customer||x.supplier||(x.entryKind==="gl"?txGlLabel(x):"—"),b:(canMoney?`القيمة: ${money(x.amount)} ${cur}`:"")}));
-  recent.sort((a,b)=>String(b.d).localeCompare(String(a.d)));
-  const recentRows=recent.slice(0,7).map(r=>`<li><span class="dx-ico ${r.c}">${r.ic}</span><div class="dx-li-main"><b>${escapeHtml(r.a)}</b><small><strong>${escapeHtml(r.t)}</strong>${r.b?` · ${escapeHtml(r.b)}`:""}</small></div><span class="dx-li-date">${escapeHtml(r.d||"—")}</span></li>`).join("")||`<li class="dx-empty">لا توجد حركات مسجلة بعد</li>`;
+  arr("shipments").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({go:"supply",d:x.date||"",t:"توريد",ic:"▣",c:"green",a:x.customer||x.supplier||"—",b:`${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
+  arr("saleOrders").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({go:"saleOrder",d:x.date||"",t:"أمر بيع",ic:"▤",c:"blue",a:x.customer||"—",b:`${x.orderNo?`أمر بيع ${x.orderNo} · `:""}${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
+  arr("treasuryEntries").filter(x=>x.entryKind!=="gl").forEach(x=>recent.push({go:x.direction==="in"?"receipts":"payments",d:x.date||"",t:x.direction==="in"?"تحصيل":"دفعة",ic:x.direction==="in"?"↓":"↑",c:x.direction==="in"?"gold":"red",a:x.customer||x.supplier||(x.entryKind==="gl"?txGlLabel(x):"—"),b:(canMoney?`القيمة: ${money(x.amount)} ${cur}`:"")}));
+  arr("policies").forEach(x=>{const q=recentQty(x.items),v=recentAmount(x);recent.push({go:"shipments",d:x.date||"",t:"بوليصة لم تُرحَّل",ic:"▣",c:"green",a:x.customer||x.supplier||"—",b:`${x.policyNo?`بوليصة ${x.policyNo} · `:""}${q?`الكمية: ${money(q)} طن`:"كمية غير مسجلة"}${canMoney&&v?` · القيمة: ${money(v)} ${cur}`:""}`});});
+  recent.forEach((r,i)=>r._i=i);
+  recent.sort((a,b)=>String(b.d).localeCompare(String(a.d))||(b._i-a._i));
+  const recentRows=recent.slice(0,7).map(r=>`<li style="cursor:pointer" onclick="go('${r.go}')" title="فتح الشاشة"><span class="dx-ico ${r.c}">${r.ic}</span><div class="dx-li-main"><b>${escapeHtml(r.a)}</b><small><strong>${escapeHtml(r.t)}</strong>${r.b?` · ${escapeHtml(r.b)}`:""}</small></div><span class="dx-li-date">${escapeHtml(r.d||"—")}</span></li>`).join("")||`<li class="dx-empty">لا توجد حركات مسجلة بعد</li>`;
 
   // --- chart (inline SVG, grouped bars)
   const mob=window.innerWidth<=640, W=mob?Math.max(290,window.innerWidth-62):560,H=mob?190:210,pl=mob?34:44,pb=26,pt=10,pr=6, iw=W-pl-pr, ih=H-pt-pb;
   const maxV=Math.max(1,...months.map(m=>Math.max(m.sales,m.coll)));
-  const mag=Math.pow(10,Math.floor(Math.log10(maxV))), top=Math.ceil(maxV/mag*2)/2*mag||1;
+  const mag=Math.pow(10,Math.floor(Math.log10(maxV))), top=maxV<=1?4:(Math.ceil(maxV/mag*2)/2*mag||1);
   const gw=iw/months.length, bw=Math.min(22,gw/2.9);
-  let svg=`<svg viewBox="0 0 ${W} ${H}" class="dx-chart" role="img" aria-label="المبيعات مقابل التحصيل آخر 6 شهور">`;
+  let svg=`<svg viewBox="0 0 ${W} ${H}" class="dx-chart" role="img" aria-label="المبيعات مقابل التحصيل — ${chartN} شهور">`;
   for(let i=0;i<=4;i++){ const y=pt+ih-ih*i/4; svg+=`<line x1="${pl}" x2="${W-pr}" y1="${y}" y2="${y}" class="dx-grid"/><text x="${pl-6}" y="${y+3}" class="dx-ax" text-anchor="end">${short(top*i/4)}</text>`; }
   months.forEach((m,i)=>{ const cx=pl+gw*i+gw/2, h1=ih*m.sales/top, h2=ih*m.coll/top;
     svg+=`<rect x="${cx-bw-1.5}" y="${pt+ih-h1}" width="${bw}" height="${Math.max(h1,0)}" rx="4" class="dx-b1"><title>مبيعات ${m.lbl}: ${money(m.sales)}</title></rect><rect x="${cx+1.5}" y="${pt+ih-h2}" width="${bw}" height="${Math.max(h2,0)}" rx="4" class="dx-b2"><title>تحصيل ${m.lbl}: ${money(m.coll)}</title></rect><text x="${cx}" y="${H-8}" class="dx-ax" text-anchor="middle">${m.lbl}</text>`; });
@@ -6174,17 +6193,17 @@ function viewDashboard(){
   const chqRows=(()=>{ try{ return chequeRegisterAll().map(e=>({e,d:chequeDays(e)})).filter(x=>x.d!==null&&x.d<=7).sort((a,b)=>a.d-b.d); }catch(_){ return []; } })();
   const chqLate=chqRows.filter(x=>x.d<0).length;
   const chqFollowTotal=chqRows.reduce((sum,x)=>sum+(Number(x.e.amount)||0),0);
-  const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="go('${go_}')"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
+  const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="${/\(/.test(go_)?go_:`go('${go_}')`}"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
   const moneyKpis = canMoney ? `
-      ${kpi('k-gold','◈','مبيعات '+P.s,money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),'supply')}
-      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),'receipts')}
-      ${kpi('k-blue','▥','أقساط غير مسددة (متأخر + قادم)',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط = '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا','salesInstallments','مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
-      ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),'salesInstallments')}
+      ${kpi('k-gold','◈','مبيعات '+P.s,money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),periodGo('supply'))}
+      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),periodGo('receipts'))}
+      ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا','salesInstallments','مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
+      ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
       ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
       ${(()=>{ const n=dxPartyNets(); return (n.c===null?'':kpi('k-blue','♙','رصيد العملاء الصافي',money(n.c)+' <em>'+cur+'</em>',n.c>=0?'مستحق لنا عند العملاء':'رصيد دائن للعملاء (علينا)','clientTB','صافي أرصدة كل العملاء حتى الآن (أول المدة + المبيعات − التحصيلات)'))+(n.v===null?'':kpi('k-slate','♧','رصيد الموردين الصافي',money(n.v)+' <em>'+cur+'</em>',n.v>=0?'مستحق للموردين (علينا)':'رصيد مدين لدى الموردين (لنا)','supplierTB','صافي أرصدة كل الموردين حتى الآن (أول المدة + المشتريات − المدفوعات)')); })()}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل','master')}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل','master')}`;
 
-  const lateList = lateTop.map(r=>`<tr><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
+  const lateList = lateTop.map(r=>`<tr style="cursor:pointer" title="فتح أقساط ${escapeAttr(r.customer)} المتأخرة" onclick="dxPulseGoto('salesInstallments',{customer:${escapeAttr(JSON.stringify(r.customer))},status:'متأخر'})"><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
   const chqList=chqRows.slice(0,8).map(({e,d})=>{ const txt=d<0?`فات بـ ${-d} يوم`:(d===0?"مستحق اليوم":`باقي ${d} يوم`);
     return `<tr><td><b>${escapeHtml(e.customer||"—")}</b><small>${escapeHtml(chequeStatusLabel(e))} · ${escapeHtml(String(e.refNo||e.no||"—"))}${e.bankDrawn?" · "+escapeHtml(e.bankDrawn):""}</small></td><td class="num">${money(e.amount)}</td><td>${escapeHtml(e.dueDate||"")}<small><span class="dx-pill ${d<0?'red':'amber'}">${txt}</span></small></td></tr>`; }).join("");
   // العهد ذات الرصيد غير الصفري تحتاج مراجعة/تسوية؛ لا يتم تعديل أي حركة محاسبية هنا.
@@ -6203,7 +6222,7 @@ function viewDashboard(){
   const _biggestLate = lateTop[0];
   const pulses = [];
   if(canMoney && _biggestLate){
-    pulses.push(`<button class="dx-pulse p-red" onclick="dxPulseGoto('salesInstallments',{customer:${JSON.stringify(_biggestLate.customer)},status:'متأخر'})" title="فتح شاشة الأقساط — متأخرات ${escapeAttr(_biggestLate.customer)}">
+    pulses.push(`<button class="dx-pulse p-red" onclick="dxPulseGoto('salesInstallments',{customer:${escapeAttr(JSON.stringify(_biggestLate.customer))},status:'متأخر'})" title="فتح شاشة الأقساط — متأخرات ${escapeAttr(_biggestLate.customer)}">
       <span class="dp-ic">🔴</span>
       <span class="dp-txt"><b>أقدم قسط متأخر:</b> ${escapeHtml(_biggestLate.customer)}${_biggestLate.orderNo?` · أمر #${escapeHtml(String(_biggestLate.orderNo))}`:""} — قسط متبقي <b>${money(_biggestLate.remaining)}</b> ${cur} <small>· متأخر ${_biggestLate.days} يوم</small></span>
     </button>`);
@@ -6249,28 +6268,13 @@ function viewDashboard(){
 
     <div class="dx-kpis">${moneyKpis}</div>
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
-    ${(()=>{
-      const pend = arr("policies");
-      const readyCount = pend.filter(r=>!missingList(toDraft(r)).length).length;
-      const cards=[];
-      if(custodyAllowed){
-        cards.push(`<button type="button" class="dx-followup-card custody" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">
-          <span class="dx-followup-icon">💼</span><span class="dx-followup-content"><b>عهد تحتاج تسوية</b><strong>${custodyCache.loaded?custodyOpenRows.length:"تحميل"} <small>${custodyCache.loaded?"عهدة":"بيانات العهد"}</small></strong><small>${custodyCache.loaded?`صافي الأرصدة ${money(custodyOpenTotal)} ${cur}`:"اضغط لتحميل ومراجعة أرصدة العهد"}</small></span><span class="dx-followup-arrow">←</span>
-        </button>`);
-      }
-      if(pend.length){
-        cards.push(`<button type="button" class="dx-followup-card" style="border-right:4px solid #d4a017" onclick="go('shipments')">
-          <span class="dx-followup-icon">📄</span><span class="dx-followup-content"><b>بوالص لم تُرحَّل</b><strong>${pend.length} <small>بوليصة</small></strong><small>${readyCount} جاهزة للترحيل · ${pend.length-readyCount} ناقصها بيانات</small></span><span class="dx-followup-arrow">←</span>
-        </button>`);
-      }
-      return cards.length ? `<div class="dx-followup-summaries">${cards.join("")}</div>` : "";
-    })()}`:""}
+    `:""}
 
     <div class="dx-grid2">
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>المبيعات مقابل التحصيل</h3><small>${P.end===0?`آخر ${chartN} ${chartN>10?'شهر':'شهور'}`:`${chartN} شهور حتى ${months[months.length-1].lbl}`}</small></div><div class="dx-legend"><span><i class="l1"></i>مبيعات</span><span><i class="l2"></i>تحصيل</span></div></div>
         ${canMoney?svg:`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`}
-        ${canMoney?`<div class="dx-sum"><div><small>نسبة التحصيل (${P.l})</small><b>${salesMonth>0?Math.round(collMonth/salesMonth*100):0}%</b></div><div><small>${salesMonth>=collMonth?"مبيعات لم تُحصَّل بعد":"تحصيل زائد عن المبيعات"}</small><b>${money(Math.abs(salesMonth-collMonth))} ${cur}</b></div></div>`:""}
+        ${canMoney?`<div class="dx-sum"><div><small>تحصيلات ${P.l} ÷ مبيعاتها</small><b>${salesMonth>0?Math.round(collMonth/salesMonth*100):0}%</b></div><div><small>${salesMonth>=collMonth?"مبيعات لم تُحصَّل بعد":"تحصيل زائد عن المبيعات"}</small><b>${money(Math.abs(salesMonth-collMonth))} ${cur}</b></div></div>`:""}
       </div>
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>آخر الحركات</h3><small>أحدث العمليات في النظام</small></div></div>
@@ -6280,16 +6284,16 @@ function viewDashboard(){
 
     <div class="dx-grid2 dx-grid2b">
       <div class="dx-card">
-        <div class="dx-card-h"><div><h3>أقساط متأخرة تحتاج متابعة</h3><small>مرتبة بالأطول تأخيرًا</small></div><button class="dx-link" onclick="go('salesInstallments')">عرض الكل ←</button></div>
+        <div class="dx-card-h"><div><h3>أقساط متأخرة تحتاج متابعة</h3><small>مرتبة بالأطول تأخيرًا</small></div><button class="dx-link" onclick="dxPulseGoto('salesInstallments',{status:'متأخر'})">عرض الكل ←</button></div>
         ${!canMoney?`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`:lateList?`<table class="dx-tbl"><thead><tr><th>العميل / القسط</th><th>المتبقي (${cur})</th><th>التأخير</th></tr></thead><tbody>${lateList}</tbody></table>`:`<div class="dx-empty ok">✓ لا توجد أقساط متأخرة</div>`}
       </div>
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>دورة العمل</h3><small>حالة الملفات الآن</small></div></div>
         <div class="dx-flow">
           <button onclick="go('quoteList')"><b>${counts.quotes}</b><span>عروض أسعار</span></button><i>›</i>
-          <button onclick="go('saleOrder')"><b>${counts.openOrders}</b><span>أوامر مفتوحة</span></button><i>›</i>
-          <button onclick="go('shipments')"><b>${counts.shipments}</b><span>بوالص</span></button><i>›</i>
-          <button onclick="go('supply')"><b>${counts.orders}</b><span>أوامر بيع</span></button>
+          <button onclick="go('saleOrder')" title="${counts.openOrders} أمر مفتوح"><b>${counts.orders}</b><span>أوامر بيع (${counts.openOrders} مفتوح)</span></button><i>›</i>
+          <button onclick="go('shipments')"><b>${arr("policies").length}</b><span>بوالص لم تُرحَّل</span></button><i>›</i>
+          <button onclick="go('supply')"><b>${counts.shipments}</b><span>بوالص مرحّلة (توريد)</span></button>
         </div>
         <div class="dx-mini">
           <button onclick="go('master')"><span>العملاء</span><b>${counts.customers}</b></button>
@@ -6298,14 +6302,13 @@ function viewDashboard(){
       </div>
     </div>
     <div class="dx-card dx-chq" style="margin-top:14px">
-      <div class="dx-card-h"><div><h3>شيكات تحتاج متابعة</h3><small>${chqRows.length?`${chqRows.length} شيك لم يُحصَّل بعد · ${chqLate} فات ميعاده`:"مستحقة خلال 7 أيام أو فات ميعادها ولم تُحصَّل"}</small></div><button class="dx-link" onclick="go('chequeRegister')">عرض الكل ←</button></div>
+      <div class="dx-card-h"><div><h3>شيكات تحتاج متابعة</h3><small>${chqRows.length?`${chqRows.length} شيك لم يُحصَّل بعد · ${chqLate} فات ميعاده`:"مستحقة خلال 7 أيام أو فات ميعادها ولم تُحصَّل"}</small></div><button class="dx-link" onclick="dxPulseGoto('chequeRegister',{due:'week'})">عرض الكل ←</button></div>
       ${!canMoney?`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`:chqList?`<table class="dx-tbl"><thead><tr><th>العميل / الشيك</th><th>المبلغ (${cur})</th><th>الاستحقاق</th></tr></thead><tbody>${chqList}</tbody></table>${chqRows.length>8?`<div class="dx-empty" style="padding:10px">و ${chqRows.length-8} شيك آخر — اضغط «عرض الكل»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد شيكات مستحقة أو متأخرة</div>`}
     </div>
     ${custodyAllowed?`<div class="dx-card dx-chq" style="margin-top:14px">
       <div class="dx-card-h"><div><h3>عهد لم تتم تسويتها</h3><small>${custodyCache.loaded?`${custodyOpenRows.length} عهدة برصيد غير صفري`:"بيانات العهد لم تُحمّل بعد"}</small></div><button class="dx-link" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">${custodyCache.loaded?"عرض تقرير العهد ←":"تحميل البيانات ↻"}</button></div>
       ${!custodyCache.loaded?`<div class="dx-empty">اضغط «تحميل البيانات» لعرض العهد التي ما زالت لها أرصدة.</div>`:custodyAlertRows?`<table class="dx-tbl"><thead><tr><th>صاحب العهدة / الكود</th><th>الرصيد (${cur})</th><th>المتابعة</th></tr></thead><tbody>${custodyAlertRows}</tbody></table>${custodyOpenRows.length>6?`<div class="dx-empty" style="padding:10px">و ${custodyOpenRows.length-6} عهدة أخرى — اضغط «عرض تقرير العهد»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد أرصدة عهد معلقة</div>`}
     </div>`:""}
-    <div class="dx-note" style="margin-top:12px">حد الائتمان للعملاء: لا توجد حاليًا خانة حد ائتماني مسجلة في بيانات العملاء، لذلك لم يتم إصدار تنبيهات تجاوز غير موثوقة. يلزم إضافة حد لكل عميل قبل تفعيل هذا التنبيه.</div>
   </section>`;
 }
 
@@ -8716,12 +8719,14 @@ function viewShipments(){
     </div>
   </div>
   ${posted&&!viewOnly?'<p style="color:var(--warn);font-size:12px;margin:-8px 0 14px">تنبيه: دي بوليصة مرحّلة — الحفظ هنا هيعدّل صفوفها في بيانات التوريد مباشرة.</p>':""}
+  <div class="ig-top-row">
   ${d.saleOrderId?`<div class="card ig-link-banner"><div class="body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <span style="color:var(--gold-text);font-size:14px">🔗 مربوطة بأمر بيع رقم <b>${escapeHtml(d.saleOrderNo)}</b></span>
     <button class="btn ghost sm" onclick="viewLinkedSO()">عرض الأمر</button>
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   ${pendingPanel()}
+  </div>
   <div class="card ig-pol-head"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
     <div class="fgrid">
       ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
@@ -8764,7 +8769,7 @@ function viewShipments(){
     <p style="margin-top:10px;color:var(--text-dim);font-size:12px">أسعار الشراء والبيع المدخلة شاملة الضريبة. يتم استخراج الضريبة من سعر البيع دون إضافتها مرة أخرى، ويُخصم 1% من البيع قبل الضريبة للعملاء المحددين فقط من إعدادات العملاء.</p>
   </div></details>
 
-  <div class="card ig-pay-card ig-terms-card"><div class="head"><div><h3>شروط السداد وجدول الاستحقاقات</h3><small class="ig-section-hint">اختيارية — الجدول يتحدّث تلقائيًا مع أي تعديل في التاريخ أو الأصناف أو الشروط</small></div><span class="count" id="paySchedTag"></span></div><div class="body">
+  <div class="card ig-pay-card ig-terms-card"><div class="head"><div><h3>شروط السداد وجدول الاستحقاقات</h3></div><span class="count" id="paySchedTag"></span></div><div class="body">
     <div class="ig-terms-layout"><div class="ig-terms-side">
     <div class="ig-terms-grid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct??0}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
@@ -9254,13 +9259,17 @@ function setPayScheduleField(id,field,value){
   const t=draftTotals(), r=policyPaySchedule(t), rows=r.rows.map(x=>({...x}));
   const row=rows.find(x=>x.id===id); if(!row) return;
   if(field==="amount") row.amount=value===""?"":Math.max(0,Number(String(value).replace(/,/g,""))||0);
+  else if(field==="pct"){ const b0=+r.total||rows.reduce((a,x)=>a+(+x.amount||0),0); row.amount=value===""?0:r2(b0*Math.min(100,Math.max(0,Number(value)||0))/100); }
   else if(field==="due") row.due=String(value||"");
   draft.paySchedule={orderNo:String(draft.saleOrderNo||""),total:r.total,rows};
   draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
   dirty=true;
   const sum=rows.reduce((a,x)=>a+(+x.amount||0),0), base=+r.total||sum, diff=r2(sum-(+r.total||0));
   const pct=v=>base>0?fmt(v/base*100,2)+"%":"—";
-  rows.forEach(x=>{ const e=document.getElementById("payPct_"+x.id); if(e) e.textContent=pct(+x.amount||0); });
+  rows.forEach(x=>{
+    const e=document.getElementById("payPct_"+x.id); if(e&&e!==document.activeElement) e.value=base>0?r2((+x.amount||0)/base*100):0;
+    const a=document.getElementById("payAmt_"+x.id); if(a&&a!==document.activeElement) a.value=fmt(+x.amount||0,2);
+  });
   payApplyNote(rows);
   const fp=document.getElementById("paySumPct"), fa=document.getElementById("paySumAmt");
   if(fp) fp.textContent=pct(sum); if(fa) fa.textContent=fmt(sum);
@@ -9296,7 +9305,7 @@ function renderPolicyPaySchedule(t){
     ${!viewOnly?`<button type="button" class="btn ghost sm" onclick="clearPayScheduleEdits()">↺ تجاهل التعديل اليدوي</button>`:""}
   </div>
   <div class="tbl-wrap"><table class="pay-sched-tbl" style="white-space:nowrap;min-width:640px"><thead><tr><th>#</th><th>نوع السداد</th><th>النسبة من الإجمالي</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${
-    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.label)}</b></td><td class="num" id="payPct_${escapeAttr(x.id)}">${pct(+x.amount||0)}</td><td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" style="min-width:145px" ${ro} value="${fnv(x.amount??0,2)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','amount',this.value)" aria-label="قيمة ${escapeAttr(x.label)}"></td><td><input class="inp" style="min-width:155px" type="date" ${ro} value="${escapeAttr(x.due||"")}" oninput="setPayScheduleField('${escapeAttr(x.id)}','due',this.value)" aria-label="تاريخ ${escapeAttr(x.label)}"></td></tr>`).join("")
+    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.label)}</b></td><td class="num"><span style="display:inline-flex;align-items:center;gap:4px"><input id="payPct_${escapeAttr(x.id)}" class="inp num" type="number" min="0" max="100" step="0.01" style="width:96px;min-width:96px" ${ro} value="${base>0?r2((+x.amount||0)/base*100):0}" oninput="setPayScheduleField('${escapeAttr(x.id)}','pct',this.value)" aria-label="نسبة ${escapeAttr(x.label)}">%</span></td><td><input id="payAmt_${escapeAttr(x.id)}" class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" style="min-width:145px" ${ro} value="${fnv(x.amount??0,2)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','amount',this.value)" aria-label="قيمة ${escapeAttr(x.label)}"></td><td><input class="inp" style="min-width:155px" type="date" ${ro} value="${escapeAttr(x.due||"")}" oninput="setPayScheduleField('${escapeAttr(x.id)}','due',this.value)" aria-label="تاريخ ${escapeAttr(x.label)}"></td></tr>`).join("")
   }</tbody><tfoot><tr><td colspan="2">إجمالي الجدول</td><td class="num" id="paySumPct">${pct(sum)}</td><td class="num" id="paySumAmt">${fmt(sum)}</td><td></td></tr></tfoot></table></div>
   <div id="paySchedSummary" style="margin-top:10px;padding:11px 13px;border:1px solid ${Math.abs(diff)>0.01?'#e6a4a4':'var(--line)'};border-radius:9px;background:${Math.abs(diff)>0.01?'#fff5f5':'var(--bg-3)'};font-size:12px">إجمالي الجدول: <b>${fmt(sum)}</b> — إجمالي الفواتير/الخطة: <b>${fmt(base)}</b> — الفرق: <b style="color:${Math.abs(diff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(diff)}</b>${Math.abs(diff)>0.01?'<div style="color:var(--danger);margin-top:4px">تنبيه: يوجد فرق بين جدول الاستحقاقات وإجمالي الفواتير. عدّل النقدي أو الأقساط حتى تصل للتوزيع المطلوب.</div>':'<div style="color:var(--ok);margin-top:4px">إجمالي جدول السداد مطابق للإجمالي.</div>'}</div>`;
 }
@@ -13361,7 +13370,7 @@ function chequeFilterSave(){ try{ localStorage.setItem(CHQ_FILTER_KEY,JSON.strin
 function chequeFilterClear(){ chequeRegisterFilter={status:"",q:"",from:igYearStart(),to:igYearEnd(),due:""}; chequeFilterSave(); go("chequeRegister"); }
 function chequeFilterDrop(k){ chequeRegisterFilter[k]=""; chequeFilterSave(); go("chequeRegister"); }
 function chequeActiveChips(){
-  const f=chequeRegisterFilter, L={status:{receivable:"أوراق قبض",pending:"شيكات تحت التحصيل"},due:{overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام"}};
+  const f=chequeRegisterFilter, L={status:{receivable:"أوراق قبض",pending:"شيكات تحت التحصيل"},due:{overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام",week:"متأخرة أو خلال 7 أيام"}};
   const items=[];
   if(f.status) items.push(["status","الحالة: "+(L.status[f.status]||f.status)]);
   if(f.q) items.push(["q","بحث: "+f.q]);
@@ -13405,6 +13414,7 @@ function chequeRegisterFiltered(){
     if(chequeRegisterFilter.due==="overdue" && due!=="overdue") return false;
     if(chequeRegisterFilter.due==="today" && due!=="today") return false;
     if(chequeRegisterFilter.due==="soon" && !["today","soon"].includes(due)) return false;
+    if(chequeRegisterFilter.due==="week"){ const dd=chequeDays(e); if(dd===null||dd>7) return false; }
     if(q){
       const hay=[e.no,e.refNo,e.customer,e.bankDrawn,e.treasury,treasuryLabel(e.treasury),e.notes,e.date,e.dueDate].map(v=>String(v||"").toLowerCase()).join(" ");
       if(!hay.includes(q)) return false;
@@ -13433,6 +13443,7 @@ function viewChequeRegister(){
         <option value="overdue" ${chequeRegisterFilter.due==="overdue"?"selected":""}>المتأخرة</option>
         <option value="today" ${chequeRegisterFilter.due==="today"?"selected":""}>مستحقة اليوم</option>
         <option value="soon" ${chequeRegisterFilter.due==="soon"?"selected":""}>مستحقة خلال 3 أيام</option>
+        <option value="week" ${chequeRegisterFilter.due==="week"?"selected":""}>متأخرة أو خلال 7 أيام</option>
       </select></div>
       <button class="btn ghost sm cr-clear" onclick="chequeFilterClear()">مسح الكل</button>
     </div>
@@ -13524,7 +13535,7 @@ function chequeReportHTML(){
   ];
   const filters = [];
   if(chequeRegisterFilter.status) filters.push("الحالة: "+(chequeRegisterFilter.status==="receivable"?"أوراق قبض":"شيكات تحت التحصيل"));
-  if(chequeRegisterFilter.due) filters.push("الاستحقاق: "+({overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام"}[chequeRegisterFilter.due]||chequeRegisterFilter.due));
+  if(chequeRegisterFilter.due) filters.push("الاستحقاق: "+({overdue:"المتأخرة",today:"مستحقة اليوم",soon:"خلال 3 أيام",week:"متأخرة أو خلال 7 أيام"}[chequeRegisterFilter.due]||chequeRegisterFilter.due));
   if(chequeRegisterFilter.from) filters.push("من "+chequeRegisterFilter.from);
   if(chequeRegisterFilter.to) filters.push("إلى "+chequeRegisterFilter.to);
   if(chequeRegisterFilter.q) filters.push("بحث: "+chequeRegisterFilter.q);
@@ -18771,18 +18782,18 @@ body.page-shipments #content:has(#paySchedBox)>.card>.body{padding:16px 18px}
 body.page-shipments #content:has(#paySchedBox) .ig-section-hint{color:var(--ps-mut)!important;font-size:11.5px!important;font-weight:500!important;margin-top:2px!important}
 
 /* بوالص لم تُرحَّل: لما تكون فاضية تتحوّل لشريط رفيع بدل كارت كبير */
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)){
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip)){
   display:flex;align-items:center;gap:12px;padding:8px 16px;min-height:0;
   background:var(--ps-soft);border:1px dashed var(--ps-line-2);box-shadow:none;
 }
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head{padding:0;min-height:0;border:0;background:transparent}
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head h3{font-size:12.5px;font-weight:700;color:#475569}
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.head h3::before{display:none}
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip))>.body{padding:0}
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)) .pwrap{max-height:none;padding:0;overflow:visible}
-body.page-shipments #content:has(#paySchedBox)>.card.pend:not(:has(.pchip)) .pwrap span{color:var(--ps-ok)!important;font-size:12.5px!important;font-weight:700}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip))>.head{padding:0;min-height:0;border:0;background:transparent}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip))>.head h3{font-size:12.5px;font-weight:700;color:#475569}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip))>.head h3::before{display:none}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip))>.body{padding:0}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip)) .pwrap{max-height:none;padding:0;overflow:visible}
+body.page-shipments #content:has(#paySchedBox) .card.pend:not(:has(.pchip)) .pwrap span{color:var(--ps-ok)!important;font-size:12.5px!important;font-weight:700}
 /* ... ولما فيها بوالص: شرائح نظيفة */
-body.page-shipments #content:has(#paySchedBox)>.card.pend>.body{padding:10px 16px}
+body.page-shipments #content:has(#paySchedBox) .card.pend>.body{padding:10px 16px}
 body.page-shipments #content:has(#paySchedBox) .pwrap{gap:8px;max-height:108px}
 body.page-shipments #content:has(#paySchedBox) .pchip{flex-direction:row;align-items:center;gap:8px;background:#fff;border:1px solid var(--ps-line-2);border-radius:9px;padding:6px 12px;min-width:0;transition:border-color .15s,box-shadow .15s}
 body.page-shipments #content:has(#paySchedBox) .pchip b{color:var(--ps-navy);font-size:13.5px}
@@ -18793,9 +18804,9 @@ body.page-shipments #content:has(#paySchedBox) .pchip.cur{background:var(--ps-go
 body.page-shipments #content:has(#paySchedBox) .pchip:hover{filter:none;box-shadow:0 3px 10px rgba(15,23,42,.1)}
 
 /* الربط بأمر بيع */
-body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner{background:#f2f7ff;border-color:#cfe0f8}
-body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner>.body{padding:9px 16px!important}
-body.page-shipments #content:has(#paySchedBox)>.card.ig-link-banner span{color:var(--ps-navy)!important}
+body.page-shipments #content:has(#paySchedBox) .card.ig-link-banner{background:#f2f7ff;border-color:#cfe0f8}
+body.page-shipments #content:has(#paySchedBox) .card.ig-link-banner>.body{padding:9px 16px!important}
+body.page-shipments #content:has(#paySchedBox) .card.ig-link-banner span{color:var(--ps-navy)!important}
 
 /* ---------- بيانات البوليصة: شبكة 12 عمود ---------- */
 body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px 16px;align-items:start}
@@ -19628,6 +19639,35 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
 #content:has(#paySchedBox) .ig-terms-main{min-width:0}
 #content:has(#paySchedBox) .ig-terms-main .pay-sched-tbl{min-width:0!important;width:100%}
 @media(max-width:900px){#content:has(#paySchedBox) .ig-terms-layout{grid-template-columns:1fr}}
+
+/* سطر علوي: ربط أمر البيع + بوالص لم تُرحَّل جنب بعض ومميزين */
+body.page-shipments #content:has(#paySchedBox) .ig-top-row{display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin:0 0 14px}
+body.page-shipments #content:has(#paySchedBox) .ig-top-row>.card{margin:0!important}
+body.page-shipments #content:has(#paySchedBox) .ig-top-row>.ig-link-banner{flex:0 1 auto;border-inline-start:5px solid #4f7fd6}
+body.page-shipments #content:has(#paySchedBox) .ig-top-row>.pend{flex:1 1 380px;min-width:0;border-inline-start:5px solid var(--gold,#d4a017)}
+
+/* ===== مراجعة الهيكل: لوجو القائمة + كروت الداشبورد + هيدر البوليصة بالموبايل ===== */
+/* اسم الشركة مكتوب جوه صورة اللوجو أصلًا — النص المكرر كان بيظهر باهت ومقصوص وراء الدايرة */
+aside .brand .t1,aside .brand .t2{display:none!important}
+/* كروت الداشبورد: توزيع متوازن بدل كارت يتيم في صف لوحده */
+@media(min-width:901px){
+  .dx-kpis{grid-template-columns:repeat(12,minmax(0,1fr))!important}
+  .dx-kpis>*{grid-column:span 3!important}
+  .dx-kpis:has(>:nth-child(7):last-child)>:nth-child(n+5){grid-column:span 4!important}
+  .dx-kpis:has(>:nth-child(6):last-child)>*{grid-column:span 4!important}
+  .dx-kpis:has(>:nth-child(5):last-child)>*{grid-column:span 4!important}
+  .dx-kpis:has(>:nth-child(5):last-child)>:nth-child(n+4){grid-column:span 6!important}
+}
+/* هيدر شاشة البوليصة على الموبايل: صف مدمج بدل عمود طويل لاصق بيغطي نص الشاشة */
+@media(max-width:900px){
+  body.page-shipments #content>.page-head{position:static!important;top:auto!important;box-sizing:border-box;margin:0 0 10px!important;padding:8px 10px!important;display:flex!important;flex-direction:row!important;flex-wrap:wrap;gap:6px;align-items:center;box-shadow:none!important}
+  body.page-shipments #content>.page-head h2{flex:1 1 auto;order:-2;margin:0!important;font-size:15px!important;display:block!important}
+  body.page-shipments #content>.page-head .chip{order:-1;margin:0!important;flex:0 0 auto}
+  body.page-shipments #content>.page-head .ig-back{order:-3;flex:1 1 100%;min-height:32px!important;padding:4px 10px!important;font-size:12px!important;text-align:start}
+  body.page-shipments #content>.page-head .ig-act-group .btn{flex:1 1 calc(50% - 6px);min-width:0;min-height:34px!important;padding:4px 8px!important;font-size:12px!important;white-space:nowrap}
+  body.page-shipments #content>.page-head .ig-act-main .btn{display:none!important}   /* حفظ/ترحيل موجودين في الشريط السفلي الثابت */
+  .topbar .ig-sync:not(.saved) .t{max-width:64px}
+}
 </style>
 <script id="chq-cycle-script">
 /* ===================================================================
