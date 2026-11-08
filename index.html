@@ -1534,6 +1534,12 @@ main,#content{background:var(--bg)}
 @keyframes bsPulseRing{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.12);opacity:0}}
 .bio-sheet .bs-cancel{display:block;margin:14px auto 0;background:none;border:none;color:#9fb0cf;font:600 13px Tahoma;cursor:pointer;padding:6px 10px;text-decoration:underline;text-underline-offset:3px}
 .bio-sheet .bs-cancel:hover{color:#e9cd85}
+.bio-sheet .bs-fp{position:relative;display:flex;align-items:center;justify-content:center;width:92px;height:92px;margin:6px auto 4px;padding:0;border-radius:50%;border:2px solid rgba(212,160,23,.55);background:rgba(212,160,23,.12);cursor:pointer;-webkit-tap-highlight-color:transparent;animation:bsIconPulse 2s ease-in-out infinite;transition:transform .15s,background .2s}
+.bio-sheet .bs-fp:active{transform:scale(.93);background:rgba(212,160,23,.28)}
+.bio-sheet .bs-fp svg{pointer-events:none}
+.bio-sheet .bs-hint{display:block;font-size:12.5px;color:#8ea4c7;margin:8px 0 2px}
+.bio-sheet.busy .bs-fp{animation:none;opacity:.6;pointer-events:none}
+.bio-sheet.busy .bs-cancel{opacity:.4;pointer-events:none}
 @media(max-width:480px){
   .bio-sheet .bs-panel{padding:12px 16px 22px}
   .bio-sheet h3{font-size:17px}
@@ -3792,6 +3798,7 @@ function go(page){
   document.getElementById("pageCrumb").textContent = t[1];
   const c = document.getElementById("content");
   if(page==="dashboard") c.innerHTML = viewDashboard();
+  if(page==="dashboard") dxTopGreeting();
   else if(page==="master") { c.innerHTML = viewMaster(); bindMaster(); }
   else if(page==="inventory") { const allowed=inventoryTabDefs().filter(t=>canTab("inventory",t.id)); if(!allowed.some(t=>t.id===inventoryTab))inventoryTab=allowed.length?allowed[0].id:"warehouses"; c.innerHTML = viewInventory(); if(inventoryTab!=="warehouses"&&inventoryTab!=="items") inventoryLoad().then(()=>{if(currentPage==="inventory"){const el=document.getElementById("content");if(el)el.innerHTML=viewInventory();}}); }
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
@@ -5871,6 +5878,16 @@ const DASH_PERIODS=[
   {k:"12m",l:"آخر 12 شهر",s:"12 شهر",n:12,end:0,cmp:"الفترة السابقة"}];
 function dxSetPeriod(k){ dashPeriod=k; try{ localStorage.setItem("irongate_dash_period",k); }catch(e){} dxRerender(); }
 function dxRerender(){ if(currentPage!=="dashboard") return; const c=document.getElementById("content"); if(c) c.innerHTML=viewDashboard(); }
+function dxTopGreeting(){
+  try{
+    const now=new Date(), hr=now.getHours(), greet=hr<12?"صباح الخير":(hr<18?"مساء الخير":"مساء النور");
+    const u=(typeof curU==="function"&&curU())||{}, nm=u.name||u.username||"";
+    const lbl=new Intl.DateTimeFormat('ar-EG',{weekday:'long',day:'numeric',month:'long'}).format(now);
+    const t=document.getElementById("pageTitle"), c=document.getElementById("pageCrumb");
+    if(t) t.textContent="👋 "+greet+(nm?"، "+nm:"");
+    if(c) c.textContent=lbl;
+  }catch(e){}
+}
 function dxRefresh(){ try{ navBadges(true); renderNav(); }catch(e){} dxRerender(); toast("تم تحديث الرئيسية","ok"); }
 // ينقل المستخدم للشاشة مع تطبيق الفلتر المناسب — النبضات في البنر الرئيسي
 function dxPulseGoto(target, opts){
@@ -6060,7 +6077,7 @@ function viewDashboard(){
   if(canMoney && _biggestLate){
     pulses.push(`<button class="dx-pulse p-red" onclick="dxPulseGoto('salesInstallments',{customer:${JSON.stringify(_biggestLate.customer)},status:'متأخر'})" title="فتح شاشة الأقساط — متأخرات ${escapeAttr(_biggestLate.customer)}">
       <span class="dp-ic">🔴</span>
-      <span class="dp-txt"><b>أكبر متأخر:</b> ${escapeHtml(_biggestLate.customer)} — <b>${money(_biggestLate.remaining)}</b> ${cur} <small>(${_biggestLate.days} يوم)</small></span>
+      <span class="dp-txt"><b>أقدم قسط متأخر:</b> ${escapeHtml(_biggestLate.customer)}${_biggestLate.orderNo?` · أمر #${escapeHtml(String(_biggestLate.orderNo))}`:""} — قسط متبقي <b>${money(_biggestLate.remaining)}</b> ${cur} <small>· متأخر ${_biggestLate.days} يوم</small></span>
     </button>`);
   }
   if(_chqOverdueToday.length){
@@ -6094,16 +6111,6 @@ function viewDashboard(){
   return `
   <section class="dx" dir="rtl">
     <header class="dx-hero dx-pulse-hero">
-      <div class="dph-top">
-        <div class="dph-greet">
-          <span class="dph-wave">👋</span>
-          <div>
-            <b>${greet}${uName?`، ${escapeHtml(uName)}`:""}</b>
-            <small>${todayLbl}</small>
-          </div>
-        </div>
-        <button type="button" class="dph-refresh" onclick="dxRefresh()" aria-label="تحديث" title="تحديث البيانات">↻</button>
-      </div>
       <div class="dph-pulses">${pulses.join("")}</div>
     </header>
 
@@ -15397,9 +15404,16 @@ function bioSheetDismiss(){
   try{ localStorage.setItem(BIO_SHEET_DISMISSED_KEY, String(Date.now())); }catch(e){}
   const bs=document.getElementById("bioSheet"); if(bs){ bs.classList.remove("open"); setTimeout(()=>bs.remove(),280); }
 }
-function bioSheetTry(){
+let _bioRunning=false;
+function _bioLoginVisible(){ const l=document.getElementById("login"); return !!l && l.style.display!=="none" && getComputedStyle(l).display!=="none"; }
+// شاشة واحدة بس في كل لحظة: إما نافذة النظام أو الشيت الأزرق (مش الاتنين فوق بعض)
+async function bioSheetTry(){
+  if(_bioRunning) return; _bioRunning=true;
   const bs=document.getElementById("bioSheet"); if(bs) bs.remove();
-  doBiometricLogin();
+  let name=""; try{ const no=parseInt(document.getElementById("loginUserNo")?.value,10); name=(JSON.parse(localStorage.getItem(BIO_KEY_PREFIX+no)||"{}").name)||""; }catch(e){}
+  try{ await doBiometricLogin(); }catch(e){}
+  _bioRunning=false;
+  if(_bioLoginVisible()){ try{ const no=parseInt(document.getElementById("loginUserNo")?.value,10); openBioSheet(no,name); }catch(e){} }
 }
 function openBioSheet(userNo, userName){
   if(document.getElementById("bioSheet")) return;
@@ -15411,26 +15425,19 @@ function openBioSheet(userNo, userName){
     <div class="bs-backdrop" onclick="bioSheetDismiss()"></div>
     <div class="bs-panel" role="dialog" aria-label="تسجيل الدخول بالبصمة">
       <div class="bs-handle"></div>
-      <div class="bs-icon">
+      <h3>الدخول بالبصمة</h3>
+      <p>${name?`أهلاً، <b>${escapeHtml(name)}</b>`:"بصمتك مسجّلة على الجهاز ده"}</p>
+      <button type="button" class="bs-fp" onclick="bioSheetTry()" aria-label="تحقق بالبصمة">
         <svg viewBox="0 0 48 48" width="56" height="56" aria-hidden="true">
           <path fill="none" stroke="#d4a017" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"
             d="M24 6c-7 0-13 4-16 10m32 0c-2-4-5-7-8-9M8 22v6c0 7 4 13 10 16m22-22v10c0 4-1 7-3 10M16 20c0-5 4-8 8-8s8 3 8 8v8c0 3-1 6-3 8M22 22v10c0 4 1 7 3 9"/>
         </svg>
-      </div>
-      <h3>الدخول بالبصمة</h3>
-      <p>${name?`أهلاً، <b>${escapeHtml(name)}</b>`:"بصمتك مسجّلة على الجهاز ده"}</p>
-      <small>اضغط على الزرار وحط بصمتك / ادخل بتعرف الوجه</small>
-      <button type="button" class="bs-go" onclick="bioSheetTry()">
-        <span class="bs-pulse"></span>
-        <span class="bs-finger">👆</span>
-        <span>تحقق الآن</span>
       </button>
+      <span class="bs-hint">المس أيقونة البصمة للدخول</span>
       <button type="button" class="bs-cancel" onclick="bioSheetDismiss()">استخدم كلمة المرور بدلاً من ذلك</button>
     </div>`;
   document.body.appendChild(sheet);
   requestAnimationFrame(()=>sheet.classList.add("open"));
-  // جرّب تلقائياً بعد 400ms (اختياري — ممكن المتصفح يحجبها لو مفيش user gesture)
-  setTimeout(()=>{ if(document.getElementById("bioSheet")) bioSheetTry(); }, 450);
 }
 function maybeAutoOpenBioSheet(){
   try{
@@ -15444,7 +15451,7 @@ function maybeAutoOpenBioSheet(){
     // استخرج الاسم المحفوظ لو موجود
     let name="";
     try{ const raw=localStorage.getItem(BIO_KEY_PREFIX+no); if(raw){ name=(JSON.parse(raw).name)||""; } }catch(e){}
-    openBioSheet(no, name);
+    if(!_bioRunning && !document.getElementById('bioSheet')) bioSheetTry();
   }catch(e){}
 }
 // فتح تلقائي عند تحميل الصفحة ولما شاشة الدخول تظهر مرة أخرى
@@ -17805,6 +17812,153 @@ function renderManagementReports(){
 }
 @media(max-width:480px){#loginFabsLeft #lgfStack .lgf-btn{font-size:19px!important}}
 </style>
+<style id="ig-dash-top-v1">
+/* لوحة التحكم: الترحيب في الشريط العلوي + التنبيهات كشرائح مدمجة */
+.dx-pulse-hero{background:none!important;border:0!important;box-shadow:none!important;padding:0!important;margin:0 0 10px!important;border-radius:0!important}
+.dx-pulse-hero:after{display:none!important}
+.dx-pulse-hero .dph-pulses{flex-direction:row!important;flex-wrap:wrap;gap:8px}
+.dx-pulse{flex:1 1 300px;min-width:0;padding:7px 12px;font-size:12.5px;background:#0f2748;border:1px solid rgba(212,160,23,.25);border-right-width:4px;border-radius:10px;box-shadow:0 2px 8px rgba(8,21,43,.12)}
+.dx-pulse:hover{transform:none;filter:brightness(1.12)}
+.dx-pulse.p-red{background:#3a1a26;border-right-color:#ef4444}
+.dx-pulse.p-amber{background:#3a2d16;border-right-color:#f59e0b}
+.dx-pulse.p-gold{background:#352f17;border-right-color:#d4a017}
+.dx-pulse.p-green,.dx-pulse.p-ok{background:#12342d;border-right-color:#22c55e}
+#pageTitle{font-size:16px}
+.topbar .crumb{white-space:nowrap}
+@media(max-width:640px){.dx-pulse{flex:1 1 100%;font-size:12px;padding:6px 10px}.dx-pulse-hero{padding:0!important}.topbar h2{font-size:15px!important}}
+</style>
+<style id="ig-mobile-final-v1">
+/* ===== نهائي: موبايل — بدون شريط سفلي + أمر البيع + بحث أوامر البيع ===== */
+@media(max-width:900px){
+  /* 1) إزالة الشريط السفلي نهائيًا */
+  #mobileTabs{display:none!important}
+  .content{padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))!important}
+  #idleWarn{bottom:calc(14px + env(safe-area-inset-bottom,0px))}
+
+  /* 2) نافذة البحث عن أوامر البيع: كروت بعرض الشاشة والقيم ظاهرة */
+  body .modal.so-search-modal .mfoot{display:none!important}
+  body .modal.so-search-modal .mbody{overflow:auto!important;max-height:calc(100dvh - 90px)!important}
+  body #soSearchResults{max-height:none!important;overflow:visible!important;border:0!important;background:transparent!important}
+  body #soSearchResults>div,body #soSearchResults .so-search-table-wrap{overflow:visible!important;width:100%!important}
+  body #soSearchResults table{display:block!important;min-width:0!important;width:100%!important;table-layout:auto!important}
+  body #soSearchResults thead{display:none!important}
+  body #soSearchResults tbody{display:block!important;width:100%!important}
+  body #soSearchResults tbody tr{display:block!important;width:100%!important;box-sizing:border-box;margin:0 0 12px!important;padding:4px 10px!important;border:1px solid #dbe4f0!important;border-inline-start:3px solid #d4a017!important;border-radius:12px!important;background:#fff!important;box-shadow:0 2px 8px rgba(20,40,70,.06)!important}
+  body #soSearchResults td{direction:rtl!important;display:flex!important;width:100%!important;min-width:0!important;box-sizing:border-box;justify-content:space-between!important;align-items:center!important;gap:10px!important;padding:5px 0!important;white-space:normal!important;text-align:start!important;font-size:12px!important;color:#16233b!important;border:0!important;border-bottom:1px dashed #e6ebf3!important}
+  body #soSearchResults td::before{content:attr(data-label);flex:0 0 34%;max-width:34%;color:#7a8699;font-weight:700;font-size:11px}
+  body #soSearchResults td>*,body #soSearchResults td{overflow-wrap:anywhere}
+  body #soSearchResults td:last-child{border-bottom:0!important;padding-top:10px!important}
+  body #soSearchResults td:last-child::before{display:none}
+  body #soSearchResults td:last-child .btn{flex:1;max-width:none!important;min-height:36px}
+  .so-search-pager{position:sticky;bottom:0;background:#fff;padding:8px 0 2px}
+
+  /* 3) شاشة أمر البيع */
+  body.page-saleOrder #content{padding:0 12px calc(24px + env(safe-area-inset-bottom,0px))!important;background:#f3f6fa;overflow-x:hidden}
+  body.page-saleOrder #content>*{min-width:0;max-width:100%}
+  body.page-saleOrder #content>.page-head{position:static!important;box-sizing:border-box;width:calc(100% + 24px)!important;max-width:none!important;margin:0 -12px 10px!important;padding:9px 12px!important;display:flex!important;flex-direction:row!important;flex-wrap:wrap;gap:8px;align-items:center;background:linear-gradient(135deg,#0f2748,#16345f);border-bottom:3px solid #d4a017;box-shadow:none}
+  body.page-saleOrder #content>.page-head .spacer{display:none}
+  body.page-saleOrder #content>.page-head h2{flex:1 1 100%;order:-3;font-size:15px!important;color:#fff!important;margin:0!important;display:block!important}
+  body.page-saleOrder #content>.page-head .chip{order:-2;flex:0 0 auto;font-size:11px;padding:3px 12px;margin:0 0 2px}
+  body.page-saleOrder #content>.page-head .btn,body.page-saleOrder #content>.page-head button{flex:1 1 0;min-width:0;min-height:34px!important;padding:4px 8px!important;font-size:12px!important;border-radius:10px;justify-content:center;white-space:nowrap;order:2}
+  body.page-saleOrder #content>.page-head .btn.ghost,body.page-saleOrder #content>.page-head .tb-back{background:rgba(255,255,255,.1);color:#e8eefb;border:1px solid rgba(255,255,255,.3)}
+  body.page-saleOrder #content>.page-head .btn:not(.ghost):not(.sm){flex:1 1 100%;order:1;min-height:40px!important;font-size:14px!important;font-weight:800;background:linear-gradient(180deg,#f2c94c,#d6a21a)!important;color:#2b1d00!important;border:1px solid #b88a0e}
+  body.page-saleOrder .so-search-btn{width:100%;min-height:38px;background:#fff;border:1px solid #cfdbe9;color:#1f5a91;border-radius:10px;font-weight:700;font-size:12.5px;margin:0 0 8px}
+  body.page-saleOrder .so-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 10px}
+  body.page-saleOrder .so-actions .btn{width:100%;min-height:34px;padding:4px;font-size:12px;border-radius:10px;background:#fff;border:1px solid #cfdbe9;color:#334155}
+  body.page-saleOrder .so-actions .btn[onclick="soSaveConfirmed()"]{display:none}
+  body.page-saleOrder .so-status-msg:empty{display:none}
+  body.page-saleOrder .so-loaded-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 10px}
+  body.page-saleOrder .so-loaded-actions button{min-height:36px;font-size:12px}
+  body.page-saleOrder #content>.card{margin:0 0 12px!important;background:#fff;border:1px solid #dbe4f0;border-radius:14px;box-shadow:0 2px 10px rgba(20,40,70,.05);overflow:hidden}
+  body.page-saleOrder .card .head{padding:8px 12px!important;background:linear-gradient(90deg,#eaf1fb,#fff);border-bottom:1px solid #dbe4f0;flex-wrap:nowrap;align-items:center}
+  body.page-saleOrder .card .head h3{font-size:13px;font-weight:800;color:#0f2748;border-inline-start:4px solid #d4a017;padding-inline-start:9px;margin:0}
+  body.page-saleOrder .card .head .btn.sm{margin-inline-start:auto;min-height:32px;padding:4px 12px;font-size:12px;background:#d4a017;color:#1b1400;border:1px solid #b88a0e;font-weight:800;border-radius:10px;white-space:nowrap}
+  body.page-saleOrder .card .body{padding:10px 12px!important}
+  body.page-saleOrder .so-grid{grid-template-columns:1fr 1fr!important;gap:8px 8px!important}
+  body.page-saleOrder .so-grid .fld{min-width:0}
+  body.page-saleOrder .so-grid .fld[style*="grid-column"]{grid-column:1/-1!important}
+  body.page-saleOrder .so-grid .fld:has(#soCustomer),body.page-saleOrder .so-grid .fld:has(#soSupplier),body.page-saleOrder .so-grid .fld:has(#soWarehouse),body.page-saleOrder .so-grid .fld:has(#soAttention){grid-column:1/-1}
+  body.page-saleOrder .fld label{display:block;font-size:11px;font-weight:700;color:#4b5b75;margin-bottom:4px}
+  body.page-saleOrder #content .inp{width:100%;box-sizing:border-box;min-height:38px!important;padding:5px 10px!important;font-size:14px!important;border:1px solid #cfdbe9;border-radius:10px;background:#fff;color:#16233b}
+  body.page-saleOrder #content .inp[aria-readonly]{background:#f3f6fa;font-weight:700;display:flex;align-items:center}
+  body.page-saleOrder textarea.inp{min-height:64px!important}
+  /* صفوف الأقطار: كارت منظم */
+  body.page-saleOrder .so-items-wrap{height:auto!important;max-height:none!important;min-height:0!important;overflow:visible!important;display:flex;flex-direction:column;gap:10px}
+  body.page-saleOrder .so-item-row{flex:none!important;height:auto!important;position:relative;display:grid!important;grid-template-columns:1fr 1fr!important;gap:7px!important;min-width:0!important;width:100%;box-sizing:border-box;padding:10px!important;background:#f7faff;border:1px solid #dbe4f0;border-inline-start:4px solid #2e75b6;border-radius:12px}
+  body.page-saleOrder .so-item-row:nth-child(even){background:#fffaf0;border-inline-start-color:#d4a017}
+  body.page-saleOrder .so-item-row .srn{position:absolute;top:-10px;inset-inline-start:10px;width:24px;height:24px;border-radius:50%;background:#0f2748;color:#f4c542;font-size:12px;display:grid;place-items:center;grid-row:auto!important}
+  body.page-saleOrder .so-item-row .mini{min-width:0;grid-column:auto!important}
+  body.page-saleOrder .so-item-row .mini label{display:block;font-size:11px;font-weight:700;color:#4b5b75;margin-bottom:2px}
+  body.page-saleOrder .so-item-row .mini.spec,body.page-saleOrder .so-item-row .mini.type{grid-column:auto!important}
+  body.page-saleOrder .so-item-row .note-icon-btn,body.page-saleOrder .so-item-row .rm-btn{grid-column:auto!important;justify-self:stretch!important;width:100%;height:34px;min-height:34px;border-radius:9px;font-size:14px}
+  body.page-saleOrder .so-item-row .note-icon-btn{background:#fff;border:1px solid #cfdbe9}
+  body.page-saleOrder .so-item-row .rm-btn{background:#fff3f3;border:1px solid #f1b9b9;color:#c0392b;font-size:18px}
+  body.page-saleOrder .so-total-row{position:static!important;inset:auto!important;margin-top:10px;padding:7px 12px;background:#fff7df;border:1px solid #efd58c;border-radius:10px;font-size:13px;color:#5b4410;text-align:center}
+  body.page-saleOrder .so-total-row b{font-size:16px;color:#8a5a00}
+  body.page-saleOrder .so-save-bottom{margin:4px 0 0}
+  body.page-saleOrder .so-save-bottom .btn{width:100%;min-height:42px;font-size:14px;font-weight:800;background:linear-gradient(180deg,#f2c94c,#d6a21a);color:#2b1d00;border:1px solid #b88a0e;border-radius:12px}
+
+  /* 4) شاشة عرض السعر */
+  body.page-quote #content{padding:0 12px calc(24px + env(safe-area-inset-bottom,0px))!important;background:#f3f6fa;overflow-x:hidden}
+  body.page-quote #content:has(#qtItemsWrap)>*{min-width:0;max-width:100%}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head{position:static!important;box-sizing:border-box;width:calc(100% + 24px)!important;max-width:none!important;margin:0 -12px 10px!important;padding:9px 12px!important;display:flex!important;flex-direction:row!important;flex-wrap:wrap;gap:8px;align-items:center;background:linear-gradient(135deg,#0f2748,#16345f);border-bottom:3px solid #d4a017;box-shadow:none}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .spacer{display:none}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head h2{flex:1 1 100%;order:-3;font-size:15px!important;color:#fff!important;margin:0!important;display:block!important}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .chip{order:-2;flex:0 0 auto;font-size:11px;padding:3px 12px;margin:0 0 2px}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .btn,body.page-quote #content:has(#qtItemsWrap)>.page-head button{flex:1 1 0;min-width:0;min-height:34px!important;padding:4px 8px!important;font-size:12px!important;border-radius:10px;justify-content:center;white-space:nowrap;order:2}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .btn.ghost,body.page-quote #content:has(#qtItemsWrap)>.page-head .tb-back{background:rgba(255,255,255,.1);color:#e8eefb;border:1px solid rgba(255,255,255,.3)}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .btn:not(.ghost):not(.sm){flex:1 1 100%;order:1;min-height:40px!important;font-size:14px!important;font-weight:800;background:linear-gradient(180deg,#f2c94c,#d6a21a)!important;color:#2b1d00!important;border:1px solid #b88a0e}
+  body.page-quote #content:has(#qtItemsWrap) .so-search-btn{width:100%;min-height:38px;background:#fff;border:1px solid #cfdbe9;color:#1f5a91;border-radius:10px;font-weight:700;font-size:12.5px;margin:0 0 8px}
+  body.page-quote #content:has(#qtItemsWrap) .so-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 10px}
+  body.page-quote #content:has(#qtItemsWrap) .so-actions .btn{width:100%;min-height:34px;padding:4px;font-size:12px;border-radius:10px;background:#fff;border:1px solid #cfdbe9;color:#334155}
+  body.page-quote #content:has(#qtItemsWrap) .so-actions .btn[onclick="qtSaveConfirmed()"]{display:none}
+  body.page-quote #content:has(#qtItemsWrap) .so-status-msg:empty{display:none}
+  body.page-quote #content:has(#qtItemsWrap) .so-loaded-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 10px}
+  body.page-quote #content:has(#qtItemsWrap) .so-loaded-actions button{min-height:36px;font-size:12px}
+  body.page-quote #content:has(#qtItemsWrap)>.card{margin:0 0 12px!important;background:#fff;border:1px solid #dbe4f0;border-radius:14px;box-shadow:0 2px 10px rgba(20,40,70,.05);overflow:hidden}
+  body.page-quote #content:has(#qtItemsWrap) .card .head{padding:8px 12px!important;background:linear-gradient(90deg,#eaf1fb,#fff);border-bottom:1px solid #dbe4f0;flex-wrap:nowrap;align-items:center}
+  body.page-quote #content:has(#qtItemsWrap) .card .head h3{font-size:13px;font-weight:800;color:#0f2748;border-inline-start:4px solid #d4a017;padding-inline-start:9px;margin:0}
+  body.page-quote #content:has(#qtItemsWrap) .card .head .btn.sm{margin-inline-start:auto;min-height:32px;padding:4px 12px;font-size:12px;background:#d4a017;color:#1b1400;border:1px solid #b88a0e;font-weight:800;border-radius:10px;white-space:nowrap}
+  body.page-quote #content:has(#qtItemsWrap) .card .body{padding:10px 12px!important}
+  body.page-quote #content:has(#qtItemsWrap) .so-grid{grid-template-columns:1fr 1fr!important;gap:8px 8px!important}
+  body.page-quote #content:has(#qtItemsWrap) .so-grid .fld{min-width:0}
+  body.page-quote #content:has(#qtItemsWrap) .so-grid .fld[style*="grid-column"]{grid-column:1/-1!important}
+  body.page-quote #content:has(#qtItemsWrap) .so-grid .fld:has(#qtCustomer),body.page-quote #content:has(#qtItemsWrap) .so-grid .fld:has(#qtAttention){grid-column:1/-1}
+  body.page-quote #content:has(#qtItemsWrap) .fld label{display:block;font-size:11px;font-weight:700;color:#4b5b75;margin-bottom:4px}
+  body.page-quote #content:has(#qtItemsWrap) .inp{width:100%;box-sizing:border-box;min-height:38px!important;padding:5px 10px!important;font-size:14px!important;border:1px solid #cfdbe9;border-radius:10px;background:#fff;color:#16233b}
+  body.page-quote #content:has(#qtItemsWrap) .inp[aria-readonly]{background:#f3f6fa;font-weight:700;display:flex;align-items:center}
+  body.page-quote #content:has(#qtItemsWrap) textarea.inp{min-height:64px!important}
+  /* صفوف الأقطار: كارت منظم */
+  body.page-quote #content:has(#qtItemsWrap) .so-items-wrap{height:auto!important;max-height:none!important;min-height:0!important;overflow:visible!important;display:flex;flex-direction:column;gap:10px}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row{flex:none!important;height:auto!important;position:relative;display:grid!important;grid-template-columns:1fr 1fr!important;gap:7px!important;min-width:0!important;width:100%;box-sizing:border-box;padding:10px!important;background:#f7faff;border:1px solid #dbe4f0;border-inline-start:4px solid #2e75b6;border-radius:12px}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row:nth-child(even){background:#fffaf0;border-inline-start-color:#d4a017}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .srn{position:absolute;top:-10px;inset-inline-start:10px;width:24px;height:24px;border-radius:50%;background:#0f2748;color:#f4c542;font-size:12px;display:grid;place-items:center;grid-row:auto!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini{min-width:0;grid-column:auto!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini label{display:block;font-size:11px;font-weight:700;color:#4b5b75;margin-bottom:2px}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini.spec,body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini.type{grid-column:auto!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .note-icon-btn,body.page-quote #content:has(#qtItemsWrap) .qt-item-row .rm-btn{grid-column:auto!important;justify-self:stretch!important;width:100%;height:34px;min-height:34px;border-radius:9px;font-size:14px}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .note-icon-btn{background:#fff;border:1px solid #cfdbe9}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .rm-btn{background:#fff3f3;border:1px solid #f1b9b9;color:#c0392b;font-size:18px}
+  body.page-quote #content:has(#qtItemsWrap) .so-total-row{position:static!important;inset:auto!important;margin-top:10px;padding:7px 12px;background:#fff7df;border:1px solid #efd58c;border-radius:10px;font-size:13px;color:#5b4410;text-align:center}
+  body.page-quote #content:has(#qtItemsWrap) .so-total-row b{font-size:16px;color:#8a5a00}
+  body.page-quote #content:has(#qtItemsWrap) .so-save-bottom{margin:4px 0 0}
+  body.page-quote #content:has(#qtItemsWrap) .so-save-bottom .btn{width:100%;min-height:42px;font-size:14px;font-weight:800;background:linear-gradient(180deg,#f2c94c,#d6a21a);color:#2b1d00;border:1px solid #b88a0e;border-radius:12px}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini.nt{grid-column:1/-1!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .rm-btn{grid-column:1/-1!important;justify-self:stretch!important;width:100%!important;height:34px;min-height:34px!important}
+  body.page-quote #content:has(#qtItemsWrap)>.page-head .chip{order:-2}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row{grid-template-columns:1fr 1fr!important;padding:10px!important;gap:7px!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini,body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini.nt{grid-column:auto!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .mini.nt{grid-column:1/-1!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .srn{position:absolute!important;grid-row:auto!important;grid-column:auto!important}
+  body.page-quote #content:has(#qtItemsWrap) .qt-item-row .rm-btn{grid-column:1/-1!important}
+  body.page-quote #content:has(#qtItemsWrap) .so-actions{grid-template-columns:1fr 1fr}
+  .modal:has(#qtSearchResults) .mfoot{display:none!important}
+  body.page-saleOrder .so-item-row .srn,body.page-quote #content:has(#qtItemsWrap) .qt-item-row .srn{inset-inline-start:auto!important;left:10px!important;right:auto!important;top:-11px!important}
+  body.page-saleOrder .so-actions,body.page-quote .so-actions{background:transparent!important;padding:0!important;box-shadow:none!important;border:0!important}
+  body.page-quote #content:has(#qtItemsWrap) .so-actions .btn{grid-column:auto!important;width:100%!important}
+}
+</style>
+
 </body>
 </html>
 \n<script>document.addEventListener('click',function(e){if(!e.target.closest('.gl-e-picker'))document.querySelectorAll('.gl-e-results').forEach(x=>{x.style.display='none';const q=x.parentElement.querySelector('.gl-e-search');if(q)q.hidden=true;});});</script>\n
