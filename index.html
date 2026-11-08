@@ -2604,7 +2604,13 @@ async function syncQuotes(){
     const r=await sb.from(QUOTE_TABLE).upsert(rows,{onConflict:"id"}); if(r.error) throw r.error;
   }
   for(let i=0;i<d.del.length;i+=100){
-    const r=await sb.from(QUOTE_TABLE).delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
+    const ids=d.del.slice(i,i+100);
+    // Soft delete: نضع deleted_at (الـRLS هيخفي من القراءات)
+    let r=await sb.from(QUOTE_TABLE).update({deleted_at:new Date().toISOString(),deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids);
+    if(r.error && /deleted_at/.test(String(r.error.message||""))){
+      r=await sb.from(QUOTE_TABLE).delete().in("id",ids);
+    }
+    if(r.error) throw r.error;
   }
   const cn=String(state.qtNextNum||1);
   if(cn!==qtCounterSnap){
@@ -2920,7 +2926,14 @@ async function syncTreasury(){
     const r=await sb.from("treasury_entries").upsert(rows,{ onConflict:"id" }); if(r.error) throw r.error;
   }
   for(let i=0;i<d.del.length;i+=100){
-    const r=await sb.from("treasury_entries").delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
+    const ids=d.del.slice(i,i+100);
+    // Soft delete: نحدّد deleted_at بدل الحذف النهائي (الـRLS هيخفي الصفوف من القراءات)
+    let r=await sb.from("treasury_entries").update({deleted_at:now,deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids);
+    // Fallback: لو عمود deleted_at لسه مش موجود، حذف نهائي
+    if(r.error && /deleted_at/.test(String(r.error.message||""))){
+      r=await sb.from("treasury_entries").delete().in("id",ids);
+    }
+    if(r.error) throw r.error;
   }
   txSnap=d.cur; txSaveSyncMap();
 }
@@ -3051,8 +3064,15 @@ async function syncDocs(){
       for(let j=0;j<items.length;j+=500){ r=await sb.from(cfg.it).insert(items.slice(j,j+500)); if(r.error) throw r.error; }
     }
     for(let i=0;i<d.del.length;i+=100){
-      window.igSyncStep=cfg.t+" (حذف)";
-      const r=await sb.from(cfg.t).delete().in("id",d.del.slice(i,i+100)); if(r.error) throw r.error;
+      window.igSyncStep=cfg.t+" (حذف مرن)";
+      const ids=d.del.slice(i,i+100);
+      // Soft delete: نضع deleted_at بدل الحذف النهائي (الـRLS هيخفي من القراءات)
+      let r=await sb.from(cfg.t).update({deleted_at:new Date().toISOString(),deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids);
+      // Fallback: لو عمود deleted_at مش موجود (migration ما اشتغلتش)، حذف نهائي
+      if(r.error && /deleted_at/.test(String(r.error.message||""))){
+        r=await sb.from(cfg.t).delete().in("id",ids);
+      }
+      if(r.error) throw r.error;
     }
     if(!docMeta.has(g)){
       const r=await sb.from("app_counters").upsert({ name:"migrated:"+g, value:1 },{ onConflict:"name" }); if(r.error) throw r.error;
@@ -3465,6 +3485,8 @@ function firstAllowedTab(scr){
 function canView(page){
   if(page==="inventory") return can("inventory","view");
   if(page==="users") return isAdmin();
+  if(page==="trash") return isAdmin();
+  if(page==="dataHealth") return isAdmin();
   // دفتر الشيكات قراءة مشتقة من التحصيلات؛ يستخدم نفس صلاحية مشاهدة التحصيلات حتى للمستخدمين الحاليين.
   if(page==="chequeRegister") return can("receipts","view");
   if(page==="overdueSummary") return can("salesInstallments","view");
@@ -3510,6 +3532,44 @@ function enterApp(u, restored){
   if(p) go(p);
   else { document.getElementById("content").innerHTML=noAccessHtml(); document.getElementById("pageTitle").textContent="—"; document.getElementById("pageCrumb").textContent=""; }
   if(!restored && u.mustChange) setTimeout(()=>openMyPassword(true),250);
+  // تذكير النسخة الاحتياطية كل 3 أيام (للأدمن فقط)
+  setTimeout(()=>{ try{ checkBackupReminder(); }catch(e){} }, 2500);
+}
+// ======================= 💾 تذكير النسخة الاحتياطية =======================
+async function checkBackupReminder(){
+  if(!isAdmin()) return;
+  const dayMs = 86400000, THRESHOLD = 3*dayMs;
+  let lastTs = 0;
+  try{ const raw=localStorage.getItem("ig_last_backup"); if(raw) lastTs = new Date(raw).getTime()||0; }catch(e){}
+  // لو مفيش نسخة سابقة، اعتبر اليوم بدايتها
+  if(!lastTs){
+    try{ localStorage.setItem("ig_last_backup_seen", String(Date.now())); }catch(e){}
+    const seen = +(localStorage.getItem("ig_last_backup_seen")||"0");
+    // بس ذكّر لو مر 3 أيام من أول ما شاف الرسالة
+    if(seen && (Date.now()-seen < THRESHOLD)) return;
+  }
+  const daysSince = lastTs ? Math.floor((Date.now()-lastTs)/dayMs) : null;
+  if(lastTs && daysSince < 3) return;
+  // ما نزعّجش في نفس اليوم مرتين لو المستخدم قال "فكّرني بكرة"
+  try{
+    const snoozed = +(localStorage.getItem("ig_backup_snooze")||"0");
+    if(snoozed && (Date.now()-snoozed < dayMs)) return;
+  }catch(e){}
+  const msg = lastTs
+    ? `آخر نسخة احتياطية كانت من ${daysSince} يوم.\nاعمل نسخة جديدة دلوقتي علشان بياناتك تفضل آمنة.`
+    : `مفيش نسخة احتياطية مسجّلة لحد دلوقتي.\nاعمل أول نسخة احتياطية دلوقتي — دقيقة واحدة بس.`;
+  const r = await _igDialog({
+    title:"💾 تذكير: نسخة احتياطية",
+    msg,
+    ok:"⬇ تنزيل نسخة الآن",
+    cancel:"فكّرني بكرة"
+  });
+  if(r===true){
+    go("settings");
+    setTimeout(()=>{ try{ fullBackupExport(); }catch(e){} }, 400);
+  } else {
+    try{ localStorage.setItem("ig_backup_snooze", String(Date.now())); }catch(e){}
+  }
 }
 let loginBusy = false;
 async function startSessionInner(user, restored){
@@ -3707,7 +3767,9 @@ const navGroups = [
   { id:"master", icon:"✦", label:"البيانات الأساسية", items:[
     { id:"master", icon:"◉", label:"إدارة البيانات" },
     { id:"settings", icon:"⚙", label:"الإعدادات العامة" },
-    { id:"users", icon:"🔐", label:"المستخدمون والصلاحيات" }
+    { id:"users", icon:"🔐", label:"المستخدمون والصلاحيات" },
+    { id:"trash", icon:"🗑", label:"سلة المحذوفات" },
+    { id:"dataHealth", icon:"🩺", label:"فحص سلامة البيانات" }
   ]},
   { id:"inventory", icon:"🏬", label:"المخازن والمخزون", items:[
     { id:"inventory", icon:"🌳", label:"المخازن ودليل الأصناف" },
@@ -3917,6 +3979,8 @@ function go(page){
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
     settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
     users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"],
+    trash:["🗑 سلة المحذوفات","القيود والبوالص وأوامر البيع والخزنة والعروض المحذوفة — استرجاع متاح للأدمن"],
+    dataHealth:["🩺 فحص سلامة البيانات","اكتشف التناقضات والسجلات المعلّقة والمكررة قبل ما تسبّب مشاكل"],
     custodyLedger:["العهد والخزن","إدارة أكواد العهد وأصحابها وحركات الوارد والمنصرف"],
     custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"],
     gl:["المحاسبة العامة","دليل الحسابات، مراكز التكلفة، السنوات والفترات، والقيود اليومية"]
@@ -3931,6 +3995,8 @@ function go(page){
   else if(page==="inventory") { const allowed=inventoryTabDefs().filter(t=>canTab("inventory",t.id)); if(!allowed.some(t=>t.id===inventoryTab))inventoryTab=allowed.length?allowed[0].id:"warehouses"; c.innerHTML = viewInventory(); if(inventoryTab!=="warehouses"&&inventoryTab!=="items") inventoryLoad().then(()=>{if(currentPage==="inventory"){const el=document.getElementById("content");if(el)el.innerHTML=viewInventory();}}); }
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
   else if(page==="users") { c.innerHTML = viewUsers(); }
+  else if(page==="trash") { c.innerHTML = viewTrash(); renderTrash(); }
+  else if(page==="dataHealth") { c.innerHTML = viewDataHealth(); }
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
   else if(page==="quote"){ c.innerHTML = viewQuote(); bindQuote(); }
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
@@ -4008,7 +4074,7 @@ async function glIndicatorsSync(force){
     const rows=r.data||[];
     if(!rows.length){   // أول مرة: نرفع اللي كان محفوظ في المتصفح
       const loc=glLoadIndicators(), ks=Object.keys(loc);
-      if(ks.length){ const up=await sb.from(GL_IND_TABLE).upsert(ks.map(k=>({ind_key:k,account_id:String(loc[k])}))); if(up.error) throw up.error; }
+      if(ks.length){ const up=await sb.from(GL_IND_TABLE).upsert(ks.map(k=>({ind_key:k,account_id:String(loc[k])})),{onConflict:"ind_key"}); if(up.error) throw up.error; }
       glIndReady=true; return window.glIndicators=loc;
     }
     const o={}; rows.forEach(x=>{ if(x.account_id) o[x.ind_key]=x.account_id; });
@@ -4018,7 +4084,7 @@ async function glIndicatorsSync(force){
 }
 async function glIndPush(key,accountId){
   try{
-    const r=accountId?await sb.from(GL_IND_TABLE).upsert({ind_key:key,account_id:String(accountId),updated_at:new Date().toISOString()}):await sb.from(GL_IND_TABLE).delete().eq("ind_key",key);
+    const r=accountId?await sb.from(GL_IND_TABLE).upsert({ind_key:key,account_id:String(accountId),updated_at:new Date().toISOString()},{onConflict:"ind_key"}):await sb.from(GL_IND_TABLE).delete().eq("ind_key",key);
     if(r.error) throw r.error;
   }catch(e){ toast("تعذر حفظ المؤشر في قاعدة البيانات (شغّل ملف irongate_order_posting.sql): "+(e.message||e),"err"); }
 }
@@ -8216,12 +8282,46 @@ function viewSettings(){
       </div>
 
       ${typeof chqSettingsCard==="function"?chqSettingsCard():""}
+      ${isAdmin()?`
+      <div class="card" style="margin-top:16px;border:2px solid #d4a017">
+        <div class="head" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"><h3>💾 نسخة احتياطية كاملة من قاعدة البيانات</h3></div>
+        <div class="body">
+          <p style="color:#6b7280;font-size:13px;line-height:1.8;margin:0 0 14px">
+            تنزيل ملف JSON واحد يحتوي على <b>كل البيانات على Supabase</b> (عملاء، موردين، بوالص، أوامر بيع، خزنة، قيود، إعدادات، مستخدمين، كل حاجة). الملف ده نسختك الآمنة — لو حصل أي كارثة، ارفعه تاني وكل حاجة بترجع.
+          </p>
+          <div id="backupStatus" style="min-height:22px;font-size:13px;color:#92400e;margin-bottom:10px;line-height:1.7"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn" onclick="fullBackupExport()" style="background:linear-gradient(135deg,#d4a017,#fcd34d);color:#1a1a1a;font-weight:800">⬇ تنزيل نسخة احتياطية</button>
+            <label class="btn ghost" style="cursor:pointer;margin:0">
+              <input type="file" accept=".json" style="display:none" onchange="fullBackupImport(event)">
+              ⬆ استرجاع من ملف
+            </label>
+            <button class="btn ghost" onclick="fullBackupPreview()">👁 معاينة محتوى ملف</button>
+          </div>
+          <p style="color:#dc2626;font-size:12px;margin:12px 0 0;line-height:1.7"><b>⚠ الاسترجاع:</b> بيدمج البيانات من الملف مع الموجود حالياً — السجلات المطابقة بالـID تتحدث، والجديدة تُضاف. البيانات الحالية اللي مش في الملف تفضل كما هي.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px;border:2px solid #3b82f6">
+        <div class="head" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe)"><h3>🔔 إشعارات الموبايل (Push Notifications)</h3></div>
+        <div class="body">
+          <p style="color:#6b7280;font-size:13px;line-height:1.8;margin:0 0 12px">
+            خلّي السيرفر يبعتلك إشعار على موبايلك/متصفحك لما يكون فيه شيكات مستحقة النهاردة أو متأخرة. التفعيل بيبقى <b>لكل جهاز لوحده</b>.
+          </p>
+          <div id="pushStatus" style="min-height:22px;font-size:13px;color:#1e40af;margin-bottom:10px;line-height:1.7"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap" id="pushActions">
+            <button class="btn" onclick="pushEnable()" id="pushEnableBtn" style="background:linear-gradient(135deg,#3b82f6,#60a5fa);color:#fff;font-weight:800">🔔 تفعيل إشعارات الموبايل</button>
+            <button class="btn ghost" onclick="pushDisable()" id="pushDisableBtn" style="display:none">❌ إلغاء من هذا الجهاز</button>
+            <button class="btn ghost" onclick="pushTest()" id="pushTestBtn" style="display:none">📨 إرسال إشعار تجريبي</button>
+          </div>
+          <p style="color:#6b7280;font-size:11.5px;margin:10px 0 0;line-height:1.7">💡 لازم تدي المتصفح إذن ظهور الإشعارات. على iOS لازم تضيف التطبيق للـHome Screen الأول.</p>
+        </div>
+      </div>`:""}
       <div class="card" style="margin-top:16px">
         <div class="head"><h3>معلومات التخزين</h3></div>
         <div class="body">
           <p style="color:var(--text-dim);font-size:13px;line-height:1.8">
-            البيانات محفوظة في متصفح هذا الجهاز فقط. إذا مسحت ذاكرة المتصفح أو انتقلت لجهاز آخر فستُفقد.
-            النسخ الاحتياطي (تصدير / استيراد) من <strong style="color:var(--gold-text)">المستخدمون والصلاحيات ← 💾 النسخ الاحتياطي</strong>، صدّر نسخة بانتظام.
+            البيانات الأساسية بتتحفظ على Supabase. الكاش المحلي بيتجدد عند كل تسجيل دخول.
+            ${isAdmin()?"<b style='color:#92400e'>اعمل نسخة احتياطية يومياً</b> من الزرار اللي فوق.":""}
           </p>
           <div style="margin-top:12px">
             <button class="btn danger sm" style="margin-right:8px" onclick="resetAll()">إعادة تعيين كامل</button>
@@ -8231,7 +8331,12 @@ function viewSettings(){
     </div>
   `;
 }
-function bindSettings(){}
+function bindSettings(){
+  // افحص حالة Push لما شاشة الإعدادات تفتح
+  if(isAdmin() && typeof pushCheckStatus==="function"){
+    setTimeout(pushCheckStatus, 200);
+  }
+}
 function saveSettings(){
   state.settings.tax = parseFloat(document.getElementById("sTax").value) || 0;
   state.settings.profitTax = parseFloat(document.getElementById("sProfitTax").value) || 0;
@@ -8246,6 +8351,271 @@ async function resetAll(){
   if(!await askConfirm("هل أنت متأكد تمامًا؟ لا يمكن التراجع.")) return;
   state = JSON.parse(JSON.stringify(defaults));
   saveState(); go("dashboard"); toast("تم إعادة التعيين","ok");
+}
+
+// ========================= 💾 نسخة احتياطية كاملة =========================
+// كل جداول Supabase اللي بنحتاجها في النسخة الكاملة
+const BACKUP_TABLES = [
+  // البيانات الأساسية
+  "customers","suppliers","diameters","factories","warehouses","steel_types",
+  "policy_statuses","quote_descs","cement_types","companies","sites",
+  "item_groups","policy_sites","treasuries",
+  // المستندات
+  "sale_orders","sale_order_items","shipments","shipment_items","sale_quotes",
+  "sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule",
+  "sale_order_postings","party_opening_balances",
+  // الخزنة
+  "treasury_entries","app_counters",
+  // GL
+  "gl_accounts","gl_cost_centers","gl_fiscal_years","gl_periods","gl_journals",
+  "gl_entries","gl_entry_lines","gl_indicators","gl_audit_log",
+  // العهد
+  "custody_accounts","custody_entries",
+  // المخزون
+  "inventory_items","inventory_moves",
+  // إعدادات ومستخدمين وسجل
+  "settings","profiles","audit_log"
+];
+// الجداول اللي عندها soft-delete — نحمّل محذوفها كمان
+const BACKUP_SOFTDEL_TABLES = ["gl_entries","sale_orders","shipments","treasury_entries","sale_quotes"];
+
+function _bkStatus(msg,isErr){
+  const el=document.getElementById("backupStatus"); if(!el) return;
+  el.innerHTML=msg; el.style.color = isErr?"#dc2626":"#92400e";
+}
+async function fullBackupExport(){
+  if(!isAdmin()){ toast("للأدمن فقط","err"); return; }
+  const btn = event&&event.target; if(btn){ btn.disabled=true; }
+  try{
+    const result = { metadata:{
+      app:"IRON GATE SUPPLIES",
+      version:"1.0",
+      created_at: new Date().toISOString(),
+      created_by: (currentUser&&currentUser.name)||"admin",
+      user_no: (currentUser&&currentUser.no)||null,
+      includes_deleted: true
+    }, tables:{}, deleted:{} };
+    let done=0, total=BACKUP_TABLES.length+BACKUP_SOFTDEL_TABLES.length, failed=[];
+    _bkStatus(`⏳ جاري التحميل… 0 / ${total}`);
+    // الحي
+    for(const t of BACKUP_TABLES){
+      try{
+        const r = await sb.from(t).select("*");
+        if(r.error){ failed.push(t+": "+r.error.message); result.tables[t]=[]; }
+        else result.tables[t] = r.data||[];
+      }catch(e){ failed.push(t+": "+(e.message||e)); result.tables[t]=[]; }
+      done++; _bkStatus(`⏳ جاري التحميل… ${done} / ${total} — ${t}`);
+    }
+    // المحذوف (via SECURITY DEFINER RPC علشان RLS)
+    for(const t of BACKUP_SOFTDEL_TABLES){
+      try{
+        const r = await sb.rpc("list_deleted_records",{p_table:t});
+        if(r.error){ result.deleted[t]=[]; }
+        else result.deleted[t] = Array.isArray(r.data)?r.data:[];
+      }catch(e){ result.deleted[t]=[]; }
+      done++; _bkStatus(`⏳ جاري التحميل… ${done} / ${total} — محذوف ${t}`);
+    }
+    // تحميل
+    const counts = Object.entries(result.tables).filter(([k,v])=>v.length).sort((a,b)=>b[1].length-a[1].length);
+    const totalRows = counts.reduce((a,[k,v])=>a+v.length,0);
+    const delTotal = Object.values(result.deleted).reduce((a,v)=>a+v.length,0);
+    const json = JSON.stringify(result,null,2);
+    const blob = new Blob([json],{type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const pad=n=>String(n).padStart(2,"0"), d=new Date();
+    const name = `IRON_GATE_BACKUP_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+    const a = document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    try{ localStorage.setItem("ig_last_backup", new Date().toISOString()); }catch(e){}
+    const sizeKb = (json.length/1024).toFixed(0);
+    let msg = `✅ تم تنزيل النسخة الاحتياطية (${sizeKb} KB) — ${totalRows.toLocaleString("ar-EG")} صف حي + ${delTotal} محذوف`;
+    if(failed.length) msg += `<br><span style="color:#dc2626">⚠ ${failed.length} جدول فشل تحميله: ${failed.slice(0,3).join(" · ")}${failed.length>3?"…":""}</span>`;
+    _bkStatus(msg);
+    audit("backup_export", `نسخة احتياطية: ${totalRows} صف · ${sizeKb} KB`);
+  }catch(e){
+    _bkStatus("❌ فشل: "+(e.message||e), true);
+  }finally{ if(btn){ btn.disabled=false; } }
+}
+
+// ========== الاسترجاع ==========
+async function fullBackupPreview(){
+  if(!isAdmin()){ toast("للأدمن فقط","err"); return; }
+  const inp = document.createElement("input"); inp.type="file"; inp.accept=".json";
+  inp.onchange = async ev=>{
+    const f = ev.target.files && ev.target.files[0]; if(!f) return;
+    try{
+      const txt = await f.text();
+      const data = JSON.parse(txt);
+      if(!data.metadata || !data.tables){ toast("ملف غير صالح","err"); return; }
+      const rows = Object.entries(data.tables).sort((a,b)=>b[1].length-a[1].length);
+      const total = rows.reduce((a,[k,v])=>a+(Array.isArray(v)?v.length:0),0);
+      const delTotal = Object.values(data.deleted||{}).reduce((a,v)=>a+(Array.isArray(v)?v.length:0),0);
+      const meta = data.metadata;
+      const lines = rows.filter(([k,v])=>v&&v.length).map(([k,v])=>`• ${k}: ${v.length.toLocaleString("ar-EG")} صف`).join("\n");
+      const msg = `📅 تاريخ الإنشاء: ${new Date(meta.created_at).toLocaleString("ar-EG")}\n👤 اللي أنشأه: ${meta.created_by||"—"}\n📊 الإجمالي: ${total.toLocaleString("ar-EG")} صف حي + ${delTotal} محذوف\n\nتوزيع الصفوف:\n${lines}`;
+      _igDialog({title:"👁 معاينة ملف النسخة الاحتياطية",msg,ok:"إغلاق",single:true});
+    }catch(e){ toast("ملف غير صالح: "+(e.message||e),"err"); }
+  };
+  inp.click();
+}
+
+async function fullBackupImport(ev){
+  if(!isAdmin()){ toast("للأدمن فقط","err"); return; }
+  const f = ev.target.files && ev.target.files[0]; if(!f) return;
+  try{
+    const txt = await f.text();
+    const data = JSON.parse(txt);
+    if(!data.metadata || !data.tables){ toast("ملف غير صالح","err"); ev.target.value=""; return; }
+
+    const total = Object.values(data.tables).reduce((a,v)=>a+(Array.isArray(v)?v.length:0),0);
+    const meta = data.metadata;
+    const ok1 = await askConfirm(`هل تريد استرجاع البيانات من:\n📅 ${new Date(meta.created_at).toLocaleString("ar-EG")}\n👤 ${meta.created_by||"—"}\n📊 ${total.toLocaleString("ar-EG")} صف\n\n⚠ البيانات في الملف هتحل محل أي سجل بنفس الـID على السيرفر.`);
+    if(!ok1){ ev.target.value=""; return; }
+    const ok2 = await askConfirm("تأكيد نهائي: استرجاع كل البيانات؟");
+    if(!ok2){ ev.target.value=""; return; }
+
+    _bkStatus(`⏳ جاري الاسترجاع…`);
+    let done=0, totalT=Object.keys(data.tables).length, failed=[], uploaded=0;
+    // ترتيب الاسترجاع: الـparents قبل الـchildren
+    const order = [
+      "customers","suppliers","diameters","factories","warehouses","steel_types",
+      "policy_statuses","quote_descs","cement_types","companies","sites","item_groups","policy_sites","treasuries",
+      "gl_fiscal_years","gl_periods","gl_accounts","gl_cost_centers","gl_journals",
+      "sale_orders","shipments","sale_quotes","sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule","sale_order_postings","party_opening_balances",
+      "sale_order_items","shipment_items",
+      "treasury_entries","app_counters",
+      "gl_entries","gl_entry_lines","gl_indicators","gl_audit_log",
+      "custody_accounts","custody_entries",
+      "inventory_items","inventory_moves",
+      "settings","profiles","audit_log"
+    ];
+    const seen = new Set();
+    const tableOrder = [...order.filter(t=>t in data.tables), ...Object.keys(data.tables).filter(t=>!order.includes(t))];
+
+    for(const t of tableOrder){
+      if(seen.has(t)) continue; seen.add(t);
+      const rows = data.tables[t]; if(!Array.isArray(rows)||!rows.length){ done++; continue; }
+      _bkStatus(`⏳ استرجاع ${t}… (${done+1}/${totalT}) — ${rows.length} صف`);
+      try{
+        // upsert على دفعات 100
+        for(let i=0;i<rows.length;i+=100){
+          const batch = rows.slice(i, i+100);
+          const r = await sb.from(t).upsert(batch);
+          if(r.error){ failed.push(`${t}: ${r.error.message}`); break; }
+          uploaded += batch.length;
+        }
+      }catch(e){ failed.push(`${t}: ${e.message||e}`); }
+      done++;
+    }
+    let msg = `✅ تم استرجاع ${uploaded.toLocaleString("ar-EG")} صف من ${done} جدول.`;
+    if(failed.length) msg += `<br><span style="color:#dc2626">⚠ ${failed.length} جدول فيه مشاكل:<br>${failed.slice(0,5).map(x=>"• "+escapeHtml(x)).join("<br>")}${failed.length>5?"<br>…":""}</span>`;
+    msg += `<br><b style="color:#92400e">⟳ سيتم إعادة تحميل التطبيق بعد 3 ثوانٍ</b>`;
+    _bkStatus(msg);
+    audit("backup_import",`استرجاع نسخة احتياطية: ${uploaded} صف`);
+    setTimeout(()=>location.reload(), 3000);
+  }catch(e){
+    _bkStatus("❌ فشل: "+(e.message||e), true);
+  }
+  ev.target.value="";
+}
+
+// ============================================================
+// 🔔 Push Notifications — تسجيل جهاز الأدمن لاستقبال إشعارات الشيكات
+// ============================================================
+// ⚠ ضع الـVAPID public key هنا بعد توليدها بـ: npx web-push generate-vapid-keys
+const VAPID_PUBLIC_KEY = "BLEbgP44PsQn3SxxvDlB0TlfL9fhshL6m1v_oKiPgDt7P-lKb-KfEKw1JYB4siXi4LTnIZkoZZH13uNrL4wYUXA";
+
+function _pushSupported(){ return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function _urlB64ToU8(base64){
+  const padding='='.repeat((4-base64.length%4)%4);
+  const b64=(base64+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(b64), out=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;++i) out[i]=raw.charCodeAt(i);
+  return out;
+}
+function _pushStatus(msg,cls){ const el=document.getElementById("pushStatus"); if(!el) return; el.innerHTML=msg; el.style.color=cls==="err"?"#dc2626":cls==="ok"?"#16a34a":"#1e40af"; }
+function _pushUpdateButtons(subscribed){
+  const en=document.getElementById("pushEnableBtn"), dis=document.getElementById("pushDisableBtn"), tst=document.getElementById("pushTestBtn");
+  if(en) en.style.display = subscribed?"none":"inline-flex";
+  if(dis) dis.style.display = subscribed?"inline-flex":"none";
+  if(tst) tst.style.display = subscribed?"inline-flex":"none";
+}
+async function pushCheckStatus(){
+  if(!_pushSupported()){ _pushStatus("❌ المتصفح ده مش بيدعم Push Notifications","err"); return; }
+  if(VAPID_PUBLIC_KEY.startsWith("REPLACE_")){ _pushStatus("⚠ VAPID public key لسه مش متحطّ في الكود — راجع التعليمات","err"); return; }
+  try{
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(sub){
+      _pushStatus("✅ إشعارات الموبايل <b>مفعّلة</b> على هذا الجهاز.","ok");
+      _pushUpdateButtons(true);
+    } else {
+      _pushStatus("🔕 إشعارات الموبايل <b>غير مفعّلة</b> على هذا الجهاز.","");
+      _pushUpdateButtons(false);
+    }
+  }catch(e){ _pushStatus("❌ فشل الفحص: "+(e.message||e),"err"); }
+}
+async function pushEnable(){
+  if(!isAdmin()){ toast("للأدمن فقط","err"); return; }
+  if(!_pushSupported()){ _pushStatus("❌ المتصفح ده مش بيدعم Push","err"); return; }
+  if(VAPID_PUBLIC_KEY.startsWith("REPLACE_")){ _pushStatus("⚠ VAPID public key لسه مش متحطّ في الكود","err"); return; }
+  try{
+    _pushStatus("⏳ جاري طلب إذن الإشعارات…");
+    const perm = await Notification.requestPermission();
+    if(perm!=="granted"){ _pushStatus("❌ لازم تسمح للموقع بالإشعارات من إعدادات المتصفح","err"); return; }
+    _pushStatus("⏳ جاري تسجيل الجهاز…");
+    const reg = await navigator.serviceWorker.ready;
+    // لو فيه subscription قديمة، احذفها الأول (لتجنب مفتاح VAPID مختلف)
+    try{ const old = await reg.pushManager.getSubscription(); if(old) await old.unsubscribe(); }catch(e){}
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:_urlB64ToU8(VAPID_PUBLIC_KEY)
+    });
+    const raw = sub.toJSON();
+    const row = {
+      endpoint: raw.endpoint,
+      p256dh:   raw.keys.p256dh,
+      auth:     raw.keys.auth,
+      user_agent: navigator.userAgent.slice(0,255)
+    };
+    const r = await sb.from("push_subscriptions").upsert(row,{onConflict:"endpoint"});
+    if(r.error) throw r.error;
+    _pushStatus("✅ تم تفعيل الإشعارات على هذا الجهاز! هيوصلك إشعار يومياً لو فيه شيكات مستحقة.","ok");
+    _pushUpdateButtons(true);
+    audit("push_enable","تفعيل Push Notifications");
+  }catch(e){ _pushStatus("❌ فشل: "+(e.message||e),"err"); console.error("pushEnable",e); }
+}
+async function pushDisable(){
+  if(!await askConfirm("إلغاء إشعارات الموبايل على هذا الجهاز؟")) return;
+  try{
+    _pushStatus("⏳ جاري الإلغاء…");
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if(sub){
+      const endpoint = sub.endpoint;
+      await sub.unsubscribe();
+      try{ await sb.from("push_subscriptions").delete().eq("endpoint", endpoint); }catch(e){}
+    }
+    _pushStatus("🔕 تم إلغاء الإشعارات من هذا الجهاز.","");
+    _pushUpdateButtons(false);
+    audit("push_disable","إلغاء Push Notifications");
+  }catch(e){ _pushStatus("❌ فشل: "+(e.message||e),"err"); }
+}
+async function pushTest(){
+  try{
+    _pushStatus("⏳ إرسال إشعار تجريبي…");
+    // استخدام الـservice worker مباشرة لإظهار إشعار محلي (بدون السيرفر)
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification("🧾 إشعار تجريبي — IRON GATE",{
+      body:"هذا اختبار. لو شفت الإشعار، كل حاجة شغالة ✓",
+      icon:"icons/favicon.png",
+      badge:"icons/favicon.png",
+      tag:"ig-test",
+      dir:"rtl",
+      lang:"ar"
+    });
+    _pushStatus("✅ تم إرسال الإشعار التجريبي! شوف شريط الإشعارات.","ok");
+  }catch(e){ _pushStatus("❌ فشل: "+(e.message||e),"err"); }
 }
 
 // ---------- Modal ----------
@@ -15307,6 +15677,278 @@ function permSummary(u){
   const p=u.perms, scr=SCREENS.filter(s=>p.screens[s.id]&&p.screens[s.id].view).length; let hid=0;
   SCREENS.forEach(s=>{ if(s.prices&&p.screens[s.id].view){ if(p.hide[s.id].buy) hid++; if(p.hide[s.id].sell) hid++; } });
   return `<span class="chip">${scr}/${SCREENS.length} شاشات</span>${hid?` <span class="chip warn">🙈 ${hid} حقل سعر مخفي</span>`:""}${p.sys.backup?' <span class="chip">نسخ احتياطي</span>':""}`;
+}
+// ======================= 🩺 فحص سلامة البيانات =======================
+function viewDataHealth(){
+  if(!isAdmin()) return noAccessHtml();
+  setTimeout(runDataHealthChecks, 100);
+  return `<div class="dh-page" style="padding:0 2px">
+    <div class="card" style="margin-bottom:12px">
+      <div class="body" style="padding:14px 16px">
+        <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="font-size:30px;line-height:1">🩺</div>
+          <div style="flex:1;min-width:220px">
+            <h3 style="margin:0 0 4px;color:#92400e">فحص سلامة البيانات</h3>
+            <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.7">بنفحص البيانات على السيرفر ونكتشف أي تناقضات: سجلات معلّقة، بيانات ناقصة، قيود غير متوازنة، مكررات. اضغط "تشغيل الفحص" وشوف النتائج.</p>
+          </div>
+          <button class="btn" onclick="runDataHealthChecks()" style="height:36px;background:linear-gradient(135deg,#d4a017,#fcd34d);color:#1a1a1a;font-weight:800">🔄 تشغيل الفحص</button>
+        </div>
+      </div>
+    </div>
+    <div id="dhResults"><div class="empty" style="padding:40px;text-align:center">جاري الفحص…</div></div>
+    <style>
+      .dh-card{border-radius:12px;background:#fff;border:1px solid #e5e7eb;margin-bottom:10px;overflow:hidden}
+      .dh-card.ok{border-right:4px solid #22c55e}
+      .dh-card.warn{border-right:4px solid #f59e0b}
+      .dh-card.err{border-right:4px solid #dc2626}
+      .dh-head{display:flex;align-items:center;gap:12px;padding:12px 16px;background:linear-gradient(90deg,#fef9ef,#fff)}
+      .dh-head .ic{font-size:22px}
+      .dh-head h4{margin:0;flex:1;font-size:14.5px;color:#1a1a1a}
+      .dh-head .count{font-size:12px;font-weight:800;padding:3px 10px;border-radius:99px}
+      .dh-head .count.ok{background:#dcfce7;color:#166534}
+      .dh-head .count.warn{background:#fef3c7;color:#92400e}
+      .dh-head .count.err{background:#fee2e2;color:#991b1b}
+      .dh-body{padding:0 16px 10px}
+      .dh-body details{margin-top:6px}
+      .dh-body summary{cursor:pointer;font-size:12.5px;color:#92400e;font-weight:700;padding:4px 0}
+      .dh-body ul{margin:6px 0;padding-right:20px;font-size:12.5px;color:#374151;line-height:1.8;max-height:200px;overflow:auto}
+      .dh-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px}
+      .dh-sum .dh-stat{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px;text-align:center}
+      .dh-sum .dh-stat b{font-size:20px;display:block;color:#1a1a1a}
+      .dh-sum .dh-stat small{font-size:11.5px;color:#6b7280}
+      .dh-sum .dh-stat.ok b{color:#16a34a} .dh-sum .dh-stat.warn b{color:#f59e0b} .dh-sum .dh-stat.err b{color:#dc2626}
+    </style>
+  </div>`;
+}
+async function runDataHealthChecks(){
+  if(currentPage!=="dataHealth") return;
+  const el = document.getElementById("dhResults"); if(!el) return;
+  el.innerHTML = '<div class="empty" style="padding:40px;text-align:center"><div style="font-size:32px;margin-bottom:8px">⏳</div>جاري تحميل البيانات من السيرفر…</div>';
+  try{
+    // اقرأ البيانات اللازمة من الـstate المحلي + السيرفر
+    const [orders, ships, shipItems, soItems, treasury, glEntries, glLines, custs, sups] = await Promise.all([
+      sb.from("sale_orders").select("id,order_no,customer").then(r=>r.data||[]),
+      sb.from("shipments").select("id,policy_no,sale_order_id,sale_order_no,customer,date").then(r=>r.data||[]),
+      sb.from("shipment_items").select("id,shipment_id").then(r=>r.data||[]),
+      sb.from("sale_order_items").select("id,sale_order_id").then(r=>r.data||[]),
+      sb.from("treasury_entries").select("id,direction,customer,supplier,amount,data,entry_date").then(r=>r.data||[]),
+      sb.from("gl_entries").select("id,entry_no,status").then(r=>r.data||[]),
+      sb.from("gl_entry_lines").select("entry_id,debit,credit").then(r=>r.data||[]),
+      sb.from("customers").select("name").then(r=>r.data||[]),
+      sb.from("suppliers").select("name").then(r=>r.data||[])
+    ]);
+    const checks = [];
+    // 1. بوالص بدون أمر بيع
+    const orderIds = new Set(orders.map(o=>String(o.id)));
+    const orderNos = new Set(orders.map(o=>String(o.order_no||"").trim()).filter(Boolean));
+    const orphShips = ships.filter(s=>{
+      const noId = !s.sale_order_id||!orderIds.has(String(s.sale_order_id));
+      const noNo = !s.sale_order_no||!orderNos.has(String(s.sale_order_no).trim());
+      return noId && noNo;
+    });
+    checks.push({k:"orphShips",title:"بوالص بدون أمر بيع مرتبط",count:orphShips.length,
+      items:orphShips.slice(0,30).map(s=>`بوليصة ${s.policy_no||s.id} — ${s.customer||"—"} — ${s.date||""}`),
+      hint:"ربط البوليصة بأمر بيع من شاشة البوالص"});
+    // 2. بنود بدون شحنة أب
+    const shipIds = new Set(ships.map(s=>String(s.id)));
+    const orphShipItems = shipItems.filter(it=>!shipIds.has(String(it.shipment_id)));
+    checks.push({k:"orphShipItems",title:"بنود بوالص معلّقة (البوليصة الأب مش موجودة)",count:orphShipItems.length,
+      items:orphShipItems.slice(0,30).map(it=>`بند ${it.id} → shipment_id=${it.shipment_id}`),
+      hint:"ممكن حذف البنود دي بأمان من SQL"});
+    // 3. بنود أوامر بيع معلّقة
+    const orphSoItems = soItems.filter(it=>!orderIds.has(String(it.sale_order_id)));
+    checks.push({k:"orphSoItems",title:"بنود أوامر بيع معلّقة (الأمر الأب مش موجود)",count:orphSoItems.length,
+      items:orphSoItems.slice(0,30).map(it=>`بند ${it.id} → sale_order_id=${it.sale_order_id}`),
+      hint:"ممكن حذف البنود دي بأمان من SQL"});
+    // 4. أوامر بيع بدون بنود
+    const soItemsByOrder = new Map();
+    soItems.forEach(it=>{ const k=String(it.sale_order_id); soItemsByOrder.set(k,(soItemsByOrder.get(k)||0)+1); });
+    const emptyOrders = orders.filter(o=>!(soItemsByOrder.get(String(o.id))||0));
+    checks.push({k:"emptyOrders",title:"أوامر بيع بدون أي بنود",count:emptyOrders.length,
+      items:emptyOrders.slice(0,30).map(o=>`أمر ${o.order_no||o.id} — ${o.customer||"—"}`),
+      hint:"أضف بنود أو احذف الأمر"});
+    // 5. قيود GL غير متوازنة (مدين ≠ دائن)
+    const linesByEntry = new Map();
+    glLines.forEach(l=>{
+      const k=String(l.entry_id); const g=linesByEntry.get(k)||{d:0,c:0}; g.d+=(+l.debit||0); g.c+=(+l.credit||0); linesByEntry.set(k,g);
+    });
+    const unbalanced = glEntries.filter(e=>{
+      const g=linesByEntry.get(String(e.id)); if(!g) return false;
+      return Math.abs(g.d-g.c) > 0.01;
+    });
+    checks.push({k:"unbalGl",title:"قيود GL غير متوازنة (مدين ≠ دائن)",count:unbalanced.length,
+      items:unbalanced.slice(0,30).map(e=>{ const g=linesByEntry.get(String(e.id)); return `قيد ${e.entry_no||e.id} — مدين ${g.d.toFixed(2)} ≠ دائن ${g.c.toFixed(2)} (فرق ${(g.d-g.c).toFixed(2)})`; }),
+      hint:"افتح القيد من شاشة اليومية وصحّح السطور"});
+    // 6. قيود GL بدون سطور
+    const entriesWithLines = new Set(glLines.map(l=>String(l.entry_id)));
+    const emptyGl = glEntries.filter(e=>!entriesWithLines.has(String(e.id)));
+    checks.push({k:"emptyGl",title:"قيود GL بدون أي سطور",count:emptyGl.length,
+      items:emptyGl.slice(0,30).map(e=>`قيد ${e.entry_no||e.id} (${e.status||""})`),
+      hint:"احذف القيود الفاضية من شاشة اليومية"});
+    // 7. عملاء بأسماء مكررة
+    const dupCust = {}, dupSup = {};
+    custs.forEach(c=>{ const k=String(c.name||"").trim(); if(k) dupCust[k]=(dupCust[k]||0)+1; });
+    sups.forEach(c=>{ const k=String(c.name||"").trim(); if(k) dupSup[k]=(dupSup[k]||0)+1; });
+    const dupCustList = Object.entries(dupCust).filter(([k,v])=>v>1);
+    const dupSupList = Object.entries(dupSup).filter(([k,v])=>v>1);
+    checks.push({k:"dupCust",title:"عملاء بنفس الاسم",count:dupCustList.length,
+      items:dupCustList.slice(0,30).map(([n,c])=>`${n} (${c} مرات)`),
+      hint:"دمج العملاء المكررين من شاشة البيانات الأساسية"});
+    checks.push({k:"dupSup",title:"موردين بنفس الاسم",count:dupSupList.length,
+      items:dupSupList.slice(0,30).map(([n,c])=>`${n} (${c} مرات)`),
+      hint:"دمج الموردين المكررين من شاشة البيانات الأساسية"});
+    // 8. تحصيلات بدون عميل
+    const noPartyTx = treasury.filter(t=>!t.customer && !t.supplier && !(t.data&&(t.data.customer||t.data.supplier)));
+    checks.push({k:"noPartyTx",title:"قيود خزنة بدون طرف محدد",count:noPartyTx.length,
+      items:noPartyTx.slice(0,30).map(t=>`${t.direction==="in"?"تحصيل":"دفعة"} ${t.id} — ${t.entry_date||""} — ${t.amount||0}`),
+      hint:"اربط القيد بعميل أو مورد"});
+    // 9. تحصيلات بمبلغ صفري
+    const zeroTx = treasury.filter(t=>!(+t.amount>0));
+    checks.push({k:"zeroTx",title:"قيود خزنة بمبلغ صفري أو سالب",count:zeroTx.length,
+      items:zeroTx.slice(0,30).map(t=>`${t.id} — المبلغ ${t.amount||0}`),
+      hint:"راجع وصحّح أو احذف القيد"});
+    // اعرض النتائج
+    renderDataHealthResults(checks);
+  }catch(e){
+    el.innerHTML = `<div class="empty" style="padding:40px;text-align:center;color:#dc2626"><div style="font-size:32px;margin-bottom:8px">❌</div>فشل الفحص: ${escapeHtml(e.message||e)}</div>`;
+  }
+}
+function renderDataHealthResults(checks){
+  const el = document.getElementById("dhResults"); if(!el) return;
+  const totalIssues = checks.reduce((a,c)=>a+c.count,0);
+  const okCount = checks.filter(c=>!c.count).length;
+  const issueCount = checks.filter(c=>c.count).length;
+  const summary = `<div class="dh-sum">
+    <div class="dh-stat ${totalIssues?'warn':'ok'}"><b>${totalIssues.toLocaleString("ar-EG")}</b><small>إجمالي المشاكل</small></div>
+    <div class="dh-stat ok"><b>${okCount}</b><small>فحوصات سليمة</small></div>
+    <div class="dh-stat ${issueCount?'warn':'ok'}"><b>${issueCount}</b><small>فحوصات تحتاج مراجعة</small></div>
+    <div class="dh-stat"><b>${checks.length}</b><small>إجمالي الفحوصات</small></div>
+  </div>`;
+  const cards = checks.map(c=>{
+    const cls = !c.count?"ok":(c.count>10?"err":"warn");
+    const ic = !c.count?"✅":(c.count>10?"❌":"⚠");
+    const items = c.items.length?`<details><summary>عرض التفاصيل (${c.items.length} سجل${c.count>c.items.length?" من "+c.count:""})</summary><ul>${c.items.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></details>`:"";
+    const hint = c.hint?`<div style="font-size:12px;color:#6b7280;margin-top:6px"><b>الحل:</b> ${escapeHtml(c.hint)}</div>`:"";
+    return `<div class="dh-card ${cls}">
+      <div class="dh-head"><span class="ic">${ic}</span><h4>${escapeHtml(c.title)}</h4><span class="count ${cls}">${c.count}</span></div>
+      ${c.count||c.hint?`<div class="dh-body">${items}${hint}</div>`:""}
+    </div>`;
+  }).join("");
+  el.innerHTML = summary + cards;
+}
+// ========================= 🗑 سلة المحذوفات =========================
+const TRASH_TABLES = [
+  { k:"treasury_entries", label:"🧾 الخزنة (تحصيلات/مدفوعات/قيود)", nameOf:r=>`${r.direction==="in"?"تحصيل":r.direction==="out"?"دفعة":"قيد"} — ${(r.data&&r.data.customer)||(r.data&&r.data.supplier)||"—"} — ${r.amount||(r.data&&r.data.amount)||0}` },
+  { k:"shipments",        label:"📄 البوالص",             nameOf:r=>`بوليصة ${r.policy_no||""} — ${r.customer||"—"} — ${r.date||""}` },
+  { k:"sale_orders",      label:"📋 أوامر البيع",         nameOf:r=>`أمر ${r.order_no||""} — ${r.customer||"—"} — ${r.date||""}` },
+  { k:"sale_quotes",      label:"💬 عروض السعر",          nameOf:r=>`عرض ${r.quote_no||""} — ${(r.data&&r.data.customer)||"—"}` },
+  { k:"gl_entries",       label:"📒 القيود اليومية",       nameOf:r=>`قيد ${r.entry_no||""} — ${r.description||""} — ${r.entry_date||""}` }
+];
+let trashState = { tab:"treasury_entries", loading:false, data:{}, counts:{}, q:"" };
+function viewTrash(){
+  if(!isAdmin()) return noAccessHtml();
+  const tabs = TRASH_TABLES.map(t=>{
+    const c = trashState.counts[t.k];
+    const badge = c>0?`<span class="tr-badge">${c}</span>`:'';
+    return `<button class="${trashState.tab===t.k?'active':''}" onclick="trashSwitch('${t.k}')">${t.label}${badge}</button>`;
+  }).join("");
+  return `<div class="trash-page" style="padding:0 2px">
+    <div class="card" style="margin-bottom:12px">
+      <div class="body" style="padding:14px 16px">
+        <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">
+          <div style="font-size:30px;line-height:1">🗑</div>
+          <div style="flex:1;min-width:220px">
+            <h3 style="margin:0 0 4px;color:#92400e">سلة المحذوفات</h3>
+            <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.7">أي حاجة اتحذفت من التطبيق بتستناها هنا. تقدر ترجّعها لحالتها الأصلية، أو تسيبها للحذف النهائي في أي وقت.<br><b style="color:#dc2626">⚠ الاسترجاع بيرجّع الصف للـGL وللتقارير فوراً.</b></p>
+          </div>
+          <button class="btn ghost" onclick="trashRefresh()" style="height:36px">↻ تحديث</button>
+        </div>
+      </div>
+    </div>
+    <div class="tabs" style="margin:0 0 12px;flex-wrap:wrap">${tabs}</div>
+    <div class="card"><div class="body" id="trashBody" style="padding:0"><div class="empty" style="padding:40px;text-align:center">جاري التحميل…</div></div></div>
+    <style>
+      .trash-page .tabs button{position:relative}
+      .trash-page .tr-badge{display:inline-block;margin-right:6px;background:#dc2626;color:#fff;border-radius:99px;padding:0 7px;font-size:11px;line-height:18px;font-weight:800;min-width:18px;text-align:center}
+      .trash-page .tr-row{border-bottom:1px solid #f0e2b2}
+      .trash-page .tr-row:hover{background:#fef9ef}
+      .trash-page .tr-meta{font-size:12px;color:#8b7345}
+      .trash-page .tr-reason{color:#92400e;font-weight:600}
+      .trash-page .tr-actions{display:flex;gap:6px;justify-content:flex-end}
+      .trash-page .tr-btn{height:30px;padding:0 10px;font-size:12px;font-weight:700;border-radius:7px;cursor:pointer;border:1px solid #d4a017;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e}
+      .trash-page .tr-btn:hover{background:linear-gradient(135deg,#fde68a,#fcd34d)}
+      .trash-page .tr-empty{padding:50px 20px;text-align:center;color:#8b7345}
+      .trash-page .tr-empty .big{font-size:48px;margin-bottom:8px}
+    </style>
+  </div>`;
+}
+function trashSwitch(tab){ trashState.tab=tab; renderTrash(); }
+async function trashRefresh(){ trashState.data={}; trashState.counts={}; renderTrash(); }
+async function renderTrash(){
+  if(currentPage!=="trash") return;
+  // عدّ المحذوف لو ما اتحسبش
+  if(!Object.keys(trashState.counts).length){
+    try{
+      const r = await sb.rpc("count_deleted_records");
+      if(!r.error && r.data) trashState.counts = r.data;
+      // أعد رسم التابات بالعدادات
+      const body = document.querySelector(".trash-page"); if(body){ body.outerHTML = viewTrash(); }
+    }catch(e){ console.warn("count_deleted_records:",e); }
+  }
+  const el = document.getElementById("trashBody"); if(!el) return;
+  const tab = trashState.tab, meta = TRASH_TABLES.find(t=>t.k===tab);
+  if(!meta){ el.innerHTML='<div class="tr-empty">جدول غير معروف</div>'; return; }
+  // حمّل البيانات لو مش موجودة
+  if(!trashState.data[tab]){
+    el.innerHTML = '<div class="tr-empty"><div style="font-size:24px">⏳</div><div>جاري تحميل المحذوف…</div></div>';
+    try{
+      const r = await sb.rpc("list_deleted_records", {p_table: tab});
+      if(r.error){
+        el.innerHTML = `<div class="tr-empty"><div class="big">❌</div><div>تعذّر تحميل المحذوف</div><small style="color:#dc2626">${escapeHtml(r.error.message||String(r.error))}</small><br><small>شغّل irongate_trash_list.sql على Supabase</small></div>`;
+        return;
+      }
+      trashState.data[tab] = Array.isArray(r.data)?r.data:[];
+    }catch(e){
+      el.innerHTML = `<div class="tr-empty"><div class="big">❌</div><div>تعذّر الاتصال: ${escapeHtml(e.message||e)}</div></div>`;
+      return;
+    }
+  }
+  const rows = trashState.data[tab]||[];
+  if(!rows.length){
+    el.innerHTML = `<div class="tr-empty"><div class="big">✨</div><div>السلة فاضية</div><small>مفيش محذوف في ${meta.label}</small></div>`;
+    return;
+  }
+  const fmtDate = s => { if(!s) return "—"; try{ const d=new Date(s); return d.toLocaleString("ar-EG",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}); }catch(e){ return s; } };
+  const html = `<div class="tbl-wrap"><table style="width:100%"><thead><tr>
+    <th>الوصف</th><th>وقت الحذف</th><th>بواسطة</th><th>السبب</th><th style="text-align:left">إجراء</th>
+  </tr></thead><tbody>${rows.map(r=>{
+    const name = escapeHtml(meta.nameOf(r)||r.id);
+    return `<tr class="tr-row">
+      <td><b>${name}</b><div class="tr-meta">ID: <code style="font-size:11px">${escapeHtml(String(r.id))}</code></div></td>
+      <td>${fmtDate(r.deleted_at)}</td>
+      <td>${escapeHtml(r.deleted_by||"—")}</td>
+      <td class="tr-reason">${escapeHtml(r.deleted_reason||"—")}</td>
+      <td class="tr-actions"><button class="tr-btn" onclick="trashRestore('${tab}','${String(r.id).replace(/'/g,"\\'")}')">↻ استرجاع</button></td>
+    </tr>`;
+  }).join("")}</tbody></table></div>`;
+  el.innerHTML = html;
+}
+async function trashRestore(table, id){
+  const ok = await askConfirm("هل تريد استرجاع هذا السجل؟ هيرجع يظهر في كل الشاشات والتقارير فوراً.");
+  if(!ok) return;
+  try{
+    const r = await sb.rpc("restore_record", {p_table: table, p_id: id});
+    if(r.error) throw r.error;
+    toast("✓ تم الاسترجاع","ok");
+    // امسح الكاش علشان يتحمل تاني
+    trashState.data[table] = null;
+    trashState.counts = {};
+    renderTrash();
+    // حدّث البيانات في التطبيق
+    try{ syncPull && syncPull(); }catch(_){}
+  }catch(e){
+    toast("تعذّر الاسترجاع: "+(e.message||e),"err");
+  }
 }
 function viewUsers(){
   if(!isAdmin()) return noAccessHtml();
