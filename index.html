@@ -2165,7 +2165,7 @@ table.qs-lp th,table.qs-lp td{font-size:12px!important;padding:6px 7px!important
       <div class="foot">IRON GATE SUPPLIES © 2026</div>
     </div>
   </div>
-  <div class="lgf-col" id="loginFabsLeft">
+  <div class="lgf-col" id="loginFabsLeft" style="display:none">
     <button type="button" class="lgf-toggle" id="lgfToggle" aria-label="قايمة الإشعارات" aria-expanded="false" aria-controls="lgfStack" onclick="lgfToggle()"><span class="lgf-burger"><i></i><i></i><i></i></span></button>
     <div class="lgf-stack" id="lgfStack">
       <button type="button" id="loginChecksBtn" class="lgf-btn" data-label="الشيكات المستحقة" aria-label="الشيكات المستحقة" title="الشيكات المستحقة">🧾
@@ -3232,6 +3232,23 @@ function permsGrant(p, scr, acts){
 // بنود قائمة "+ جديد" في الشريط العلوي (كل بند يحتاج صلاحية "إضافة" في شاشته + السماح له من نموذج المستخدم)
 const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","go('receipts');txNew('in')"],["↑","دفعة","payments","go('payments');txNew('out')"]];
 const quickOn=(p,id)=>!p||!p.quick||typeof p.quick!=="object"||p.quick[id]!==false;
+// ---------- صلاحيات الإشعارات الخارجية (أيقونات شمال شاشة الدخول) ----------
+// كل أيقونة مرتبطة بشاشة (أو أكثر): لو الأدمن ما حددش صلاحية الأيقونة للمستخدم، بتتبع صلاحية مشاهدة الشاشة المرتبطة.
+const EXT_NOTIFS=[
+  {id:"loginChecksBtn",label:"الشيكات المستحقة",icon:"🧾",scr:["receipts"]},
+  {id:"loginChecksAgainstUsBtn",label:"شيكات علينا",icon:"📝",scr:["payments"]},
+  {id:"loginPartiesBtn",label:"أرصدة العملاء والموردين",icon:"🤝",scr:["clientTB","supplierTB"]},
+  {id:"loginOverdueBtn",label:"اجمالي المتأخرات",icon:"📉",scr:["salesInstallments"]},
+  {id:"loginInstallmentsBtn",label:"الأقساط",icon:"💳",scr:["salesInstallments"]},
+  {id:"loginLastPricesBtn",label:"اخر سعر شراء وبيع",icon:"🏷️",scr:["saleOrder"]},
+  {id:"loginCustodyBtn",label:"العهد",icon:"💼",scr:["custodyLedger"]}
+];
+function notifAllowed(p,id,role){
+  if(role==="admin") return true;
+  if(p&&p.notif&&typeof p.notif==="object"&&Object.prototype.hasOwnProperty.call(p.notif,id)) return p.notif[id]===true;
+  const d=EXT_NOTIFS.find(x=>x.id===id); if(!d) return false;
+  return d.scr.some(sc=>p&&p.screens&&p.screens[sc]&&p.screens[sc].view===true);
+}
 const ROLE_PRESETS = {
   admin:{ label:"أدمن", desc:"كل الصلاحيات + إدارة المستخدمين — مفيش أي قيود", build:()=>permsBlank(true) },
   manager:{ label:"مدير", desc:"كل الشاشات والأسعار والنسخ الاحتياطي، بدون إدارة المستخدمين", build:()=>permsBlank(true) },
@@ -3271,6 +3288,7 @@ function normalizePerms(p){
   });
   p.sys.backup = p.sys.backup===true;
   if(p.quick&&typeof p.quick==="object"){ const q={}; QUICK_NEW_ITEMS.forEach(x=>{ q[x[2]]=p.quick[x[2]]!==false; }); p.quick=q; } else delete p.quick;
+  if(p.notif&&typeof p.notif==="object"){ const n={}; EXT_NOTIFS.forEach(x=>{ n[x.id]=p.notif[x.id]===true; }); p.notif=n; } else delete p.notif;
   return p;
 }
 
@@ -3411,6 +3429,7 @@ function lockSet(o){ try{ localStorage.setItem(LOCK_KEY,JSON.stringify(o)); }cat
 function loginErr(msg){ const e=document.getElementById("loginErr"); if(e) e.textContent=msg||""; }
 function enterApp(u, restored){
   currentUser = { no:u.no, name:u.name };
+  try{ extNotifCacheSave(u.no,null); }catch(e){}
   lastActivity = Date.now();
   document.getElementById("login").style.display="none";
   document.getElementById("app").style.display="block";
@@ -3459,6 +3478,7 @@ function restoreSavedLogin(){
     const sv=JSON.parse(localStorage.getItem(SAVED_KEY)||"null");
     if(sv){ if(noInp&&sv.no) noInp.value=sv.no; if(passInp&&cb&&cb.checked&&sv.p) passInp.value=decPw(sv.p); }
   }catch(e){}
+  try{ extNotifSync(); }catch(e){}
 }
 async function doLogin(){
   if(loginBusy) return;
@@ -3492,7 +3512,7 @@ async function doLogin(){
         }
       }catch(mfaErr){ console.warn("MFA check failed",mfaErr); /* نكمل بدون MFA لو Supabase Auth MFA مش مُفعّل */ }
       const ok = await startSession(r.data.user,false);
-      if(ok){ delete locks[no]; lockSet(locks); saveLogin(no,pass); document.getElementById("loginPass").value=""; }
+      if(ok){ delete locks[no]; lockSet(locks); saveLogin(no,pass); try{ extNotifCacheSave(no,pass); }catch(e){} document.getElementById("loginPass").value=""; }
       return;
     }
     lk.n=(lk.n||0)+1;
@@ -3569,6 +3589,46 @@ function lgfToggle(force){
   st.classList.toggle("is-open",open); tg.classList.toggle("is-open",open); tg.setAttribute("aria-expanded",open?"true":"false");
 }
 document.addEventListener("click",e=>{ if(!e.target.closest("#loginFabsLeft")) lgfToggle(false); });
+
+// ---------- صلاحيات الإشعارات الخارجية لكل مستخدم ----------
+// الأيقونات بتظهر بس لما رقم المستخدم + كلمة المرور المكتوبين يطابقوا حساب سبق الدخول بيه على الجهاز ده،
+// وكل مستخدم يشوف الأيقونات المسموحة له بس (الأدمن يشوف الكل). أي حاجة تانية: الأيقونات مخفية تمامًا.
+const EXT_NOTIF_KEY="irongate_ext_notif";
+function extNotifCacheGet(){ try{ return JSON.parse(localStorage.getItem(EXT_NOTIF_KEY)||"{}")||{}; }catch(e){ return {}; } }
+function extNotifCacheSave(no,pass){
+  const u=(state.users||[]).find(x=>x.no===no); if(!u) return;
+  const c=extNotifCacheGet(), old=c[no]||{};
+  const e={ name:u.name, role:u.role, ids:EXT_NOTIFS.filter(x=>notifAllowed(u.perms,x.id,u.role)).map(x=>x.id) };
+  if(pass){ e.salt=randSalt(); e.ph=hashPw(pass,e.salt); } else if(old.salt&&old.ph){ e.salt=old.salt; e.ph=old.ph; }
+  c[no]=e; try{ localStorage.setItem(EXT_NOTIF_KEY,JSON.stringify(c)); }catch(err){}
+}
+let _extMemo={k:"",v:null};
+function extNotifIdentify(){
+  const noEl=document.getElementById("loginUserNo"), pEl=document.getElementById("loginPass"); if(!noEl||!pEl) return null;
+  const no=parseInt(noEl.value,10), pass=pEl.value||"";
+  if(!no||no<=0||!pass) return null;
+  const k=no+"\u0001"+pass; if(_extMemo.k===k) return _extMemo.v;
+  const e=extNotifCacheGet()[no]; let v=null;
+  if(e&&e.salt&&e.ph){ try{ if(hashPw(pass,e.salt)===e.ph) v={no,role:e.role,ids:e.ids||[]}; }catch(err){} }
+  _extMemo={k,v}; return v;
+}
+function extNotifSync(){
+  const col=document.getElementById("loginFabsLeft"); if(!col) return;
+  const lg=document.getElementById("login"); if(lg&&lg.style.display==="none") return;
+  const who=extNotifIdentify();
+  const allowed=who?(who.role==="admin"?EXT_NOTIFS.map(x=>x.id):who.ids):[];
+  let any=false;
+  EXT_NOTIFS.forEach(x=>{ const el=document.getElementById(x.id); if(!el) return; const on=allowed.includes(x.id); el.style.display=on?"":"none"; if(on) any=true; });
+  window._extNotifAllowed=allowed;
+  const next=any?"":"none";
+  if(col.style.display!==next){ col.style.display=next; if(!any) lgfToggle(false); }
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest&&e.target.closest(EXT_NOTIFS.map(x=>"#"+x.id).join(","));
+  if(b&&!(window._extNotifAllowed||[]).includes(b.id)){ e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); }
+},true);
+["loginUserNo","loginPass"].forEach(id=>{ const el=document.getElementById(id); if(el) ["input","change","keyup","blur"].forEach(ev=>el.addEventListener(ev,()=>{ try{ extNotifSync(); }catch(e){} })); });
+setInterval(()=>{ try{ extNotifSync(); }catch(e){} },600); // الملء التلقائي من المتصفح ساعات ما بيطلعش event
 
 // ---------- nav ----------
 // مجموعات القائمة الجانبية — كل مجموعة ليها أيقونة بتفتح/تقفل
@@ -15091,7 +15151,8 @@ function permMatrixHtml(p){
     return tr;
   }).join("");
   const quick=`<div class="pm-quick" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">➕ بنود زر "+ جديد" في الشريط العلوي</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${QUICK_NEW_ITEMS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pq_${x[2]}" ${quickOn(p,x[2])?"checked":""}> ${x[0]} ${escapeHtml(x[1])}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">البند بيظهر للمستخدم لو متعلّم هنا <b>و</b> عنده صلاحية "إضافة" في شاشته. لو شلت التعليم من الكل، الزر بيختفي.</div></div>`;
-  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}`;
+  const notifBox=`<div class="pm-quick pm-notif" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🔔 الإشعارات الخارجية (أيقونات شمال شاشة الدخول)</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${EXT_NOTIFS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pn_${x.id}" ${notifAllowed(p,x.id,"custom")?"checked":""}> ${x.icon} ${escapeHtml(x.label)}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">الأيقونات المعلَّمة بس هي اللي بتظهر للمستخدم لما يكتب رقمه وكلمة مروره في شاشة الدخول. الأيقونة اللي ما اتحددتش ليه بتتبع صلاحية مشاهدة شاشتها. الأدمن بيشوف الكل.</div></div>`;
+  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}${notifBox}`;
 }
 function pmChange(scr,act){
   if(act!=="view") return;
@@ -15111,6 +15172,7 @@ function readPermForm(){
   });
   p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
   if(document.getElementById("pq_"+QUICK_NEW_ITEMS[0][2])){ p.quick={}; QUICK_NEW_ITEMS.forEach(x=>{ p.quick[x[2]]=!!document.getElementById("pq_"+x[2])?.checked; }); }
+  if(document.getElementById("pn_"+EXT_NOTIFS[0].id)){ p.notif={}; EXT_NOTIFS.forEach(x=>{ p.notif[x.id]=!!document.getElementById("pn_"+x.id)?.checked; }); }
   return p;
 }
 function pmRender(p){
@@ -15140,6 +15202,7 @@ function pmBulk(kind){
     }
   });
   if(kind==="all") p.sys.backup=true; if(kind==="none") p.sys.backup=false;
+  if(kind==="all"||kind==="none"){ p.notif={}; EXT_NOTIFS.forEach(x=>{ p.notif[x.id]=kind==="all"; }); }
   pmRender(p); document.getElementById("uf_role").value="custom"; document.getElementById("uf_roleDesc").textContent=ROLE_PRESETS.custom.desc;
 }
 function openUserForm(no){
@@ -15183,6 +15246,7 @@ function permDiff(a,b){
   });
   if(!!a.sys.backup!==!!b.sys.backup) out.push("النسخ الاحتياطي: "+(b.sys.backup?"+سماح":"−منع"));
   { const ch=QUICK_NEW_ITEMS.filter(x=>quickOn(a,x[2])!==quickOn(b,x[2])).map(x=>(quickOn(b,x[2])?"+":"−")+x[1]); if(ch.length) out.push("بنود + جديد: "+ch.join("، ")); }
+  { const ch=EXT_NOTIFS.filter(x=>notifAllowed(a,x.id,"custom")!==notifAllowed(b,x.id,"custom")).map(x=>(notifAllowed(b,x.id,"custom")?"+":"−")+x.label); if(ch.length) out.push("الإشعارات الخارجية: "+ch.join("، ")); }
   return out;
 }
 function saveUserForm(){
@@ -15213,7 +15277,7 @@ function saveUserForm(){
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, name, role, perms } });
       if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+(await fnErrMsg(r)),"err"); return; }
-      u.name=name; u.role=role; u.perms=perms; saveState();
+      u.name=name; u.role=role; u.perms=perms; saveState(); try{ if(currentUser&&u.no===currentUser.no) extNotifCacheSave(u.no,null); }catch(e){}
       const d=permDiff(before,perms);
       audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
       toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser();
