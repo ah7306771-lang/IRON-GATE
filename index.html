@@ -6288,11 +6288,13 @@ function renderTradeReport(){
   const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" onclick="tradeReportOpenRow('${kind}',${i})"><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.weight?r.buy/r.weight:0)}</td><td class="num"><b>${money(r.buy)}</b></td></tr>`).join('');
   el.innerHTML=trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>تفاصيل المشتريات</h3><span class="count">نتائج الفلتر: ${rows.length} صنف</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة</div></td></tr>`}</tbody></table></div></div></div>`;
 }
-function openReportPreview(html,title){
+function openReportPreview(html,title,fileBase){
   const w=window.open('','_blank');
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
   const toolbar=`<div class="report-preview-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:10px;padding:12px 18px;background:#172337;color:#fff;font:14px Tahoma,Arial,sans-serif;box-shadow:0 2px 10px #0002"><strong style="flex:1">${title||'معاينة التقرير'}</strong><button onclick="shareReportPreview()" style="border:0;border-radius:8px;padding:9px 14px;background:#fff;color:#172337;font-weight:bold;cursor:pointer">↗ مشاركة</button><button onclick="window.print()" style="border:0;border-radius:8px;padding:9px 16px;background:#d9ad3b;color:#172337;font-weight:bold;cursor:pointer">🖨 طباعة</button><button onclick="window.close()" style="border:1px solid #ffffff66;border-radius:8px;padding:9px 14px;background:transparent;color:#fff;cursor:pointer">إغلاق</button></div>`;
+  const safePdfBase=(fileBase&&String(fileBase).replace(/[^0-9A-Za-z_-]/g,''))||igSafeFileName(String(title||'Report').replace(/<[^>]*>/g,'').trim(),'').replace(/\s+/g,'_');
   const shareScript=`<script>
+  const SAFE_PDF_BASE=${JSON.stringify(safePdfBase)};
   async function shareReportPreview(){
     const title=document.title||'تقرير IRON GATE SUPPLIES';
     const btn=document.querySelector('.report-preview-toolbar button');
@@ -6316,7 +6318,7 @@ function openReportPreview(html,title){
           if(page++)pdf.addPage();pdf.addImage(img,'JPEG',margin,margin,usableW,drawH,undefined,'FAST');y+=h;
         }
       }
-      const blob=pdf.output('blob'),file=new File([blob],((title.replace(/[\\/:*?"<>|]/g,'_').trim()||'تقرير')+' - '+new Date().toISOString().slice(0,10))+'.pdf',{type:'application/pdf'});
+      const blob=pdf.output('blob'),file=new File([blob],SAFE_PDF_BASE+'_'+new Date().toISOString().slice(0,10)+'.pdf',{type:'application/pdf'});
       if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title,text:title});}
       else {pdf.save(file.name);alert('المشاركة المباشرة غير مدعومة في هذا المتصفح؛ تم تنزيل التقرير PDF بنفس تنسيق الطباعة لتتمكن من إرساله.');}
     }catch(e){if(e&&e.name!=='AbortError')alert('تعذّر تجهيز ملف المشاركة: '+(e.message||e));}
@@ -13351,8 +13353,17 @@ async function chequeBuildPdf(){
   finally{host.remove();}
 }
 // تحويل أسماء الملفات العربية لصيغة ASCII آمنة عشان المشاركة والتحميل ما يبوظش الاسم
+function igArToLatin(str){
+  const m={"ا":"a","أ":"a","إ":"i","آ":"a","ٱ":"a","ب":"b","ت":"t","ث":"th","ج":"j","ح":"h","خ":"kh","د":"d","ذ":"z","ر":"r","ز":"z","س":"s","ش":"sh","ص":"s","ض":"d","ط":"t","ظ":"z","ع":"a","غ":"gh","ف":"f","ق":"q","ك":"k","ل":"l","م":"m","ن":"n","ه":"h","ة":"a","و":"w","ؤ":"w","ي":"y","ى":"a","ئ":"y","ء":"","گ":"g","پ":"p","چ":"ch","ڤ":"v"};
+  return String(str||"").replace(/[\u064B-\u065F\u0670\u0640]/g,"")
+    .split(/\s+/).filter(Boolean)
+    .map(w=>{ const t=[...w].map(ch=>m[ch]!==undefined?m[ch]:ch).join("").replace(/[^0-9A-Za-z]/g,""); return t?t.charAt(0).toUpperCase()+t.slice(1):""; })
+    .filter(Boolean).join("_");
+}
 function igSafeFileName(nameAr, ext){
   const map = {
+    "سجل الأقساط والمستحقات":"Installments_Ledger",
+    "سجل_الأقساط_والمستحقات":"Installments_Ledger",
     "أوراق_القبض_وشيكات_تحت_التحصيل":"Cheques_Register",
     "أوراق القبض وشيكات تحت التحصيل":"Cheques Register",
     "سجل_الأقساط":"Installments_Register",
@@ -14613,12 +14624,13 @@ function salesInstallmentsExport(format){
   const custList=[...byCust.entries()].sort((a,b)=>a[0].localeCompare(b[0],"ar"));
   const docsHtml=custList.length>1
     ? custList.map(([c,rs],i)=>`<div data-share-page="1" style="${i<custList.length-1?"page-break-after:always;break-after:page;":""}">${docFor(rs,c)}</div>`).join("")
-    : docFor(allRows,"");
+    : docFor(allRows,custList.length===1?custList[0][0]:"");
   const html=head+docsHtml+"</body></html>";
+  const shareBase="IronGate_Installments_Ledger"+(custList.length===1?"_"+igArToLatin(custList[0][0]):custList.length>1?"_All_Customers":"");
 
   if(format==="excel"){
     igSaveXlsx(html,igSafeFileName("سجل_الأقساط_"+new Date().toISOString().slice(0,10)));toast("✓ تم تجهيز ملف Excel احترافي","ok");
-  }else openReportPreview(html,title);
+  }else openReportPreview(html,title,shareBase);
 }
 
 (function(){
