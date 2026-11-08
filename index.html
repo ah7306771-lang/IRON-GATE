@@ -14510,7 +14510,7 @@ function salesInstallmentsExport(format){
                         :s==="مستحق اليوم"?{bg:"#fef08a",fg:"#854d0e",rowBg:"#fefce8"}
                         :s==="قادم"?{bg:"#dbeafe",fg:"#1e40af",rowBg:"#eff6ff"}
                         :{bg:"#e5e7eb",fg:"#374151",rowBg:"#fff"};
-  const docFor=(rows,cust)=>{
+  const docFor=(rows,cust,pg)=>{
   const total=k=>rows.reduce((a,r)=>a+(+r[k]||0),0);
   const cols=siColumns(rows).filter(c=>c.pay===undefined&&c.k!=="diff");
   const body=rows.map((r,ri)=>{
@@ -14528,43 +14528,52 @@ function salesInstallmentsExport(format){
     }).join("")}</tr>`;
   }).join("");
   const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left;font-size:13px">💰 الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  // بطاقات المؤشرات — شبكة متساوية
+  // بطاقات المؤشرات — صف واحد
   const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
-  const kpiCard = (lbl,val,sub,accent)=>`<div class="kc" style="border-top-color:${accent}">
+  const todayD=new Date(); todayD.setHours(0,0,0,0);
+  const daysLeft=r=>{ if(!r.due) return null; const d=new Date(r.due+"T00:00:00"); return Number.isNaN(d.getTime())?null:Math.round((d-todayD)/86400000); };
+  const openRows=rows.filter(r=>r.remaining>0.004);
+  const tmrRows=openRows.filter(r=>daysLeft(r)===1), aftRows=openRows.filter(r=>daysLeft(r)===2);
+  const twoAmt=[...tmrRows,...aftRows].reduce((a,r)=>a+r.remaining,0);
+  const kpiCard = (lbl,val,sub,accent,cls)=>`<div class="kc ${cls||""}" style="border-top-color:${accent}">
     <div class="kl">${lbl}</div>
     <div class="kv">${val}</div>
     <div class="ks">${sub||"&nbsp;"}</div>
   </div>`;
   const kpis = `<div class="kgrid">
-    ${kpiCard("عدد الأقساط",rows.length,"قسط","#64748b")}
+    ${kpiCard("عدد الأقساط",rows.length,"قسط","#64748b","sm")}
     ${kpiCard("إجمالي الأقساط",n(total("amount")),escapeHtml(cur),"#1e40af")}
     ${kpiCard("المسدد",n(total("paid")),paidRows.length+" قسط مسدد","#16a34a")}
     ${kpiCard("المتبقي",n(total("remaining")),escapeHtml(cur),"#d97706")}
     ${kpiCard("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#dc2626")}
-    ${kpiCard("قريب الاستحقاق (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308")}
+    ${kpiCard("⏰ خلال يومين",n(twoAmt),"غداً "+tmrRows.length+" · بعده "+aftRows.length,"#7c3aed","hot")}
+    ${kpiCard("قريب (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308")}
   </div>`;
-  const filtersBar = filtersList.length ? `<div class="fbar">
+  const scopeBar = filtersList.length ? `<div class="hscope">
     <span class="fl">نطاق التقرير</span>
     ${filtersList.map(f=>`<span class="fchip">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
   const today=new Date();
   return `<div class="doc">
       <div class="hdr">
-        <div class="hl">
-          <div class="emoji">💳</div>
-          <div>
-            <h1>${title}</h1>
-            <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
+        <div class="hmain">
+          <div class="hl">
+            <div class="emoji">💳</div>
+            <div>
+              <h1>${title}</h1>
+              <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
+            </div>
+          </div>
+          <div class="hr">
+            <div class="mi"><span>تاريخ التقرير</span><b>${today.toLocaleDateString("en-GB")}</b></div>
+            <div class="mi"><span>عدد الأقساط</span><b>${rows.length}</b></div>
+            <div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div>
+            ${cust?`<div class="mi"><span>العميل</span><b>${escapeHtml(cust)}</b></div>`:""}
+            ${pg&&pg.n>1?`<div class="mi"><span>الصفحة</span><b>${pg.i} / ${pg.n}</b></div>`:""}
           </div>
         </div>
-        <div class="hr">
-          <div class="mi"><span>تاريخ التقرير</span><b>${today.toLocaleDateString("en-GB")}</b></div>
-          <div class="mi"><span>عدد الأقساط</span><b>${rows.length}</b></div>
-          <div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div>
-          ${cust?`<div class="mi"><span>العميل</span><b>${escapeHtml(cust)}</b></div>`:""}
-        </div>
+        ${scopeBar}
       </div>
-      ${filtersBar}
       ${kpis}
       <table>
         <thead><tr>${cols.map(c=>`<th>${c.h}</th>`).join("")}</tr></thead>
@@ -14578,7 +14587,8 @@ function salesInstallmentsExport(format){
     *{box-sizing:border-box}
     body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
-    .hdr{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:12px 18px;background:linear-gradient(135deg,#111 0%,#2a2a2a 100%);border-bottom:3px solid #d4a017;border-radius:8px 8px 0 0;margin:-8px -12px 10px}
+    .hdr{padding:12px 18px 10px;background:linear-gradient(135deg,#111 0%,#2a2a2a 100%);border-bottom:3px solid #d4a017;border-radius:8px 8px 0 0;margin:-8px -12px 10px}
+    .hdr .hmain{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
     .hdr .hl{display:flex;align-items:center;gap:12px}
     .hdr .emoji{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#fcd34d,#d4a017);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0;flex:none}
     .hdr h1{margin:0;font-size:19px;color:#fff;font-weight:900;line-height:1.2}
@@ -14588,14 +14598,17 @@ function salesInstallmentsExport(format){
     .hdr .mi:last-child{border-right:0;padding-left:0}
     .hdr .mi span{color:#9ca3af;font-size:9.5px;font-weight:700}
     .hdr .mi b{color:#fff;font-size:12.5px;font-weight:800;direction:ltr;font-variant-numeric:tabular-nums}
-    .fbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;padding:6px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px}
-    .fbar .fl{color:#92400e;font-size:10.5px;font-weight:900;padding-left:8px;margin-left:4px;border-left:2px solid #d4a017}
-    .fchip{background:#fff;color:#78350f;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;border:1px solid #fcd34d}
-    .kgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:0 0 10px}
-    .kc{background:#fff;border:1px solid #e5e7eb;border-top:3px solid #64748b;border-radius:8px;padding:7px 10px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    .kc .kl{color:#6b7280;font-size:10px;font-weight:800}
-    .kc .kv{color:#111;font-size:16px;font-weight:900;direction:ltr;font-variant-numeric:tabular-nums;margin:2px 0 1px;line-height:1.25}
-    .kc .ks{color:#9ca3af;font-size:9.5px;font-weight:700}
+    .hdr .hscope{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:9px;padding-top:8px;border-top:1px solid rgba(255,255,255,.16)}
+    .hdr .hscope .fl{color:#fcd34d;font-size:10.5px;font-weight:900;padding-left:8px;margin-left:2px;border-left:2px solid #d4a017}
+    .hdr .hscope .fchip{background:rgba(255,255,255,.1);color:#fff;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;border:1px solid rgba(252,211,77,.55)}
+    .kgrid{display:grid;grid-template-columns:.62fr repeat(6,1fr);gap:7px;margin:0 0 10px}
+    .kc{background:#fff;border:1px solid #e5e7eb;border-top:3px solid #64748b;border-radius:8px;padding:6px 6px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04);min-width:0}
+    .kc .kl{color:#6b7280;font-size:9.5px;font-weight:800;white-space:nowrap}
+    .kc .kv{color:#111;font-size:14.5px;font-weight:900;direction:ltr;font-variant-numeric:tabular-nums;margin:2px 0 1px;line-height:1.25;white-space:nowrap}
+    .kc .ks{color:#9ca3af;font-size:9px;font-weight:700;white-space:nowrap}
+    .kc.sm .kv{font-size:13px}
+    .kc.hot{background:#faf5ff;border-color:#e9d5ff}
+    .kc.hot .kl{color:#6d28d9}.kc.hot .ks{color:#7c3aed}
     .meta{text-align:center;color:#374151;font-size:11.5px;background:#f9fafb;padding:9px 14px;border-radius:6px;margin:10px 0;border:1px solid #e5e7eb}
     .meta b{color:#111}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
@@ -14605,13 +14618,14 @@ function salesInstallmentsExport(format){
     tbody td.n{font-variant-numeric:tabular-nums;direction:ltr}
     tbody tr:last-child td{border-bottom:0}
     tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-weight:900;padding:11px 6px;border-top:2px solid #a67c0a;font-size:12.5px;white-space:nowrap}
+    tfoot td.n{text-align:center;direction:ltr;font-variant-numeric:tabular-nums}
     .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
     @media print{
       @page{size:A4 landscape;margin:5mm}
       body{padding:0;background:#fff}
       .doc{box-shadow:none;border-radius:0;padding:4px 6px}
-      .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px}
-      .hdr h1{font-size:16px}.hdr .en{font-size:9px}.kgrid{margin-bottom:6px}.kc{padding:5px 8px}.kc .kv{font-size:14px}.fbar{margin-bottom:6px}
+      .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px 7px}
+      .hdr h1{font-size:16px}.hdr .en{font-size:9px}.hdr .hscope{margin-top:6px;padding-top:5px}.kgrid{margin-bottom:6px;gap:5px}.kc{padding:4px 5px}.kc .kv{font-size:13px}.kc.sm .kv{font-size:12px}
       tr{break-inside:avoid}
       thead{display:table-header-group}
       tfoot{display:table-footer-group}
@@ -14623,7 +14637,7 @@ function salesInstallmentsExport(format){
   const byCust=new Map(); allRows.forEach(r=>{ const k=String(r.customer||"بدون اسم"); if(!byCust.has(k)) byCust.set(k,[]); byCust.get(k).push(r); });
   const custList=[...byCust.entries()].sort((a,b)=>a[0].localeCompare(b[0],"ar"));
   const docsHtml=custList.length>1
-    ? custList.map(([c,rs],i)=>`<div data-share-page="1" style="${i<custList.length-1?"page-break-after:always;break-after:page;":""}">${docFor(rs,c)}</div>`).join("")
+    ? custList.map(([c,rs],i)=>`<div data-share-page="1" style="${i<custList.length-1?"page-break-after:always;break-after:page;":""}">${docFor(rs,c,{i:i+1,n:custList.length})}</div>`).join("")
     : docFor(allRows,custList.length===1?custList[0][0]:"");
   const html=head+docsHtml+"</body></html>";
   const shareBase="IronGate_Installments_Ledger"+(custList.length===1?"_"+igArToLatin(custList[0][0]):custList.length>1?"_All_Customers":"");
