@@ -14403,7 +14403,16 @@ function siCell(r,c){
     case "order": return r.orderNo; case "customer": return r.customer; case "date": return r.date||"—"; case "total": return m(r.total);
     case "due": return r.due||"—"; case "label": return r.label; case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":"-"; case "lateRemaining": return dash(r.lateRemaining);
-    case "status": return r.status;
+    case "status": {
+      if(r.status==="قادم" && r.due){
+        const t=new Date(); t.setHours(0,0,0,0);
+        const dd=new Date(r.due+"T00:00:00");
+        const left=Math.round((dd-t)/86400000);
+        if(left===1) return "مستحق غداً";
+        if(left===2) return "باقي يومان";
+      }
+      return r.status;
+    }
     case "diff": { const d=r.paid-r.amount; return Math.abs(d)<0.005?"0":(d<0?"("+m(-d)+")":m(d)); }
     default: { const v=(r.pays||[])[c.pay]; return v?m(v):""; }
   }
@@ -14508,30 +14517,41 @@ function salesInstallmentsExport(format){
     }).join("")}</tr>`;
   }).join("");
   const foot=`<tr>${cols.map((c,i)=>i===0?`<td colspan="6" style="text-align:left;font-size:13px">💰 الإجمالي العام</td>`:i<6?"":`<td class="n">${c.k==="amount"?n(total("amount")):c.k==="paid"?n(total("paid")):c.k==="remaining"?n(total("remaining")):c.k==="lateRemaining"?n(total("lateRemaining")):c.pay!==undefined?n(rows.reduce((a,r)=>a+((r.pays||[])[c.pay]||0),0)):""}</td>`).join("")}</tr>`;
-  // شريط KPI أفقي من سطر واحد — احترافي ومضغوط للغاية
+  // بطاقات المؤشرات — شبكة متساوية
   const lateRows=rows.filter(r=>r.status==="متأخر"), paidRows=rows.filter(r=>r.status==="مسدد"), nearRows=rows.filter(r=>r.near);
-  const kpiLine = (lbl,val,sub,accent)=>`<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:#fff;border-right:3px solid ${accent};border-radius:0 4px 4px 0;white-space:nowrap">
-    <span style="color:#6b7280;font-size:10px;font-weight:700">${lbl}:</span>
-    <b style="color:#111;font-size:11.5px;direction:ltr;font-variant-numeric:tabular-nums">${val}</b>
-    ${sub?`<span style="color:#9ca3af;font-size:9px">${sub}</span>`:''}
-  </span>`;
-  const kpis = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0;padding:5px 8px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px">
-    ${kpiLine("عدد الأقساط",rows.length+" قسط","","#64748b")}
-    ${kpiLine("إجمالي الأقساط",n(total("amount")),cur,"#1e40af")}
-    ${kpiLine("المسدد",n(total("paid")),paidRows.length+" مسدد","#16a34a")}
-    ${kpiLine("المتبقي",n(total("remaining")),cur,"#d97706")}
-    ${kpiLine("المتأخر",n(total("lateRemaining")),lateRows.length+" متأخر","#dc2626")}
-    ${nearRows.length?kpiLine("قريب (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308"):""}
+  const kpiCard = (lbl,val,sub,accent)=>`<div class="kc" style="border-top-color:${accent}">
+    <div class="kl">${lbl}</div>
+    <div class="kv">${val}</div>
+    <div class="ks">${sub||"&nbsp;"}</div>
   </div>`;
-  const filtersBar = filtersList.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:3px 0;justify-content:center">
-    ${filtersList.map(f=>`<span style="background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:12px;font-size:9.5px;font-weight:700;border:1px solid #fde68a">${escapeHtml(f)}</span>`).join("")}
+  const kpis = `<div class="kgrid">
+    ${kpiCard("عدد الأقساط",rows.length,"قسط","#64748b")}
+    ${kpiCard("إجمالي الأقساط",n(total("amount")),escapeHtml(cur),"#1e40af")}
+    ${kpiCard("المسدد",n(total("paid")),paidRows.length+" قسط مسدد","#16a34a")}
+    ${kpiCard("المتبقي",n(total("remaining")),escapeHtml(cur),"#d97706")}
+    ${kpiCard("المتأخر",n(total("lateRemaining")),lateRows.length+" قسط متأخر","#dc2626")}
+    ${kpiCard("قريب الاستحقاق (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308")}
+  </div>`;
+  const filtersBar = filtersList.length ? `<div class="fbar">
+    <span class="fl">نطاق التقرير</span>
+    ${filtersList.map(f=>`<span class="fchip">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
+  const today=new Date();
   return `<div class="doc">
       <div class="hdr">
-        <div class="emoji">💳</div>
-        <h1>${title}</h1>
-        <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
-        <div class="sub">${new Date().toLocaleDateString("en-GB")} · ${rows.length} قسط · ${escapeHtml(cur)}${cust?" · العميل: "+escapeHtml(cust):""}</div>
+        <div class="hl">
+          <div class="emoji">💳</div>
+          <div>
+            <h1>${title}</h1>
+            <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
+          </div>
+        </div>
+        <div class="hr">
+          <div class="mi"><span>تاريخ التقرير</span><b>${today.toLocaleDateString("en-GB")}</b></div>
+          <div class="mi"><span>عدد الأقساط</span><b>${rows.length}</b></div>
+          <div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div>
+          ${cust?`<div class="mi"><span>العميل</span><b>${escapeHtml(cust)}</b></div>`:""}
+        </div>
       </div>
       ${filtersBar}
       ${kpis}
@@ -14545,13 +14565,26 @@ function salesInstallmentsExport(format){
   };
   const head=`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>
     *{box-sizing:border-box}
-    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0}
+    body{font-family:"Cairo",Tahoma,Arial,sans-serif;color:#1f2937;padding:6px 10px;background:#f8fafc;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .doc{background:#fff;padding:8px 12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);max-width:100%}
-    .hdr{text-align:center;padding:5px 10px 6px;background:linear-gradient(90deg,#fffbea 0%,#fff 50%,#fffbea 100%);border-bottom:2px solid #d4a017;border-radius:6px 6px 0 0;margin:-8px -12px 5px;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap}
-    .hdr .emoji{font-size:16px;margin:0}
-    .hdr h1{margin:0;font-size:15px;color:#1a1a1a;font-weight:900}
-    .hdr .en{color:#d4a017;font-size:10px;letter-spacing:2px;font-weight:800}
-    .hdr .sub{color:#6b7280;font-size:10px;margin:0}
+    .hdr{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:12px 18px;background:linear-gradient(135deg,#111 0%,#2a2a2a 100%);border-bottom:3px solid #d4a017;border-radius:8px 8px 0 0;margin:-8px -12px 10px}
+    .hdr .hl{display:flex;align-items:center;gap:12px}
+    .hdr .emoji{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#fcd34d,#d4a017);display:flex;align-items:center;justify-content:center;font-size:20px;margin:0;flex:none}
+    .hdr h1{margin:0;font-size:19px;color:#fff;font-weight:900;line-height:1.2}
+    .hdr .en{color:#fcd34d;font-size:10px;letter-spacing:2.5px;font-weight:700;margin-top:3px;direction:ltr;text-align:right}
+    .hdr .hr{display:flex;gap:0;align-items:stretch}
+    .hdr .mi{display:flex;flex-direction:column;gap:2px;padding:0 14px;border-right:1px solid rgba(255,255,255,.18);text-align:center}
+    .hdr .mi:last-child{border-right:0;padding-left:0}
+    .hdr .mi span{color:#9ca3af;font-size:9.5px;font-weight:700}
+    .hdr .mi b{color:#fff;font-size:12.5px;font-weight:800;direction:ltr;font-variant-numeric:tabular-nums}
+    .fbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 10px;padding:6px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px}
+    .fbar .fl{color:#92400e;font-size:10.5px;font-weight:900;padding-left:8px;margin-left:4px;border-left:2px solid #d4a017}
+    .fchip{background:#fff;color:#78350f;padding:2px 10px;border-radius:12px;font-size:10px;font-weight:700;border:1px solid #fcd34d}
+    .kgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:0 0 10px}
+    .kc{background:#fff;border:1px solid #e5e7eb;border-top:3px solid #64748b;border-radius:8px;padding:7px 10px;text-align:center;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    .kc .kl{color:#6b7280;font-size:10px;font-weight:800}
+    .kc .kv{color:#111;font-size:16px;font-weight:900;direction:ltr;font-variant-numeric:tabular-nums;margin:2px 0 1px;line-height:1.25}
+    .kc .ks{color:#9ca3af;font-size:9.5px;font-weight:700}
     .meta{text-align:center;color:#374151;font-size:11.5px;background:#f9fafb;padding:9px 14px;border-radius:6px;margin:10px 0;border:1px solid #e5e7eb}
     .meta b{color:#111}
     table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;margin-top:4px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 0 0 1px #e5e7eb}
@@ -14566,8 +14599,8 @@ function salesInstallmentsExport(format){
       @page{size:A4 landscape;margin:5mm}
       body{padding:0;background:#fff}
       .doc{box-shadow:none;border-radius:0;padding:4px 6px}
-      .hdr{border-radius:0;margin:-4px -6px 3px;padding:3px 10px 4px}
-      .hdr h1{font-size:13px}.hdr .en{font-size:9px}.hdr .sub{font-size:9px}
+      .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px}
+      .hdr h1{font-size:16px}.hdr .en{font-size:9px}.kgrid{margin-bottom:6px}.kc{padding:5px 8px}.kc .kv{font-size:14px}.fbar{margin-bottom:6px}
       tr{break-inside:avoid}
       thead{display:table-header-group}
       tfoot{display:table-footer-group}
