@@ -9093,7 +9093,7 @@ const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:""
 let draft=null, editingId=null, editingSrc="new", viewOnly=false, dirty=false;
 let lastPostedOrderNoForSupply="";
 // editingSrc: "new" = جديدة | "policies" = محفوظة لم تُرحَّل | "shipments" = مرحّلة لبيانات التوريد
-let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],from:igYearStart(),to:igYearEnd(),grouped:false,order:"",groupWarehouse:"",groupPosting:"",groupOrderStatus:"",groupCollection:""};
+let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],diameter:[],type:[],company:[],site:[],saleOrder:[],policy:[],from:igYearStart(),to:igYearEnd(),grouped:false,order:"",groupWarehouse:"",groupPosting:"",groupOrderStatus:"",groupCollection:""};
 let supBreak="";
 let supKpiOpen=false; try{ supKpiOpen = localStorage.getItem("supKpiOpen2")==="1"; }catch(e){}   // الافتراضي مقفول عشان الجدول ياخد المساحة
 function supToggleKpi(){
@@ -9125,7 +9125,7 @@ function supToggleFilt(){
 function supFiltCount(){
   let n = 0;
   if(String(supFilter.q||"").trim()) n++;
-  ["supplier","customer","factory","status"].forEach(k=>{ if(igMsNormArr(supFilter[k]).length) n++; });
+  ["supplier","customer","factory","status","diameter","type","company","site","saleOrder","policy"].forEach(k=>{ if(igMsNormArr(supFilter[k]).length) n++; });
   if(supFilter.from&&supFilter.from!==igYearStart()) n++; if(supFilter.to&&supFilter.to!==igYearEnd()) n++; if(supFilter.order) n++; if(supFilter.groupWarehouse) n++; if(supFilter.groupPosting) n++; if(supFilter.groupOrderStatus) n++; if(supFilter.groupCollection) n++;
   return n;
 }
@@ -10218,6 +10218,19 @@ function renderSearch(){
 function pickRecord(src,id){ closeModal(); dirty=false; loadRecord(src,id,false); }
 
 // ---------- بيانات التوريد ----------
+// فلتر عمود بشكل الإكسيل: الفارغ يُمثَّل بقيمة خاصة، والمصفوفة الفاضية = بدون فلتر
+const SUP_COLF_KEYS=["policy","saleOrder","supplier","customer","company","site","factory","diameter","type"];
+const SUP_BLANK="__blank__";
+function supColMatch(key,val){
+  const a=igMsNormArr(supFilter[key]).map(String); if(!a.length) return true;
+  const v=String(val==null?"":val).trim();
+  return a.includes(v||SUP_BLANK);
+}
+function supColValues(key){
+  const g=SUP_SORT[key], m=new Map(); if(!g) return [];
+  (state.shipments||[]).forEach(s=>(s.items||[]).forEach(it=>{ const v=String(g({s,it})==null?"":g({s,it})).trim(); const k=v||SUP_BLANK; if(!m.has(k)) m.set(k,v||"(فارغ)"); }));
+  return [...m].map(([v,label])=>({v,label})).sort((a,b)=>a.v===SUP_BLANK?1:b.v===SUP_BLANK?-1:a.label.localeCompare(b.label,"ar",{numeric:true}));
+}
 function supplyLines(){
   const q=supFilter.q.trim().toLowerCase(), out=[];
   const nz=(x,y)=>String(y||"").localeCompare(String(x||""),undefined,{numeric:true});
@@ -10227,11 +10240,15 @@ function supplyLines(){
   const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
   list.forEach(s=>{
     if(ordK&&supOrderNumberKey(s.saleOrderNo)!==ordK&&!(ordSo&&s.saleOrderId===ordSo.id)) return;
-    if(!igMsMatch(supFilter.supplier, s.supplier)) return;
-    if(!igMsMatch(supFilter.customer, s.customer)) return;
+    if(!supColMatch("supplier", s.supplier)) return;
+    if(!supColMatch("customer", s.customer)) return;
+    if(!supColMatch("company", s.company)) return;
+    if(!supColMatch("site", s.site)) return;
+    if(!supColMatch("policy", s.policyNo)) return;
+    if(igMsNormArr(supFilter.saleOrder).length && !supColMatch("saleOrder", SUP_SORT.saleOrder({s}))) return;
     if(supFilter.from&&(!s.date||s.date<supFilter.from)) return;
     if(supFilter.to&&(!s.date||s.date>supFilter.to)) return;
-    const items=s.items.filter(it=>igMsMatch(supFilter.factory, itemFactory(s,it)) && igMsMatch(supFilter.status, it.agingStatus));
+    const items=s.items.filter(it=>supColMatch("factory", itemFactory(s,it)) && igMsMatch(supFilter.status, it.agingStatus) && supColMatch("diameter", it.diameter) && supColMatch("type", it.type));
     if(!items.length) return;
     if(q&&![s.policyNo,s.supplier,s.customer,s.company,s.site,s.notes,s.saleOrderNo,...s.items.map(it=>itemFactory(s,it))].some(v=>String(v||"").toLowerCase().includes(q))) return;
     items.forEach((it,i)=>out.push({s,it,first:i===0}));
@@ -10279,7 +10296,8 @@ function supSortBy(k,view){
 function supTh(k,label,view){
   view=view||"flat"; const e=supEff(view);
   const c=(e.key===k&&k)?(e.dir===1?" sort-asc":" sort-desc"):"";
-  return `<th class="sortable${c}" title="ترتيب تصاعدي / تنازلي / رجوع للافتراضي" onclick="supSortBy('${k}','${view}')">${label}</th>`;
+  const fb=(view==="flat"&&SUP_COLF_KEYS.includes(k))?`<button type="button" class="th-fbtn${igMsNormArr(supFilter[k]).length?" on":""}" title="فلتر ${label}" onclick="supColFilterOpen('${k}',event)">▾</button>`:"";
+  return `<th class="sortable${c}" title="ترتيب تصاعدي / تنازلي / رجوع للافتراضي" onclick="supSortBy('${k}','${view}')"><span class="th-wrap">${label}${fb}</span></th>`;
 }
 function viewSupply(){
   migrateState(state);
@@ -13281,6 +13299,7 @@ function txMsOnToggle(detailsEl, ev){
   if(!detailsEl.open) return;
   // اقفل باقي القوايم المفتوحة
   document.querySelectorAll('.ms-dd[open]').forEach(d=>{ if(d!==detailsEl) d.open=false; });
+  try{ igMsEnhance(detailsEl); }catch(e){}
   const sum = detailsEl.querySelector(':scope > summary');
   const panel = detailsEl.querySelector(':scope > .ms-panel');
   if(!sum || !panel) return;
@@ -13361,6 +13380,7 @@ function igMsSync(scope,key,selArr){
   const one=cbs.find(cb=>sel.has(cb.value));
   const t=det.querySelector(':scope > summary .ms-sumtxt');
   if(t) t.innerHTML=siMsSummaryHtml(sel,cbs.length,det.getAttribute('data-ph')||'',one?one.parentElement.textContent.trim():"");
+  try{ igMsRefreshAll(det); }catch(e){}
 }
 function siMsSync(key){ igMsSync('si',key,salesInstallmentFilters[key]); }
 function supMsSync(key){ igMsSync('sup',key,supFilter[key]); }
@@ -14450,7 +14470,7 @@ function openTxForm(direction, existing){
     </div>
     <!-- (2) القيمة بعد العميل مباشرة -->
     <div class="fld" id="tx_amountWrap" style="margin-top:12px"><label>القيمة * <span style="color:var(--text-dim);font-weight:400">(الخطوة الثانية)</span></label>
-      <input class="inp num" type="number" min="0" step="0.01" id="tx_amount" value="${escapeAttr(draft.amount||"")}" placeholder="0.00" style="font-size:16px;font-weight:700;padding:10px 12px" oninput="if(window.__txKind==='gl'){txGlTotal()}else{txMirrorAmount(this.value);txPreviewAutoAllocations();txUpdateDetailsAccess()}">
+      <input class="inp num tx-fmt" type="number" min="0" step="0.01" id="tx_amount" value="${escapeAttr(draft.amount||"")}" placeholder="0.00" style="font-size:16px;font-weight:700;padding:10px 12px" oninput="if(window.__txKind==='gl'){txGlTotal()}else{txMirrorAmount(this.value);txPreviewAutoAllocations();txUpdateDetailsAccess()}">
     </div>
     <!-- (3) باقي الحقول -->
     <div class="tx-form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
@@ -14528,7 +14548,7 @@ function openTxForm(direction, existing){
         <div style="font-weight:800;color:var(--gold-text);margin-bottom:8px">تفاصيل الفواتير والأقساط</div>
         <div id="txSettlementSummary" class="tx-settle-sum">
           <label style="display:flex;align-items:center;gap:6px">${isIn?"قيمة التحصيل":"قيمة الدفع"}
-            <input class="inp num" id="tx_amountMirror" type="number" min="0" step="0.01" placeholder="0.00" style="width:150px;padding:6px 10px" oninput="txMirrorAmount(this.value)"></label>
+            <input class="inp num tx-fmt" id="tx_amountMirror" type="number" min="0" step="0.01" placeholder="0.00" style="width:150px;padding:6px 10px" oninput="txMirrorAmount(this.value)"></label>
           <span>الموزَّع: <b class="num" id="txSumAlloc">0.00</b></span>
           <span>غير موزَّع: <b class="num" id="txSumLeft">0.00</b></span>
         </div>
@@ -15715,7 +15735,7 @@ function txRenderSettlementDetails(){
   if(!rows.length){body.innerHTML='<tr><td colspan="10">'+(isIn?'لا توجد أقساط مستحقة أو متبقية لهذا العميل.':'لا توجد فواتير مستحقة أو متبقية لهذا المورد.')+'</td></tr>';window.__txCurrentAllocRows=[];return;}
   window.__txCurrentAllocRows=rows;
   const auto=kind==='invoice_deduction';
-  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${isIn?(r.installment===0?'نقدي':'قسط '+r.installment):escapeHtml(r.label||'فاتورة مشتريات')}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td${isIn?"":' style="display:none"'}>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<div class="tx-alloc-cell" data-index="${i}" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"><input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" step="0.01" value="0" oninput="txAllocManual(this)" onfocus="this.select()" title="اكتب المبلغ بإيدك، أو علّم الاختيار ليتوزع تلقائيًا" style="min-width:100px"><button type="button" class="btn ghost sm" onclick="txAddAllocField(${i})" title="إضافة مبلغ سداد آخر على نفس القسط" style="padding:2px 8px">➕</button></div>`}</td></tr>`).join('');
+  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${isIn?(r.installment===0?'نقدي':'قسط '+r.installment):escapeHtml(r.label||'فاتورة مشتريات')}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td${isIn?"":' style="display:none"'}>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<div class="tx-alloc-cell" data-index="${i}" style="display:flex;gap:4px;align-items:center;flex-wrap:nowrap"><button type="button" class="btn ghost sm" onclick="txAddAllocField(${i})" title="إضافة مبلغ سداد آخر على نفس القسط" style="padding:2px 8px;flex:0 0 auto">➕</button><input class="inp num tx-alloc-amount tx-fmt" data-index="${i}" type="number" min="0" step="0.01" value="0" oninput="txAllocManual(this)" title="اكتب المبلغ بإيدك، أو علّم الاختيار ليتوزع تلقائيًا" style="width:130px;min-width:110px"></div>`}</td></tr>`).join('');
   const mir=document.getElementById('tx_amountMirror'); if(mir) mir.value=document.getElementById('tx_amount')?.value||'';
   // Restore saved allocations from the entry being edited
   if(txEditingId){
@@ -15770,10 +15790,10 @@ function txAllocManual(inp){
 function txAddAllocField(i,val){
   const cell=document.querySelector(`.tx-alloc-cell[data-index="${i}"]`); if(!cell) return;
   const inp=document.createElement('input');
-  inp.className='inp num tx-alloc-amount'; inp.type='number'; inp.min='0'; inp.step='0.01';
-  inp.dataset.index=i; inp.dataset.manual='1'; inp.style.minWidth='100px'; inp.value=val!=null?val:'';
+  inp.className='inp num tx-alloc-amount tx-fmt'; inp.type='number'; inp.min='0'; inp.step='0.01';
+  inp.dataset.index=i; inp.dataset.manual='1'; inp.style.width='130px'; inp.style.minWidth='110px'; inp.value=val!=null?val:'';
   inp.placeholder='مبلغ آخر'; inp.setAttribute('oninput','txAllocManual(this)'); inp.onfocus=function(){this.select();};
-  cell.insertBefore(inp, cell.querySelector('button'));
+  cell.appendChild(inp);
   if(val==null) inp.focus();
 }
 // تحقق: إجمالي كل قسط ≤ المتبقي، وإجمالي التوزيع ≤ مبلغ التحصيل
@@ -19288,6 +19308,182 @@ function renderManagementReports(){
 }
 </style>
 
+
+<style id="ig-topbar-mobile-fix">
+/* الشريط العلوي على الموبايل: سطر واحد مرتب، العنوان ياخد المساحة المتبقية والأزرار مدمجة */
+@media(max-width:700px){
+  body .topbar{display:flex!important;flex-wrap:nowrap!important;align-items:center!important;gap:6px!important;padding:8px 10px!important;min-height:52px!important}
+  body .topbar>*{flex:0 0 auto;min-width:0}
+  body .topbar h2{flex:1 1 0!important;min-width:0!important;font-size:15px!important;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body .topbar .spacer{display:none!important}
+  body .topbar .sidebar-toggle{width:36px!important;height:36px!important;border-radius:10px!important;font-size:18px}
+  body .topbar .tb-back{width:34px;height:34px}
+  body .topbar .ig-top-exit{width:34px!important;height:34px!important;padding:0!important;justify-content:center;border-radius:10px!important}
+  body .topbar .ig-top-exit .ig-exit-short,body .topbar .ig-top-exit .ig-exit-long{display:none!important}
+  body .topbar .ig-sync{padding:0!important;width:22px;height:34px;background:none!important;border:0!important;justify-content:center}
+  body .topbar .ig-sync .t{display:none!important}
+  body .topbar .tb-new{width:36px!important;height:36px!important;border-radius:10px!important}
+  body .topbar .tb-new b{font-size:22px}
+  body .topbar .user{flex:0 0 auto;gap:5px!important;flex-wrap:nowrap!important}
+  body .topbar .tb-theme{width:32px!important;height:32px!important;font-size:14px!important;margin:0!important}
+  body .topbar .tb-av{width:32px;height:32px;font-size:14px}
+  body .topbar .tb-user-btn{padding:2px!important}
+}
+</style>
+
+<style id="ig-settle-assist-wide">
+#modalBackdrop .modal.set-assist-wide{position:relative!important;inset:auto!important;width:min(98vw,1280px)!important;max-width:98vw!important;height:min(94dvh,920px)!important;max-height:94dvh!important;margin:auto!important;border-radius:14px!important;display:flex!important;flex-direction:column!important}
+#modalBackdrop .modal.set-assist-wide .mbody{flex:1 1 auto;overflow:auto}
+.set-assist-wrap{max-height:none!important;overflow:auto!important}
+#setAssistTable{min-width:1000px}
+#setAssistTable th,#setAssistTable td{white-space:nowrap;padding:6px 8px}
+#setAssistTable .setAssistAmt{width:110px;min-width:90px;padding:6px 8px;font-size:14px}
+</style>
+
+<script id="ig-tx-numfmt">
+/* تنسيق المبالغ بفواصل الآلاف وخانتين عشريتين في حقول التحصيل/التسكين، مع بقاء .value رقمًا خامًا للكود الحالي */
+(function(){
+  const nat=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value");
+  const clean=v=>String(v==null?"":v).replace(/[,\s\u066C]/g,"");
+  const show=v=>{ const c=clean(v); if(c===""||!isFinite(+c)) return c; return (+c).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); };
+  function init(inp){
+    if(inp.dataset.fmt) return; inp.dataset.fmt="1";
+    const cur=nat.get.call(inp);
+    inp.type="text"; inp.setAttribute("inputmode","decimal"); inp.autocomplete="off";
+    Object.defineProperty(inp,"value",{configurable:true,
+      get(){ return clean(nat.get.call(inp)); },
+      set(v){ nat.set.call(inp, document.activeElement===inp?clean(v):show(v)); }});
+    nat.set.call(inp,show(cur));
+    inp.addEventListener("focus",()=>{ nat.set.call(inp,clean(nat.get.call(inp))); try{inp.select();}catch(e){} });
+    inp.addEventListener("input",()=>{ const raw=nat.get.call(inp), ok=raw.replace(/[^0-9.]/g,"").replace(/(\..*)\./g,"$1"); if(ok!==raw) nat.set.call(inp,ok); },true);
+    inp.addEventListener("blur",()=>{ nat.set.call(inp,show(nat.get.call(inp))); });
+  }
+  function scan(root){ if(!root||root.nodeType!==1) return; if(root.matches&&root.matches(".tx-fmt")) init(root); root.querySelectorAll&&root.querySelectorAll(".tx-fmt:not([data-fmt])").forEach(init); }
+  new MutationObserver(ms=>ms.forEach(m=>m.addedNodes.forEach(scan))).observe(document.documentElement,{childList:true,subtree:true});
+  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",()=>scan(document.body)); else scan(document.body);
+})();
+</script>
+
+
+<style id="ig-excel-filter-css">
+/* ===== فلاتر بشكل الإكسيل: بحث + (تحديد الكل) + قائمة مضغوطة ===== */
+.ms-dd .ms-panel{padding:6px 6px 4px;max-height:360px}
+.ms-dd .ms-xhead{position:sticky;top:-6px;z-index:2;background:var(--card,#fff);padding:2px 0 4px;border-bottom:1px solid var(--line,#ddd);margin-bottom:2px}
+.ms-dd .ms-xhead .ms-search{width:100%;box-sizing:border-box;background:var(--bg,#f7f7f7);border:1px solid var(--line,#cfd6e0);color:var(--text);padding:6px 8px;font-size:13px;border-radius:6px;margin:0 0 4px}
+.ms-dd .ms-xrow{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ms-dd .ms-xrow .ms-clear{border:0;background:none;color:var(--danger,#b02a25);font:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:2px 4px}
+.ms-dd .ms-item{padding:2px 6px!important;font-size:13px;line-height:1.35;min-height:0!important}
+.ms-dd .ms-item.ms-all{font-weight:800;border-bottom:1px dashed var(--line,#ddd);border-radius:0;flex:1}
+.th-wrap{display:inline-flex;align-items:center;gap:4px}
+.th-fbtn{border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:inherit;border-radius:4px;font-size:10px;line-height:1;width:18px;height:18px;padding:0;cursor:pointer}
+.th-fbtn:hover{background:rgba(255,255,255,.28)}
+.th-fbtn.on{background:#F4C542;color:#10274d;border-color:#F4C542}
+.sup-colf{position:fixed;z-index:100001;width:270px;max-width:94vw;background:var(--card,#fff);color:var(--text,#1e293b);border:1px solid var(--gold,#c99724);border-radius:10px;box-shadow:0 14px 40px rgba(6,18,42,.35);padding:8px;direction:rtl;font-size:13px}
+.sup-colf .cf-search{width:100%;box-sizing:border-box;border:1px solid var(--line,#cfd6e0);border-radius:6px;padding:7px 9px;font:inherit;background:var(--bg,#f7f7f7);color:inherit;margin-bottom:6px}
+.sup-colf .cf-list{max-height:250px;overflow:auto;border:1px solid var(--line,#e2e7ee);border-radius:6px;padding:2px}
+.sup-colf .cf-item{display:flex;align-items:center;gap:7px;padding:3px 6px;border-radius:4px;cursor:pointer;line-height:1.35}
+.sup-colf .cf-item:hover{background:rgba(230,179,37,.14)}
+.sup-colf .cf-item input{accent-color:#c99724;width:15px;height:15px;flex:none}
+.sup-colf .cf-all{font-weight:800;border-bottom:1px dashed var(--line,#ddd);border-radius:0}
+.sup-colf .cf-foot{display:flex;gap:6px;margin-top:8px;align-items:center}
+.sup-colf .cf-foot .btn{padding:6px 14px}
+.sup-colf .cf-foot .cf-clear{margin-inline-start:auto;border:0;background:none;color:var(--danger,#b02a25);font:inherit;font-weight:700;cursor:pointer;font-size:12px}
+.sup-colf .cf-cnt{font-size:11px;color:var(--text-dim,#64748b);margin:4px 2px 0}
+</style>
+<script id="ig-excel-filter-js">
+(function(){
+  const norm=t=>String(t||"").toLowerCase().replace(/[ً-ْـ]/g,"").replace(/[أإآ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").trim();
+  window.igNormAr=norm;
+
+  /* ---- 1) تحسين القوائم المنسدلة الحالية (بحث + تحديد الكل على الظاهر) ---- */
+  window.igMsRefreshAll=function(det){
+    const cb=det.querySelector(".ms-allcb"); if(!cb) return;
+    const vis=[...det.querySelectorAll(".ms-item:not(.ms-all)")].filter(x=>x.style.display!=="none");
+    const on=vis.filter(x=>x.querySelector("input").checked).length;
+    cb.checked=vis.length>0&&on===vis.length; cb.indeterminate=on>0&&on<vis.length;
+  };
+  window.igMsEnhance=function(det){
+    const panel=det.querySelector(":scope > .ms-panel"); if(!panel) return;
+    if(!panel.dataset.enh){
+      panel.dataset.enh="1";
+      const old=panel.querySelector(".ms-head"); let dir="";
+      const allBtn=old&&[...old.querySelectorAll("button")].find(b=>/SelectAll/.test(b.getAttribute("onclick")||""));
+      const clrBtn=old&&[...old.querySelectorAll("button")].find(b=>/Clear/.test(b.getAttribute("onclick")||""));
+      if(allBtn){ const m=/txMsSelectAll\('([^']+)','([^']+)'/.exec(allBtn.getAttribute("onclick")||""); if(m) dir=m[2]; }
+      const head=document.createElement("div"); head.className="ms-xhead";
+      head.innerHTML='<input type="search" class="ms-search" placeholder="🔍 بحث..." autocomplete="off"><div class="ms-xrow"><label class="ms-item ms-all"><input type="checkbox" class="ms-allcb"> (تحديد الكل)</label><button type="button" class="ms-clear">✕ مسح</button></div>';
+      panel.insertBefore(head,panel.firstChild);
+      if(old) old.style.display="none";
+      const [scope,key]=String(det.dataset.ms||":").split(":");
+      const apply=arr=>{ if(scope==="sup") supMsSelectAll(key,arr); else if(scope==="si") siMsSelectAll(key,arr); else if(scope==="tx") txMsSelectAll(key,dir,arr); };
+      head.querySelector(".ms-search").addEventListener("input",e=>{
+        const q=norm(e.target.value);
+        panel.querySelectorAll(".ms-item:not(.ms-all)").forEach(it=>{ it.style.display=(!q||norm(it.textContent).includes(q))?"":"none"; });
+        igMsRefreshAll(det);
+      });
+      head.querySelector(".ms-allcb").addEventListener("change",e=>{
+        const vis=[...panel.querySelectorAll(".ms-item:not(.ms-all)")].filter(x=>x.style.display!=="none").map(x=>x.querySelector("input"));
+        const sel=new Set([...panel.querySelectorAll(".ms-item:not(.ms-all) input")].filter(c=>c.checked).map(c=>c.value));
+        vis.forEach(c=>{ if(e.target.checked) sel.add(c.value); else sel.delete(c.value); });
+        apply([...sel]);
+      });
+      head.querySelector(".ms-clear").addEventListener("click",e=>{ e.preventDefault(); if(clrBtn) clrBtn.click(); });
+      head.querySelector(".ms-search").addEventListener("keydown",e=>{ if(e.key==="Escape") det.open=false; });
+    }
+    const si=panel.querySelector(".ms-search"); if(si){ si.value=""; panel.querySelectorAll(".ms-item").forEach(it=>it.style.display=""); }
+    igMsRefreshAll(det);
+    setTimeout(()=>{ try{ si&&si.focus(); }catch(e){} },30);
+  };
+
+  /* ---- 2) فلتر عمود بشكل الإكسيل في هيد جدول بيانات التوريد ---- */
+  let panelEl=null, panelKey="";
+  const closePanel=()=>{ if(panelEl){ panelEl.remove(); panelEl=null; panelKey=""; } };
+  window.supColFilterClose=closePanel;
+  window.supColFilterOpen=function(key,ev){
+    if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+    if(panelEl&&panelKey===key){ closePanel(); return; }
+    closePanel();
+    const vals=supColValues(key);
+    const cur=igMsNormArr(supFilter[key]).map(String);
+    const sel=new Set(cur.length?cur:vals.map(v=>v.v));
+    const el=document.createElement("div"); el.className="sup-colf"; panelEl=el; panelKey=key;
+    el.addEventListener("click",e=>e.stopPropagation());
+    el.innerHTML='<input type="search" class="cf-search" placeholder="🔍 بحث..." autocomplete="off">'
+      +'<div class="cf-list"><label class="cf-item cf-all"><input type="checkbox" class="cf-allcb"> (تحديد الكل)</label>'
+      +vals.map(v=>'<label class="cf-item" data-t="'+escapeAttr(norm(v.label))+'"><input type="checkbox" value="'+escapeAttr(v.v)+'"> '+escapeHtml(v.label)+'</label>').join("")+'</div>'
+      +'<div class="cf-cnt"></div>'
+      +'<div class="cf-foot"><button type="button" class="btn sm cf-ok">موافق</button><button type="button" class="btn ghost sm cf-cancel">إلغاء</button><button type="button" class="cf-clear">مسح الفلتر</button></div>';
+    document.body.appendChild(el);
+    const items=[...el.querySelectorAll(".cf-item:not(.cf-all)")], allcb=el.querySelector(".cf-allcb"), cnt=el.querySelector(".cf-cnt"), okb=el.querySelector(".cf-ok");
+    const visible=()=>items.filter(x=>x.style.display!=="none");
+    const refresh=()=>{
+      items.forEach(x=>{ x.querySelector("input").checked=sel.has(x.querySelector("input").value); });
+      const v=visible(), on=v.filter(x=>x.querySelector("input").checked).length;
+      allcb.checked=v.length>0&&on===v.length; allcb.indeterminate=on>0&&on<v.length;
+      cnt.textContent=sel.size+" من "+vals.length+" محدد"; okb.disabled=sel.size===0; okb.style.opacity=sel.size?"":".5";
+    };
+    el.querySelector(".cf-search").addEventListener("input",e=>{ const q=norm(e.target.value); items.forEach(x=>{ x.style.display=(!q||x.dataset.t.includes(q))?"":"none"; }); refresh(); });
+    el.querySelector(".cf-search").addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); if(e.key==="Enter"&&sel.size) el.querySelector(".cf-ok").click(); });
+    items.forEach(x=>x.querySelector("input").addEventListener("change",e=>{ if(e.target.checked) sel.add(e.target.value); else sel.delete(e.target.value); refresh(); }));
+    allcb.addEventListener("change",e=>{ visible().forEach(x=>{ const v=x.querySelector("input").value; if(e.target.checked) sel.add(v); else sel.delete(v); }); refresh(); });
+    const commit=arr=>{ supFilter[key]=arr; try{ supSaveUi(); }catch(e){} try{ supMsSync(key); }catch(e){} closePanel(); renderSupply(); };
+    el.querySelector(".cf-ok").addEventListener("click",()=>{ if(!sel.size) return; commit(sel.size===vals.length?[]:[...sel]); });
+    el.querySelector(".cf-cancel").addEventListener("click",closePanel);
+    el.querySelector(".cf-clear").addEventListener("click",()=>commit([]));
+    refresh();
+    const btn=ev&&ev.currentTarget&&ev.currentTarget.getBoundingClientRect?ev.currentTarget.getBoundingClientRect():{left:100,bottom:100,right:100};
+    const vw=window.innerWidth, vh=window.innerHeight, w=270;
+    let left=Math.min(Math.max(8,btn.right-w),vw-w-8), top=btn.bottom+6;
+    if(top+el.offsetHeight>vh-8) top=Math.max(8,vh-el.offsetHeight-8);
+    el.style.left=left+"px"; el.style.top=top+"px";
+    setTimeout(()=>{ try{ el.querySelector(".cf-search").focus(); }catch(e){} },30);
+  };
+  document.addEventListener("click",e=>{ if(panelEl&&!panelEl.contains(e.target)) closePanel(); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
+  window.addEventListener("resize",closePanel);
+})();
+</script>
+
 </body>
 </html>
 \n<script>document.addEventListener('click',function(e){if(!e.target.closest('.gl-e-picker'))document.querySelectorAll('.gl-e-results').forEach(x=>{x.style.display='none';const q=x.parentElement.querySelector('.gl-e-search');if(q)q.hidden=true;});});</script>\n
@@ -20578,38 +20774,7 @@ ${trLbl&&trLbl!=="—"?`<div class="f"><small>${trName}</small><b>${esc(trLbl)}<
 <div class="f w2"><small>وذلك عن / البيان</small><b>${esc(e.notes||"—")}</b></div></div>
 ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th>المبلغ</th></tr></thead><tbody>${glRows}</tbody><tfoot><tr><td colspan="4">إجمالي الحسابات</td><td class="m">${f2(glTot)}</td></tr></tfoot></table>`:""}
 <div class="sg"><div>${isIn?"المستلم":"المُصرِّف"}</div><div>المحاسب</div><div>المدير المالي</div><div>${isIn?"المُسلِّم (توقيع الدافع)":"المستلم (توقيع المورد)"}</div></div>
-<div class="ft"><span>طُبع بواسطة: ${esc(who||"—")}</span><span>${esc(now)}</span></div>
-<style id="ig-topbar-mobile-fix">
-/* الشريط العلوي على الموبايل: سطر واحد مرتب، العنوان ياخد المساحة المتبقية والأزرار مدمجة */
-@media(max-width:700px){
-  body .topbar{display:flex!important;flex-wrap:nowrap!important;align-items:center!important;gap:6px!important;padding:8px 10px!important;min-height:52px!important}
-  body .topbar>*{flex:0 0 auto;min-width:0}
-  body .topbar h2{flex:1 1 0!important;min-width:0!important;font-size:15px!important;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  body .topbar .spacer{display:none!important}
-  body .topbar .sidebar-toggle{width:36px!important;height:36px!important;border-radius:10px!important;font-size:18px}
-  body .topbar .tb-back{width:34px;height:34px}
-  body .topbar .ig-top-exit{width:34px!important;height:34px!important;padding:0!important;justify-content:center;border-radius:10px!important}
-  body .topbar .ig-top-exit .ig-exit-short,body .topbar .ig-top-exit .ig-exit-long{display:none!important}
-  body .topbar .ig-sync{padding:0!important;width:22px;height:34px;background:none!important;border:0!important;justify-content:center}
-  body .topbar .ig-sync .t{display:none!important}
-  body .topbar .tb-new{width:36px!important;height:36px!important;border-radius:10px!important}
-  body .topbar .tb-new b{font-size:22px}
-  body .topbar .user{flex:0 0 auto;gap:5px!important;flex-wrap:nowrap!important}
-  body .topbar .tb-theme{width:32px!important;height:32px!important;font-size:14px!important;margin:0!important}
-  body .topbar .tb-av{width:32px;height:32px;font-size:14px}
-  body .topbar .tb-user-btn{padding:2px!important}
-}
-</style>
-
-<style id="ig-settle-assist-wide">
-#modalBackdrop .modal.set-assist-wide{position:relative!important;inset:auto!important;width:min(98vw,1280px)!important;max-width:98vw!important;height:min(94dvh,920px)!important;max-height:94dvh!important;margin:auto!important;border-radius:14px!important;display:flex!important;flex-direction:column!important}
-#modalBackdrop .modal.set-assist-wide .mbody{flex:1 1 auto;overflow:auto}
-.set-assist-wrap{max-height:none!important;overflow:auto!important}
-#setAssistTable{min-width:1000px}
-#setAssistTable th,#setAssistTable td{white-space:nowrap;padding:6px 8px}
-#setAssistTable .setAssistAmt{width:110px;min-width:90px;padding:6px 8px;font-size:14px}
-</style>
-</body></html>`;
+<div class="ft"><span>طُبع بواسطة: ${esc(who||"—")}</span><span>${esc(now)}</span></div></body></html>`;
   if(typeof openReportPreview==="function") openReportPreview(html,title+" "+(e.no||""));
   else{ const w=window.open("","_blank"); if(w){ w.document.open(); w.document.write(html); w.document.close(); } }
 }
