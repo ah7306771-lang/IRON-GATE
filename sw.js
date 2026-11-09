@@ -1,4 +1,7 @@
-const CACHE = 'irongate-v1';
+// IRON GATE — Service Worker (PWA + Push Notifications)
+// نسخة كاملة تجمع الـcaching وإشعارات الـpush في ملف واحد
+
+const CACHE = 'irongate-v2';  // غيّرت الـversion علشان المتصفحات تاخد النسخة الجديدة
 const SHELL = ['./', './index.html', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -25,5 +28,38 @@ self.addEventListener('fetch', e => {
         return res;
       })
       .catch(() => caches.match(req).then(r => r || caches.match('./index.html')))
+  );
+});
+
+// ============================================================
+// 🔔 Push Notifications
+// ============================================================
+
+self.addEventListener('push', function (event) {
+  var d = {};
+  try { d = event.data ? event.data.json() : {}; }
+  catch (_) { d = { body: event.data ? event.data.text() : '' }; }
+  var title = d.title || 'IRON GATE';
+  event.waitUntil(self.registration.showNotification(title, {
+    body: d.body || '',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    tag: d.tag || 'ig-cheques',
+    dir: 'rtl',
+    lang: 'ar',
+    data: { url: d.url || './' }
+  }));
+});
+
+self.addEventListener('notificationclick', function (event) {
+  event.notification.close();
+  var url = (event.notification.data && event.notification.data.url) || './';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        if ('focus' in list[i]) return list[i].focus();
+      }
+      return self.clients.openWindow(url);
+    })
   );
 });
