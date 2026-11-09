@@ -14939,7 +14939,7 @@ function renderSettlement(){
     const statusChip = r.status==="دائن" ? `<span class="chip ok">دائن</span>`
                      : r.status==="مدين" ? `<span class="chip warn">مدين</span>`
                      : `<span class="chip">${escapeHtml(r.status)}</span>`;
-    const canUnalloc = settlementCustomerPaid(r.name) > 0;
+    const canUnalloc = settlementAllocatedEntries(r.name).length > 0;
     return `<tr>
       <td><input type="checkbox" ${checked} onchange="settlementToggleSelect('${escapeAttr(r.name)}',this.checked)"></td>
       <td><strong style="color:var(--gold)">${escapeHtml(r.name)}</strong></td>
@@ -15071,97 +15071,118 @@ function settlementOpenAssistanceModal(customerList, idx){
     settlementOpenAssistanceModal(customerList, i+1);
     return;
   }
+  const NF = 5; // عدد خانات مبالغ السداد لكل قسط
   const bodyHtml = `
     <div style="padding:10px 0;border-bottom:1px solid var(--line);margin-bottom:10px">
-      <div style="font-size:14px;font-weight:800;color:var(--gold)">العميل: ${escapeHtml(customer)}</div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">الرصيد الدائن المتاح: <b style="color:var(--gold)">${fmt(credit)}</b> · عدد الأقساط المتبقية: ${rows.length}${customerList.length>1?` · (${i+1}/${customerList.length})`:""}</div>
+      <div style="font-size:15px;font-weight:800;color:var(--gold)">العميل: ${escapeHtml(customer)}</div>
+      <div style="font-size:12.5px;color:var(--text-dim);margin-top:4px">الرصيد الدائن المتاح: <b style="color:var(--gold)">${fmt(credit)}</b> · عدد الأقساط المتبقية: ${rows.length}${customerList.length>1?` · (${i+1}/${customerList.length})`:""}</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">اكتب حتى ${NF} مبالغ سداد لكل قسط؛ تُجمع وتُخصم من القسط كإجمالي واحد، وتظهر كل دفعة منفصلة في شاشة الأقساط.</div>
     </div>
-    <div class="tbl-wrap" style="max-height:50vh;overflow:auto"><table id="setAssistTable">
-      <thead><tr><th>اختيار</th><th>أمر البيع</th><th>القسط</th><th>تاريخ الاستحقاق</th><th>قيمة القسط</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead>
+    <div class="tbl-wrap set-assist-wrap"><table id="setAssistTable">
+      <thead><tr><th>أمر البيع</th><th>القسط</th><th>تاريخ الاستحقاق</th><th>قيمة القسط</th><th>المتبقي</th>${Array.from({length:NF},(_,k)=>`<th>مبلغ ${k+1}</th>`).join("")}<th>إجمالي السداد</th><th>المتبقي بعد</th></tr></thead>
       <tbody>
-        ${rows.map((r,j)=>`<tr>
-          <td><input type="checkbox" class="setAssistChk" data-idx="${j}" onchange="settlementAssistUpdate(${credit})"></td>
+        ${rows.map((r,j)=>`<tr class="setAssistRow" data-idx="${j}" data-rem="${r.remaining}">
           <td>${escapeHtml(String(r.orderNo))}</td>
           <td>${r.installment===0?'نقدي':'قسط '+r.installment}</td>
           <td>${escapeHtml(r.due||'')}</td>
           <td class="num">${fmt(r.amount)}</td>
           <td class="num"><strong>${fmt(r.remaining)}</strong></td>
-          <td class="num"><input type="number" class="inp num setAssistAmt" data-idx="${j}" data-rem="${r.remaining}" min="0" max="${r.remaining}" step="0.01" value="0" style="width:120px" readonly></td>
+          ${Array.from({length:NF},(_,k)=>`<td><input type="number" class="inp num setAssistAmt" data-idx="${j}" data-k="${k}" min="0" step="0.01" placeholder="0" oninput="settlementAssistUpdate(${credit})"></td>`).join("")}
+          <td class="num"><b class="setAssistRowSum" data-idx="${j}">0.00</b></td>
+          <td class="num"><span class="setAssistRowLeft" data-idx="${j}">${fmt(r.remaining)}</span></td>
         </tr>`).join("")}
       </tbody>
     </table></div>
-    <div style="padding:10px;display:flex;justify-content:space-between;gap:10px;background:var(--bg-2);border-radius:8px;margin-top:10px">
+    <div style="padding:10px;display:flex;justify-content:space-between;gap:10px;background:var(--bg-2);border-radius:8px;margin-top:10px;font-size:14px">
       <span>الموزّع: <b class="num" id="setAssistAlloc">0.00</b></span>
       <span>المتبقي من الرصيد: <b class="num" id="setAssistLeft">${fmt(credit)}</b></span>
     </div>`;
   openModal(`تسكين مساعدة — ${customer}`, bodyHtml, ()=>{
+    // اجمع مبالغ كل قسط (كل مبلغ على حدة) وتحقق من الحدود
     const picks = [];
-    document.querySelectorAll(".setAssistChk").forEach(chk=>{
-      if(!chk.checked) return;
-      const j = +chk.dataset.idx;
-      const amt = +document.querySelector(`.setAssistAmt[data-idx="${j}"]`).value||0;
-      if(amt>0.009) picks.push({row:rows[j], amount:amt});
-    });
+    let grand = 0;
+    for(let j=0;j<rows.length;j++){
+      const vals = Array.from(document.querySelectorAll(`.setAssistAmt[data-idx="${j}"]`)).map(inp=>Math.round((+inp.value||0)*100)/100).filter(v=>v>0.009);
+      if(!vals.length) continue;
+      const sum = vals.reduce((x,y)=>x+y,0);
+      if(sum > rows[j].remaining + 0.01){ toast(`إجمالي السداد على ${rows[j].installment===0?'القسط النقدي':'القسط '+rows[j].installment} (أمر ${rows[j].orderNo}) أكبر من المتبقي`,"err"); return false; }
+      grand += sum; picks.push({row:rows[j], values:vals});
+    }
+    if(grand > credit + 0.01){ toast("إجمالي المبالغ أكبر من الرصيد الدائن المتاح","err"); return false; }
     if(!picks.length){
-      // ما اخترش حاجة — عدي للعميل اللي بعده
+      // ما كتبش حاجة — عدي للعميل اللي بعده
       setTimeout(()=>settlementOpenAssistanceModal(customerList, i+1), 50);
       return true;
     }
-    // نفذ التوزيع
+    // نفذ التوزيع: كل مبلغ يُسجَّل كتسكين مستقل ليظهر منفصلًا في الأقساط
     const openReceipts = (state.treasuryEntries||[])
       .filter(e=>e.direction==="in" && String(e.customer||"").trim()===String(customer).trim() && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
       .filter(e=>{ const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0); return (+e.amount||0) - used > 0.009; })
       .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
     let totalApplied=0;
     picks.forEach(p=>{
-      let need = p.amount;
-      for(const e of openReceipts){
-        if(need<=0.009) break;
-        const used = (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0);
-        const avail = Math.max(0, (+e.amount||0) - used);
-        if(avail<=0.009) continue;
-        const take = Math.min(need, avail);
-        e.allocations = e.allocations || [];
-        e.allocations.push({orderId:p.row.orderId, orderNo:p.row.orderNo, installment:p.row.installment, amount:+take.toFixed(2)});
-        need -= take; totalApplied += take;
-      }
+      p.values.forEach(v=>{
+        let need = v;
+        for(const e of openReceipts){
+          if(need<=0.009) break;
+          const used = (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0);
+          const avail = Math.max(0, (+e.amount||0) - used);
+          if(avail<=0.009) continue;
+          const take = Math.min(need, avail);
+          e.allocations = e.allocations || [];
+          e.allocations.push({orderId:p.row.orderId, orderNo:p.row.orderNo, installment:p.row.installment, amount:+take.toFixed(2)});
+          need -= take; totalApplied += take;
+        }
+      });
     });
     saveState();
     toast(`تم تسكين ${fmt(totalApplied)} لـ ${customer}`,"ok");
     setTimeout(()=>settlementOpenAssistanceModal(customerList, i+1), 50);
     return true;
   }, "تطبيق التسكين");
+  const mdl=document.querySelector("#modalBackdrop .modal"); if(mdl) mdl.classList.add("set-assist-wide");
 }
 function settlementAssistUpdate(credit){
-  const checks = Array.from(document.querySelectorAll(".setAssistChk"));
-  let left = credit, alloc = 0;
-  checks.forEach(chk=>{
-    const j = +chk.dataset.idx;
-    const amtInp = document.querySelector(`.setAssistAmt[data-idx="${j}"]`);
-    if(!amtInp) return;
-    const rem = +amtInp.dataset.rem||0;
-    const take = chk.checked ? Math.min(left, rem) : 0;
-    amtInp.value = take.toFixed(2);
-    left -= take; alloc += take;
+  const rowEls = Array.from(document.querySelectorAll(".setAssistRow"));
+  let alloc = 0;
+  rowEls.forEach(tr=>{
+    const j = tr.dataset.idx, rem = +tr.dataset.rem||0;
+    const sum = Array.from(tr.querySelectorAll(".setAssistAmt")).reduce((t,inp)=>t+(+inp.value||0),0);
+    alloc += sum;
+    const sEl=tr.querySelector(".setAssistRowSum"), lEl=tr.querySelector(".setAssistRowLeft");
+    const over = sum > rem + 0.009;
+    if(sEl){ sEl.textContent=fmt(sum); sEl.style.color = over?"#dc2626":""; }
+    if(lEl){ lEl.textContent=fmt(Math.max(0,rem-sum)); lEl.style.color = over?"#dc2626":""; }
+    tr.style.background = over?"#fef2f2":(sum>0?"#fffbeb":"");
   });
+  const left = credit - alloc;
   const a=document.getElementById("setAssistAlloc"); if(a) a.textContent = fmt(alloc);
-  const l=document.getElementById("setAssistLeft");  if(l) l.textContent = fmt(Math.max(0,left));
+  const l=document.getElementById("setAssistLeft");  if(l){ l.textContent = fmt(Math.max(0,left)); l.style.color = left<-0.009?"#dc2626":""; }
 }
 
-// فك التسكين — يمسح كل التخصيصات المرتبطة بتحصيلات هذا العميل
+// كل تحصيلات العميل اللي عليها تسكين (أي حالة: نقدي/تحويل/شيك لسه ما اتحصلش/مرتجع) — هي نفسها اللي بتظهر مسددة في شاشة التحصيلات
+function settlementAllocatedEntries(customer){
+  const cust = String(customer||"").trim();
+  return (state.treasuryEntries||[]).filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust
+    && (e.allocations||[]).some(a=>(+a.amount||0)>0));
+}
+// فك التسكين — يفك كل التسديدات اللي اتسكنت على أقساط/فواتير هذا العميل من شاشة التحصيلات،
+// فتفضل التحصيلات موجودة كرصيد دائن، ويقدر المستخدم يرجع لشاشة التحصيلات ويعيد السداد من جديد
 async function settlementUnallocCustomer(customer){
   const cust = String(customer||"").trim();
-  const n = (state.treasuryEntries||[]).filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.allocations||[]).length).length;
-  if(!n){ toast("لا توجد تخصيصات لفكها","warn"); return; }
-  if(!(await askConfirm(`فك تسكين كل تحصيلات العميل "${customer}" (${n} تحصيل)؟
-سيتم تفريغ تفاصيل السداد في جميع تحصيلاته، وستظل المبالغ كرصيد دائن حتى تعيد تسكينها.`))) return;
-  (state.treasuryEntries||[]).forEach(e=>{
-    if(e.direction==="in" && String(e.customer||"").trim()===cust){
-      e.allocations = [];
-    }
+  const list = settlementAllocatedEntries(cust);
+  if(!list.length){ toast("لا توجد تخصيصات لفكها","warn"); return; }
+  const sum = list.reduce((t,e)=>t+(e.allocations||[]).reduce((x,a)=>x+(+a.amount||0),0),0);
+  if(!(await askConfirm(`فك تسكين كل تحصيلات العميل "${customer}"؟
+عدد التحصيلات: ${list.length} — إجمالي المسدد على الأقساط: ${fmt(sum)}
+سيتم فك كل التسديدات في شاشة التحصيلات، وتظل المبالغ كرصيد دائن للعميل، وتقدر تعيد السداد من التحصيلات أو من هنا.`))) return;
+  list.forEach(e=>{
+    e.allocations = [];
+    // التحصيلات التي كانت يدوية تعود غير موزعة؛ التلقائي يُعاد توزيعه عند فتح التحصيل وحفظه
   });
+  try{ audit("tx_unallocate", `فك تسكين ${list.length} تحصيل للعميل "${customer}" بإجمالي ${fmt(sum)}`); }catch(e){}
   saveState(); renderSettlement();
-  toast(`تم فك تسكين ${n} تحصيل للعميل "${customer}"`,"ok");
+  toast(`تم فك تسكين ${list.length} تحصيل (${fmt(sum)}) للعميل "${customer}" — يمكنك إعادة السداد من التحصيلات`,"ok");
 }
 
 // ========== شاشة متابعة الأقساط داخل المبيعات ==========
@@ -20500,6 +20521,15 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
   body .topbar .tb-av{width:32px;height:32px;font-size:14px}
   body .topbar .tb-user-btn{padding:2px!important}
 }
+</style>
+
+<style id="ig-settle-assist-wide">
+#modalBackdrop .modal.set-assist-wide{position:relative!important;inset:auto!important;width:min(98vw,1280px)!important;max-width:98vw!important;height:min(94dvh,920px)!important;max-height:94dvh!important;margin:auto!important;border-radius:14px!important;display:flex!important;flex-direction:column!important}
+#modalBackdrop .modal.set-assist-wide .mbody{flex:1 1 auto;overflow:auto}
+.set-assist-wrap{max-height:none!important;overflow:auto!important}
+#setAssistTable{min-width:1000px}
+#setAssistTable th,#setAssistTable td{white-space:nowrap;padding:6px 8px}
+#setAssistTable .setAssistAmt{width:110px;min-width:90px;padding:6px 8px;font-size:14px}
 </style>
 </body></html>`;
   if(typeof openReportPreview==="function") openReportPreview(html,title+" "+(e.no||""));
