@@ -9873,9 +9873,9 @@ function renderPolicyPaySchedule(t){
 function applyTermsLock(){
   const no=String(draft.saleOrderNo||"").trim();
   const ot=no?orderTermsFor(no):null, locked=!!no&&(!!ot||!!supImportedPaymentPlan(no));
-  ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.disabled=!!(viewOnly||locked); });
+  ["cashPct","installments","periodDays"].forEach(k=>{ const i=document.getElementById("t_"+k); if(i) i.disabled=!!viewOnly; });
   const n=document.getElementById("termsLockNote"); if(!n) return;
-  if(locked) n.innerHTML='🔒 شروط السداد معتمدة على <b>أمر البيع '+escapeHtml(no)+'</b> للعرض فقط — للتعديل افتح شاشة أمر البيع.'
+  if(locked) n.innerHTML='🔗 شروط السداد على مستوى <b>أمر البيع '+escapeHtml(no)+'</b> — أي تعديل هنا بعد الحفظ يتطبق على الأمر وكل بوالصه.'
     +(ot&&ot.updatedAt?' <span style="opacity:.8">آخر تعديل: '+escapeHtml(ot.updatedBy||"—")+' — '+escapeHtml(String(ot.updatedAt).slice(0,16).replace("T"," "))+'</span>':'')
     +' <button type="button" class="btn ghost sm" onclick="goOrderScreen(\''+escapeAttr(no)+'\')">فتح أمر البيع</button>';
   else n.textContent=no?'لا توجد شروط سداد لهذا الأمر بعد — ما تكتبه هنا يُسجَّل كشروط الأمر لأول مرة فقط، وبعدها تتعدل من شاشة أمر البيع.':'';
@@ -10061,8 +10061,22 @@ function buildRecord(strict){
 // أول مرة فقط: لو الأمر ليس له شروط، شروط أول بوليصة تُسجَّل كشروط الأمر. بعد كده الشروط تتعدل من شاشة أمر البيع فقط.
 function commitOrderTerms(rec){
   const k=soKey(rec.saleOrderNo); if(!k) return;
-  const existing=orderTermsFor(rec.saleOrderNo), imported=supImportedPaymentPlan(rec.saleOrderNo);
+  let existing=orderTermsFor(rec.saleOrderNo); const imported=supImportedPaymentPlan(rec.saleOrderNo);
   const hasTerms=!!(rec.terms&&rec.terms.cashPct!=null);
+  // تعديل الشروط من شاشة البوليصة: يُحدَّث شروط الأمر وكل بوالصه مع تسجيل من غيّر ومتى
+  if(hasTerms&&(existing||imported)&&typeof draft!=="undefined"&&draft&&draft.termsEdited){
+    const cur=existing||{cashPct:imported.cashPct,installments:imported.installments,periodDays:imported.periodDays};
+    const nt={cashPct:+rec.terms.cashPct,installments:+rec.terms.cashPct<100?(parseInt(rec.terms.installments,10)||0):0,periodDays:+rec.terms.periodDays||0};
+    if(!sameTerms(cur,nt)){
+      const u0=(typeof curU==="function"&&curU())||null, at0=new Date().toISOString();
+      const hist=((existing&&existing.history)||[]).slice(-19); hist.push({at:(existing&&existing.updatedAt)||"",by:(existing&&existing.updatedBy)||"",cashPct:cur.cashPct,installments:cur.installments,periodDays:cur.periodDays});
+      state.orderTerms[k]={...nt,updatedAt:at0,updatedBy:u0?u0.name:"",source:"policy-edit",history:hist};
+      orderDocs(rec.saleOrderNo).forEach(x=>{ x.terms={...nt}; });
+      rec.terms={...nt};
+      try{ audit("order_terms","تعديل شروط السداد من بوليصة "+rec.policyNo+" — أمر بيع "+rec.saleOrderNo+": "+cur.cashPct+"%/"+cur.installments+"/"+cur.periodDays+" ← "+nt.cashPct+"%/"+nt.installments+"/"+nt.periodDays); }catch(e){}
+      existing=orderTermsFor(rec.saleOrderNo);
+    }
+  }
   if(!existing&&!imported&&!hasTerms&&!Array.isArray(rec.paymentSchedule)) return;
   const u=(typeof curU==="function"&&curU())||null, at=new Date().toISOString();
   let ot=existing?{...existing}:null;
@@ -13523,6 +13537,7 @@ function viewTreasury(direction){
       <th class="sortable" data-sk="status" onclick="txSortBy('status','${direction}')">الحالة</th>
       <th class="sortable" data-sk="alert" onclick="txSortBy('alert','${direction}')">تنبيه</th>
       <th class="sortable" data-sk="notes" onclick="txSortBy('notes','${direction}')">ملاحظات</th>
+      <th>حالة السداد</th>
       <th></th>
     </tr></thead>
     <tbody id="txBody"></tbody>
@@ -13703,6 +13718,20 @@ function txExport(direction,format){
   } else openReportPreview(html,title);
 }
 
+// حالة سداد التحصيل/الدفعة: مسدد (كل القيمة موزعة على أقساط/فواتير) / جزئي / غير مسدد
+function txAllocStatus(e){
+  if(!e||e.entryKind==="gl"||e.method==="adjustment"&&e.adjustmentKind!=="credit") return "";
+  const amt=+e.amount||0;
+  const used=(e.allocations||[]).reduce((t,a)=>t+(+a.amount||0),0);
+  if(amt>0.009&&used>=amt-0.01) return "paid";
+  if(used>0.009) return "partial";
+  return "unpaid";
+}
+function txAllocStatusChip(e){
+  const k=txAllocStatus(e); if(!k) return "—";
+  const m={paid:["مسدد","#dcfce7","#166534"],partial:["جزئي","#fef3c7","#854d0e"],unpaid:["غير مسدد","#fee2e2","#991b1b"]}[k];
+  return `<span class="chip" style="background:${m[1]};color:${m[2]};font-weight:800;white-space:nowrap">${m[0]}</span>`;
+}
 function renderTreasury(direction){
   txViewSave(direction);
   { const sm=document.getElementById("txFiltersSum"); if(sm) sm.textContent=txFilterSummary(direction); }
@@ -13735,11 +13764,12 @@ function renderTreasury(direction){
       <td>${txStatusChip(e.status)}</td>
       <td>${alert}</td>
       <td style="font-size:11px;color:var(--text-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.notes||"")}</td>
+      <td>${txAllocStatusChip(e)}</td>
       <td>${txRowActions(e,direction)}</td>
     </tr>`;
   }).join("");
-  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="13"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
-  document.getElementById("txFoot").innerHTML = filtered.length ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="7"></td></tr>` : "";
+  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="14"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
+  document.getElementById("txFoot").innerHTML = filtered.length ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="8"></td></tr>` : "";
   { const ch=document.getElementById("txDashChip");
     if(ch){
       if(txFilter.dashCollected){
