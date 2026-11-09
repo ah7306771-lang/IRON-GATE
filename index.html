@@ -3544,6 +3544,7 @@ function firstAllowedTab(scr){
 }
 function canView(page){
   if(page==="inventory") return can("inventory","view");
+  if(page==="supplyBulkPost") return can("supply","post");
   if(page==="users") return isAdmin();
   if(page==="trash") return isAdmin();
   if(page==="dataHealth") return isAdmin();
@@ -3863,6 +3864,7 @@ const navGroups = [
     { id:"saleOrder", icon:"📝", label:"أمر البيع" },
     { id:"shipments", icon:"📦", label:"إدخال البوليصة" },
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
+    { id:"supplyBulkPost", icon:"📥", label:"ترحيل بيانات التوريد" },
     { sep:"التقارير والمتابعة" },
     { id:"salesReport", icon:"📊", label:"تقرير المبيعات" },
     { id:"managementReports", icon:"📈", label:"تقارير الإدارة والرقابة" },
@@ -4055,6 +4057,7 @@ function go(page){
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
     supply:["بيانات التوريد","كل البوالص والأصناف"],
+    supplyBulkPost:["ترحيل بيانات التوريد","ترحيل جماعي لقيود المشتريات والمبيعات حسب تاريخ التوريد ونطاق أوامر البيع"],
     salesReport:["تقرير المبيعات","تقرير احترافي مجمّع حسب أمر البيع — بدون عرض البوالص"],
     managementReports:["تقارير الإدارة والرقابة","موقف العملاء والموردين وربحية أوامر البيع وأعمار الديون"],
     orderReport:["تقرير أوامر البيع التفصيلي","كل أمر بيع وتحته بوالصه وشروط السداد والأقساط والمسدد والمتبقي"],
@@ -4093,6 +4096,7 @@ function go(page){
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
   else if(page==="shipments"){ c.innerHTML = viewShipments(); bindShipments(); }
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
+  else if(page==="supplyBulkPost"){ c.innerHTML = viewSupplyBulk(); renderSupplyBulk(); }
   else if(page==="orderReport"){ c.innerHTML = viewOrderReport(); renderOrderReport(); }
   else if(page==="salesInstallments"){ c.innerHTML = viewSalesInstallments(); renderSalesInstallments(); }
   else if(page==="overdueSummary"){ c.innerHTML=viewOverdueSummary(); renderOverdueSummary(); }
@@ -11400,12 +11404,12 @@ function supSalesPlan(c,ids){
   return {lines:L,subC,vatC,discountC,grossReceivable,costC};
 }
 function supDoPostPurchase(){ return supDoPostKind(); }
-async function supDoPostKind(){
-  const X=window._supPostCtx; if(!X) return;
-  if(X.bad||!X.postingsOk) return toast("في بنود محتاجة تصليح قبل الترحيل","err");
-  if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
+async function supDoPostKind(opts){
+  const silent=!!(opts&&opts.silent), X=(opts&&opts.ctx)||window._supPostCtx; if(!X) return;
+  if(X.bad||!X.postingsOk){ if(silent) return {ok:false,error:"في بنود محتاجة تصليح قبل الترحيل"}; return toast("في بنود محتاجة تصليح قبل الترحيل","err"); }
+  if(!can("supply","post")){ if(silent) return {ok:false,error:"لا تملك صلاحية الترحيل"}; return toast("لا تملك صلاحية الترحيل","err"); }
   const {c,sup,cus,wh,ind,journals,kind}=X, orderNo=c.orderNo;
-  const btn=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(btn){btn.disabled=true;btn.textContent="جارٍ الترحيل…";}
+  const btn=silent?null:document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(btn){btn.disabled=true;btn.textContent="جارٍ الترحيل…";}
   let entry=null;
   try{
     const date=c.date||glDate();
@@ -11424,15 +11428,28 @@ async function supDoPostKind(){
     if(td!==tc||!td)throw new Error("القيد غير متوازن: "+td/100+" / "+tc/100);
     if(plan.lines.some(x=>!x.acc))throw new Error("يوجد حساب غير مربوط بأحد بنود القيد");
     const old=await sb.from("sale_order_postings").select("*").eq("order_no",orderNo).eq("kind",kind).maybeSingle();
-    if(old.data&&old.data.entry_id){await sb.from("gl_entry_lines").delete().eq("entry_id",old.data.entry_id);await sb.from("gl_entries").delete().eq("id",old.data.entry_id).eq("status","draft");}
+    if(old.data&&old.data.entry_id){
+      const oe=await sb.from("gl_entries").select("id,status,entry_no").eq("id",old.data.entry_id).maybeSingle();
+      if(oe.error)throw oe.error;
+      if(oe.data&&oe.data.status==="posted")throw new Error("الأمر مرحّل بالفعل بقيد "+(oe.data.entry_no||"")+" — ألغِ الترحيل أولًا");
+      if(oe.data){const dl0=await sb.from("gl_entry_lines").delete().eq("entry_id",oe.data.id);if(dl0.error)throw dl0.error;const de0=await sb.from("gl_entries").delete().eq("id",oe.data.id).eq("status","draft");if(de0.error)throw de0.error;}
+    }
     const prefix=String(parseInt(date.slice(5,7),10));
-    const ne=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"%");if(ne.error)throw ne.error;
-    const seqs=(ne.data||[]).map(e=>String(e.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
-    const entryNo=prefix+String((seqs.length?Math.max(...seqs):0)+1).padStart(4,"0");
+    const nextNo=async()=>{
+      // رقم القيد = رقم الشهر + 4 خانات؛ نفس الطول فالترتيب النصي = الرقمي → أعلى رقم بطلب واحد (لا يتأثر بحد 1000 صف)
+      const ne=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"____").order("entry_no",{ascending:false}).limit(50);
+      if(ne.error)throw ne.error;
+      const seqs=(ne.data||[]).map(e=>String(e.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
+      return prefix+String((seqs.length?Math.max(...seqs):0)+1).padStart(4,"0");
+    };
+    let entryNo=await nextNo();
     const title=kind==="purchase"?"مشتريات":"مبيعات";
     const party=kind==="purchase"?c.supplier:c.customer;
     const desc=`قيد ${title} — أمر بيع ${orderNo} — ${party} — [مستند: ${orderNo}]`;
-    entry=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:y.id,period_id:per.id,entry_date:date,document_date:date,description:desc,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:td/100,total_credit:tc/100});
+    for(let attempt=0;;attempt++){
+      try{entry=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:y.id,period_id:per.id,entry_date:date,document_date:date,description:desc,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:td/100,total_credit:tc/100});break;}
+      catch(ie){ if(attempt<3&&(ie.code==="23505"||/duplicate|unique/i.test(String(ie.message||"")))){entryNo=await nextNo();continue;} throw ie; }
+    }
     const lr=await sb.from("gl_entry_lines").insert(plan.lines.map((x,i)=>({entry_id:entry.id,line_no:i+1,account_id:x.acc,description:(kind==="purchase"&&x.k==="المورد"?`المورد: ${c.supplier} — ${x.k}`:kind==="sales"&&x.k==="العميل"?`العميل: ${c.customer} — ${x.k}`:x.k)+" — أمر بيع "+orderNo,debit:x.dr/100,credit:x.cr/100})));
     if(lr.error)throw lr.error;
     const posted=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id});if(posted.error)throw posted.error;
@@ -11440,9 +11457,11 @@ async function supDoPostKind(){
     const sp=await sb.from("sale_order_postings").upsert({order_no:orderNo,kind,entry_id:entry.id,entry_no:entryNo,journal_code:SUP_POST_JOURNALS[kind],amount:td/100,posted_at:new Date().toISOString(),posted_by:u.name||u.username||""},{onConflict:"order_no,kind"});
     if(sp.error)throw new Error("القيد اترحّل برقم "+entryNo+" لكن تسجيل الترحيل فشل: "+sp.error.message);
     try{await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"بيانات التوريد",source_ref:orderNo});}catch(e){}
+    if(silent){window._supPostMapAt=0;return {ok:true,entryNo};}
     toast("✓ تم ترحيل قيد "+title+" برقم "+entryNo,"ok");closeModal();window._supPostMapAt=0;await supEnsurePostMap(true);
   }catch(e){
     if(entry&&!/اترحّل برقم/.test(String(e.message))){try{await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id);await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft");}catch(_){}}
+    if(silent) return {ok:false,error:String(e.message||e)};
     if(btn){btn.disabled=false;btn.textContent="إعادة المحاولة";}
     toast("تعذر الترحيل: "+(e.message||e),"err");
   }
@@ -11479,16 +11498,142 @@ async function supEnsurePostMap(force){
   if(!force&&Date.now()-window._supPostMapAt<20000)return;
   window._supPostMapAt=Date.now();
   try{
-    const r=await sb.from("sale_order_postings").select("order_no,kind,entry_id,entry_no");if(r.error)return;
-    const ids=[...new Set((r.data||[]).map(x=>x.entry_id).filter(Boolean))],st={};
-    if(ids.length){const e=await sb.from("gl_entries").select("id,status").in("id",ids);(e.data||[]).forEach(x=>st[x.id]=x.status);}
+    // ترقيم صفحات (حد Supabase 1000 صف) + تجزئة قائمة in لتفادي حد طول الرابط؛ أي فشل = إبقاء الخريطة الحالية بدل تفريغها
+    const rows=await fetchAllRows("sale_order_postings",["order_no","kind"]);
+    const ids=[...new Set(rows.map(x=>x.entry_id).filter(Boolean))],st={};
+    for(let i=0;i<ids.length;i+=80){const e=await sb.from("gl_entries").select("id,status").in("id",ids.slice(i,i+80));if(e.error)throw e.error;(e.data||[]).forEach(x=>st[x.id]=x.status);}
     const m={},mi={};
-    (r.data||[]).forEach(x=>{if(st[x.entry_id]==="posted"){m[x.order_no+"|"+x.kind]=x.entry_no||"✓";mi[x.order_no+"|"+x.kind]=x.entry_id;}});
+    rows.forEach(x=>{if(st[x.entry_id]==="posted"){m[x.order_no+"|"+x.kind]=x.entry_no||"✓";mi[x.order_no+"|"+x.kind]=x.entry_id;}});
     const changed=JSON.stringify(m)!==JSON.stringify(window.supPostMap);
     window.supPostMap=m;window.supPostIds=mi;
     if(changed&&currentPage==="supply")go("supply");
   }catch(e){}
 }
+// ================= ترحيل جماعي لبيانات التوريد (مشتريات 502 + مبيعات 503) =================
+window.supBulk=window.supBulk||{from:"",to:"",ofrom:"",oto:"",res:null,busy:false,prog:""};
+const _sbCmp=(a,b)=>String(a).localeCompare(String(b),"en",{numeric:true});
+// الأوامر اللي فيها بوليصة تاريخ توريدها داخل النطاق، مرتبة تصاعديًا برقم أمر البيع
+function supBulkList(){
+  const B=window.supBulk, g=new Map();
+  (state.shipments||[]).forEach(s=>{
+    const k=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id);
+    let x=g.get(k); if(!x){x={key:k,dates:[],inRange:false,supplier:s.supplier||"",customer:s.customer||"",orderNo:""};g.set(k,x);}
+    if(s.date) x.dates.push(s.date);
+    if((!B.from||(s.date&&s.date>=B.from))&&(!B.to||(s.date&&s.date<=B.to))) x.inRange=true;
+    if(!x.orderNo){const so=s.saleOrderId&&(state.saleOrders||[]).find(o=>o.id===s.saleOrderId);x.orderNo=String((so&&so.orderNo)||s.saleOrderNo||"");}
+  });
+  return [...g.values()].filter(x=>x.inRange&&x.orderNo&&(!B.ofrom||_sbCmp(x.orderNo,B.ofrom)>=0)&&(!B.oto||_sbCmp(x.orderNo,B.oto)<=0)).sort((a,b)=>_sbCmp(a.orderNo,b.orderNo));
+}
+async function supBulkShared(){
+  await glIndicatorsSync(true);
+  const [a,j,y,p]=await Promise.all([sb.from("gl_accounts").select("*"),sb.from("gl_journals").select("*"),sb.from("gl_fiscal_years").select("*").eq("status","open"),sb.from("gl_periods").select("*").eq("status","open")]);
+  for(const r of [a,j,y,p]) if(r.error) throw r.error;
+  return {accs:a.data||[],journals:j.data||[],years:y.data||[],periods:p.data||[],ind:window.glIndicators||{}};
+}
+// نفس فحوصات supPostAccounts لكن بدون نافذة؛ بترجّع قائمة الأخطاء
+function supBulkPrepare(key,kind,sh){
+  const c=supPostCollect(key), ind=sh.ind, accs=sh.accs, errs=[];
+  if(!c.orderNo) return {errs:["الأمر غير مربوط برقم أمر بيع"]};
+  const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!accs.some(ch=>ch.is_active&&ch.parent_id===x.id);
+  const acc=(label,id)=>{const x=id?accs.find(a=>String(a.id)===String(id)):null; if(!x) errs.push(label+": غير مربوط بحساب"); else if(!isLeaf(x)) errs.push(label+": ليس حسابًا نهائيًا قابلاً للترحيل");};
+  const sup=findParty(state.suppliers,c.supplier)||{}, cus=findParty(state.customers,c.customer)||{};
+  const wid=(c.so&&c.so.warehouseId)||whDefaultId(), wh=whList().find(w=>String(w.id)===String(wid));
+  const pnl=label=>{ if(!ind.trading_pnl) errs.push("مؤشر الأرباح التجارية والصناعية غير معدّ"); else acc(label,ind.trading_pnl); };
+  if(kind==="purchase"){
+    acc("حساب المورد "+c.supplier,sup.accountId);
+    if(!wh) errs.push("المخزن غير موجود"); else acc("حساب المخزن "+wh.name,wh.accountId);
+    if(sup.applyProfitTax) pnl("حساب الأرباح التجارية والصناعية");
+  }else{
+    acc("حساب العميل "+c.customer,cus.accountId);
+    if(!wh) errs.push("المخزن غير موجود"); else acc("حساب المخزن "+wh.name,wh.accountId);
+    c.byGroup.forEach(g=>{
+      const ig=(state.itemGroups||[]).find(x=>String(x.id)===String(g.gid));
+      if(!ig) errs.push("الصنف بدون مجموعة");
+      else{acc("تكلفة البضاعة المباعة — "+ig.name,ig.acc1Id);acc("إيرادات المبيعات — "+ig.name,ig.acc2Id);}
+    });
+    if([...c.byGroup.values()].some(g=>g.dis>0)) pnl("حساب الأرباح التجارية والصناعية");
+  }
+  if(!ind.vat_account) errs.push("مؤشر ضريبة القيمة المضافة غير معدّ"); else acc("حساب ضريبة القيمة المضافة",ind.vat_account);
+  const jc=SUP_POST_JOURNALS[kind], j=sh.journals.find(x=>String(x.journal_code)===jc);
+  if(!j) errs.push("يومية "+jc+" غير موجودة"); else if(!j.is_active) errs.push("يومية "+jc+" غير نشطة");
+  const d=c.date||glDate(), y=sh.years.find(x=>x.start_date<=d&&x.end_date>=d), per=y&&sh.periods.find(x=>x.fiscal_year_id===y.id&&x.start_date<=d&&x.end_date>=d);
+  if(!per) errs.push("مفيش فترة مالية مفتوحة تغطي "+d);
+  return {c,sup,cus,wh,errs};
+}
+async function supBulkRun(){
+  const B=window.supBulk; if(B.busy) return;
+  if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
+  const list=supBulkList(); if(!list.length) return toast("لا توجد أوامر في النطاق","err");
+  const ok=await askConfirm(`ترحيل مشتريات ومبيعات ${list.length} أمر بيع (تاريخ التوريد ${B.from||"…"} ← ${B.to||"…"})؟\n\nالأوامر المترحّلة قبل كده بتتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل بيانات التوريد",ok:"ابدأ الترحيل",cancel:"إلغاء"});
+  if(!ok) return;
+  B.busy=true; B.res=null; renderSupplyBulk();
+  const res={pur:0,sal:0,err:0,skip:0,errors:[]};
+  try{
+    await supEnsurePostMap(true);
+    const sh=await supBulkShared(); let n=0;
+    for(const o of list){
+      B.prog=(++n)+" / "+list.length; const pe=document.getElementById("sbProg"); if(pe) pe.textContent=B.prog;
+      const done=k=>!!window.supPostMap[o.orderNo+"|"+k];
+      if(done("purchase")&&done("sales")){res.skip++;continue;}
+      let bad=false;
+      for(const kind of ["purchase","sales"]){
+        if(done(kind)) continue;
+        const lbl=kind==="purchase"?"مشتريات":"مبيعات", p=supBulkPrepare(o.key,kind,sh);
+        if(p.errs.length){bad=true;p.errs.forEach(m=>res.errors.push({orderNo:o.orderNo,msg:lbl+": "+m}));continue;}
+        const r=await supDoPostKind({silent:true,ctx:{c:p.c,sup:p.sup,cus:p.cus,wh:p.wh,ind:sh.ind,journals:sh.journals,bad:0,postingsOk:true,posted:null,kind}});
+        if(r&&r.ok){ if(kind==="purchase")res.pur++; else res.sal++; }
+        else{bad=true;res.errors.push({orderNo:o.orderNo,msg:lbl+": "+((r&&r.error)||"فشل الترحيل")});}
+      }
+      if(bad) res.err++;
+    }
+  }catch(e){ toast("تعذر الترحيل الجماعي: "+(e.message||e),"err"); }
+  B.busy=false; B.res=res; window._supPostMapAt=0; await supEnsurePostMap(true); renderSupplyBulk();
+  toast(`انتهى الترحيل — مشتريات ${res.pur} / مبيعات ${res.sal} / أخطاء ${res.err}`,res.err?"err":"ok");
+}
+function viewSupplyBulk(){
+  const B=window.supBulk; if(!B.from&&!B.to){B.from=igYearStart();B.to=igYearEnd();}
+  supEnsurePostMap();
+  return `<div class="card" style="padding:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+    <label>تاريخ التوريد من <input class="inp" type="date" value="${escapeAttr(B.from)}" onchange="supBulk.from=this.value;renderSupplyBulk()"></label>
+    <label>إلى <input class="inp" type="date" value="${escapeAttr(B.to)}" onchange="supBulk.to=this.value;renderSupplyBulk()"></label>
+    <label>من أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.ofrom)}" oninput="supBulk.ofrom=this.value.trim();renderSupplyBulk()"></label>
+    <label>إلى أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.oto)}" oninput="supBulk.oto=this.value.trim();renderSupplyBulk()"></label>
+    <button id="sbPost" type="button" class="btn" onclick="supBulkRun()">📥 ترحيل</button>
+    <span id="sbProg" style="font-weight:800;color:var(--gold-text)"></span></div></div><div id="sbBody"></div>`;
+}
+function renderSupplyBulk(){
+  const B=window.supBulk, box=document.getElementById("sbBody"); if(!box) return;
+  const list=supBulkList(), r=B.res, can_=can("supply","post");
+  const st=(o,k)=>window.supPostMap[o.orderNo+"|"+k]?'<span class="chip ok">مُرحّل ✓</span>':'<span class="muted">—</span>';
+  const rows=list.map((o,i)=>{const ds=[...o.dates].sort(), d=ds.length?(ds[0]===ds[ds.length-1]?ds[0]:ds[0]+" ← "+ds[ds.length-1]):"—";
+    return `<tr><td class="num">${i+1}</td><td><strong style="color:var(--gold-text)">${escapeHtml(o.orderNo)}</strong></td><td>${escapeHtml(d)}</td><td>${escapeHtml(o.supplier||"—")}</td><td>${escapeHtml(o.customer||"—")}</td><td>${st(o,"purchase")}</td><td>${st(o,"sales")}</td></tr>`;}).join("");
+  const pb=document.getElementById("sbPost"); if(pb){pb.style.display=can_?"":"none";pb.disabled=B.busy||!list.length;pb.textContent=B.busy?"جارٍ الترحيل…":"📥 ترحيل";}
+  const cnt=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${[["ترحيل مشتريات",r.pur,"var(--ok)"],["ترحيل مبيعات",r.sal,"var(--ok)"],["أوامر فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)"],["أوامر مترحّلة سابقًا (تخطّت)",r.skip,"var(--text-dim)"]].map(x=>`<div class="card" style="padding:10px 16px;min-width:150px"><div style="font-size:12px;color:var(--text-dim)">${x[0]}</div><div style="font-size:22px;font-weight:800;color:${x[2]}">${x[1]}</div></div>`).join("")}</div>`:"";
+  const err=r&&r.errors.length?`<div class="card" style="padding:12px;margin-top:6px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong style="color:var(--danger)">تقرير الأخطاء (${r.errors.length})</strong><button type="button" class="btn ghost" onclick="supBulkErrPdf()">⬇ تصدير PDF</button></div><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>رقم أمر البيع</th><th>نوع الخطأ</th></tr></thead><tbody>${r.errors.map(e=>`<tr><td><strong>${escapeHtml(e.orderNo)}</strong></td><td style="color:var(--danger)">${escapeHtml(e.msg)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
+  box.innerHTML=`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>#</th><th>أمر البيع</th><th>تاريخ التوريد</th><th>المورد</th><th>العميل</th><th>مشتريات</th><th>مبيعات</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;padding:18px" class="muted">لا توجد أوامر في النطاق</td></tr>'}</tbody></table></div><div style="padding:8px 12px;font-weight:700">عدد الأوامر: ${list.length}</div></div>${cnt}${err}`;
+}
+async function supBulkErrPdf(){
+  const r=window.supBulk.res; if(!r||!r.errors.length) return toast("لا توجد أخطاء للتصدير","err");
+  if(!window.html2canvas||!window.jspdf?.jsPDF) return toast("مولد PDF غير متاح الآن","err");
+  const host=document.createElement("div"); host.dir="rtl";
+  host.style.cssText="position:fixed;left:-20000px;top:0;width:900px;background:#fff;padding:24px;color:#172033;font-family:Tahoma,Arial;z-index:-1";
+  const th='style="border:1px solid #999;padding:6px 10px;background:#f1e6c4"', td='style="border:1px solid #bbb;padding:6px 10px"';
+  host.innerHTML=`<h2 style="text-align:center;margin:0 0 6px">تقرير أخطاء ترحيل بيانات التوريد</h2><p style="text-align:center;margin:0 0 14px">تاريخ التوريد: ${escapeHtml(window.supBulk.from||"—")} ← ${escapeHtml(window.supBulk.to||"—")} — عدد الأخطاء: ${r.errors.length} — ${new Date().toLocaleDateString("en-GB")}</p><table style="width:100%;border-collapse:collapse;font-size:14px"><thead><tr><th ${th}>رقم أمر البيع</th><th ${th}>نوع الخطأ</th></tr></thead><tbody>${r.errors.map(e=>`<tr><td ${td}>${escapeHtml(e.orderNo)}</td><td ${td}>${escapeHtml(e.msg)}</td></tr>`).join("")}</tbody></table>`;
+  document.body.appendChild(host);
+  try{
+    const canvas=await html2canvas(host,{scale:2,backgroundColor:"#ffffff",useCORS:true,windowWidth:900});
+    const pdf=new window.jspdf.jsPDF("p","mm","a4"), W=190, H=277, sliceMax=Math.floor(canvas.width*H/W), pc=document.createElement("canvas"), ctx=pc.getContext("2d");
+    for(let y=0,first=true;y<canvas.height;y+=sliceMax){
+      const h=Math.min(sliceMax,canvas.height-y); pc.width=canvas.width; pc.height=h;
+      ctx.fillStyle="#fff"; ctx.fillRect(0,0,pc.width,h); ctx.drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
+      if(!first) pdf.addPage(); first=false;
+      pdf.addImage(pc.toDataURL("image/jpeg",.92),"JPEG",10,10,W,h*W/canvas.width);
+    }
+    pdf.save((typeof igSafeFileName==="function"?igSafeFileName:x=>x)("أخطاء_ترحيل_التوريد_"+new Date().toISOString().slice(0,10))+".pdf");
+  }catch(e){console.error(e);toast("تعذر إنشاء PDF","err");}
+  finally{host.remove();}
+}
+
 async function supPrintPostedEntry(orderNo,kind="purchase"){
   kind=kind==="sales"?"sales":"purchase";
   const id=(window.supPostIds||{})[orderNo+"|"+kind];
