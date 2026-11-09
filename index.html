@@ -14546,6 +14546,9 @@ function openTxForm(direction, existing){
     if(!isGl && !d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); document.getElementById("tx_party")?.focus(); return false; }
     if(!method){ toast("اختر نوع السداد أولاً","err"); document.getElementById("tx_method")?.focus(); return false; }
     if(!d.amount || d.amount<=0){ toast("القيمة لازم تكون أكبر من صفر","err"); return false; }
+    if(!isGl && allocTypeVal==="invoice_assistance"){ const _ve=txValidateAssistance(d.amount); if(_ve){ toast(_ve,"err"); return false; } }
+    // حارس عام: لا يُحفظ أبدًا توزيع أكبر من قيمة التحصيل/الدفعة
+    if(!isGl){ const _alSum=(d.allocations||[]).reduce((t,x)=>t+(+x.amount||0),0); if(_alSum>(+d.amount||0)+0.01){ toast(`المبلغ الموزع (${fmt(_alSum)}) أكبر من قيمة ${isIn?"التحصيل":"الدفعة"} (${fmt(d.amount)}) — لا يمكن الحفظ`,"err"); return false; } }
     if(isGl){
       if(!glLines.length){ toast("أضف حسابًا واحدًا على الأقل في جدول الحسابات","err"); return false; }
       const bad = glLines.findIndex(r=>!r.accountId || !(r.amount>0));
@@ -14689,7 +14692,7 @@ function txUpdateSettlementSummary(){
   document.querySelectorAll('.tx-alloc-amount').forEach(i=>used+=+i.value||0);
   document.querySelectorAll('.tx-auto-alloc').forEach(c=>used+=parseFloat(String(c.textContent).replace(/,/g,''))||0);
   const u=document.getElementById('txSumAlloc'), l=document.getElementById('txSumLeft');
-  if(u) u.textContent=fmt(used); if(l) l.textContent=fmt(Math.max(0,total-used));
+  if(u) u.textContent=fmt(used); if(l){ l.textContent=fmt(Math.max(0,total-used)); l.style.color=(total-used<-0.009)?'#dc2626':''; }
 }
 function txOrderKey(v){ return supOrderNumberKey(v); }
 function txAllocMatches(a, so, orderNo){
@@ -15682,7 +15685,7 @@ function txRenderSettlementDetails(){
   if(!rows.length){body.innerHTML='<tr><td colspan="10">'+(isIn?'لا توجد أقساط مستحقة أو متبقية لهذا العميل.':'لا توجد فواتير مستحقة أو متبقية لهذا المورد.')+'</td></tr>';window.__txCurrentAllocRows=[];return;}
   window.__txCurrentAllocRows=rows;
   const auto=kind==='invoice_deduction';
-  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${isIn?(r.installment===0?'نقدي':'قسط '+r.installment):escapeHtml(r.label||'فاتورة مشتريات')}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td${isIn?"":' style="display:none"'}>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" max="${r.remaining}" step="0.01" value="0" readonly title="${isIn?"يتم توزيع مبلغ التحصيل تلقائيًا على الأقساط التي تختارها":"يتم توزيع مبلغ الدفع تلقائيًا على الفواتير التي تختارها"}" style="min-width:90px;opacity:.9">`}</td></tr>`).join('');
+  body.innerHTML=rows.map((r,i)=>`<tr><td>${auto?'<span title="تخصيص تلقائي حسب أقدم استحقاق">تلقائي</span>':`<input type="checkbox" class="tx-alloc-check" data-index="${i}" onchange="txPreviewAssistanceAllocations()" ${r.remaining<=0?'disabled':''}>`}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${isIn?(r.installment===0?'نقدي':'قسط '+r.installment):escapeHtml(r.label||'فاتورة مشتريات')}</td><td>${escapeHtml(r.date)}</td><td class="num">${fmt(r.total)}</td><td${isIn?"":' style="display:none"'}>${r.due}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num">${fmt(r.remaining)}</td><td>${auto?`<span class="num tx-auto-alloc" data-index="${i}">—</span>`:`<div class="tx-alloc-cell" data-index="${i}" style="display:flex;gap:4px;align-items:center;flex-wrap:wrap"><input class="inp num tx-alloc-amount" data-index="${i}" type="number" min="0" step="0.01" value="0" oninput="txAllocManual(this)" onfocus="this.select()" title="اكتب المبلغ بإيدك، أو علّم الاختيار ليتوزع تلقائيًا" style="min-width:100px"><button type="button" class="btn ghost sm" onclick="txAddAllocField(${i})" title="إضافة مبلغ سداد آخر على نفس القسط" style="padding:2px 8px">➕</button></div>`}</td></tr>`).join('');
   const mir=document.getElementById('tx_amountMirror'); if(mir) mir.value=document.getElementById('tx_amount')?.value||'';
   // Restore saved allocations from the entry being edited
   if(txEditingId){
@@ -15690,12 +15693,13 @@ function txRenderSettlementDetails(){
     const savedAllocs=entry&&Array.isArray(entry.allocations)?entry.allocations:[];
     if(savedAllocs.length && !auto){
       rows.forEach((r,i)=>{
-        const saved=savedAllocs.find(a=>+a.installment===+r.installment&&txAllocMatches(a,{id:r.orderId},r.orderNo));
-        if(saved){
+        const saved=savedAllocs.filter(a=>+a.installment===+r.installment&&txAllocMatches(a,{id:r.orderId},r.orderNo)&&(+a.amount||0)>0);
+        if(saved.length){
           const chk=document.querySelector(`.tx-alloc-check[data-index="${i}"]`);
           if(chk) chk.checked=true;
           const inp=document.querySelector(`.tx-alloc-amount[data-index="${i}"]`);
-          if(inp) inp.value=(+saved.amount||0).toFixed(2);
+          if(inp){ inp.value=(+saved[0].amount||0).toFixed(2); inp.dataset.manual="1"; }
+          saved.slice(1).forEach(a=>txAddAllocField(i,(+a.amount||0).toFixed(2)));
         }
       });
     }
@@ -15703,18 +15707,54 @@ function txRenderSettlementDetails(){
   if(auto) txPreviewAutoAllocations();
   else txPreviewAssistanceAllocations();
 }
+function txRowAllocInputs(i){ return Array.from(document.querySelectorAll(`.tx-alloc-amount[data-index="${i}"]`)); }
 function txPreviewAssistanceAllocations(){
   const rows=window.__txCurrentAllocRows||[];
   let left=Math.max(0,+(document.getElementById('tx_amount')?.value||0));
+  // الصفوف المكتوبة يدويًا تُخصم أولًا من المتاح، والباقي يتوزع تلقائيًا على الصفوف المعلّمة
   rows.forEach((r,i)=>{
-    const checked=!!document.querySelector(`.tx-alloc-check[data-index="${i}"]`)?.checked;
-    const input=document.querySelector(`.tx-alloc-amount[data-index="${i}"]`);
-    if(!input) return;
-    const take=checked?Math.min(left,r.remaining):0;
-    input.value=take.toFixed(2);
-    left-=take;
+    const chk=document.querySelector(`.tx-alloc-check[data-index="${i}"]`);
+    const ins=txRowAllocInputs(i); if(!ins.length) return;
+    if(chk&&!chk.checked){ ins.forEach((x,k)=>{ if(k>0) x.remove(); else { x.value="0"; delete x.dataset.manual; } }); return; }
+    if(ins.some(x=>x.dataset.manual==="1")) left-=ins.reduce((t,x)=>t+(+x.value||0),0);
+  });
+  left=Math.max(0,left);
+  rows.forEach((r,i)=>{
+    const chk=document.querySelector(`.tx-alloc-check[data-index="${i}"]`);
+    const ins=txRowAllocInputs(i); if(!ins.length||!chk||!chk.checked) return;
+    if(ins.some(x=>x.dataset.manual==="1")) return;
+    const take=Math.min(left,r.remaining);
+    ins[0].value=take.toFixed(2); left-=take;
   });
   txUpdateSettlementSummary();
+}
+// كتابة يدوية في خانة المبلغ: تعلّم الصف تلقائيًا وتفضل القيمة زي ما كتبها المستخدم
+function txAllocManual(inp){
+  const i=inp.dataset.index; inp.dataset.manual="1";
+  const chk=document.querySelector(`.tx-alloc-check[data-index="${i}"]`);
+  const sum=txRowAllocInputs(i).reduce((t,x)=>t+(+x.value||0),0);
+  if(chk&&!chk.disabled) chk.checked=sum>0;
+  txUpdateSettlementSummary();
+}
+// إضافة خانة مبلغ إضافية على نفس القسط
+function txAddAllocField(i,val){
+  const cell=document.querySelector(`.tx-alloc-cell[data-index="${i}"]`); if(!cell) return;
+  const inp=document.createElement('input');
+  inp.className='inp num tx-alloc-amount'; inp.type='number'; inp.min='0'; inp.step='0.01';
+  inp.dataset.index=i; inp.dataset.manual='1'; inp.style.minWidth='100px'; inp.value=val!=null?val:'';
+  inp.placeholder='مبلغ آخر'; inp.setAttribute('oninput','txAllocManual(this)'); inp.onfocus=function(){this.select();};
+  cell.insertBefore(inp, cell.querySelector('button'));
+  if(val==null) inp.focus();
+}
+// تحقق: إجمالي كل قسط ≤ المتبقي، وإجمالي التوزيع ≤ مبلغ التحصيل
+function txValidateAssistance(amount){
+  const rows=window.__txCurrentAllocRows||[]; let used=0;
+  for(let i=0;i<rows.length;i++){
+    const sum=txRowAllocInputs(i).reduce((t,x)=>t+(+x.value||0),0); used+=sum;
+    if(sum>rows[i].remaining+0.01) return `إجمالي السداد على ${rows[i].installment===0?'القسط النقدي':(rows[i].label||'القسط '+rows[i].installment)} (أمر ${rows[i].orderNo}) أكبر من المتبقي`;
+  }
+  if(used>(+amount||0)+0.01) return "إجمالي التوزيع أكبر من مبلغ العملية";
+  return "";
 }
 function txPreviewAutoAllocations(){
   const rows=window.__txCurrentAllocRows||[]; let left=+(document.getElementById('tx_amount')?.value||0);
@@ -15722,8 +15762,14 @@ function txPreviewAutoAllocations(){
   txUpdateSettlementSummary();
 }
 function txCollectAllocations(){
-  const rows=window.__txCurrentAllocRows||[];
-  return rows.filter((r,i)=>document.querySelector(`.tx-alloc-check[data-index="${i}"]`)?.checked).map(r=>({orderId:r.orderId,orderNo:r.orderNo,installment:r.installment,amount:+(document.querySelector(`.tx-alloc-amount[data-index="${rows.indexOf(r)}"]`)?.value||0)})).filter(x=>x.amount>0);
+  const rows=window.__txCurrentAllocRows||[]; const out=[];
+  rows.forEach((r,i)=>{
+    txRowAllocInputs(i).forEach(inp=>{
+      const v=Math.round((+inp.value||0)*100)/100;
+      if(v>0.009) out.push({orderId:r.orderId,orderNo:r.orderNo,installment:r.installment,amount:v});
+    });
+  });
+  return out;
 }
 function txBuildAllocations(kind, amount){
   if(kind==='credit_amount') return [];
