@@ -7774,9 +7774,10 @@ function viewMaster(){
       </tr>
     `).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isParty){
-    header = `<tr><th>#</th>${tab.key==="customers"?"<th>الكود</th>":""}<th>الاسم</th>${tab.key==="customers"?"<th>التصنيف</th>":""}<th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
+    header = `<tr>${tab.key==="customers"?`<th style="width:34px"><input type="checkbox" title="تحديد الكل" onclick="ccSelAll(this)"></th>`:""}<th>#</th>${tab.key==="customers"?"<th>الكود</th>":""}<th>الاسم</th>${tab.key==="customers"?"<th>التصنيف</th>":""}<th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((p,i)=>`
       <tr>
+        ${tab.key==="customers"?`<td><input type="checkbox" class="cc-sel" data-i="${i}"></td>`:""}
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
         ${tab.key==="customers"?`<td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text);white-space:nowrap">${escapeHtml(p.code||"—")}</td>`:""}
         <td><strong style="color:var(--text)">${escapeHtml(p.name)}</strong>${p.contactPerson?`<div style="font-size:11px;color:var(--text-dim);margin-top:2px">👤 ${escapeHtml(p.contactPerson)}</div>`:""}</td>
@@ -7794,7 +7795,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="11"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
+    `).join("") : `<tr><td colspan="12"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات بعد.</p></div></td></tr>`;
   } else {
     header = `<tr><th>#</th><th>${tab.label}</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((v,i) => `
@@ -7815,6 +7816,7 @@ function viewMaster(){
     <div class="page-head">
       <h2>البيانات الأساسية</h2>
       <div class="spacer"></div>
+      ${tab.key==="customers"&&can("master","edit")?`<button class="btn ghost" onclick="ccSelUnclassified()">تحديد بدون تصنيف</button><button class="btn ghost" onclick="ccBulkOpen()">تصنيف المحدد</button>`:""}
       <button class="btn" onclick="addItem('${tab.key}','${tab.label}')">+ إضافة ${tab.label.substring(0,15)}</button>
     </div>
     <div class="tabs">${tabs}</div>
@@ -8180,6 +8182,25 @@ function ccPreview(){
   const sel=document.getElementById("pf_classCode"), out=document.getElementById("pf_code"); if(!sel||!out) return;
   const v=sel.value;
   out.value = !v ? "" : (v===out.dataset.oldclass && out.dataset.oldcode) ? out.dataset.oldcode : ccGenCode(v, out.dataset.name||null);
+}
+// ===== تصنيف جماعي للعملاء الموجودين =====
+function ccSelAll(box){ document.querySelectorAll(".cc-sel").forEach(c=>{ c.checked=box.checked; }); }
+function ccSelUnclassified(){ document.querySelectorAll(".cc-sel").forEach(c=>{ const x=(state.customers||[])[+c.dataset.i]; c.checked=!!x&&!x.classCode; }); const n=document.querySelectorAll(".cc-sel:checked").length; toast(n?`تم تحديد ${n} عميل بدون تصنيف`:"كل العملاء مصنّفين","ok"); }
+function ccBulkOpen(){
+  const idx=[...document.querySelectorAll(".cc-sel:checked")].map(c=>+c.dataset.i).sort((a,b)=>a-b);
+  if(!idx.length){ toast("حدّد عميل واحد على الأقل","err"); return; }
+  if(!ccList().length){ toast("أضف تصنيف أولًا من تبويب تصنيف العملاء","err"); return; }
+  openModal(`تصنيف ${idx.length} عميل`, `<div style="display:grid;gap:12px">
+    <div class="fld"><label>التصنيف</label><select class="inp" id="cc_bulk_sel"><option value="">— اختر التصنيف —</option>${ccList().map(c=>`<option value="${escapeAttr(c.code)}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join("")}<option value="__none__">إزالة التصنيف (وإلغاء الكود)</option></select></div>
+    <p style="margin:0;color:var(--text-dim);font-size:12px">الأكواد هتتولّد بترتيب ظهور العملاء في الجدول، وتكمّل على آخر رقم موجود في التصنيف. العميل اللي في نفس التصنيف أصلًا بيحتفظ بكوده.</p></div>`, ()=>{
+    const v=document.getElementById("cc_bulk_sel")?.value||"";
+    if(!v){ toast("اختر التصنيف","err"); return false; }
+    idx.forEach(i=>{
+      const p=state.customers[i]; if(!p) return;
+      const old=Object.assign({},p); p.classCode = v==="__none__" ? "" : v; ccApplyCode(p,old);
+    });
+    saveState(); go("master"); toast(`تم تحديث ${idx.length} عميل`,"ok"); return true;
+  });
 }
 function ccSelectHtml(sel){
   return `<div class="fld" style="grid-column:span 2"><label>تصنيف العميل</label><select class="inp" id="pf_classCode" onchange="ccPreview()"><option value="">— بدون تصنيف —</option>${ccList().map(c=>`<option value="${escapeAttr(c.code)}" ${String(c.code)===String(sel||"")?"selected":""}>${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join("")}</select></div>
