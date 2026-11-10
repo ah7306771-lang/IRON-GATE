@@ -2981,6 +2981,12 @@ async function syncTreasury(){
   for(let i=0;i<d.up.length;i+=100){
     const rows=d.up.slice(i,i+100).map(e=>({ id:e.id, direction:e.direction||"in", entry_date:/^\d{4}-\d{2}-\d{2}$/.test(String(e.date||""))?e.date:today, data:e, updated_at:now }));
     const r=await sb.from("treasury_entries").upsert(rows,{ onConflict:"id" }); if(r.error) throw r.error;
+    // تحقق فعلي: نقرأ الصفوف من السيرفر ونقارنها — لو السيرفر تجاهل التعديل نوقف بخطأ واضح بدل ما التعديل يضيع بعد إعادة الفتح
+    const chk=await sb.from("treasury_entries").select("id,data").in("id",rows.map(x=>x.id));
+    if(chk.error) throw chk.error;
+    const got=new Map((chk.data||[]).map(x=>[x.id,x.data]));
+    const bad=rows.filter(x=>{ const g=got.get(x.id); return !g || txHash(g)!==txHash(x.data); });
+    if(bad.length) throw new Error("السيرفر لم يحتفظ بتعديل "+bad.length+" سند (غالبًا صلاحيات جدول treasury_entries في Supabase) — التعديل محفوظ على جهازك فقط");
   }
   for(let i=0;i<d.del.length;i+=100){
     const ids=d.del.slice(i,i+100);
@@ -9411,10 +9417,11 @@ function migrateState(s){
   // ترحيل السجلات القديمة (كانت بالاسم) إلى الكود الجديد للبنك/الخزينة
   {
     const codes = new Set([...s.banks,...s.safes].map(x=>x.code));
-    s.treasuryEntries.forEach(e=>{
+    // لو قوائم البنوك/الخزائن لسه ما اتحمّلتش، منغيّرش أي كود (كان ممكن يرجّع البنك لأول خزينة)
+    if(codes.size) s.treasuryEntries.forEach(e=>{
       if(!e.treasury || codes.has(e.treasury)) return;
       const old = s.treasuries.find(t=>t.name===e.treasury);
-      const isBank = old ? old.kind==="bank" : e.method==="bank";
+      const isBank = old ? old.kind==="bank" : (e.method!=="cash");
       const hit = isBank
         ? s.banks.find(b=>b.code===e.treasury || b.name===e.treasury || (b.name||"").includes("("+e.treasury+")"))
         : (s.safes.find(x=>x.name===e.treasury) || s.safes[0]);
@@ -14842,6 +14849,39 @@ async function txDel(id, direction){
   toast(msg,"ok");
 }
 
+
+// ===== فحص بعد حفظ سند التحصيل/الدفع: يوضّح سبب رجوع نوع البنك فاضي =====
+function txBankLocalReason(d){
+  if(!d || d.entryKind==="gl" || d.method==="adjustment" || d.method==="transfer_supplier") return "";
+  const code=d.treasury;
+  if(!code) return "لم يتم حفظ أي بنك/خزينة في السند (الحقل فاضي وقت الحفظ).";
+  if(d.method==="cash"){
+    return (state.safes||[]).some(x=>x.code===code) ? "" : "كود الخزينة «"+code+"» غير موجود في قائمة الخزائن (اتحذفت أو اتغيّر كودها) فبيظهر الحقل فاضي.";
+  }
+  const b=(state.banks||[]).find(x=>x.code===code);
+  if(!b) return "كود البنك «"+code+"» غير موجود في قائمة البنوك (اتحذف أو اتغيّر كوده أو القائمة لسه ما اتحمّلتش) فبيظهر الحقل فاضي.";
+  if(typeof chqIsSysBank==="function" && chqIsSysBank(b)) return "البنك «"+code+"» بنك نظامي مخفي من قائمة الاختيار فبيظهر الحقل فاضي عند التعديل.";
+  return "";
+}
+async function txVerifyAfterSave(d){
+  const dlg=(title,msg)=>{ try{ _igDialog({title,msg,ok:"حسنًا",single:true,danger:true}); }catch(_){ toast(title+": "+msg,"err"); } };
+  const local=txBankLocalReason(d);
+  if(local){ dlg("⚠ البنك لن يظهر بعد الحفظ", local+"\n\nالحل: راجع قائمة البنوك في البيانات الأساسية وتأكد إن الكود موجود، ثم اختر البنك من جديد واحفظ."); return; }
+  // استنى مزامنة السيرفر ثم اتأكد إن السند وصل بنفس البنك
+  for(let i=0;i<20;i++){ await new Promise(r=>setTimeout(r,500)); if(!syncBusy && !txChanged()) break; }
+  if(txChanged()){
+    dlg("⚠ التعديل لم يُرفع للسيرفر", "التعديل محفوظ على جهازك فقط ولم يصل لـ Supabase، فعند فتح البرنامج من جهاز تاني أو بعد مسح بيانات المتصفح سيرجع البنك فاضي.\n\nالسبب: "+(window.igSyncErr||"لسه بيحاول الرفع أو الاتصال ضعيف — جرّب بعد قليل.")); return;
+  }
+  try{
+    const r=await sb.from("treasury_entries").select("data").eq("id",d.id).maybeSingle();
+    if(r.error) throw r.error;
+    const got=r.data&&r.data.data;
+    if(!got) dlg("⚠ السند غير موجود على السيرفر","السيرفر لم يحتفظ بالسند (غالبًا صلاحيات جدول treasury_entries في Supabase).");
+    else if(String(got.treasury||"")!==String(d.treasury||"")) dlg("⚠ السيرفر رجّع البنك القديم","أرسلنا البنك «"+d.treasury+"» لكن السيرفر محتفظ بـ «"+(got.treasury||"فاضي")+"».\nالسبب غالبًا: صلاحيات التعديل (UPDATE) على جدول treasury_entries في Supabase، أو تعديل من جهاز تاني بعد حفظك.");
+    else toast("✓ تم تأكيد حفظ البنك «"+d.treasury+"» على السيرفر","ok");
+  }catch(e){ dlg("تعذر التأكد من الحفظ على السيرفر", String((e&&e.message)||e)); }
+}
+
 function openTxForm(direction, existing){
   if(existing && txIsPosted(existing)) return toast("الحركة مُرحّلة — لا يُسمح بالتعديل","err");
   const isIn = direction==="in";
@@ -14884,14 +14924,23 @@ function openTxForm(direction, existing){
   const showKind = (!existing && !draft.adjustmentKind) || draft.entryKind==="gl";
   window.__txKind = (showKind && draft.entryKind==="gl") ? "gl" : "party";
   window.txGlLegacy = !!(existing && draft.entryKind==="gl" && !draft.customer && !draft.supplier && draft.method!=="adjustment");   // تسويات قديمة بدون طرف
+  // تسويات: على حسابات (زي الأول) أو على عميل/مورد — الافتراضي للجديد: حسابات
+  window.__txGlTarget = (existing && draft.entryKind==="gl" && !window.txGlLegacy) ? "party" : "accounts";
+  // اختيار المورد/العميل مستقل: واحد لسداد المورد/تحصيل العميل وواحد للتسويات
+  window.__txPartyPay = (draft.entryKind==="gl") ? "" : (draft[partyField]||"");
+  window.__txPartyGl  = (draft.entryKind==="gl") ? (draft[partyField]||"") : "";
   window.txGlDraft = (Array.isArray(draft.glLines)&&draft.glLines.length) ? draft.glLines.map(x=>({...x})) : [{accountId:"",accountCode:"",accountName:"",desc:"",amount:""}];
   const kindHtml = showKind ? `<div class="tx-kind" role="group" aria-label="نوع الحركة">
       <button type="button" class="tx-kind-btn ${window.__txKind==='party'?'on':''}" data-kind="party" ${existing?'disabled':''} onclick="txKindChanged('party')">${isIn?'👤 تحصيل عميل':'🏭 سداد مورد'}</button>
       <button type="button" class="tx-kind-btn ${window.__txKind==='gl'?'on':''}" data-kind="gl" ${existing?'disabled':''} onclick="txKindChanged('gl')">⚖ تسويات</button>
+    </div>
+    <div id="tx_glTargetWrap" class="tx-tgt" style="display:none">
+      <button type="button" class="tx-tgt-btn" data-target="accounts" ${existing?'disabled':''} onclick="txGlTargetChanged('accounts')">📒 تسوية على حسابات</button>
+      <button type="button" class="tx-tgt-btn" data-target="party" ${existing?'disabled':''} onclick="txGlTargetChanged('party')">${isIn?'👤 تسوية على عميل':'🏭 تسوية على مورد'}</button>
     </div>` : "";
   const glHtml = `<div id="tx_glWrap" class="tx-gl" style="display:none">
       <div class="tx-gl-title">⚖ توزيع القيمة على الحسابات</div>
-      <div class="tx-gl-hint">${isIn?'مقبوضات تسويات: <b>الخزنة / البنك مدين</b> ← والحسابات أدناه <b>دائنة</b>':'مدفوعات تسويات: <b>الحسابات أدناه مدينة</b> ← و<b>الخزنة / البنك دائن</b>'} — لازم إجمالي الحسابات يساوي <b>القيمة</b> المكتوبة فوق، وإلا القيد غير موزون ولن يتم الحفظ.</div>
+      <div class="tx-gl-hint" id="txGlHint">${isIn?'مقبوضات تسويات: <b>الخزنة / البنك مدين</b> ← والحسابات أدناه <b>دائنة</b>':'مدفوعات تسويات: <b>الحسابات أدناه مدينة</b> ← و<b>الخزنة / البنك دائن</b>'} — لازم إجمالي الحسابات يساوي <b>القيمة</b> المكتوبة فوق، وإلا القيد غير موزون ولن يتم الحفظ.</div>
       <div class="tbl-wrap"><table class="tx-gl-table"><thead><tr><th>#</th><th>رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th>المبلغ</th><th></th></tr></thead><tbody id="txGlRows"></tbody>
       <tfoot><tr><td colspan="4" style="text-align:left">الإجمالي</td><td class="num"><b id="txGlTotal">0.00</b></td><td></td></tr></tfoot></table></div>
       <div class="tx-gl-bar"><button type="button" class="btn ghost sm" onclick="txGlAdd()">+ إضافة حساب</button>
@@ -15129,6 +15178,7 @@ function openTxForm(direction, existing){
     }
     if(isGl) audit(existing?"tx_edit":"tx_add", `${existing?"تعديل":"إضافة"} حركة تسويات ${isIn?"(مقبوضات)":"(مدفوعات)"} رقم ${d.no} بقيمة ${fmt(d.amount)} على ${glLines.length} حساب`);
     saveState();
+    try{ txVerifyAfterSave(d); }catch(_e){ console.warn(_e); }
     // حدّث نفس الشاشة التي بدأ منها المستخدم: التسويات أو التحصيلات/المدفوعات.
     if(document.getElementById("adjView")) renderAdjustments(direction);
     else renderTreasury(direction);
@@ -20756,6 +20806,10 @@ body.page-shipments #content:has(#paySchedBox) #paySchedBox th{background:var(--
 .tx-kind-btn{flex:1;padding:11px 8px;border:2px solid var(--line,#d8dee6);border-radius:12px;background:#fff;color:#334155;font:inherit;font-weight:800;font-size:14px;cursor:pointer}
 .tx-kind-btn.on{border-color:#2563eb;background:#eaf1ff;color:#1d4ed8}
 .tx-kind-btn[disabled]{opacity:.65;cursor:default}
+.tx-tgt{display:flex;gap:8px;margin:-4px 0 12px}
+.tx-tgt-btn{flex:1;padding:8px 8px;border:2px solid var(--line,#d8dee6);border-radius:10px;background:#fff;color:#334155;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+.tx-tgt-btn.on{border-color:#c99724;background:#fff7df;color:#7a5c0b}
+.tx-tgt-btn[disabled]{opacity:.65;cursor:default}
 .tx-gl{margin-top:12px}
 .tx-gl-hint{font-size:12px;color:#475569;background:#f1f5f9;border:1px solid #dbe3ee;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.7}
 .tx-gl .tbl-wrap{overflow:auto;border:1px solid #8a94a3;border-radius:8px}
@@ -20816,11 +20870,16 @@ function txKindApply(){
   const gl=window.__txKind==="gl", $=id=>document.getElementById(id);
   document.querySelectorAll(".tx-kind-btn").forEach(b=>b.classList.toggle("on",b.dataset.kind===(gl?"gl":"party")));
   const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?"":"none"; };
-  show("tx_partyWrap",true); show("tx_glWrap",gl); show("tx_allocBlock",!gl);
+  const accounts = gl && window.__txGlTarget!=="party";
+  window.txGlLegacy = accounts;   // تسوية على حسابات = بدون طرف، نقدي/بنكي
+  show("tx_glTargetWrap",gl);
+  document.querySelectorAll(".tx-tgt-btn").forEach(b=>b.classList.toggle("on",b.dataset.target===(accounts?"accounts":"party")));
+  show("tx_partyWrap",!accounts); show("tx_glWrap",gl); show("tx_allocBlock",!gl);
+  if(accounts){ const ps=$("tx_party"); if(ps&&ps.value){ ps.value=""; } const si=$("tx_party_search"); if(si) si.value=""; }
   const isInDir=window.__txDir==="in";
-  const hasParty=gl&&!window.txGlLegacy;
+  const hasParty=gl&&!accounts;
   { const pl=document.querySelector("#tx_partyWrap label"); if(pl){ if(pl.dataset.orig===undefined) pl.dataset.orig=pl.innerHTML;
-      pl.innerHTML = gl ? (isInDir?"العميل":"المورد")+(window.txGlLegacy?"":" *")+' <span style="color:var(--text-dim);font-weight:400">('+(window.txGlLegacy?"اختياري":"تسوية غير نقدية "+(isInDir?"مدينة":"دائنة")+" على حسابه")+')</span>' : pl.dataset.orig; } }
+      pl.innerHTML = gl ? (isInDir?"العميل":"المورد")+(window.txGlLegacy?"":" *")+' <span style="color:var(--text-dim);font-weight:400">('+(window.txGlLegacy?"اختياري":"تسوية غير نقدية "+((($("tx_adjustmentKind")||{}).value||"credit")==="debit"?"مدينة":"دائنة")+" على حسابه")+')</span>' : pl.dataset.orig; } }
   const amt=$("tx_amount"); if(amt){ amt.readOnly=false; amt.style.opacity=""; }
   const mdl=document.querySelector("#modalBackdrop .modal"); if(mdl) mdl.classList.add("tx-wide");
   const wrap=$("tx_amountWrap"), lab=wrap&&wrap.querySelector("label");
@@ -20832,17 +20891,54 @@ function txKindApply(){
     if(gl&&sel.value&&!okM.includes(sel.value)) sel.value="";
     if(hasParty){ sel.value="adjustment"; sel.dataset.glForced="1"; }
     else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment") sel.value=""; }
+    // سداد المورد وتحصيل العميل: نخفي "تسوية" من أنواع الدفع/التحصيل — التسويات من تاب التسويات (إلا لو الحركة نفسها تسوية)
+    if(!gl){ [...sel.options].forEach(o=>{ if(o.value==="adjustment"){ const b=sel.value!=="adjustment"; o.hidden=b; o.disabled=b; } }); }
   }
   if(gl){ txGlRender(); txGlTotal(); if(typeof mdAccEnsure==="function") mdAccEnsure(); }
   if(typeof txToggleFields==="function") txToggleFields();
-  { const ak=$("tx_adjustmentKind"); if(ak){ if(hasParty){ ak.value=isInDir?"debit":"credit"; ak.disabled=true; } else ak.disabled=false; } }
+  { const ak=$("tx_adjustmentKind"); if(ak){
+    ak.disabled=false;
+    if(hasParty){
+      if(!ak.value) ak.value="credit";
+      if(!ak.dataset.glBound){ ak.dataset.glBound="1"; ak.addEventListener("change",()=>{ if(window.__txKind==="gl") txKindApply(); }); }
+    }
+    const h=$("txGlHint");
+    if(h){ if(h.dataset.orig===undefined) h.dataset.orig=h.innerHTML;
+      if(hasParty){ const who=isInDir?"العميل":"المورد", deb=ak.value==="debit";
+        h.innerHTML = deb ? `تسوية غير نقدية <b>من ${who} إلى حسابات</b>: <b>${who} مدين</b> ← والحسابات أدناه <b>دائنة</b>` : `تسوية غير نقدية <b>من حسابات إلى ${who}</b>: <b>${who} دائن</b> ← والحسابات أدناه <b>مدينة</b>`;
+        h.innerHTML += ` — لازم إجمالي الحسابات يساوي <b>القيمة</b> المكتوبة فوق، وإلا القيد غير موزون ولن يتم الحفظ.`;
+      } else h.innerHTML=h.dataset.orig; }
+  } }
   if(typeof txSetDefaultStatus==="function") txSetDefaultStatus();
   if(typeof txUpdateDetailsAccess==="function") txUpdateDetailsAccess();
+}
+function txPartyStash(){
+  const ps=document.getElementById("tx_party"); if(!ps) return;
+  if(window.__txKind==="gl"){ if(window.__txGlTarget==="party") window.__txPartyGl=ps.value; }
+  else window.__txPartyPay=ps.value;
+}
+function txPartyRestore(){
+  const ps=document.getElementById("tx_party"); if(!ps) return;
+  if(window.__txKind==="gl"){ if(window.__txGlTarget!=="party") return; ps.value=window.__txPartyGl||""; }
+  else ps.value=window.__txPartyPay||"";
+  const si=document.getElementById("tx_party_search");
+  if(si){ const o=ps.options[ps.selectedIndex]; si.value=(o&&o.value)?o.textContent.trim():""; }
+  if(typeof txUpdateDetailsAccess==="function") txUpdateDetailsAccess();
+  if(window.__txKind!=="gl" && typeof txRenderSettlementDetails==="function") txRenderSettlementDetails();
+}
+function txGlTargetChanged(t){
+  if(document.querySelector(".tx-tgt-btn[disabled]")) return;
+  if(window.__txKind==="gl") txGlSync();
+  txPartyStash();
+  window.__txGlTarget=t; txKindApply();
+  txPartyRestore();
 }
 function txKindChanged(k){
   if(document.querySelector(".tx-kind-btn[disabled]")) return;
   if(window.__txKind==="gl") txGlSync();
+  txPartyStash();
   window.__txKind=k; txKindApply();
+  txPartyRestore();
 }
 </script>
 <style id="tx-post-css">
@@ -21131,9 +21227,11 @@ function txPostPlan(e,accs){
   if(e.entryKind==="gl"){
     if(e.method==="adjustment"){
       const nm=isIn?e.customer:e.supplier, p=findParty(isIn?state.customers:state.suppliers,nm)||{}, id=chk((isIn?"العميل: ":"المورد: ")+nm,p.accountId);
-      lines.push({k:(isIn?"العميل: ":"المورد: ")+nm,acc:id,dr:isIn?amount:0,cr:isIn?0:amount,desc:stmt});
+      const pDebit=(e.adjustmentKind||(isIn?"debit":"credit"))==="debit";
+      lines.push({k:(isIn?"العميل: ":"المورد: ")+nm,acc:id,dr:pDebit?amount:0,cr:pDebit?0:amount,desc:stmt});
     } else if(isIn) treasuryLine(amount,0); else treasuryLine(0,amount);
-    (e.glLines||[]).forEach(r=>{ const v=C(r.amount); const id=chk("حساب: "+(r.accountName||r.accountCode||""),r.accountId); lines.push({k:(r.accountCode?r.accountCode+" — ":"")+(r.accountName||""),acc:id,dr:isIn?0:v,cr:isIn?v:0,desc:(r.desc||r.accountName||"")+" — "+stmt}); });
+    const acctDr = e.method==="adjustment" ? ((e.adjustmentKind||(isIn?"debit":"credit"))==="credit") : !isIn;
+    (e.glLines||[]).forEach(r=>{ const v=C(r.amount); const id=chk("حساب: "+(r.accountName||r.accountCode||""),r.accountId); lines.push({k:(r.accountCode?r.accountCode+" — ":"")+(r.accountName||""),acc:id,dr:acctDr?v:0,cr:acctDr?0:v,desc:(r.desc||r.accountName||"")+" — "+stmt}); });
   }else if(isIn && e.method==="transfer_supplier"){
     const sup=findParty(state.suppliers,e.targetSupplier)||{}, cus=findParty(state.customers,e.customer)||{};
     const a=chk("المورد: "+e.targetSupplier,sup.accountId); const b=chk("العميل: "+e.customer,cus.accountId);
@@ -21224,7 +21322,7 @@ async function txPostDo(){
 function txRowActions(e,direction){
   const logBtn=(e.editLog&&e.editLog.length)?`<button onclick="txShowLog('${e.id}')">سجل (${e.editLog.length})</button>`:"";
   const prn=(e.method!=="adjustment")?`<button class="tx-prn-btn" onclick="txPrintVoucher('${e.id}','${direction}')" title="طباعة سند ${direction==="in"?"قبض":"صرف"}">🖨 سند</button>`:"";
-  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${e.id}','${direction}')">🖨 طباعة القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:""}${prn}${logBtn}</div>`;
+  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${e.id}','${direction}')">🖨 طباعة القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:(txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${e.id}','${direction}')" title="حذف القيد وإرجاع الحركة غير مُرحّلة">↶ إلغاء الترحيل</button>`:"")}${prn}${logBtn}</div>`;
   const scr=direction==="in"?"receipts":"payments";
   const post=(e.method!=="adjustment" && can(scr,"post") && !(typeof chqCanReceipt==="function"&&chqCanReceipt(e)))?`<button class="tx-post-btn" onclick="txPostOpen('${e.id}','${direction}')">ترحيل الحركة</button>`:"";
   const un=(e.method!=="adjustment")?`<span class="tx-unposted">غير مُرحّل</span>`:"";
@@ -22536,6 +22634,54 @@ function chqUnpost(id,direction){
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="رجوع";
 }
 function chqUnChange(){ const v=document.querySelector('input[name="chqUn"]:checked')?.value, b=document.getElementById("chqUnSure"); if(b){ b.style.display=v==="all"?"":"none"; if(v!=="all") document.getElementById("chqUnSureCb").checked=false; } }
+/* ---------- إلغاء ترحيل أي حركة تحصيل/دفع غير الشيكات (نقدي / تحويل بنكي / تحويل لمورد / تسويات) ----------
+   نفس منطق إلغاء ترحيل الشيك: القيد بيتحذف من القيود اليومية بدون قيد عكسي، والحركة ترجع غير مُرحّلة. */
+function txCanUnpost(e,direction){
+  if(!e||!txIsPosted(e)) return false;
+  if(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction)) return false; // الشيكات ليها مسارها الخاص
+  return can((direction||e.direction)==="in"?"receipts":"payments","post");
+}
+async function txUnpost(id,direction){
+  const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e||!txCanUnpost(e,direction)) return;
+  const isIn=(direction||e.direction)==="in", title=isIn?"التحصيل":"الدفعة";
+  const linked=(state.treasuryEntries||[]).filter(x=>x.id!==e.id&&x.postedEntryId&&x.postedEntryId===e.postedEntryId);
+  const lk=linked.length?"\n\nالقيد ده مشترك مع "+linked.map(x=>(x.direction==="in"?"تحصيل":"دفعة")+" رقم "+(x.no||"")).join("، ")+" — فهتترجع غير مُرحّلة هي كمان.":"";
+  const ok=await askConfirm("هيتم إلغاء ترحيل "+title+" رقم "+(e.no||"")+" وحذف القيد "+(e.postedEntryNo||"")+" نهائيًا من القيود اليومية (بدون قيد عكسي). الحركة هترجع غير مُرحّلة وتقدر تعدّلها أو تحذفها أو ترحّلها من جديد."+lk,{title:"إلغاء الترحيل",ok:"نعم، ألغِ الترحيل",cancel:"رجوع"});
+  if(!ok) return;
+  await txUnpostRun(id,direction);
+}
+async function txUnpostRun(id,direction){
+  const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e||!txCanUnpost(e,direction)) return;
+  const eid=e.postedEntryId, eno=e.postedEntryNo, isIn=(direction||e.direction)==="in";
+  const group=(state.treasuryEntries||[]).filter(x=>x.postedEntryId===eid);
+  try{
+    const rp=await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:eid});
+    let chk=await sb.from("gl_entries").select("status").eq("id",eid).maybeSingle();
+    if(chk.data&&chk.data.status==="posted"){
+      const u=await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",eid).eq("status","posted").select();
+      chk=await sb.from("gl_entries").select("status").eq("id",eid).maybeSingle();
+      if(chk.data&&chk.data.status==="posted") throw new Error("تعذر فك ترحيل القيد "+eno+" في قاعدة البيانات"+((rp.error||u.error)?" ("+((rp.error||u.error).message||"")+")":""));
+    }
+    if(chk.data){
+      const dl=await sb.from("gl_entry_lines").delete().eq("entry_id",eid); if(dl.error) throw dl.error;
+      const de=await sb.from("gl_entries").delete().eq("id",eid).eq("status","draft"); if(de.error) throw de.error;
+      const again=await sb.from("gl_entries").select("id").eq("id",eid).maybeSingle();
+      if(again.data) throw new Error("القيد "+eno+" اتفك ترحيله لكن مقدرناش نحذفه — احذفه من القيود (مسودة)");
+    }
+    try{ await sb.from("gl_posting_sources").delete().eq("entry_id",eid); }catch(_){}
+  }catch(err){
+    return toast("تعذر إلغاء الترحيل: "+String(err.message||err),"err");
+  }
+  const u=(typeof curU==="function"&&curU())||{}, by=u.name||u.username||"", at=new Date().toISOString();
+  group.forEach(t=>{
+    ["postedEntryId","postedEntryNo","postedAt","postedBy","postedJournal"].forEach(k=>{ delete t[k]; });
+    t.editLog=(t.editLog||[]).concat([{at,by,changes:[{f:"إلغاء الترحيل",from:"قيد "+eno,to:"غير مُرحّل"}]}]);
+  });
+  try{ audit("tx_unpost",`إلغاء ترحيل ${isIn?"تحصيل":"دفعة"} رقم ${e.no} — حُذف القيد ${eno}`); }catch(_){}
+  saveState();
+  if(typeof renderTreasury==="function"&&document.getElementById("txBody")) renderTreasury(direction);
+  toast("✓ تم إلغاء الترحيل وحذف القيد "+eno,"ok");
+}
 /* ---------- حماية البنكين الوسيطين ---------- */
 (function(){
   const _del=window.delItem, _edit=window.editItem;
