@@ -2934,7 +2934,7 @@ async function txLoadTreasuryFromDb(){
   try{
     const rows=await fetchAllRows("treasury_entries",["id"]);
     const local=Array.isArray(state.treasuryEntries)?state.treasuryEntries:[], lastSync=txLoadSyncMap();
-    const db=new Map(); rows.forEach(r=>{ const d=r&&r.data; if(d&&d.id){ if(!Array.isArray(d.allocations)) d.allocations=[]; db.set(d.id,d); } });
+    const db=new Map(); rows.forEach(r=>{ if(r&&r.deleted_at) return; const d=r&&r.data; if(d&&d.id){ if(!Array.isArray(d.allocations)) d.allocations=[]; db.set(d.id,d); } });
     const out=[], seen=new Set();
     local.forEach(e=>{
       if(!e||!e.id) return;
@@ -2985,12 +2985,19 @@ async function syncTreasury(){
   for(let i=0;i<d.del.length;i+=100){
     const ids=d.del.slice(i,i+100);
     // Soft delete: نحدّد deleted_at بدل الحذف النهائي (الـRLS هيخفي الصفوف من القراءات)
-    let r=await sb.from("treasury_entries").update({deleted_at:now,deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids);
+    let r=await sb.from("treasury_entries").update({deleted_at:now,deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids).select("id");
     // Fallback: لو عمود deleted_at لسه مش موجود، حذف نهائي
     if(r.error && /deleted_at/.test(String(r.error.message||""))){
-      r=await sb.from("treasury_entries").delete().in("id",ids);
+      r=await sb.from("treasury_entries").delete().in("id",ids).select("id");
     }
     if(r.error) throw r.error;
+    // تأكد إن السيرفر فعلاً حذف كل السجلات (الصلاحيات ممكن تتجاهل التحديث بدون خطأ فيرجع السجل بعد التحديث)
+    const okIds=new Set((r.data||[]).map(x=>x.id)), rest=ids.filter(x=>!okIds.has(x));
+    if(rest.length){
+      const r2=await sb.from("treasury_entries").delete().in("id",rest).select("id");
+      if(r2.error) throw r2.error;
+      if((r2.data||[]).length<rest.length) throw new Error("السيرفر لم يحذف السجل (صلاحيات قاعدة البيانات)");
+    }
   }
   txSnap=d.cur; txSaveSyncMap();
 }
