@@ -14876,6 +14876,7 @@ function openTxForm(direction, existing){
   // ---- نوع الحركة: تحصيل عميل / سداد مورد  ⟷  تسويات (حسابات عامة) ----
   const showKind = (!existing && !draft.adjustmentKind) || draft.entryKind==="gl";
   window.__txKind = (showKind && draft.entryKind==="gl") ? "gl" : "party";
+  window.txGlLegacy = !!(existing && draft.entryKind==="gl" && !draft.customer && !draft.supplier && draft.method!=="adjustment");   // تسويات قديمة بدون طرف
   window.txGlDraft = (Array.isArray(draft.glLines)&&draft.glLines.length) ? draft.glLines.map(x=>({...x})) : [{accountId:"",accountCode:"",accountName:"",desc:"",amount:""}];
   const kindHtml = showKind ? `<div class="tx-kind" role="group" aria-label="نوع الحركة">
       <button type="button" class="tx-kind-btn ${window.__txKind==='party'?'on':''}" data-kind="party" ${existing?'disabled':''} onclick="txKindChanged('party')">${isIn?'👤 تحصيل عميل':'🏭 سداد مورد'}</button>
@@ -15011,7 +15012,7 @@ function openTxForm(direction, existing){
     const d = {
       ...draft,
       date: document.getElementById("tx_date").value,
-      [partyField]: isGl ? "" : document.getElementById("tx_party").value,
+      [partyField]: document.getElementById("tx_party").value,
       method: method,
       refNo: document.getElementById("tx_refNo").value.trim(),
       amount: Math.round((+document.getElementById("tx_amount").value || 0)*100)/100,
@@ -15030,7 +15031,7 @@ function openTxForm(direction, existing){
       chq2: method==="bank" ? (existing ? !!existing.chq2 : true) : undefined
     };
     if(!d.date){ toast("التاريخ مطلوب","err"); return false; }
-    if(!isGl && !d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); (document.getElementById("tx_party_search")||document.getElementById("tx_party"))?.focus(); return false; }
+    if((!isGl || !window.txGlLegacy) && !d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); (document.getElementById("tx_party_search")||document.getElementById("tx_party"))?.focus(); return false; }
     if(!method){ toast("اختر نوع السداد أولاً","err"); document.getElementById("tx_method")?.focus(); return false; }
     if(!d.amount || d.amount<=0){ toast("القيمة لازم تكون أكبر من صفر","err"); return false; }
     if(!isGl && allocTypeVal==="invoice_assistance"){ const _ve=txValidateAssistance(d.amount); if(_ve){ toast(_ve,"err"); return false; } }
@@ -15040,7 +15041,8 @@ function openTxForm(direction, existing){
       if(!glLines.length){ toast("أضف حسابًا واحدًا على الأقل في جدول الحسابات","err"); return false; }
       const bad = glLines.findIndex(r=>!r.accountId || !(r.amount>0));
       if(bad>=0){ toast(`السطر ${bad+1}: اختر الحساب وأدخل مبلغًا أكبر من صفر`,"err"); return false; }
-      if(["bank","adjustment","transfer_supplier"].includes(method)){ toast("التسويات: اختر نقدي أو تحويل بنكي","err"); return false; }
+      if(d[partyField]){ if(method!=="adjustment"){ toast("تسوية على حساب "+partyLabel+": نوع السداد لازم يكون تسوية غير نقدية","err"); return false; } }
+      else if(["bank","adjustment","transfer_supplier"].includes(method)){ toast("التسويات: اختر نقدي أو تحويل بنكي (أو اختر "+partyLabel+" لتسوية غير نقدية)","err"); return false; }
       if(Math.round(d.amount*100)!==Math.round(glTotal*100)){
         const diffV=Math.abs(Math.round((d.amount-glTotal)*100)/100);
         const msg=`القيمة: ${fmt(d.amount)} — إجمالي الحسابات: ${fmt(glTotal)} — الفرق: ${fmt(diffV)}\n\nعدّل مبالغ الحسابات (أو القيمة) حتى يتساوى الإجماليان، ثم احفظ.`;
@@ -15174,6 +15176,7 @@ function igSearchableSelect(sel,opts){
   return inp;
 }
 function txPartyChanged(){
+  if(window.__txKind==="gl"){ txGlSync(); txKindApply(); return; }
   const party=document.getElementById("tx_party"), amount=document.getElementById("tx_amount");
   txRenderSettlementDetails();
   if(party?.value){
@@ -20762,7 +20765,7 @@ body.page-shipments #content:has(#paySchedBox) #paySchedBox th{background:var(--
 /* ===== تسويات الخزينة: جدول حسابات عامة ===== */
 function txGlLabel(e){
   const L=(e&&e.glLines)||[], names=L.map(r=>r.accountName||r.accountCode||"").filter(Boolean);
-  return "⚖ تسويات"+(names.length?" — "+names.slice(0,2).join("، ")+(names.length>2?" +"+(names.length-2):""):"");
+  return "⚖ تسويات"+((e&&(e.customer||e.supplier))?" — "+(e.customer||e.supplier):"")+(names.length?" — "+names.slice(0,2).join("، ")+(names.length>2?" +"+(names.length-2):""):"");
 }
 function txGlSync(){
   const rows=document.querySelectorAll("#txGlRows tr[data-i]"); if(!rows.length) return;
@@ -20806,19 +20809,26 @@ function txKindApply(){
   const gl=window.__txKind==="gl", $=id=>document.getElementById(id);
   document.querySelectorAll(".tx-kind-btn").forEach(b=>b.classList.toggle("on",b.dataset.kind===(gl?"gl":"party")));
   const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?"":"none"; };
-  show("tx_partyWrap",!gl); show("tx_glWrap",gl); show("tx_allocBlock",!gl);
+  show("tx_partyWrap",true); show("tx_glWrap",gl); show("tx_allocBlock",!gl);
+  const isInDir=window.__txDir==="in";
+  const hasParty=gl&&!window.txGlLegacy;
+  { const pl=document.querySelector("#tx_partyWrap label"); if(pl){ if(pl.dataset.orig===undefined) pl.dataset.orig=pl.innerHTML;
+      pl.innerHTML = gl ? (isInDir?"العميل":"المورد")+(window.txGlLegacy?"":" *")+' <span style="color:var(--text-dim);font-weight:400">('+(window.txGlLegacy?"اختياري":"تسوية غير نقدية "+(isInDir?"مدينة":"دائنة")+" على حسابه")+')</span>' : pl.dataset.orig; } }
   const amt=$("tx_amount"); if(amt){ amt.readOnly=false; amt.style.opacity=""; }
   const mdl=document.querySelector("#modalBackdrop .modal"); if(mdl) mdl.classList.add("tx-wide");
   const wrap=$("tx_amountWrap"), lab=wrap&&wrap.querySelector("label");
   if(lab){ lab.childNodes[0].nodeValue="القيمة * "; const sp=lab.querySelector("span"); if(sp) sp.style.display=gl?"none":""; }
   const sel=$("tx_method");
   if(sel){
-    const bad=["bank","adjustment","transfer_supplier"];
-    [...sel.options].forEach(o=>{ const b=gl&&bad.includes(o.value); o.hidden=b; o.disabled=b; });
-    if(gl&&bad.includes(sel.value)) sel.value="";
+    const okM=hasParty?["adjustment"]:["cash","transfer"];
+    [...sel.options].forEach(o=>{ const b=gl&&o.value!==""&&!okM.includes(o.value); o.hidden=b; o.disabled=b; });
+    if(gl&&sel.value&&!okM.includes(sel.value)) sel.value="";
+    if(hasParty){ sel.value="adjustment"; sel.dataset.glForced="1"; }
+    else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment") sel.value=""; }
   }
   if(gl){ txGlRender(); txGlTotal(); if(typeof mdAccEnsure==="function") mdAccEnsure(); }
   if(typeof txToggleFields==="function") txToggleFields();
+  { const ak=$("tx_adjustmentKind"); if(ak){ if(hasParty){ ak.value=isInDir?"debit":"credit"; ak.disabled=true; } else ak.disabled=false; } }
   if(typeof txSetDefaultStatus==="function") txSetDefaultStatus();
   if(typeof txUpdateDetailsAccess==="function") txUpdateDetailsAccess();
 }
@@ -21100,7 +21110,7 @@ function txPostPlan(e,accs){
   const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!(accs||[]).some(ch=>ch.is_active&&ch.parent_id===x.id);
   const accOf=id=>id?(accs||[]).find(x=>String(x.id)===String(id)):null;
   if(txIsPosted(e)) return {reason:"الحركة مُرحّلة بالفعل"};
-  if(e.method==="adjustment") return {reason:"تسوية على حساب عميل/مورد بدون خزنة — لا تُرحَّل من هنا"};
+  if(e.method==="adjustment" && e.entryKind!=="gl") return {reason:"تسوية على حساب عميل/مورد بدون خزنة — لا تُرحَّل من هنا"};
   if(e.status==="returned"||e.status==="guarantee") return {reason:"لا يُرحَّل شيك مرتد أو شيك ضمان"};
   if(e.method==="bank" && e.status!=="collected") return {reason:"الشيك لم يُحصَّل بعد — يُرحَّل بعد التحصيل"};
   if(!isIn && e.linkedTxId && e.method==="transfer" && !e.treasury) return {reason:"دفعة مرتبطة بتحويل من تحصيل — تُرحَّل مع التحصيل المرتبط"};
@@ -21112,7 +21122,10 @@ function txPostPlan(e,accs){
   const trName=e.method==="cash"?"الخزنة":"البنك";
   const treasuryLine=(dr,cr)=>{ const t=txPostTreasuryAcc(e); const id=chk(trName+": "+treasuryLabel(e.treasury),t&&t.accountId,"اربط "+trName+" بحساب من البيانات الأساسية"); lines.push({k:trName+": "+treasuryLabel(e.treasury),acc:id,dr,cr,desc:stmt}); };
   if(e.entryKind==="gl"){
-    if(isIn) treasuryLine(amount,0); else treasuryLine(0,amount);
+    if(e.method==="adjustment"){
+      const nm=isIn?e.customer:e.supplier, p=findParty(isIn?state.customers:state.suppliers,nm)||{}, id=chk((isIn?"العميل: ":"المورد: ")+nm,p.accountId);
+      lines.push({k:(isIn?"العميل: ":"المورد: ")+nm,acc:id,dr:isIn?amount:0,cr:isIn?0:amount,desc:stmt});
+    } else if(isIn) treasuryLine(amount,0); else treasuryLine(0,amount);
     (e.glLines||[]).forEach(r=>{ const v=C(r.amount); const id=chk("حساب: "+(r.accountName||r.accountCode||""),r.accountId); lines.push({k:(r.accountCode?r.accountCode+" — ":"")+(r.accountName||""),acc:id,dr:isIn?0:v,cr:isIn?v:0,desc:(r.desc||r.accountName||"")+" — "+stmt}); });
   }else if(isIn && e.method==="transfer_supplier"){
     const sup=findParty(state.suppliers,e.targetSupplier)||{}, cus=findParty(state.customers,e.customer)||{};
