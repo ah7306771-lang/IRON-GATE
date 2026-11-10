@@ -13625,7 +13625,7 @@ function txComputeTotals(list){
   });
   return t;
 }
-function txRenderKpisHtml(totals,cur,isIn){
+function txRenderKpisHtml(totals,cur,isIn,shown){
   const k=(lbl,val,sub,color,full)=>`<div class="kpi" title="${escapeAttr(full||lbl)}"><div class="lbl">${lbl}</div><div class="val small" style="direction:ltr;color:${color||'inherit'}">${fmt(val)}</div>${sub&&sub!==cur?`<div class="sub">${sub}</div>`:""}</div>`;
   return (
     k("إجمالي الحركة", totals.all, cur, "var(--gold-2)", "إجمالي الحركة النقدية")+
@@ -13654,6 +13654,9 @@ function viewTreasury(direction){
 
   return `
   <div class="tx-page">
+  <div id="txKpisWrap" class="kpis compact tx-kpis tx-kpis-top">
+    ${txRenderKpisHtml(totals, cur, isIn)}
+  </div>
   <div class="tx-bar">
     <button type="button" class="btn ghost sm" id="txFiltersBtn" onclick="txToggleFilters('${direction}')">${txFiltersOpen()?'▲':'▼'} الفلاتر</button>
     <span class="tx-fsum" id="txFiltersSum" style="display:${txFiltersOpen()?'none':''}">${escapeHtml(txFilterSummary(direction))}</span>
@@ -13668,7 +13671,7 @@ function viewTreasury(direction){
     <button type="button" class="btn ghost" onclick="fpClear('${isIn?'receipts':'payments'}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
   </div>
     <div class="tx-actions">
-      <span class="chip gold tx-count">${list.length} سجل</span>
+      <span class="chip gold tx-count" id="txCount">${list.length} سجل</span>
       <button type="button" class="btn ghost tx-ic" title="طباعة حسب الفلتر" aria-label="طباعة حسب الفلتر" onclick="txExport('${direction}','pdf')">🖨<span class="tx-lbl"> طباعة حسب الفلتر</span></button>
       <button type="button" class="btn ghost tx-xl" title="تصدير Excel" onclick="txExport('${direction}','excel')">⬇ Excel</button>
       <button type="button" class="btn tx-new" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
@@ -13698,9 +13701,6 @@ function viewTreasury(direction){
     <tfoot id="txFoot"></tfoot>
   </table></div>
   ${isIn?`<div id="txCheckSummary" style="margin-top:18px"></div>`:""}
-  <div id="txKpisWrap" class="kpis compact tx-kpis tx-kpis-bottom">
-    ${txRenderKpisHtml(totals, cur, isIn)}
-  </div>
   </div>
   `;
 }
@@ -13896,6 +13896,8 @@ function renderTreasury(direction){
   { const sm=document.getElementById("txFiltersSum"); if(sm) sm.textContent=txFilterSummary(direction); }
   const partyField = direction==="in" ? "customer" : "supplier";
   const filtered = txFilteredSorted(direction);
+  { const c=document.getElementById("txCount"), tot=treasuryList(direction).length;
+    if(c) c.textContent = filtered.length===tot ? tot+" سجل" : filtered.length+" من "+tot+" سجل"; }
   txMarkSort();
   // أعد حساب الـKPIs حسب الفلتر الحالي
   try{
@@ -21520,16 +21522,16 @@ function chqUnChange(){ const v=document.querySelector('input[name="chqUn"]:chec
 #content .tx-page .tbl-wrap{overflow-anchor:none;scrollbar-gutter:stable}
 
 @media(min-width:901px){
-  #content:has(.tx-page){padding:8px 12px 0!important}
-  .tx-page .tbl-wrap{max-height:calc(100vh - 195px);min-height:240px}
-  .tx-page .kpis.tx-kpis.tx-kpis-bottom{
-    position:sticky;bottom:0;z-index:30;display:flex!important;grid-template-columns:none!important;gap:6px;
-    margin:8px -12px 0!important;padding:6px 12px 8px;overflow-x:auto;
-    background:var(--card,#fff);border-top:2px solid var(--gold,#c99724);box-shadow:0 -4px 14px rgba(20,35,55,.10)}
-  .tx-page .tx-kpis-bottom .kpi{flex:1 1 0;min-width:108px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:1px;padding:4px 8px;text-align:center}
-  .tx-page .tx-kpis-bottom .kpi .lbl{font-size:10.5px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tx-page .tx-kpis-bottom .kpi .val{font-size:clamp(11px,.85vw,13px);font-weight:800;white-space:nowrap;text-align:center}
-  .tx-page .tx-kpis-bottom .kpi .sub{font-size:9.5px;white-space:nowrap}
+  #content:has(.tx-page){padding:8px 12px 10px!important}
+  .tx-page .tbl-wrap{max-height:calc(100vh - 205px);min-height:240px}
+  .tx-page .kpis.tx-kpis.tx-kpis-top{
+    display:flex!important;grid-template-columns:none!important;gap:6px;margin:0 0 8px!important;overflow-x:auto}
+  .tx-page .tx-kpis-top .kpi{flex:1 1 0;min-width:108px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:1px;padding:4px 8px;text-align:center}
+  .tx-page .tx-kpis-top .kpi .lbl{font-size:10.5px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx-page .tx-kpis-top .kpi .val{font-size:clamp(11px,.85vw,13px);font-weight:800;white-space:nowrap;text-align:center}
+  .tx-page .tx-kpis-top .kpi .sub{font-size:9.5px;white-space:nowrap}
+  /* صف إجماليات الأعمدة مثبّت أسفل الجدول مع السكرول */
+  .tx-page .tbl-wrap table tfoot td{position:sticky;bottom:0;z-index:3;background:var(--bg-3,#fff6dc)!important;border-top:2px solid var(--gold,#c99724);font-weight:900}
 }
 @media(max-width:900px){
   .tx-bar{flex-wrap:wrap;gap:8px}
@@ -21540,6 +21542,18 @@ function chqUnChange(){ const v=document.querySelector('input[name="chqUn"]:chec
   .tx-bar .tx-actions .tx-lbl{display:inline}
   .tx-bar .tx-actions .tx-count{flex:none}
   .tx-bar .tx-filters{flex:1 1 100%}
+}
+
+@media(max-width:900px),(pointer:coarse){
+  .tx-page .th-fbtn{width:32px;height:32px;font-size:15px;border-radius:7px}
+  .tx-page thead th{padding-block:10px}
+  .sup-colf{left:8px!important;right:8px!important;top:auto!important;bottom:8px!important;width:auto!important;max-width:none!important;max-height:78vh;padding:12px;border-radius:14px}
+  .sup-colf .cf-search{font-size:16px;padding:11px 12px}
+  .sup-colf .cf-list{max-height:42vh}
+  .sup-colf .cf-item{padding:11px 8px;font-size:15px}
+  .sup-colf .cf-item input{width:20px;height:20px}
+  .sup-colf .cf-foot .btn{min-height:44px;padding:8px 20px;font-size:14px}
+  .sup-colf .cf-foot .cf-clear{font-size:13px;padding:10px 6px}
 }
 </style>
 <script id="tx-screen-v2-js">
