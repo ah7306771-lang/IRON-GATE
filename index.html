@@ -2518,6 +2518,7 @@ const defaults = {
   ],
   itemGroups: [],        // المجموعات الرئيسية للأصناف (حديد / اسمنت ...) ولكل مجموعة حسابين
   customerClasses: [],   // تصنيفات العملاء (رقم + اسم) — جدول customer_classes
+  supplierClasses: [],   // تصنيفات الموردين (رقم + اسم) — جدول supplier_classes
   diameterGroups: {},    // اسم الصنف (القطر) ← كود مجموعته
   warehouses: [],   // المخازن (جدول warehouses في Supabase)
   settings: { tax: 14, profitTax: 1, discount1pct: true, currency: "ج.م", warehouses: [] },
@@ -2590,7 +2591,8 @@ const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:
 const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", commercialReg:"commercial_reg", email:"email", contactPerson:"contact_person", notes:"notes", accountId:"account_id", accountCode:"account_code", accountName:"account_name" };
 // كل نوع بيانات أساسية له جدول لوحده: t=اسم الجدول، k=عمود المفتاح، f=اسم المفتاح في التطبيق، cols=باقي الأعمدة (لو مفيش يبقى قايمة نصوص)
 const MASTER_TABLES = {
-  suppliers:   { t:"suppliers",       k:"name", f:"name", cols:PARTY_COLS },
+  suppliers:   { t:"suppliers",       k:"name", f:"name", cols:Object.assign({}, PARTY_COLS, { classCode:"class_code", code:"code" }) },
+  supplierClasses: { t:"supplier_classes", k:"code", f:"code", cols:{ name:"name" } },
   customers:   { t:"customers",       k:"name", f:"name", cols:Object.assign({}, PARTY_COLS, { applyDiscount1Pct:"apply_discount_1pct", classCode:"class_code", code:"code" }) },
   customerClasses: { t:"customer_classes", k:"code", f:"code", cols:{ name:"name" } },
   diameters:   { t:"diameters",       k:"name", gm:"diameterGroups" },   // gm: خريطة (اسم الصنف ← كود المجموعة) بتتحفظ في عمود group_id
@@ -2788,12 +2790,13 @@ async function loadMaster(admin){
     const k=kinds[i];
     if(r.error){
       // جدول المخازن لسه متعملش على Supabase: نكمل تحميل التطبيق ونوقف رفعه لحد ما يتشغّل ملف SQL
-      if((k==="warehouses"||k==="itemGroups"||k==="customerClasses") && /relation|does not exist|schema cache|42P01|PGRST205/i.test(String(r.error.message||"")+String(r.error.code||""))){
+      if((k==="warehouses"||k==="itemGroups"||k==="customerClasses"||k==="supplierClasses") && /relation|does not exist|schema cache|42P01|PGRST205/i.test(String(r.error.message||"")+String(r.error.code||""))){
         skipSyncKinds.add(k); console.warn("جدول "+MASTER_TABLES[k].t+" غير موجود:",r.error);
-        toast(k==="customerClasses"?"جدول تصنيف العملاء غير موجود على Supabase — شغّل ملف irongate_customer_classes.sql":k==="itemGroups"?"جدول مجموعات الأصناف غير موجود على Supabase — شغّل ملف irongate_item_groups.sql":"جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
+        toast(k==="customerClasses"?"جدول تصنيف العملاء غير موجود على Supabase — شغّل ملف irongate_customer_classes.sql":k==="supplierClasses"?"جدول تصنيف الموردين غير موجود على Supabase — شغّل ملف irongate_supplier_classes_and_party_codes.sql":k==="itemGroups"?"جدول مجموعات الأصناف غير موجود على Supabase — شغّل ملف irongate_item_groups.sql":"جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
         if(k==="warehouses"&&(!Array.isArray(state.warehouses)||!state.warehouses.length)) state.warehouses=(state.settings&&state.settings.warehouses||[]).slice();
         if(k==="itemGroups"&&!Array.isArray(state.itemGroups)) state.itemGroups=[];
         if(k==="customerClasses"&&!Array.isArray(state.customerClasses)) state.customerClasses=[];
+        if(k==="supplierClasses"&&!Array.isArray(state.supplierClasses)) state.supplierClasses=[];
         return;
       }
       throw r.error;
@@ -3191,7 +3194,7 @@ async function syncMaster(){
           if(u.error && /class_code|[^_a-z]code[^_a-z]/.test(String(u.error.message||"")) && !/(account|acc[12])_code/.test(String(u.error.message||""))){
             uploadRows.forEach(r=>{ delete r.class_code; delete r.code; });
             u = await sb.from(cfg.t).upsert(uploadRows,{onConflict:cfg.k});
-            toast("تم الحفظ، لكن ربط العميل بالتصنيف محتاج عمودي class_code و code في جدول customers (شغّل ملف irongate_customer_classes.sql)","err");
+            toast("تم الحفظ، لكن ربط التصنيف والكود محتاج عمودي class_code و code في جدول "+cfg.t+" (شغّل ملف irongate_customer_classes.sql أو irongate_supplier_classes_and_party_codes.sql)","err");
           }
           let _accStripped=false;
           if(u.error && /(account|acc[12])_(id|code|name)/.test(String(u.error.message||""))){
@@ -3313,7 +3316,7 @@ function srvUsersBlocked(){ toast("إدارة المستخدمين لسه ما �
 const SCREENS = [
   { id:"dashboard", label:"لوحة التحكم",       icon:"⬢",  acts:[] },
   { id:"master",    label:"البيانات الأساسية", icon:"◉",  acts:["add","edit","delete"], tabs:[
-    {id:"customers",label:"العملاء"},{id:"customerClasses",label:"تصنيف العملاء"},{id:"suppliers",label:"الموردين"},
+    {id:"customers",label:"العملاء"},{id:"customerClasses",label:"تصنيف العملاء"},{id:"suppliers",label:"الموردين"},{id:"supplierClasses",label:"تصنيف الموردين"},
     {id:"types",label:"الأنواع"},
     {id:"factories",label:"المصانع"},{id:"quoteDescs",label:"أوصاف عرض السعر"},
     {id:"cementTypes",label:"أنواع الاسمنت"},{id:"statuses",label:"حالات التعتيق"},
@@ -7690,6 +7693,7 @@ const masterTabs = [
   { id:"suppliers", key:"suppliers", label:"الموردين", icon:"◉" },
   { id:"customers", key:"customers", label:"العملاء", icon:"◉" },
   { id:"customerClasses", key:"customerClasses", label:"تصنيف العملاء", icon:"◉" },
+  { id:"supplierClasses", key:"supplierClasses", label:"تصنيف الموردين", icon:"◉" },
   { id:"types", key:"types", label:"الأنواع", icon:"◉" },
   { id:"factories", key:"factories", label:"المصانع", icon:"◉" },
   { id:"quoteDescs", key:"quoteDescs", label:"أوصاف عرض السعر", icon:"◉" },
@@ -7704,7 +7708,7 @@ const isPartyKey = k => k==="customers" || k==="suppliers";
 const isTreasuryKey = k => k==="treasuries";
 const isBankKey = k => k==="banks";
 const isSafeKey = k => k==="safes";
-const isClassKey = k => k==="customerClasses";
+const isClassKey = k => k==="customerClasses" || k==="supplierClasses";
 
 function viewMaster(){
   migrateState(state);
@@ -7728,7 +7732,7 @@ function viewMaster(){
   let header, rows;
   const isClass = isClassKey(tab.key);
   if(isClass){
-    header = `<tr><th>#</th><th>الرقم *</th><th>الاسم *</th><th>عدد العملاء</th><th>إجراءات</th></tr>`;
+    header = `<tr><th>#</th><th>الرقم *</th><th>الاسم *</th><th>عدد ${CC_WORD[ccKind()].many}</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((c,i)=>{ const n=ccCount(c.code); return `
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
@@ -7774,14 +7778,14 @@ function viewMaster(){
       </tr>
     `).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isParty){
-    header = `<tr>${tab.key==="customers"?`<th style="width:34px"><input type="checkbox" title="تحديد الكل" onclick="ccSelAll(this)"></th>`:""}<th>#</th>${tab.key==="customers"?"<th>الكود</th>":""}<th>الاسم</th>${tab.key==="customers"?"<th>التصنيف</th>":""}<th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
+    header = `<tr>${isParty?`<th style="width:34px"><input type="checkbox" title="تحديد الكل" onclick="ccSelAll(this)"></th>`:""}<th>#</th>${isParty?"<th>الكود</th>":""}<th>الاسم</th>${isParty?"<th>التصنيف</th>":""}<th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((p,i)=>`
       <tr>
-        ${tab.key==="customers"?`<td><input type="checkbox" class="cc-sel" data-i="${i}"></td>`:""}
+        ${isParty?`<td><input type="checkbox" class="cc-sel" data-i="${i}"></td>`:""}
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
-        ${tab.key==="customers"?`<td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text);white-space:nowrap">${escapeHtml(p.code||"—")}</td>`:""}
+        ${isParty?`<td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text);white-space:nowrap">${escapeHtml(p.code||"—")}</td>`:""}
         <td><strong style="color:var(--text)">${escapeHtml(p.name)}</strong>${p.contactPerson?`<div style="font-size:11px;color:var(--text-dim);margin-top:2px">👤 ${escapeHtml(p.contactPerson)}</div>`:""}</td>
-        ${tab.key==="customers"?`<td>${p.classCode?`<span style="font-family:monospace;color:var(--gold-text)">${escapeHtml(p.classCode)}</span> — ${escapeHtml(ccName(p.classCode))}`:`<span style="color:var(--text-dim)">—</span>`}</td>`:""}
+        ${isParty?`<td>${p.classCode?`<span style="font-family:monospace;color:var(--gold-text)">${escapeHtml(p.classCode)}</span> — ${escapeHtml(ccName(p.classCode))}`:`<span style="color:var(--text-dim)">—</span>`}</td>`:""}
         <td style="direction:ltr;text-align:right">${escapeHtml(p.phone||"—")}</td>
         <td style="direction:ltr;text-align:right">${escapeHtml(p.taxCard||"—")}</td>
         <td style="direction:ltr;text-align:right">${escapeHtml(p.commercialReg||"—")}</td>
@@ -7816,7 +7820,7 @@ function viewMaster(){
     <div class="page-head">
       <h2>البيانات الأساسية</h2>
       <div class="spacer"></div>
-      ${tab.key==="customers"&&can("master","edit")?`<button class="btn ghost" onclick="ccSelUnclassified()">تحديد بدون تصنيف</button><button class="btn ghost" onclick="ccBulkOpen()">تصنيف المحدد</button>`:""}
+      ${isParty&&can("master","edit")?`<button class="btn ghost" onclick="ccSelUnclassified()">تحديد بدون تصنيف</button><button class="btn ghost" onclick="ccBulkOpen()">تصنيف المحدد</button>`:""}
       <button class="btn" onclick="addItem('${tab.key}','${tab.label}')">+ إضافة ${tab.label.substring(0,15)}</button>
     </div>
     <div class="tabs">${tabs}</div>
@@ -8133,15 +8137,19 @@ async function itDel(idx){
 }
 
 // ================= تصنيف العملاء (رقم + اسم) — العميل بيتربط بتصنيف عن طريق عمود class_code =================
-function ccList(){ if(!Array.isArray(state.customerClasses)) state.customerClasses=[]; return state.customerClasses; }
-function ccName(code){ const c=ccList().find(x=>String(x.code)===String(code)); return c?c.name:"(تصنيف محذوف)"; }
-function ccCount(code){ return (state.customers||[]).filter(x=>x&&String(x.classCode||"")===String(code)).length; }
-function ccNextCode(){ const m=ccList().reduce((a,c)=>{ const n=parseInt(c.code,10); return isNaN(n)?a:Math.max(a,n); },0); return String(m+1); }
+const CC_LIST_KEY = { customers:"customerClasses", suppliers:"supplierClasses" };
+const CC_WORD = { customers:{one:"العميل",many:"العملاء",cls:"تصنيف العملاء"}, suppliers:{one:"المورد",many:"الموردين",cls:"تصنيف الموردين"} };
+function ccKind(){ return (typeof currentTab==="string" && /^supplier/.test(currentTab)) ? "suppliers" : "customers"; }
+function ccList(k){ k=k||ccKind(); const key=CC_LIST_KEY[k]; if(!Array.isArray(state[key])) state[key]=[]; return state[key]; }
+function ccParty(k){ return state[k||ccKind()]||[]; }
+function ccName(code,k){ const c=ccList(k).find(x=>String(x.code)===String(code)); return c?c.name:"(تصنيف محذوف)"; }
+function ccCount(code,k){ return ccParty(k).filter(x=>x&&String(x.classCode||"")===String(code)).length; }
+function ccNextCode(k){ const m=ccList(k).reduce((a,c)=>{ const n=parseInt(c.code,10); return isNaN(n)?a:Math.max(a,n); },0); return String(m+1); }
 function ccFormHtml(c){
   const v=escapeAttr;
   return `<div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">
     <div class="fld"><label>الرقم *</label><input class="inp" id="cc_code" value="${v(c.code)}" style="direction:ltr;text-align:right" autocomplete="off"></div>
-    <div class="fld"><label>اسم التصنيف *</label><input class="inp" id="cc_name" value="${v(c.name)}" placeholder="مثال: عملاء جملة" autocomplete="off"></div>
+    <div class="fld"><label>اسم التصنيف *</label><input class="inp" id="cc_name" value="${v(c.name)}" placeholder="مثال: جملة" autocomplete="off"></div>
   </div>`;
 }
 function ccRead(){ return { code:(document.getElementById("cc_code")?.value||"").trim(), name:(document.getElementById("cc_name")?.value||"").trim() }; }
@@ -8152,29 +8160,34 @@ function ccCheck(r,selfIdx){
   if(ccList().some((x,i)=>i!==selfIdx&&x.name===r.name)){ toast("هذا الاسم موجود بالفعل","err"); return false; }
   return true;
 }
-// كود العميل شجري: رقم التصنيف + "." + تسلسل 3 أرقام (1.001 ، 1.002 ...). التسلسل بيبدأ من جديد جوه كل تصنيف.
-function ccGenCode(classCode, selfName){
-  const prefix=String(classCode)+".";
+// الكود شجري: رقم التصنيف + تسلسل 4 أرقام (10001 ، 10002 ...). التسلسل بيبدأ من جديد جوه كل تصنيف (بيتحسب من عملاء نفس التصنيف بس).
+function ccGenCode(classCode, selfName, k){
+  const prefix=String(classCode);
   let max=0;
-  (state.customers||[]).forEach(x=>{
+  ccParty(k).forEach(x=>{
     if(!x||(selfName!==undefined&&selfName!==null&&x.name===selfName)) return;
+    if(String(x.classCode||"")!==prefix) return;
     const c=String(x.code||""); if(!c.startsWith(prefix)) return;
     const rest=c.slice(prefix.length); if(/^\d+$/.test(rest)) max=Math.max(max,parseInt(rest,10));
   });
-  return prefix+String(max+1).padStart(3,"0");
+  return prefix+String(max+1).padStart(4,"0");
 }
-// بيحدد كود العميل بعد الحفظ: نفس الكود لو التصنيف ما اتغيّرش، كود جديد لو اتغيّر، وفاضي لو من غير تصنيف
-function ccApplyCode(p, old){
+// بيحدد الكود بعد الحفظ: نفس الكود لو التصنيف ما اتغيّرش، كود جديد لو اتغيّر، وفاضي لو من غير تصنيف
+function ccApplyCode(p, old, k){
   if(!p.classCode){ p.code=""; return p; }
-  if(old && old.code && String(old.classCode||"")===String(p.classCode) && String(old.code).startsWith(String(p.classCode)+".")) p.code=old.code;
-  else p.code=ccGenCode(p.classCode, old?old.name:null);
+  if(old && old.code && String(old.classCode||"")===String(p.classCode) && String(old.code).startsWith(String(p.classCode))) p.code=old.code;
+  else p.code=ccGenCode(p.classCode, old?old.name:null, k);
   return p;
 }
-// أي عميل له تصنيف وملوش كود يتولّد له كود تلقائيًا (مرة واحدة ويتحفظ)
+// أي عميل/مورد له تصنيف وملوش كود يتولّد له كود تلقائيًا (مرة واحدة ويتحفظ)
 function ccBackfill(){
   let ch=false;
-  (state.customers||[]).forEach(x=>{
-    if(x&&x.classCode&&!x.code&&ccList().some(c=>String(c.code)===String(x.classCode))){ x.code=ccGenCode(x.classCode,x.name); ch=true; }
+  ["customers","suppliers"].forEach(k=>{
+    ccParty(k).forEach(x=>{
+      // توحيد أي كود قديم (1.001 أو 1001) إلى رقم التصنيف + تسلسل 4 أرقام (10001)
+      if(x&&x.code&&x.classCode){ const cc=String(x.classCode), c=String(x.code); if(c.startsWith(cc)){ const rest=c.slice(cc.length).replace(/^\./,""); if(/^\d+$/.test(rest)){ const nc=cc+String(parseInt(rest,10)).padStart(4,"0"); if(nc!==c){ x.code=nc; ch=true; } } } }
+      if(x&&x.classCode&&!x.code&&ccList(k).some(c=>String(c.code)===String(x.classCode))){ x.code=ccGenCode(x.classCode,x.name,k); ch=true; }
+    });
   });
   if(ch){ try{ saveState(); }catch(_){} }
 }
@@ -8183,28 +8196,32 @@ function ccPreview(){
   const v=sel.value;
   out.value = !v ? "" : (v===out.dataset.oldclass && out.dataset.oldcode) ? out.dataset.oldcode : ccGenCode(v, out.dataset.name||null);
 }
+// كود/اسم العميل أو المورد للعرض في الحركات (الربط بالاسم زي ما هو، والكود بيتجاب من البيانات الأساسية)
+function partyCode(kind,name){ const x=(state[kind]||[]).find(p=>p&&p.name===name); return x&&x.code?x.code:""; }
+function partyWithCode(kind,name){ const c=partyCode(kind,name); return c?`${c} — ${name}`:(name||""); }
 // ===== تصنيف جماعي للعملاء الموجودين =====
 function ccSelAll(box){ document.querySelectorAll(".cc-sel").forEach(c=>{ c.checked=box.checked; }); }
-function ccSelUnclassified(){ document.querySelectorAll(".cc-sel").forEach(c=>{ const x=(state.customers||[])[+c.dataset.i]; c.checked=!!x&&!x.classCode; }); const n=document.querySelectorAll(".cc-sel:checked").length; toast(n?`تم تحديد ${n} عميل بدون تصنيف`:"كل العملاء مصنّفين","ok"); }
+function ccSelUnclassified(){ document.querySelectorAll(".cc-sel").forEach(c=>{ const x=ccParty()[+c.dataset.i]; c.checked=!!x&&!x.classCode; }); const n=document.querySelectorAll(".cc-sel:checked").length; toast(n?`تم تحديد ${n} ${ccKind()==="suppliers"?"مورد":"عميل"} بدون تصنيف`:`كل ${CC_WORD[ccKind()].many} مصنّفين`,"ok"); }
 function ccBulkOpen(){
   const idx=[...document.querySelectorAll(".cc-sel:checked")].map(c=>+c.dataset.i).sort((a,b)=>a-b);
   if(!idx.length){ toast("حدّد عميل واحد على الأقل","err"); return; }
-  if(!ccList().length){ toast("أضف تصنيف أولًا من تبويب تصنيف العملاء","err"); return; }
-  openModal(`تصنيف ${idx.length} عميل`, `<div style="display:grid;gap:12px">
+  if(!ccList().length){ toast("أضف تصنيف أولًا من تبويب "+CC_WORD[ccKind()].cls,"err"); return; }
+  openModal(`تصنيف ${idx.length} ${ccKind()==="suppliers"?"مورد":"عميل"}`, `<div style="display:grid;gap:12px">
     <div class="fld"><label>التصنيف</label><select class="inp" id="cc_bulk_sel"><option value="">— اختر التصنيف —</option>${ccList().map(c=>`<option value="${escapeAttr(c.code)}">${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join("")}<option value="__none__">إزالة التصنيف (وإلغاء الكود)</option></select></div>
     <p style="margin:0;color:var(--text-dim);font-size:12px">الأكواد هتتولّد بترتيب ظهور العملاء في الجدول، وتكمّل على آخر رقم موجود في التصنيف. العميل اللي في نفس التصنيف أصلًا بيحتفظ بكوده.</p></div>`, ()=>{
     const v=document.getElementById("cc_bulk_sel")?.value||"";
     if(!v){ toast("اختر التصنيف","err"); return false; }
     idx.forEach(i=>{
-      const p=state.customers[i]; if(!p) return;
+      const p=ccParty()[i]; if(!p) return;
       const old=Object.assign({},p); p.classCode = v==="__none__" ? "" : v; ccApplyCode(p,old);
     });
-    saveState(); go("master"); toast(`تم تحديث ${idx.length} عميل`,"ok"); return true;
+    saveState(); go("master"); toast(`تم تحديث ${idx.length} ${ccKind()==="suppliers"?"مورد":"عميل"}`,"ok"); return true;
   });
 }
-function ccSelectHtml(sel){
-  return `<div class="fld" style="grid-column:span 2"><label>تصنيف العميل</label><select class="inp" id="pf_classCode" onchange="ccPreview()"><option value="">— بدون تصنيف —</option>${ccList().map(c=>`<option value="${escapeAttr(c.code)}" ${String(c.code)===String(sel||"")?"selected":""}>${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join("")}</select></div>
-    <div class="fld" style="grid-column:span 2"><label>كود العميل <span style="color:var(--text-dim);font-weight:400">(بيتولّد تلقائيًا من التصنيف)</span></label><input class="inp" id="pf_code" readonly value="${escapeAttr(p.code||"")}" data-oldclass="${escapeAttr(p.classCode||"")}" data-oldcode="${escapeAttr(p.code||"")}" data-name="${escapeAttr(p.name||"")}" placeholder="اختر تصنيف لتوليد الكود" style="direction:ltr;text-align:right;font-family:monospace"></div>`;
+function ccSelectHtml(p){
+  const sel=p.classCode;
+  return `<div class="fld" style="grid-column:span 2"><label>تصنيف ${CC_WORD[ccKind()].one}</label><select class="inp" id="pf_classCode" onchange="ccPreview()"><option value="">— بدون تصنيف —</option>${ccList().map(c=>`<option value="${escapeAttr(c.code)}" ${String(c.code)===String(sel||"")?"selected":""}>${escapeHtml(c.code)} — ${escapeHtml(c.name)}</option>`).join("")}</select></div>
+    <div class="fld" style="grid-column:span 2"><label>كود ${CC_WORD[ccKind()].one} <span style="color:var(--text-dim);font-weight:400">(بيتولّد تلقائيًا من التصنيف)</span></label><input class="inp" id="pf_code" readonly value="${escapeAttr(p.code||"")}" data-oldclass="${escapeAttr(p.classCode||"")}" data-oldcode="${escapeAttr(p.code||"")}" data-name="${escapeAttr(p.name||"")}" placeholder="اختر تصنيف لتوليد الكود" style="direction:ltr;text-align:right;font-family:monospace"></div>`;
 }
 
 function partyFormHtml(p){
@@ -8232,7 +8249,7 @@ function partyFormHtml(p){
       <div class="fld"><label>العنوان</label>
         <input class="inp" id="pf_address" value="${v(p.address)}" placeholder="العنوان الكامل">
       </div>
-      ${currentTab==="customers" ? ccSelectHtml(p.classCode) : ""}
+      ${(currentTab==="customers"||currentTab==="suppliers") ? ccSelectHtml(p) : ""}
       ${currentTab==="customers" ? `<div class="fld" style="grid-column:span 2;padding:10px;border:1px solid var(--border);border-radius:8px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="pf_applyDiscount1Pct" ${p.applyDiscount1Pct?"checked":""}> تطبيق خصم 1% على هذا العميل (من السعر قبل الضريبة)</label></div>` : ""}
       ${currentTab==="suppliers" ? `<div class="fld" style="grid-column:span 2;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-3)"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700"><input type="checkbox" id="pf_applyProfitTax" ${p.applyProfitTax?"checked":""}> يطبق خصم أرباح تجارية وصناعية على هذا المورد</label><div class="fld" style="margin-top:9px"><label>نسبة الخصم %</label><input class="inp" type="number" min="0" max="100" step="0.01" id="pf_profitTaxPct" value="${v(p.profitTaxPct==null?(+state.settings.profitTax||1):p.profitTaxPct)}"></div><small style="color:var(--text-dim)">لن يُحسب الخصم في قيد المشتريات إلا عند تفعيل الاختيار.</small></div>` : ""}
       ${mdAccHtml('pf_acc',p)}
@@ -8330,7 +8347,7 @@ function safeFormRead(){
 
 function addItem(key,label){
   if(isClassKey(key)){
-    openModal("إضافة تصنيف عملاء", ccFormHtml({code:ccNextCode(),name:""}), ()=>{
+    openModal("إضافة "+CC_WORD[ccKind()].cls, ccFormHtml({code:ccNextCode(),name:""}), ()=>{
       const r=ccRead(); if(!ccCheck(r,-1)) return false;
       ccList().push(r); saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
     });
@@ -8375,7 +8392,7 @@ function addItem(key,label){
       const p = partyFormRead();
       if(!p.name){ toast("يجب إدخال الاسم","err"); return false; }
       if(state[key].some(x=> (x.name||x) === p.name)){ toast("هذا الاسم موجود بالفعل","err"); return false; }
-      if(key==="customers") ccApplyCode(p,null);
+      ccApplyCode(p,null,key);
       state[key].push(p); saveState(); go("master");
       toast("تمت الإضافة","ok"); return true;
     });
@@ -8400,9 +8417,9 @@ function addItem(key,label){
 function editItem(key,idx){
   if(isClassKey(key)){
     const cur=ccList()[idx]; if(!cur) return; const oldCode=cur.code;
-    openModal("تعديل تصنيف عملاء", ccFormHtml(cur), ()=>{
+    openModal("تعديل "+CC_WORD[ccKind()].cls, ccFormHtml(cur), ()=>{
       const r=ccRead(); if(!ccCheck(r,idx)) return false;
-      if(String(oldCode)!==r.code) (state.customers||[]).forEach(x=>{ if(x&&String(x.classCode||"")===String(oldCode)){ x.classCode=r.code; if(x.code&&String(x.code).startsWith(String(oldCode)+".")) x.code=r.code+x.code.slice(String(oldCode).length); } });
+      if(String(oldCode)!==r.code) ccParty().forEach(x=>{ if(x&&String(x.classCode||"")===String(oldCode)){ x.classCode=r.code; if(x.code&&String(x.code).startsWith(String(oldCode))) x.code=r.code+x.code.slice(String(oldCode).length); } });
       ccList()[idx]=r; saveState(); go("master"); toast("تم التعديل","ok"); return true;
     });
     setTimeout(()=>{ const el=document.getElementById("cc_name"); if(el){ el.focus(); el.select(); } },50);
@@ -8463,7 +8480,7 @@ function editItem(key,idx){
       const p = partyFormRead();
       if(!p.name){ toast("يجب إدخال الاسم","err"); return false; }
       if(state[key].some((x,i)=> i!==idx && (x.name||x) === p.name)){ toast("هذا الاسم موجود بالفعل","err"); return false; }
-      if(key==="customers") ccApplyCode(p,normalized);
+      ccApplyCode(p,normalized,key);
       state[key][idx] = p;
       // لو الاسم اتغيّر، نحدّث السجلات المرتبطة
       if(originalName && originalName !== p.name){
@@ -8501,7 +8518,7 @@ async function delItem(key,idx){
   if(isClassKey(key)){
     const c=ccList()[idx]; if(!c) return;
     const n=ccCount(c.code);
-    if(n){ toast(`لا يمكن حذف التصنيف — مرتبط بـ ${n} عميل. انقل العملاء لتصنيف آخر أولًا`,"err"); return; }
+    if(n){ toast(`لا يمكن حذف التصنيف — مرتبط بـ ${n} ${ccKind()==="suppliers"?"مورد":"عميل"}. انقل ${CC_WORD[ccKind()].many} لتصنيف آخر أولًا`,"err"); return; }
     if(!await askConfirm(`حذف التصنيف "${c.code} — ${c.name}" ؟`)) return;
     ccList().splice(idx,1); saveState(); go("master"); toast("تم الحذف","ok"); return;
   }
@@ -8626,7 +8643,7 @@ async function resetAll(){
 // كل جداول Supabase اللي بنحتاجها في النسخة الكاملة
 const BACKUP_TABLES = [
   // البيانات الأساسية
-  "customer_classes","customers","suppliers","diameters","factories","warehouses","steel_types",
+  "customer_classes","supplier_classes","customers","suppliers","diameters","factories","warehouses","steel_types",
   "policy_statuses","quote_descs","cement_types","companies","sites",
   "item_groups","policy_sites","treasuries",
   // المستندات
@@ -8747,7 +8764,7 @@ async function fullBackupImport(ev){
     let done=0, totalT=Object.keys(data.tables).length, failed=[], uploaded=0;
     // ترتيب الاسترجاع: الـparents قبل الـchildren
     const order = [
-      "customer_classes","customers","suppliers","diameters","factories","warehouses","steel_types",
+      "customer_classes","supplier_classes","customers","suppliers","diameters","factories","warehouses","steel_types",
       "policy_statuses","quote_descs","cement_types","companies","sites","item_groups","policy_sites","treasuries",
       "gl_fiscal_years","gl_periods","gl_accounts","gl_cost_centers","gl_journals",
       "sale_orders","shipments","sale_quotes","sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule","sale_order_postings","party_opening_balances",
@@ -9267,6 +9284,7 @@ function migrateState(s){
   if(!Array.isArray(s.warehouses)) s.warehouses = [];
   if(!Array.isArray(s.itemGroups)) s.itemGroups = [];
   if(!Array.isArray(s.customerClasses)) s.customerClasses = [];
+  if(!Array.isArray(s.supplierClasses)) s.supplierClasses = [];
   if(!s.diameterGroups||typeof s.diameterGroups!=="object"||Array.isArray(s.diameterGroups)) s.diameterGroups = {};
   // الخزائن والبنوك
   if(!Array.isArray(s.treasuries)) s.treasuries = [];
@@ -9307,7 +9325,7 @@ function migrateState(s){
     // ربط الحساب من دليل الحسابات — لازم يفضل محفوظ (كان بيتمسح هنا كل ما تتفتح الشاشة)
     accountId: v.accountId||"", accountCode: v.accountCode||"", accountName: v.accountName||"",
     classCode: v.classCode||"",   // تصنيف العميل (رقم التصنيف)
-    code: v.code||""              // كود العميل الشجري: رقم التصنيف.تسلسل (مثال 1.001)
+    code: v.code||""              // كود العميل الشجري: رقم التصنيف + تسلسل 4 أرقام (مثال 10001)
   };
   if(Array.isArray(s.customers)) s.customers = s.customers.map(toParty);
   if(Array.isArray(s.suppliers)) s.suppliers = s.suppliers.map(toParty);
@@ -10342,7 +10360,7 @@ function renderSearch(){
     <thead><tr><th>البوليصة</th><th>أمر البيع</th><th>التاريخ</th><th>العميل</th><th>المورد</th><th>الأصناف</th>${showSell("shipments")?"<th>الإجمالي</th>":""}<th>الحالة</th></tr></thead>
     <tbody>${rows.map(({r,src})=>`<tr data-id="${r.id}" onclick="pickRecord('${src}','${r.id}')">
       <td><strong style="color:var(--gold-text)">${escapeHtml(r.policyNo)}</strong></td><td>${escapeHtml(r.saleOrderNo||state.saleOrders.find(o=>o.id===r.saleOrderId)?.orderNo||"—")}</td><td>${r.date||""}</td>
-      <td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td class="num">${r.items.length}</td>
+      <td>${escapeHtml(partyWithCode("customers",r.customer))}</td><td>${escapeHtml(partyWithCode("suppliers",r.supplier))}</td><td class="num">${r.items.length}</td>
       ${showSell("shipments")?`<td class="num">${fmt(r.totals?.grandTotal)}</td>`:""}
       <td>${src==="shipments"?'<span class="chip ok">مرحّلة</span>':'<span class="chip warn">لم تُرحَّل</span>'}</td></tr>`).join("")}</tbody></table></div>`
     :`<div class="empty" style="padding:24px"><p>${allRecords().length?"مفيش نتائج للبحث ده":"لسه مفيش بوالص محفوظة"}</p></div>`;
@@ -13151,7 +13169,7 @@ function soDoSearch(){
     const method=p.method||"غير متاح";
     const status=isMaster?(r.closed?"أمر بيع مقفل":"أمر بيع مفتوح"):"خطة مستوردة — سجل الأمر الأصلي غير موجود";
     const action=isMaster?`<button class="btn sm" onclick="soLoad('${escapeAttr(r.id)}')">فتح الأمر</button>`:`<button class="btn sm" onclick="goOrderScreen('${escapeAttr(x.orderNo)}')">فتح البيانات المتاحة</button>`;
-    return `<tr><td data-label="رقم الأمر"><b style="color:var(--gold-text)">#${escapeHtml(x.orderNo)}</b></td><td data-label="العميل">${escapeHtml(customer)}</td><td data-label="المورد">${escapeHtml(supplier)}</td><td data-label="رقم البوليصة">${escapeHtml(policy)}</td><td data-label="إجمالي الخطة" class="num">${money(p.total??p.invoiceTotal)}</td><td data-label="نسبة النقدي" class="num">${cashPct}</td><td data-label="قيمة النقدي" class="num">${money(p.cashValue)}</td><td data-label="المؤجل" class="num">${money(p.creditValue)}</td><td data-label="عدد الأقساط" class="num">${escapeHtml(count)}</td><td data-label="طريقة السداد">${escapeHtml(method)}</td><td data-label="الحالة">${escapeHtml(status)}</td><td data-label="فتح">${action}</td></tr>`;
+    return `<tr><td data-label="رقم الأمر"><b style="color:var(--gold-text)">#${escapeHtml(x.orderNo)}</b></td><td data-label="العميل">${escapeHtml(partyWithCode("customers",customer))}</td><td data-label="المورد">${escapeHtml(partyWithCode("suppliers",supplier))}</td><td data-label="رقم البوليصة">${escapeHtml(policy)}</td><td data-label="إجمالي الخطة" class="num">${money(p.total??p.invoiceTotal)}</td><td data-label="نسبة النقدي" class="num">${cashPct}</td><td data-label="قيمة النقدي" class="num">${money(p.cashValue)}</td><td data-label="المؤجل" class="num">${money(p.creditValue)}</td><td data-label="عدد الأقساط" class="num">${escapeHtml(count)}</td><td data-label="طريقة السداد">${escapeHtml(method)}</td><td data-label="الحالة">${escapeHtml(status)}</td><td data-label="فتح">${action}</td></tr>`;
   }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة للفلاتر المحددة</div>`;
   const el=document.getElementById("soSearchResults"); if(el) el.innerHTML=html;
   const meta=document.getElementById("soSearchMeta"); if(meta) meta.textContent=`عدد النتائج: ${all.length} · الصفحة ${soSearchPage} من ${pages} · ${SO_SEARCH_PAGE_SIZE} سجلًا في الصفحة`;
@@ -13460,7 +13478,7 @@ function renderQuoteList(){
     <tbody>${rows.map(r=>{
       const st=qtEff(r), so=state.saleOrders.find(s=>s.quoteId===r.id);
       return `<tr>
-        <td><strong style="color:var(--gold-text)">${escapeHtml(r.quoteNo)}</strong></td><td>${escapeHtml(r.date||"")}</td><td>${escapeHtml(r.customer||"")}</td>
+        <td><strong style="color:var(--gold-text)">${escapeHtml(r.quoteNo)}</strong></td><td>${escapeHtml(r.date||"")}</td><td>${escapeHtml(partyWithCode("customers",r.customer||""))}</td>
         <td class="num">${r.items.filter(it=>it.desc||it.type||it.price).length}</td>
         <td><select class="inp" style="min-width:100px" onchange="qlSetStatus('${r.id}',this.value)">${QT_STATUSES.map(s=>`<option ${s===st?"selected":""}>${s}</option>`).join("")}</select></td>
         <td>${so?`<span class="chip ok">#${escapeHtml(so.orderNo)}</span>`:"—"}</td>
@@ -14061,7 +14079,7 @@ function renderTreasury(direction){
     return `<tr>
       <td style="color:var(--text-dim)">${e.no||""}</td>
       <td>${e.date||""}</td>
-      <td><strong>${escapeHtml(e.entryKind==="gl" ? txGlLabel(e) : (e[partyField]||"—"))}</strong></td>
+      <td><strong>${escapeHtml(e.entryKind==="gl" ? txGlLabel(e) : (partyWithCode(partyField==="customer"?"customers":"suppliers",e[partyField])||"—"))}</strong></td>
       <td>${txMethodLabel(e.method, e)}</td>
       <td style="direction:ltr;text-align:right">${escapeHtml(e.refNo||"—")}</td>
       <td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>
@@ -15708,7 +15726,7 @@ function siColumns(rows){
 function siCell(r,c){
   const m=salesInstallmentMoney, dash=v=>v>0.004?m(v):"-";
   switch(c.k){
-    case "order": return r.orderNo; case "customer": return r.customer; case "date": return r.date||"—"; case "total": return m(r.total);
+    case "order": return r.orderNo; case "customer": return partyWithCode("customers",r.customer); case "date": return r.date||"—"; case "total": return m(r.total);
     case "due": return r.due||"—"; case "label": return r.label; case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":"-"; case "lateRemaining": return dash(r.lateRemaining);
     case "status": {
