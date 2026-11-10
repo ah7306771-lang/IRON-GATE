@@ -13626,17 +13626,17 @@ function txComputeTotals(list){
   return t;
 }
 function txRenderKpisHtml(totals,cur,isIn){
-  const k=(lbl,val,sub,color)=>`<div class="kpi"><div class="lbl">${lbl}</div><div class="val small" style="direction:ltr;color:${color||'inherit'}">${fmt(val)}</div><div class="sub">${sub||""}</div></div>`;
+  const k=(lbl,val,sub,color,full)=>`<div class="kpi" title="${escapeAttr(full||lbl)}"><div class="lbl">${lbl}</div><div class="val small" style="direction:ltr;color:${color||'inherit'}">${fmt(val)}</div>${sub&&sub!==cur?`<div class="sub">${sub}</div>`:""}</div>`;
   return (
-    k("إجمالي الحركة النقدية", totals.all, cur, "var(--gold-2)")+
+    k("إجمالي الحركة", totals.all, cur, "var(--gold-2)", "إجمالي الحركة النقدية")+
     k("نقدي", totals.cash, cur, "var(--ok)")+
     k("تحويلات", totals.transfer, cur, "var(--ok)")+
     k("محصل شيك", totals.collected, cur, "var(--ok)")+
     (isIn?k("أوراق قبض", totals.receivable, cur, "var(--warn)"):"")+
-    k("شيكات تحت التحصيل", totals.pending, cur, "var(--warn)")+
+    k("تحت التحصيل", totals.pending, cur, "var(--warn)", "شيكات تحت التحصيل")+
     k("شيكات ضمان", totals.guarantee, cur, "var(--warn)")+
     k("مرتد", totals.returned, cur, "var(--danger)")+
-    k("⚖ تسويات (غير نقدية)", totals.adjustment, `م:${fmt(totals.adjDebit)} · د:${fmt(totals.adjCredit)}`, "#8b5cf6")
+    k("⚖ تسويات", totals.adjustment, `م:${fmt(totals.adjDebit)} · د:${fmt(totals.adjCredit)}`, "#8b5cf6", "تسويات (غير نقدية)")
   );
 }
 function viewTreasury(direction){
@@ -13653,24 +13653,11 @@ function viewTreasury(direction){
   const cur = state.settings.currency;
 
   return `
-  <div class="page-head">
-    <h2>${isIn?'↓ ':'↑ '}${title}</h2>
-    <span class="chip gold" style="margin-right:8px">${list.length} سجل</span>
-    <div class="spacer"></div>
-    <button class="btn ghost" onclick="txExport('${direction}','pdf')">🖨 طباعة حسب الفلتر</button>
-    <button class="btn ghost" onclick="txExport('${direction}','excel')">⬇ Excel</button>
-    <button class="btn" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
-  </div>
-
-  <div id="txKpisWrap" class="kpis compact tx-kpis" style="grid-template-columns:repeat(${isIn?9:8},minmax(140px,1fr));overflow-x:auto">
-    ${txRenderKpisHtml(totals, cur, isIn)}
-  </div>
-
-  <div class="tx-ftoggle">
+  <div class="tx-page">
+  <div class="tx-bar">
     <button type="button" class="btn ghost sm" id="txFiltersBtn" onclick="txToggleFilters('${direction}')">${txFiltersOpen()?'▲':'▼'} الفلاتر</button>
     <span class="tx-fsum" id="txFiltersSum" style="display:${txFiltersOpen()?'none':''}">${escapeHtml(txFilterSummary(direction))}</span>
-  </div>
-  <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
+    <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
     <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
     ${txMsBuild("method","كل الأنواع", txMethods.map(m=>({v:m.v,label:m.label,ico:m.ico})), direction)}
     ${txMsBuild("status","كل الحالات", txStatuses.map(s=>({v:s.v,label:s.label})), direction)}
@@ -13680,6 +13667,13 @@ function viewTreasury(direction){
     <input class="inp" type="date" title="إلى تاريخ" value="${escapeAttr(txFilter.to||'')}" onchange="txFilter.to=this.value;renderTreasury('${direction}')">
     <button type="button" class="btn ghost" onclick="fpClear('${isIn?'receipts':'payments'}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
   </div>
+    <div class="tx-actions">
+      <span class="chip gold tx-count">${list.length} سجل</span>
+      <button type="button" class="btn ghost tx-ic" title="طباعة حسب الفلتر" aria-label="طباعة حسب الفلتر" onclick="txExport('${direction}','pdf')">🖨<span class="tx-lbl"> طباعة حسب الفلتر</span></button>
+      <button type="button" class="btn ghost tx-xl" title="تصدير Excel" onclick="txExport('${direction}','excel')">⬇ Excel</button>
+      <button type="button" class="btn tx-new" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
+    </div>
+  </div>
 
   <div id="txDashChip" class="tx-dash-chip" role="status" style="display:none"></div>
   <div class="tbl-swipe-hint" aria-hidden="true">↔ ↕ اسحب الجدول يمين وشمال وفوق وتحت لعرض كل الأعمدة والصفوف</div>
@@ -13687,14 +13681,14 @@ function viewTreasury(direction){
     <thead><tr>
       <th class="sortable" data-sk="no" onclick="txSortBy('no','${direction}')">م</th>
       <th class="sortable" data-sk="date" onclick="txSortBy('date','${direction}')">التاريخ</th>
-      <th class="sortable" data-sk="party" onclick="txSortBy('party','${direction}')">${partyLabel}</th>
-      <th class="sortable" data-sk="method" onclick="txSortBy('method','${direction}')">النوع</th>
+      <th class="sortable" data-sk="party" onclick="txSortBy('party','${direction}')"><span class="th-wrap">${partyLabel}<button type="button" class="th-fbtn" data-fk="party" title="فلتر" onclick="txColFilterOpen('party','${direction}',event)">▾</button></span></th>
+      <th class="sortable" data-sk="method" onclick="txSortBy('method','${direction}')"><span class="th-wrap">النوع<button type="button" class="th-fbtn" data-fk="method" title="فلتر" onclick="txColFilterOpen('method','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="ref" onclick="txSortBy('ref','${direction}')">رقم المرجع</th>
       <th class="sortable" data-sk="amount" onclick="txSortBy('amount','${direction}')">القيمة</th>
       <th class="sortable" data-sk="due" onclick="txSortBy('due','${direction}')">تاريخ الاستحقاق</th>
-      <th class="sortable" data-sk="treasury" onclick="txSortBy('treasury','${direction}')">الخزنة / البنك</th>
+      <th class="sortable" data-sk="treasury" onclick="txSortBy('treasury','${direction}')"><span class="th-wrap">الخزنة / البنك<button type="button" class="th-fbtn" data-fk="treasury" title="فلتر" onclick="txColFilterOpen('treasury','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="bank" onclick="txSortBy('bank','${direction}')">البنك المسحوب عليه</th>
-      <th class="sortable" data-sk="status" onclick="txSortBy('status','${direction}')">الحالة</th>
+      <th class="sortable" data-sk="status" onclick="txSortBy('status','${direction}')"><span class="th-wrap">الحالة<button type="button" class="th-fbtn" data-fk="status" title="فلتر" onclick="txColFilterOpen('status','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="alert" onclick="txSortBy('alert','${direction}')">تنبيه</th>
       <th class="sortable" data-sk="notes" onclick="txSortBy('notes','${direction}')">ملاحظات</th>
       <th>حالة السداد</th>
@@ -13704,6 +13698,10 @@ function viewTreasury(direction){
     <tfoot id="txFoot"></tfoot>
   </table></div>
   ${isIn?`<div id="txCheckSummary" style="margin-top:18px"></div>`:""}
+  <div id="txKpisWrap" class="kpis compact tx-kpis tx-kpis-bottom">
+    ${txRenderKpisHtml(totals, cur, isIn)}
+  </div>
+  </div>
   `;
 }
 
@@ -13771,6 +13769,7 @@ function txMarkSort(){
     th.classList.remove("sort-asc","sort-desc");
     if(th.dataset.sk===txSort.key) th.classList.add(txSort.dir==="desc"?"sort-desc":"sort-asc");
   });
+  document.querySelectorAll(".th-fbtn[data-fk]").forEach(b=>{ const a=txNormFilterArr(txFilter[b.dataset.fk]); b.classList.toggle("on",a.length>0); });
 }
 function txFilterSummary(direction){
   const isIn=direction==="in", out=[];
@@ -21498,6 +21497,114 @@ function chqUnChange(){ const v=document.querySelector('input[name="chqUn"]:chec
     if(key==="banks"&&chqIsSysBank(v)) setTimeout(()=>{ const c=document.getElementById("bk_code"); if(c){ c.readOnly=true; c.title="كود ثابت للنظام"; } },80);
     return r;
   };
+})();
+</script>
+
+<style id="tx-screen-v2">
+/* ===== التحصيلات/المدفوعات: شريط واحد (فلاتر + أدوات) + إجماليات مثبتة تحت + ثبات الجدول ===== */
+.tx-bar{display:flex;align-items:center;gap:6px;margin:0 0 8px}
+.tx-bar .tx-fsum{flex:1 1 0;min-width:0}
+.tx-bar .tx-filters{flex:1 1 auto;min-width:0;margin:0}
+.tx-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.tx-actions .btn{padding:6px 12px;font-size:12px;white-space:nowrap}
+.tx-actions .tx-count{margin:0;white-space:nowrap}
+.tx-actions .tx-ic{width:34px;padding:6px 0;font-size:16px;line-height:1}
+.tx-actions .tx-lbl{display:none}
+.tx-page .th-wrap{display:inline-flex;align-items:center;gap:5px}
+.tx-page .th-fbtn.on{background:#F4C542;color:#10274d;border-color:#F4C542}
+
+/* إلغاء الاهتزاز عند المرور بالماوس على الجدول */
+#content .tx-page table tbody tr,#content .tx-page table tbody td{transition:none!important;transform:none!important;animation:none!important}
+#content .tx-page table tbody tr:hover td{filter:none!important;background-image:linear-gradient(rgba(201,151,36,.10),rgba(201,151,36,.10))}
+#content .tx-page table .btn:hover,#content .tx-page table .icon-btn:hover{transform:none!important}
+#content .tx-page .tbl-wrap{overflow-anchor:none;scrollbar-gutter:stable}
+
+@media(min-width:901px){
+  #content:has(.tx-page){padding:8px 12px 0!important}
+  .tx-page .tbl-wrap{max-height:calc(100vh - 195px);min-height:240px}
+  .tx-page .kpis.tx-kpis.tx-kpis-bottom{
+    position:sticky;bottom:0;z-index:30;display:flex!important;grid-template-columns:none!important;gap:6px;
+    margin:8px -12px 0!important;padding:6px 12px 8px;overflow-x:auto;
+    background:var(--card,#fff);border-top:2px solid var(--gold,#c99724);box-shadow:0 -4px 14px rgba(20,35,55,.10)}
+  .tx-page .tx-kpis-bottom .kpi{flex:1 1 0;min-width:108px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:1px;padding:4px 8px;text-align:center}
+  .tx-page .tx-kpis-bottom .kpi .lbl{font-size:10.5px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx-page .tx-kpis-bottom .kpi .val{font-size:clamp(11px,.85vw,13px);font-weight:800;white-space:nowrap;text-align:center}
+  .tx-page .tx-kpis-bottom .kpi .sub{font-size:9.5px;white-space:nowrap}
+}
+@media(max-width:900px){
+  .tx-bar{flex-wrap:wrap;gap:8px}
+  .tx-bar .tx-actions{order:-1;flex:1 1 100%}
+  .tx-bar .tx-actions .btn{flex:1 1 0;min-height:46px;width:auto;padding:8px 6px;font-size:13px}
+  .tx-bar .tx-actions .tx-new{flex:2 1 0}
+  .tx-bar .tx-actions .tx-ic{width:auto}
+  .tx-bar .tx-actions .tx-lbl{display:inline}
+  .tx-bar .tx-actions .tx-count{flex:none}
+  .tx-bar .tx-filters{flex:1 1 100%}
+}
+</style>
+<script id="tx-screen-v2-js">
+/* فلتر عمود بشكل الإكسيل (بحث + اختيار أكثر من قيمة) لأعمدة: العميل/المورد، النوع، الخزنة/البنك، الحالة */
+(function(){
+  let panelEl=null, panelKey="";
+  const closePanel=()=>{ if(panelEl){ panelEl.remove(); panelEl=null; panelKey=""; } };
+  const norm=t=>(window.igNormAr?window.igNormAr(t):String(t||"").toLowerCase());
+  function colValues(key,direction){
+    const pf=direction==="in"?"customer":"supplier", map=new Map();
+    const add=(v,l)=>{ v=String(v==null?"":v); if(v==="") return; if(!map.has(v)) map.set(v,l||v); };
+    treasuryList(direction).forEach(e=>{
+      if(key==="party") add(e.entryKind==="gl"&&typeof txGlLabel==="function"?e[pf]:e[pf], e[pf]);
+      else if(key==="method") add(e.method,((txMethods.find(m=>m.v===e.method)||{}).label)||e.method);
+      else if(key==="status") add(e.status,((txStatuses.find(s=>s.v===e.status)||{}).label)||e.status);
+      else if(key==="treasury") add(e.treasury,e.treasury?treasuryLabel(e.treasury):"");
+    });
+    txNormFilterArr(txFilter[key]).forEach(v=>add(v,
+      key==="method"?((txMethods.find(m=>m.v===v)||{}).label):key==="status"?((txStatuses.find(s=>s.v===v)||{}).label):key==="treasury"?treasuryLabel(v):v));
+    return [...map].map(([v,label])=>({v,label})).sort((a,b)=>String(a.label).localeCompare(String(b.label),"ar",{numeric:true}));
+  }
+  window.txColFilterOpen=function(key,direction,ev){
+    if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+    const btnEl=ev&&ev.currentTarget;
+    if(panelEl&&panelKey===key){ closePanel(); return; }
+    closePanel();
+    const vals=colValues(key,direction);
+    const cur=txNormFilterArr(txFilter[key]).map(String);
+    const sel=new Set(cur.length?cur:vals.map(v=>v.v));
+    const el=document.createElement("div"); el.className="sup-colf"; panelEl=el; panelKey=key;
+    el.addEventListener("click",e=>e.stopPropagation());
+    el.innerHTML='<input type="search" class="cf-search" placeholder="🔍 بحث..." autocomplete="off">'
+      +'<div class="cf-list"><label class="cf-item cf-all"><input type="checkbox" class="cf-allcb"> (تحديد الكل)</label>'
+      +vals.map(v=>'<label class="cf-item" data-t="'+escapeAttr(norm(v.label))+'"><input type="checkbox" value="'+escapeAttr(v.v)+'"> '+escapeHtml(v.label)+'</label>').join("")+'</div>'
+      +'<div class="cf-cnt"></div>'
+      +'<div class="cf-foot"><button type="button" class="btn sm cf-ok">موافق</button><button type="button" class="btn ghost sm cf-cancel">إلغاء</button><button type="button" class="cf-clear">مسح الفلتر</button></div>';
+    document.body.appendChild(el);
+    const items=[...el.querySelectorAll(".cf-item:not(.cf-all)")], allcb=el.querySelector(".cf-allcb"), cnt=el.querySelector(".cf-cnt"), okb=el.querySelector(".cf-ok");
+    const visible=()=>items.filter(x=>x.style.display!=="none");
+    const refresh=()=>{
+      items.forEach(x=>{ const i=x.querySelector("input"); i.checked=sel.has(i.value); });
+      const v=visible(), on=v.filter(x=>x.querySelector("input").checked).length;
+      allcb.checked=v.length>0&&on===v.length; allcb.indeterminate=on>0&&on<v.length;
+      cnt.textContent=sel.size+" من "+vals.length+" محدد"; okb.disabled=sel.size===0; okb.style.opacity=sel.size?"":".5";
+    };
+    const srch=el.querySelector(".cf-search");
+    srch.addEventListener("input",e=>{ const q=norm(e.target.value); items.forEach(x=>{ x.style.display=(!q||x.dataset.t.includes(q))?"":"none"; }); refresh(); });
+    srch.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); if(e.key==="Enter"&&sel.size) el.querySelector(".cf-ok").click(); });
+    items.forEach(x=>x.querySelector("input").addEventListener("change",e=>{ if(e.target.checked) sel.add(e.target.value); else sel.delete(e.target.value); refresh(); }));
+    allcb.addEventListener("change",e=>{ visible().forEach(x=>{ const v=x.querySelector("input").value; if(e.target.checked) sel.add(v); else sel.delete(v); }); refresh(); });
+    const commit=arr=>{ txFilter[key]=arr; try{ txMsSync(key); }catch(e){} closePanel(); renderTreasury(direction); };
+    el.querySelector(".cf-ok").addEventListener("click",()=>{ if(!sel.size) return; commit(sel.size===vals.length?[]:[...sel]); });
+    el.querySelector(".cf-cancel").addEventListener("click",closePanel);
+    el.querySelector(".cf-clear").addEventListener("click",()=>commit([]));
+    refresh();
+    const r=btnEl&&btnEl.getBoundingClientRect?btnEl.getBoundingClientRect():{right:200,bottom:100};
+    const vw=window.innerWidth, vh=window.innerHeight, w=270;
+    let left=Math.min(Math.max(8,r.right-w),vw-w-8), top=r.bottom+6;
+    if(top+el.offsetHeight>vh-8) top=Math.max(8,vh-el.offsetHeight-8);
+    el.style.left=left+"px"; el.style.top=top+"px";
+    setTimeout(()=>{ try{ srch.focus(); }catch(e){} },30);
+  };
+  document.addEventListener("click",e=>{ if(panelEl&&!panelEl.contains(e.target)&&!(e.target.closest&&e.target.closest(".th-fbtn[data-fk]"))) closePanel(); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
+  window.addEventListener("resize",closePanel);
 })();
 </script>
 
