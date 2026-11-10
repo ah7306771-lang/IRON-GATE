@@ -9276,7 +9276,7 @@ function viewShipments(){
   </div>
   <div class="card ig-pol-head"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
     <div class="fgrid">
-      ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
+      ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<input class="inp" id="f_soNoManual" type="text" inputmode="text" autocomplete="off" placeholder="✎ أو اكتب رقم الأمر" title="لو الأمر مش في القائمة اكتب رقمه بإيدك (زي ما هو في الداتا بيز) واضغط Enter" onchange="setSoNoManual(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" style="width:150px;flex:0 0 auto"><button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
       ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
       ${F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
@@ -9699,6 +9699,15 @@ function soNoSelectOptions(cur){
   return h+list.map(v=>`<option value="${escapeAttr(v)}"${c&&soKey(v)===soKey(c)?" selected":""}>${escapeHtml(v)}</option>`).join("");
 }
 async function newOrderFromPolicy(){ if(!(await guard())) return; soLoadedId=null; soDraft=soDefault(); go("saleOrder"); }
+// كتابة رقم أمر البيع يدويًا (لو الأمر مش مسجل في القائمة): يتحفظ الرقم كما هو ويشتغل عليه عادي
+function setSoNoManual(v){
+  v=String(v||"").trim(); if(!v) return;
+  const exist=[...soNoSet().values()].find(x=>soKey(x)===soKey(v));   // لو الرقم موجود فعلًا نستخدم صيغته المسجلة
+  setSoNo(exist||v);
+  const sel=document.getElementById("f_soNo"); if(sel) sel.innerHTML=soNoSelectOptions(draft.saleOrderNo);
+  const inp=document.getElementById("f_soNoManual"); if(inp) inp.value="";
+  toast(exist?"تم اختيار أمر البيع "+(exist):"تم تثبيت رقم أمر البيع "+v+" يدويًا (غير مسجل في أوامر البيع)","ok");
+}
 function setSoNo(v){
   draft.saleOrderNo=String(v||"").trim(); dirty=true; draft.paySchedule=null; draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
   const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(draft.saleOrderNo));
@@ -9993,8 +10002,8 @@ function buildRecord(strict){
   const err=m=>{toast(m,"err");return null;};
   if(!p) return err("اكتب رقم البوليصة");
   if(allRecords().some(({r})=>String(r.policyNo)===p&&r.id!==editingId)) return err("رقم البوليصة مكرر");
-  if(String(d.saleOrderNo||"").trim()&&!soNoExists(d.saleOrderNo)){ document.getElementById("f_soNo")?.classList.add("bad"); return err("أمر البيع المختار غير موجود — امسح الاختيار لإدخال البوليصة بدون أمر بيع"); }
-  { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; if(!so) d.saleOrderNo=""; }
+  // أمر البيع غير المسجل لا يمنع الحفظ/التعديل: يتم الاحتفاظ برقمه كما هو بدون ربط (saleOrderId فارغ)
+  { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; }
   if(!d.date) return err("اختر التاريخ");
   if(!d.supplier&&!d.customer) return err("اختر المورد أو العميل على الأقل");
   const blank=termsBlank(d.terms);
@@ -15619,7 +15628,8 @@ function renderSalesInstallments(){
   const us=salesInstallmentUI;
   { const F=salesInstallmentFilters, n=[F.customer,F.order,F.status].filter(a=>igMsNormArr(a).length).length+((F.from||F.to)?1:0)+(F.q?1:0); const fc=document.getElementById("siFiltCnt"); if(fc) fc.textContent=n?String(n):""; }
   const cols=siColumns(rows).filter(c=>!(us.hidePays&&(c.pay!==undefined||c.k==="diff")));
-  const th=cols.map(c=>c.sort?`<th class="si-sortable" onclick="siSort('${c.sort}')">${c.h}${us.sort===c.sort?(us.dir==="asc"?" ▲":" ▼"):""}</th>`:`<th>${c.h}</th>`).join("");
+  const siFb=c=>(c.k==="order"||c.k==="customer"||c.k==="status")?`<button type="button" class="th-fbtn ${igMsNormArr(salesInstallmentFilters[c.k]).length?"on":""}" title="فلتر" onclick="siColFilterOpen('${c.k}',event)">▾</button>`:"";
+  const th=cols.map(c=>c.sort?`<th class="si-sortable" onclick="siSort('${c.sort}')">${c.h}${us.sort===c.sort?(us.dir==="asc"?" ▲":" ▼"):""}${siFb(c)}</th>`:`<th>${c.h}</th>`).join("");
   const numKeys=new Set(["total","amount","paid","remaining","lateRemaining","diff","days"]);
   const body=rows.map(r=>`<tr class="${siRowClass(r)}">${cols.map(c=>{
     const v=escapeHtml(siCell(r,c)); 
@@ -21619,6 +21629,100 @@ function chqUnChange(){ const v=document.querySelector('input[name="chqUn"]:chec
   document.addEventListener("click",e=>{ if(panelEl&&!panelEl.contains(e.target)&&!(e.target.closest&&e.target.closest(".th-fbtn[data-fk]"))) closePanel(); });
   document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
   window.addEventListener("resize",closePanel);
+})();
+</script>
+
+<style id="si-screen-v2">
+/* ===== الأقساط: إجماليات في سطر واحد + فلاتر أعمدة + تثبيت صف الإجماليات ===== */
+.sales-inst-table .th-fbtn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-inline-start:5px;padding:0;border:0;border-radius:5px;background:rgba(255,255,255,.2);color:#fff;font-size:11px;line-height:1;cursor:pointer;vertical-align:middle}
+.sales-inst-table .th-fbtn:hover{background:rgba(255,255,255,.35)}
+.sales-inst-table .th-fbtn.on{background:#F4C542;color:#10274d}
+@media(min-width:901px){
+  .si-compact .sales-inst-totals-card .sales-inst-kpis{display:flex!important;flex-wrap:nowrap;grid-template-columns:none!important;gap:6px!important;padding:6px 8px;overflow-x:auto}
+  .si-compact .sales-inst-kpi{flex:1 1 0;min-width:118px;padding:4px 8px;text-align:center;display:flex;flex-direction:column;justify-content:center}
+  .si-compact .sales-inst-kpi span{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .si-compact .sales-inst-kpi b{font-size:clamp(12px,1.05vw,15px);margin-top:1px;white-space:nowrap}
+  .si-compact .sales-inst-kpi small{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media(max-width:900px),(pointer:coarse){
+  .sales-inst-table .th-fbtn{width:30px;height:30px;font-size:14px;border-radius:7px}
+}
+</style>
+<script id="si-screen-v2-js">
+(function(){
+  /* لوحة فلتر عمود عامة (بحث + اختيار متعدد) */
+  let panelEl=null, panelId="";
+  const closePanel=()=>{ if(panelEl){ panelEl.remove(); panelEl=null; panelId=""; } };
+  const norm=t=>(window.igNormAr?window.igNormAr(t):String(t||"").toLowerCase());
+  function openPanel(o){
+    if(panelEl&&panelId===o.id){ closePanel(); return; }
+    closePanel();
+    const vals=o.vals, sel=new Set(o.current.length?o.current:vals.map(v=>v.v));
+    const el=document.createElement("div"); el.className="sup-colf"; panelEl=el; panelId=o.id;
+    el.addEventListener("click",e=>e.stopPropagation());
+    el.innerHTML='<input type="search" class="cf-search" placeholder="🔍 بحث..." autocomplete="off">'
+      +'<div class="cf-list"><label class="cf-item cf-all"><input type="checkbox" class="cf-allcb"> (تحديد الكل)</label>'
+      +vals.map(v=>'<label class="cf-item" data-t="'+escapeAttr(norm(v.label))+'"><input type="checkbox" value="'+escapeAttr(v.v)+'"> '+escapeHtml(v.label)+'</label>').join("")+'</div>'
+      +'<div class="cf-cnt"></div>'
+      +'<div class="cf-foot"><button type="button" class="btn sm cf-ok">موافق</button><button type="button" class="btn ghost sm cf-cancel">إلغاء</button><button type="button" class="cf-clear">مسح الفلتر</button></div>';
+    document.body.appendChild(el);
+    const items=[...el.querySelectorAll(".cf-item:not(.cf-all)")], allcb=el.querySelector(".cf-allcb"), cnt=el.querySelector(".cf-cnt"), okb=el.querySelector(".cf-ok"), srch=el.querySelector(".cf-search");
+    const visible=()=>items.filter(x=>x.style.display!=="none");
+    const refresh=()=>{
+      items.forEach(x=>{ const i=x.querySelector("input"); i.checked=sel.has(i.value); });
+      const v=visible(), on=v.filter(x=>x.querySelector("input").checked).length;
+      allcb.checked=v.length>0&&on===v.length; allcb.indeterminate=on>0&&on<v.length;
+      cnt.textContent=sel.size+" من "+vals.length+" محدد"; okb.disabled=sel.size===0; okb.style.opacity=sel.size?"":".5";
+    };
+    srch.addEventListener("input",e=>{ const q=norm(e.target.value); items.forEach(x=>{ x.style.display=(!q||x.dataset.t.includes(q))?"":"none"; }); refresh(); });
+    srch.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); if(e.key==="Enter"&&sel.size) okb.click(); });
+    items.forEach(x=>x.querySelector("input").addEventListener("change",e=>{ if(e.target.checked) sel.add(e.target.value); else sel.delete(e.target.value); refresh(); }));
+    allcb.addEventListener("change",e=>{ visible().forEach(x=>{ const v=x.querySelector("input").value; if(e.target.checked) sel.add(v); else sel.delete(v); }); refresh(); });
+    const commit=arr=>{ closePanel(); o.commit(arr); };
+    okb.addEventListener("click",()=>{ if(!sel.size) return; commit(sel.size===vals.length?[]:[...sel]); });
+    el.querySelector(".cf-cancel").addEventListener("click",closePanel);
+    el.querySelector(".cf-clear").addEventListener("click",()=>commit([]));
+    refresh();
+    const r=o.btn&&o.btn.getBoundingClientRect?o.btn.getBoundingClientRect():{right:200,bottom:100};
+    const vw=window.innerWidth, vh=window.innerHeight, w=270;
+    let left=Math.min(Math.max(8,r.right-w),vw-w-8), top=r.bottom+6;
+    if(top+el.offsetHeight>vh-8) top=Math.max(8,vh-el.offsetHeight-8);
+    el.style.left=left+"px"; el.style.top=top+"px";
+    setTimeout(()=>{ try{ srch.focus(); }catch(e){} },30);
+  }
+  document.addEventListener("click",e=>{ if(panelEl&&!panelEl.contains(e.target)&&!(e.target.closest&&e.target.closest(".th-fbtn"))) closePanel(); });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") closePanel(); });
+  window.addEventListener("resize",closePanel);
+
+  /* الأقساط: فلتر أعمدة العميل / الحالة / أمر البيع */
+  window.siColFilterOpen=function(key,ev){
+    if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+    const f=salesInstallmentFilters, cur=igMsNormArr(f[key]).map(String);
+    const get=r=>key==="customer"?r.customer:key==="order"?String(r.orderNo||""):r.status;
+    const set=new Set(); salesInstallmentBaseRows().forEach(r=>{ const v=get(r); if(v!==undefined&&v!==null&&String(v)!=="") set.add(String(v)); });
+    cur.forEach(v=>set.add(v));
+    const vals=[...set].sort((a,b)=>a.localeCompare(b,"ar",{numeric:true})).map(v=>({v,label:v}));
+    openPanel({id:"si:"+key,btn:ev&&ev.currentTarget,vals,current:cur,commit:arr=>{
+      f[key]=arr; try{ siSavePrefs(); }catch(e){} try{ siMsSync(key); }catch(e){} renderSalesInstallments(); }});
+  };
+
+  /* ضبط ارتفاع الجدول تلقائيًا علشان صف الإجماليات يفضل ظاهر ومثبت تحت */
+  function fit(sel){
+    if(window.innerWidth<=900) return;
+    const w=document.querySelector(sel); if(!w){ return; }
+    w.style.maxHeight="";
+    const top=w.getBoundingClientRect().top;
+    const h=window.innerHeight-top-14;
+    w.style.maxHeight=Math.max(240,h)+"px";
+  }
+  const SELS=[".sales-inst-page .sales-inst-table-wrap",".tx-page .tbl-wrap"];
+  const fitAll=()=>SELS.forEach(fit);
+  const later=()=>{ fitAll(); requestAnimationFrame(fitAll); setTimeout(fitAll,200); };
+  [["renderSalesInstallments"],["renderTreasury"],["siToggle"],["txToggleFilters"]].forEach(([n])=>{
+    const orig=window[n]; if(typeof orig!=="function") return;
+    window[n]=function(){ const r=orig.apply(this,arguments); later(); return r; };
+  });
+  window.addEventListener("resize",fitAll);
 })();
 </script>
 
