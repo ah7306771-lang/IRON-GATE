@@ -6273,7 +6273,7 @@ function dxPulseGoto(target, opts){
           txFilter.from = t; txFilter.to = t;
         }
         if(opts.from || opts.to || opts.today){
-          txFilter.q = ""; txFilter.method=[]; txFilter.status=[]; txFilter.party=[]; txFilter.treasury=[];
+          txFilter.q = ""; txFilter.method=[]; txFilter.status=[]; txFilter.post=[]; txFilter.party=[]; txFilter.treasury=[];
         }
         txFilter.dashCollected = !!opts.collected;   // التحصيل الفعلي بنفس حساب كارت الداشبورد
         try{ if(typeof txViewSave==="function") txViewSave(dir); }catch(_){}
@@ -13657,7 +13657,7 @@ function txMethodLabel(v, e){
 }
 function txStatusChip(v){ const s=txStatuses.find(x=>x.v===v); if(!s) return ""; return `<span class="chip ${s.color==='danger'?'':s.color==='warn'?'warn':'ok'}" style="${s.color==='danger'?'background:#fbe6e4;color:#b3261e;border-color:#f0b8ad':''}">${escapeHtml(s.label)}</span>`; }
 
-let txFilter = { q:"", method:[], status:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
+let txFilter = { q:"", method:[], status:[], post:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
 // توحيد قيمة الفلتر إلى مصفوفة — للتوافق مع الحفظ القديم (نصّي)
 function txNormFilterArr(v){
   if(Array.isArray(v)) return v.filter(x=>x!=null && x!=="");
@@ -13665,7 +13665,28 @@ function txNormFilterArr(v){
   return [String(v)];
 }
 function txFilterNormalizeAll(){
-  ["method","status","treasury","party"].forEach(k=>{ txFilter[k] = txNormFilterArr(txFilter[k]); });
+  ["method","status","post","treasury","party"].forEach(k=>{ txFilter[k] = txNormFilterArr(txFilter[k]); });
+}
+/* فلتر حالة الترحيل — الخيارات بتختلف بين التحصيلات والمدفوعات (استلام/تحصيل ↔ إصدار/صرف) */
+function txPostOptions(direction){
+  const isIn=direction==="in";
+  return [
+    {v:"unposted",label:"غير مُرحّل"},
+    {v:"posted",label:"مُرحّل (كل المراحل)"},
+    {v:"chq_receipt",label:isIn?"شيك مُرحّل الاستلام فقط (لم يُحصَّل)":"شيك مُرحّل الإصدار فقط (لم يُصرف)"},
+    {v:"chq_collect",label:isIn?"شيك مُرحّل التحصيل":"شيك مُرحّل الصرف"}
+  ];
+}
+function txPostMatch(selected, e){
+  const arr=txNormFilterArr(selected); if(!arr.length) return true;
+  const posted=txIsPosted(e);
+  return arr.some(v=>{
+    if(v==="unposted") return !posted && e.method!=="adjustment";
+    if(v==="posted") return posted;
+    if(v==="chq_receipt") return chqIsChq(e) && chqHasKind(e,"receipt") && !chqHasKind(e,"collect");
+    if(v==="chq_collect") return chqIsChq(e) && chqHasKind(e,"collect");
+    return false;
+  });
 }
 function txMatchMulti(selected, val){
   const arr = txNormFilterArr(selected);
@@ -13855,7 +13876,7 @@ function txRestoreView(direction){
   if(txCurDir===direction) return;   // نفس الشاشة: الحالة الحالية في الذاكرة (يشمل زر "مسح")
   if(txCurDir) txViewSave(txCurDir);   // احفظ حالة الشاشة اللي خارجين منها
   const saved = st[direction];
-  txFilter = igYearFix({ q:"", method:[], status:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd(), ...(saved&&saved.filter||{}) });
+  txFilter = igYearFix({ q:"", method:[], status:[], post:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd(), ...(saved&&saved.filter||{}) });
   txFilterNormalizeAll();
   txSort = (saved&&saved.sort&&saved.sort.key) ? { key:saved.sort.key, dir:saved.sort.dir==="desc"?"desc":"asc" } : { key:"date", dir:"asc" };
   txCurDir = direction;
@@ -13936,6 +13957,7 @@ function viewTreasury(direction){
     <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
     ${txMsBuild("method","كل الأنواع", txMethods.map(m=>({v:m.v,label:m.label,ico:m.ico})), direction)}
     ${txMsBuild("status","كل الحالات", txStatuses.map(s=>({v:s.v,label:s.label})), direction)}
+    ${txMsBuild("post","كل حالات الترحيل", txPostOptions(direction), direction)}
     ${txMsBuild("party", "كل "+(isIn?'العملاء':'الموردين'), partyList.map(n=>({v:n,label:n})), direction)}
     ${txMsBuild("treasury","كل الخزائن/البنوك", treasuryAll().filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t))).map(t=>({v:t.code,label:`${t.code} — ${t.name}`,ico:t.kind==="bank"?"🏦":"🗄"})), direction)}
     <input class="inp" type="date" title="من تاريخ" value="${escapeAttr(txFilter.from||'')}" onchange="txFilter.from=this.value;renderTreasury('${direction}')">
@@ -14008,6 +14030,7 @@ function txFilteredSorted(direction){
   const rows = treasuryList(direction).filter(e=>{
     if(!txMatchMulti(txFilter.method, e.method)) return false;
     if(!txMatchMulti(txFilter.status, e.status)) return false;
+    if(!txPostMatch(txFilter.post, e)) return false;
     if(!txMatchMulti(txFilter.treasury, e.treasury)) return false;
     if(!txMatchMulti(txFilter.party, e[partyField])) return false;
     if(txFilter.from && String(e.date||"")<txFilter.from) return false;
@@ -14055,6 +14078,7 @@ function txFilterSummary(direction){
   if(txFilter.q) out.push("بحث: "+txFilter.q);
   const m = multiLabel(txFilter.method,"النوع","الأنواع",labMethod); if(m) out.push(m);
   const s = multiLabel(txFilter.status,"الحالة","الحالات",labStatus); if(s) out.push(s);
+  { const po=txPostOptions(direction), pp=multiLabel(txFilter.post,"الترحيل","حالات الترحيل",v=>(po.find(x=>x.v===v)||{}).label||v); if(pp) out.push(pp); }
   const p = multiLabel(txFilter.party, isIn?"العميل":"المورد", isIn?"العملاء":"الموردين", v=>v); if(p) out.push(p);
   const t = multiLabel(txFilter.treasury,"الخزنة/البنك","الخزائن/البنوك", v=>treasuryLabel(v)); if(t) out.push(t);
   if(txFilter.dashCollected) out.push("تحصيلات فعلية (مطابقة للوحة التحكم)");
@@ -18181,7 +18205,7 @@ window.addEventListener("pagehide",fpSave);
 document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="hidden") fpSave(); });
 window.fpClear=function(page){
   if(page==="receipts"||page==="payments"){
-    txFilter={q:"",method:[],status:[],treasury:[],party:[],from:igYearStart(),to:igYearEnd()};
+    txFilter={q:"",method:[],status:[],post:[],treasury:[],party:[],from:igYearStart(),to:igYearEnd()};
     try{ txViewSave(page==="receipts"?"in":"out"); }catch(e){}
   } else if(page==="clientTB"||page==="supplierTB"){
     Object.assign(tbFilters[page],{from:tbYear+"-01-01",to:tbYear+"-12-31",partyFrom:"",partyTo:"",hideZero:true});
@@ -21169,6 +21193,7 @@ async function txPostDo(){
     try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
     audit("tx_post",`ترحيل ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState(); toast("✓ تم ترحيل "+title+" بقيد رقم "+entryNo,"ok"); closeModal();
+    try{ if(await askConfirm("تم الترحيل بقيد رقم "+entryNo+" — هل تريد طباعة القيد؟")) txPrintEntry(e.id,direction); }catch(_){}
     if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(direction);
   }catch(err){
     if(entry){ try{ await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){} }
@@ -21179,7 +21204,7 @@ async function txPostDo(){
 function txRowActions(e,direction){
   const logBtn=(e.editLog&&e.editLog.length)?`<button onclick="txShowLog('${e.id}')">سجل (${e.editLog.length})</button>`:"";
   const prn=(e.method!=="adjustment")?`<button class="tx-prn-btn" onclick="txPrintVoucher('${e.id}','${direction}')" title="طباعة سند ${direction==="in"?"قبض":"صرف"}">🖨 سند</button>`:"";
-  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:""}${prn}${logBtn}</div>`;
+  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${e.id}','${direction}')">🖨 طباعة القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:""}${prn}${logBtn}</div>`;
   const scr=direction==="in"?"receipts":"payments";
   const post=(e.method!=="adjustment" && can(scr,"post") && !(typeof chqCanReceipt==="function"&&chqCanReceipt(e)))?`<button class="tx-post-btn" onclick="txPostOpen('${e.id}','${direction}')">ترحيل الحركة</button>`:"";
   const un=(e.method!=="adjustment")?`<span class="tx-unposted">غير مُرحّل</span>`:"";
@@ -21205,83 +21230,86 @@ function txShowLog(id){
 </script>
 
 <style id="cgx-style">
-/* ===== العهد (نمط الموبايل) — منقول من شاشة العهد في نسخة index_1 ===== */
-.cgx{max-width:640px;margin:0 auto}
+/* ===== العهد (نمط الموبايل) — مصغّر وبألوان التطبيق (ذهبي/أخضر/أحمر من :root) ===== */
+.cgx{max-width:560px;margin:0 auto;font-size:12.5px;line-height:1.45}
 .cgx *{box-sizing:border-box}
-.cgx-title{text-align:center;font-size:20px;font-weight:900;margin:2px 0 8px}
-.cgx-emp{margin:0 0 8px;text-align:center}
-.cgx-emp label{display:block;font-size:11px;color:var(--text-dim);margin-bottom:2px}
-.cgx-emp select{width:100%;max-width:260px;height:34px;border:1px solid var(--line);border-radius:9px;padding:0 8px;font:inherit;font-size:13px;background:#fff}
-.cgx-top{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 8px}
-.cgx-rep{border:0;background:#e2621f;color:#fff;border-radius:10px;padding:9px 16px;font:inherit;font-weight:800;font-size:14px;cursor:pointer}
-.cgx-who{font-weight:800;font-size:13px}
-.cgx-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
-.cgx-card{border-radius:8px;padding:6px 4px;text-align:center;font-size:11px;font-weight:800;background:#fff;border:1px solid var(--line);line-height:1.3}
-.cgx-card b{display:block;font-size:16px;margin-top:1px}
-.cgx-card.in{color:#1f7a4c;background:#eaf6ef;border-color:#b7e0c8}
-.cgx-card.out{color:#c0392b;background:#fdecea;border-color:#f0bcb6}
-.cgx-card.neg b{color:#c0392b}
-.cgx-lockmsg{background:#eaf6ef;color:#1f7a4c;border:1px solid #b7e0c8;border-radius:10px;padding:8px 10px;margin:6px 0;text-align:center;font-weight:800;font-size:13px}
-.cgx-status{min-height:16px;font-size:12px;font-weight:700;color:#1f7a4c;margin:4px 0;text-align:center}
-.cgx-status.err{color:#c0392b}
-.cgx-sec{margin:8px 0;border-radius:12px;border:1.5px solid;background:#fff}
-.cgx-sec.in{border-color:#1f7a4c}.cgx-sec.out{border-color:#c0392b}
-.cgx-head{display:flex;align-items:stretch;gap:4px;border-radius:10px 10px 0 0;overflow:hidden}
-.cgx-add{flex:1;display:flex;justify-content:space-between;align-items:center;border:0;color:#fff;font:inherit;font-weight:800;font-size:15px;padding:10px 14px;cursor:pointer;text-align:right}
-.cgx-sec.in .cgx-add{background:#1f7a4c}.cgx-sec.out .cgx-add{background:#c0392b}
+.cgx-title{text-align:center;font-size:16px;font-weight:900;margin:0 0 5px;color:var(--text)}
+.cgx-emp{margin:0 0 6px;text-align:center}
+.cgx-emp label{display:block;font-size:10px;color:var(--text-dim);margin-bottom:1px}
+.cgx-emp select{width:100%;max-width:230px;height:30px;border:1px solid #dce2ea;border-radius:9px;padding:0 8px;font:inherit;font-size:12px;background:#fff;color:var(--text)}
+.cgx-emp select:focus{outline:0;border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,151,36,.13)}
+.cgx-top{display:flex;justify-content:space-between;align-items:center;gap:6px;margin:0 0 6px}
+.cgx-rep{border:0;background:linear-gradient(135deg,#d8ab3f,#b98a20);color:#fff;border-radius:9px;padding:6px 12px;font:inherit;font-weight:800;font-size:12px;cursor:pointer}
+.cgx-who{font-weight:800;font-size:11.5px;color:var(--text)}
+.cgx-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:6px}
+.cgx-card{border-radius:9px;padding:4px 3px;text-align:center;font-size:10px;font-weight:800;background:#fff;border:1px solid #e1e6ed;line-height:1.25;color:var(--text-dim);box-shadow:0 2px 8px rgba(31,45,67,.03)}
+.cgx-card b{display:block;font-size:13.5px;margin-top:1px;color:var(--text)}
+.cgx-card.in{color:var(--ok);background:#fff;border-color:#e1e6ed}
+.cgx-card.in b{color:var(--ok)}
+.cgx-card.out{color:var(--danger);background:#fff;border-color:#e1e6ed}
+.cgx-card.out b{color:var(--danger)}
+.cgx-card:not(.in):not(.out){background:var(--gold-soft);border-color:#ecd9a3;color:var(--gold-dim)}
+.cgx-card:not(.in):not(.out) b{color:var(--gold-dim)}
+.cgx-card.neg b{color:var(--danger)}
+.cgx-lockmsg{background:var(--gold-soft);color:var(--gold-dim);border:1px solid #ecd9a3;border-radius:9px;padding:5px 8px;margin:4px 0;text-align:center;font-weight:800;font-size:11px}
+.cgx-status{min-height:14px;font-size:11px;font-weight:700;color:var(--ok);margin:2px 0;text-align:center}
+.cgx-status.err{color:var(--danger)}
+.cgx-sec{margin:6px 0;border-radius:11px;border:1px solid #e1e6ed;background:#fff;box-shadow:0 2px 8px rgba(31,45,67,.03);overflow:hidden}
+.cgx-sec.in{border-right:3px solid var(--ok)}.cgx-sec.out{border-right:3px solid var(--danger)}
+.cgx-head{display:flex;align-items:stretch;gap:4px;background:#f7f9fc;border-bottom:1px solid #e8ecf2}
+.cgx-add{flex:1;display:flex;justify-content:space-between;align-items:center;border:0;background:transparent;font:inherit;font-weight:800;font-size:13px;padding:6px 10px;cursor:pointer;text-align:right}
+.cgx-sec.in .cgx-add{color:var(--ok)}.cgx-sec.out .cgx-add{color:var(--danger)}
 .cgx-add.static{cursor:default}
-.cgx-add span{font-size:13px;font-weight:700;opacity:.95}
-.cgx-showlocked{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:800;cursor:pointer;user-select:none;padding:0 10px;border-radius:8px;white-space:nowrap;margin:3px}
-.cgx-sec.in .cgx-showlocked{background:#eaf6ef;color:#1f7a4c;border:1px solid #b7e0c8}
-.cgx-sec.out .cgx-showlocked{background:#fdecea;color:#c0392b;border:1px solid #f0bcb6}
-.cgx-showlocked input{width:14px;height:14px;margin:0;accent-color:currentColor}
+.cgx-add span{font-size:12px;font-weight:800}
+.cgx-showlocked{display:flex;align-items:center;gap:3px;font-size:10px;font-weight:800;cursor:pointer;user-select:none;padding:0 7px;border-radius:7px;white-space:nowrap;margin:3px;background:#fff;color:var(--gold-dim);border:1px solid #ecd9a3}
+.cgx-showlocked input{width:12px;height:12px;margin:0;accent-color:var(--gold)}
 .cgx-list{max-height:none}
-.cgx-row{display:flex;align-items:center;gap:6px;padding:7px 10px;border-top:1px solid #f1e6d8;font-size:13px;font-weight:700;background:#fff;line-height:1.35}
+.cgx-row{display:flex;align-items:center;gap:5px;padding:5px 9px;border-top:1px solid #edf0f4;font-size:12px;font-weight:700;background:#fff;line-height:1.3}
 .cgx-row>span{flex:1;min-width:0;word-break:break-word}
-.cgx-row i{display:block;font-style:normal;font-size:10.5px;color:var(--text-dim);direction:ltr;text-align:right}
-.cgx-row em.cgx-proj{display:block;font-style:normal;font-size:10.5px;font-weight:800;color:#1f6feb}
-.cgx-sec.out .cgx-row em.cgx-proj{color:#8e44ad}
+.cgx-row i{display:block;font-style:normal;font-size:9.5px;color:var(--text-dim);direction:ltr;text-align:right}
+.cgx-row em.cgx-proj{display:block;font-style:normal;font-size:9.5px;font-weight:800;color:var(--gold-2)}
 .cgx-row b{white-space:nowrap}
-.cgx-sec.in .cgx-row b{color:#1f7a4c}.cgx-sec.out .cgx-row b{color:#c0392b}
-.cgx-row.locked{background:#fafafa}
-.cgx-edit,.cgx-del{border:0;background:none;font-size:15px;cursor:pointer;padding:0 3px}
-.cgx-edit{color:#2563a8}.cgx-del{color:#b00}
-.cgx-empty{padding:10px;text-align:center;color:var(--text-dim);font-size:12.5px;background:#fff;border-radius:0 0 10px 10px}
-.cgx-draft{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px;background:#fffaf4;border-top:1px solid #f1e6d8}
-.cgx-draft input{width:100%;padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13px;background:#fff}
+.cgx-sec.in .cgx-row b{color:var(--ok)}.cgx-sec.out .cgx-row b{color:var(--danger)}
+.cgx-row.locked{background:#f8fafc}
+.cgx-edit,.cgx-del{border:0;background:none;font-size:13px;cursor:pointer;padding:0 2px}
+.cgx-edit{color:var(--gold-2)}.cgx-del{color:var(--danger)}
+.cgx-empty{padding:7px;text-align:center;color:var(--text-dim);font-size:11.5px;background:#fff}
+.cgx-draft{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:6px;background:#fffaf0;border-top:1px solid #edf0f4}
+.cgx-draft input{width:100%;padding:5px 7px;min-height:30px;border:1px solid #dce2ea;border-radius:8px;font:inherit;font-size:12px;background:#fff}
+.cgx-draft input:focus{outline:0;border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,151,36,.13)}
 .cgx-draft .d-bayan{grid-column:1/-1}
-.cgx-draft .d-btns{grid-column:1/-1;display:flex;gap:6px}
-.cgx-draft .d-btns button{flex:1;border:0;border-radius:8px;padding:8px;font:inherit;font-weight:800;cursor:pointer}
-.cgx-draft .d-ok{background:#1f7a4c;color:#fff}.cgx-draft .d-no{background:#e5e7eb;color:#333}
-.cgx-new{margin-top:14px;border:1px dashed var(--line);border-radius:10px;padding:8px 12px;background:#fff}
-.cgx-new summary{cursor:pointer;font-weight:800;font-size:13px}
-.cgx-new .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-.cgx-new .grid input{padding:8px;border:1px solid var(--line);border-radius:8px;font:inherit;width:100%}
-.cgx-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
-.cgx-filters label{display:block;font-size:11.5px;color:var(--text-dim);margin-bottom:3px}
+.cgx-draft .d-btns{grid-column:1/-1;display:flex;gap:5px}
+.cgx-draft .d-btns button{flex:1;border:0;border-radius:8px;padding:6px;font:inherit;font-size:12px;font-weight:800;cursor:pointer}
+.cgx-draft .d-ok{background:linear-gradient(135deg,#d8ab3f,#b98a20);color:#fff}.cgx-draft .d-no{background:#eef1f5;color:#49566b}
+.cgx-new{margin-top:10px;border:1px dashed #d5a12a;border-radius:10px;padding:6px 10px;background:#fff}
+.cgx-new summary{cursor:pointer;font-weight:800;font-size:12px;color:var(--gold-dim)}
+.cgx-new .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.cgx-new .grid input{padding:5px 8px;min-height:30px;border:1px solid #dce2ea;border-radius:8px;font:inherit;font-size:12px;width:100%}
+.cgx-filters{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+.cgx-filters label{display:block;font-size:10.5px;color:var(--text-dim);margin-bottom:2px}
 .cgx-filters .full{grid-column:1/-1}
-.cgx-filters input,.cgx-filters select{width:100%;padding:9px 8px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;background:#fff}
-.cgx-tag{font-weight:800;font-size:13px;margin:8px 0 4px}
-.cgx-vault{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-top:6px;cursor:pointer;font-size:13px}
+.cgx-filters input,.cgx-filters select{width:100%;padding:6px 7px;min-height:32px;border:1px solid #dce2ea;border-radius:8px;font:inherit;font-size:12.5px;background:#fff}
+.cgx-tag{font-weight:800;font-size:12px;margin:6px 0 3px}
+.cgx-vault{display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;border:1px solid #e1e6ed;border-radius:9px;padding:6px 9px;margin-top:5px;cursor:pointer;font-size:12px}
 .cgx-vault small{color:var(--text-dim)}
-.cgx-pend{border:0;background:#fff3cd;color:#8a5a00;border-radius:7px;padding:3px 8px;font:inherit;font-size:11px;font-weight:800;cursor:pointer;margin-inline-start:6px}
-.cgx-lockline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 10px 8px;font-size:12.5px}
-.cgx-lockline input[type=date]{padding:3px 6px;border:1px solid var(--line);border-radius:6px;font:inherit}
-.cgx-lockline .msg{font-weight:800;color:#1f7a4c}
-.cgx-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
-.cgx-actions button,.cgx-mbtns button{border:0;border-radius:10px;padding:10px;font:inherit;font-weight:800;cursor:pointer;background:var(--gold,#d4a017);color:#fff}
-.cgx-actions button.alt,.cgx-mbtns button.alt{background:#e5e7eb;color:#222}
+.cgx-pend{border:0;background:var(--gold-soft);color:var(--gold-dim);border-radius:7px;padding:2px 7px;font:inherit;font-size:10.5px;font-weight:800;cursor:pointer;margin-inline-start:5px}
+.cgx-lockline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 9px 6px;font-size:11.5px}
+.cgx-lockline input[type=date]{padding:2px 5px;border:1px solid #dce2ea;border-radius:6px;font:inherit}
+.cgx-lockline .msg{font-weight:800;color:var(--ok)}
+.cgx-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.cgx-actions button,.cgx-mbtns button{border:0;border-radius:9px;padding:7px;font:inherit;font-size:12.5px;font-weight:800;cursor:pointer;background:linear-gradient(135deg,#d8ab3f,#b98a20);color:#fff}
+.cgx-actions button.alt,.cgx-mbtns button.alt{background:#eef1f5;color:#49566b}
 .cgx-actions button:disabled,.cgx-mbtns button:disabled{opacity:.55;cursor:wait}
 .cgx-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;z-index:10100}
-.cgx-modal-card{width:100%;max-width:480px;background:#fff;border-radius:16px 16px 0 0;padding:14px 14px 18px;direction:rtl}
-.cgx-modal-card h3{margin:0 0 10px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
-.cgx-modal-card h3 button{border:0;background:none;font-size:18px;color:#b00;cursor:pointer}
-.cgx-mbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.cgx-modal-card{width:100%;max-width:480px;background:#fff;border-radius:16px 16px 0 0;padding:12px 12px 16px;direction:rtl}
+.cgx-modal-card h3{margin:0 0 8px;font-size:14.5px;color:var(--gold-dim);display:flex;justify-content:space-between;align-items:center}
+.cgx-modal-card h3 button{border:0;background:none;font-size:17px;color:var(--danger);cursor:pointer}
+.cgx-mbtns{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
 .cgx-viewer{position:fixed;inset:0;background:#555;display:none;flex-direction:column;z-index:10200;direction:rtl}
-.cgx-vbar{display:flex;gap:6px;align-items:center;padding:8px;background:#222;color:#fff}
+.cgx-vbar{display:flex;gap:6px;align-items:center;padding:7px;background:#202938;color:#fff}
 .cgx-vbar span{flex:1;font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:right}
-.cgx-vbar button{border:0;border-radius:8px;padding:7px 11px;font:inherit;font-weight:700;cursor:pointer;background:#e2621f;color:#fff}
-.cgx-vbar .vclose{background:#444}
+.cgx-vbar button{border:0;border-radius:8px;padding:6px 10px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#d8ab3f,#b98a20);color:#fff}
+.cgx-vbar .vclose{background:#3a465c}
 .cgx-vbody{flex:1;overflow:auto;padding:8px;text-align:center}
 .cgx-vbody img{width:100%;max-width:820px;display:block;margin:0 auto 8px;background:#fff}
 </style>
@@ -21682,6 +21710,24 @@ function txBulkList(){
     .slice()
     .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||(+a.no||0)-(+b.no||0)||(a.direction===b.direction?0:(a.direction==="in"?-1:1)));
 }
+/* اختيار حركات معيّنة للترحيل/الفحص: لو فيه محدد بيتنفّذ على المحدد فقط، ولو مفيش بيتنفّذ على كل الجاهز */
+function txBulkTodo(){
+  const B=window.txBulk, ready=txBulkList().filter(e=>txBulkState(e).k==="ready"), sel=B.sel||{};
+  const picked=ready.filter(e=>sel[e.id]);
+  return picked.length?picked:ready;
+}
+function txBulkToggle(id,on){ const B=window.txBulk; if(B.busy) return; B.sel=B.sel||{}; if(on) B.sel[id]=1; else delete B.sel[id]; renderTxBulk(); }
+function txBulkToggleAll(on){
+  const B=window.txBulk; if(B.busy) return; B.sel={};
+  if(on) txBulkList().forEach(e=>{ if(txBulkState(e).k==="ready") B.sel[e.id]=1; });
+  renderTxBulk();
+}
+/* حالة الحركة: شيك / تحويل / نقدي (+ حالة الشيك) */
+function txBulkMoveStatus(e){
+  const kind={bank:"🧾 شيك",transfer:"🏦 تحويل",cash:"💵 نقدي",transfer_supplier:"🔄 تحويل لمورد",adjustment:"⚖ تسوية"}[e.method]||"";
+  const chip=e.method==="bank"&&typeof txStatusChip==="function"?txStatusChip(e.status):"";
+  return `<b>${escapeHtml(kind||String(e.method||"—"))}</b>${chip?" "+chip:""}`;
+}
 function txBulkState(e){
   if(txIsPosted(e)) return {k:"posted"};
   const p=txPostPlan(e,[]);
@@ -21712,12 +21758,14 @@ function renderTxBulk(){
   const kinds=txBulkKinds(), list=txBulkList(), r=B.res;
   const sts=list.map(e=>({e,s:txBulkState(e)}));
   const cnt={ready:0,posted:0,na:0}; sts.forEach(x=>cnt[x.s.k]++);
+  B.sel=B.sel||{}; { const rid={}; sts.forEach(x=>{ if(x.s.k==="ready") rid[x.e.id]=1; }); Object.keys(B.sel).forEach(k=>{ if(!rid[k]) delete B.sel[k]; }); }
+  const nSel=Object.keys(B.sel).length;
   const pb=document.getElementById("tbPost");
-  if(pb){ pb.style.display=kinds.length?"":"none"; pb.disabled=B.busy||!cnt.ready; pb.textContent=B.busy==="check"?"📥 ترحيل":B.busy?"جارٍ الترحيل…":"📥 ترحيل ("+cnt.ready+")"; }
+  if(pb){ pb.style.display=kinds.length?"":"none"; pb.disabled=B.busy||!cnt.ready; pb.textContent=B.busy==="check"?"📥 ترحيل":B.busy?"جارٍ الترحيل…":(nSel?"📥 ترحيل المحدد ("+nSel+")":"📥 ترحيل ("+cnt.ready+")"); }
   const cb=document.getElementById("tbCheck");
-  if(cb){ cb.style.display=kinds.length?"":"none"; cb.disabled=!!B.busy||!cnt.ready; cb.textContent=B.busy==="check"?"جارٍ الفحص…":"🔍 فحص قبل الترحيل"; }
+  if(cb){ cb.style.display=kinds.length?"":"none"; cb.disabled=!!B.busy||!cnt.ready; cb.textContent=B.busy==="check"?"جارٍ الفحص…":(nSel?"🔍 فحص المحدد ("+nSel+")":"🔍 فحص قبل الترحيل"); }
   const card=(l,v,c)=>`<div class="card" style="padding:10px 16px;min-width:150px"><div style="font-size:12px;color:var(--text-dim)">${l}</div><div style="font-size:20px;font-weight:800;color:${c}">${v}</div></div>`;
-  const sum=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("جاهزة للترحيل",cnt.ready,"var(--gold-text)")}${card("مُرحّلة قبل كده",cnt.posted,"var(--ok)")}${card("غير قابلة للترحيل",cnt.na,"var(--text-dim)")}</div>`;
+  const sum=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("جاهزة للترحيل",cnt.ready,"var(--gold-text)")}${card("مُرحّلة قبل كده",cnt.posted,"var(--ok)")}${card("غير قابلة للترحيل",cnt.na,"var(--text-dim)")}${nSel?card("محددة للترحيل",nSel,"var(--gold-text)"):""}</div>`;
   const res=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("اترحّل تحصيلات",r.inN,"var(--ok)")}${card("اترحّل مدفوعات",r.outN,"var(--ok)")}${card("حركات فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)")}${card("اتخطّت",r.skip,"var(--text-dim)")}</div>`:"";
   const err=r&&r.errors.length?`<div class="card" style="padding:12px;margin-top:6px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong style="color:var(--danger)">تقرير الأخطاء (${r.errors.length})</strong><button type="button" class="btn ghost" onclick="txBulkErrPdf()">⬇ تصدير PDF</button></div><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>الحركة</th><th>الخطأ</th></tr></thead><tbody>${r.errors.map(e=>`<tr><td>${escapeHtml(e.ref)}</td><td style="color:var(--danger)">${escapeHtml(e.msg)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
   const P=B.pre;
@@ -21726,8 +21774,9 @@ function renderTxBulk(){
   const MAX=1000, shown=sts.slice(0,MAX);
   const rows=shown.map((x,i)=>{ const e=x.e;
     const stc=x.s.k==="posted"?`<span class="chip ok">مُرحّل ✓ ${escapeHtml(String(e.postedEntryNo||""))}</span>`:x.s.k==="ready"?(P&&P.ids[e.id]?(P.ids[e.id].length?`<span class="chip" style="background:#fee2e2;color:var(--danger)" title="${escapeAttr(P.ids[e.id].join(" | "))}">جاهز لكن فيه خطأ ⚠</span>`:`<span class="chip ok">جاهز ✓ اتفحص</span>`):`<span class="chip gold">جاهز</span>`):`<span class="muted" title="${escapeAttr(x.s.reason)}">لن يُرحَّل — ${escapeHtml(x.s.reason)}</span>`;
-    return `<tr><td class="num">${i+1}</td><td>${escapeHtml(e.date||"—")}</td><td>${e.direction==="in"?"تحصيل":"دفعة"}</td><td class="num">${escapeHtml(String(e.no||""))}</td><td>${escapeHtml(e.entryKind==="gl"?txGlLabel(e):(e.customer||e.supplier||"—"))}</td><td>${txMethodLabel(e.method,e)}</td><td class="num">${fmt(e.amount)}</td><td>${stc}</td></tr>`; }).join("");
-  box.innerHTML=sum+preSum+preErr+res+err+`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>رقم</th><th>العميل / المورد</th><th>طريقة السداد</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody>${rows||'<tr><td colspan="8" style="text-align:center;padding:18px" class="muted">لا توجد حركات في النطاق.</td></tr>'}</tbody></table></div>${sts.length>MAX?`<div class="muted" style="padding:8px;text-align:center">معروض أول ${MAX} حركة من ${sts.length} — الترحيل بيشمل كل الحركات الجاهزة في النطاق.</div>`:""}</div>`;
+    return `<tr><td style="text-align:center;width:34px"><input type="checkbox" ${x.s.k==="ready"?"":"disabled"} ${B.sel[e.id]?"checked":""} ${B.busy?"disabled":""} onchange="txBulkToggle('${escapeAttr(String(e.id))}',this.checked)"></td><td class="num">${i+1}</td><td>${escapeHtml(e.date||"—")}</td><td>${e.direction==="in"?"تحصيل":"دفعة"}</td><td class="num">${escapeHtml(String(e.no||""))}</td><td>${escapeHtml(e.entryKind==="gl"?txGlLabel(e):(e.customer||e.supplier||"—"))}</td><td>${txMethodLabel(e.method,e)}</td><td class="num">${fmt(e.amount)}</td><td>${stc}</td><td>${txBulkMoveStatus(e)}</td></tr>`; }).join("");
+  box.innerHTML=sum+preSum+preErr+res+err+`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="text-align:center;width:34px"><input type="checkbox" id="tbAll" title="تحديد كل الحركات الجاهزة" ${cnt.ready&&nSel===cnt.ready?"checked":""} ${B.busy||!cnt.ready?"disabled":""} onchange="txBulkToggleAll(this.checked)"></th><th>#</th><th>التاريخ</th><th>النوع</th><th>رقم</th><th>العميل / المورد</th><th>طريقة السداد</th><th>القيمة</th><th>الحالة</th><th>حالة الحركة</th></tr></thead><tbody>${rows||'<tr><td colspan="10" style="text-align:center;padding:18px" class="muted">لا توجد حركات في النطاق.</td></tr>'}</tbody></table></div>${sts.length>MAX?`<div class="muted" style="padding:8px;text-align:center">معروض أول ${MAX} حركة من ${sts.length} — الترحيل بيشمل كل الحركات الجاهزة في النطاق.</div>`:""}</div>`;
+  { const ta=document.getElementById("tbAll"); if(ta) ta.indeterminate=nSel>0&&nSel<cnt.ready; }
 }
 /* نفس منطق txPostDo لكن من غير نافذة؛ بيرمي خطأ لو فشل */
 async function txPostCore(e,direction,plan,j,years,periods){
@@ -21765,7 +21814,7 @@ async function txPostCore(e,direction,plan,j,years,periods){
 async function txBulkPrecheck(){
   const B=window.txBulk; if(B.busy) return;
   const kinds=txBulkKinds(); if(!kinds.length) return toast("لا تملك صلاحية الترحيل","err");
-  const todo=txBulkList().filter(e=>txBulkState(e).k==="ready");
+  const todo=txBulkTodo();
   if(!todo.length) return toast("لا توجد حركات جاهزة للفحص في النطاق","err");
   const st=state.settings||{}, jc={in:st.txJournalIn||"",out:st.txJournalOut||""};
   B.busy="check"; B.pre=null; renderTxBulk();
@@ -21805,9 +21854,9 @@ async function txBulkRun(){
   const st=state.settings||{}, jc={in:st.txJournalIn||"",out:st.txJournalOut||""};
   const miss=kinds.filter(k=>!jc[k]);
   if(miss.length) return toast("حدّد "+miss.map(k=>k==="in"?"يومية التحصيلات":"يومية المدفوعات").join(" و ")+" من مؤشرات النظام أولًا","err");
-  const todo=txBulkList().filter(e=>txBulkState(e).k==="ready"); if(!todo.length) return toast("لا توجد حركات جاهزة للترحيل في النطاق","err");
+  const todo=txBulkTodo(); if(!todo.length) return toast("لا توجد حركات جاهزة للترحيل في النطاق","err");
   const nIn=todo.filter(e=>e.direction==="in").length, nOut=todo.length-nIn;
-  const okc=await askConfirm(`ترحيل ${todo.length} حركة (تحصيلات ${nIn} / مدفوعات ${nOut}) من ${B.from||"…"} إلى ${B.to||"…"}؟\n\nقيد مستقل لكل حركة بالترتيب (التاريخ ثم رقم الحركة). بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها.\nالمُرحّل قبل كده بيتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل التحصيلات والمدفوعات",ok:"ابدأ الترحيل",cancel:"إلغاء"});
+  const okc=await askConfirm(`ترحيل ${todo.length} حركة${Object.keys(B.sel||{}).length?" محددة":""} (تحصيلات ${nIn} / مدفوعات ${nOut}) من ${B.from||"…"} إلى ${B.to||"…"}؟\n\nقيد مستقل لكل حركة بالترتيب (التاريخ ثم رقم الحركة). بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها.\nالمُرحّل قبل كده بيتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل التحصيلات والمدفوعات",ok:"ابدأ الترحيل",cancel:"إلغاء"});
   if(!okc) return;
   B.busy=true; B.res=null; renderTxBulk();
   const res={inN:0,outN:0,err:0,skip:0,errors:[]};
@@ -22308,6 +22357,38 @@ async function chqCollectDo(){
   chqDialog("ok",stage==="receipt"?"تم ترحيل "+(direction==="in"?"الاستلام":"الإصدار")+" بنجاح":"تم "+(direction==="in"?"التحصيل":"الصرف")+" بنجاح","رقم القيد: "+done.map(d=>d.no).join(" · "));
 }
 /* ---------- عرض القيد (قراءة فقط) ---------- */
+/* ---------- طباعة قيد الحركة المُرحّلة — بنفس تصميم طباعة القيود المرحّلة في اليومية ---------- */
+async function txPrintEntry(id,direction){
+  const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e) return;
+  if(!txIsPosted(e)) return toast("الحركة لم تُرحَّل بعد","err");
+  const refs=(e.chequeEntries&&e.chequeEntries.length)?e.chequeEntries:[{kind:"main",id:e.postedEntryId,no:e.postedEntryNo}];
+  const ids=refs.map(r=>r.id).filter(Boolean);
+  const bad=()=>toast("تعذّر قراءة القيد للطباعة","err");
+  let ents=[],lines=[],accs=[],jrs=[],srcs=[];
+  try{
+    const er=await sb.from("gl_entries").select("*").in("id",ids);
+    const lr=await sb.from("gl_entry_lines").select("*").in("entry_id",ids).order("line_no");
+    if(er.error||lr.error||!(er.data||[]).length){
+      const rp=await sb.rpc("tx_view_entry",{p_entry_ids:ids});
+      if(rp.error||!rp.data) return bad();
+      ents=rp.data.entries||[]; lines=rp.data.lines||[]; accs=rp.data.accounts||[]; jrs=rp.data.journals||[];
+    }else{
+      ents=er.data; lines=lr.data||[];
+      const aids=[...new Set(lines.map(l=>l.account_id).filter(Boolean))], jids=[...new Set(ents.map(x=>x.journal_id).filter(Boolean))];
+      const [ar,jr]=await Promise.all([
+        aids.length?sb.from("gl_accounts").select("id,account_code,account_name").in("id",aids):Promise.resolve({data:[]}),
+        jids.length?sb.from("gl_journals").select("id,journal_code,journal_name").in("id",jids):Promise.resolve({data:[]})]);
+      accs=ar.data||[]; jrs=jr.data||[];
+    }
+    try{ const sr=await sb.from("gl_posting_sources").select("*").in("entry_id",ids); srcs=sr.data||[]; }catch(_){}
+  }catch(_){ return bad(); }
+  if(!ents.length) return bad();
+  const bak={entries:glState.entries,lines:glState.lines,accounts:glState.accounts,journals:glState.journals,sources:glState.sources};
+  try{
+    Object.assign(glState,{entries:ents,lines:lines,accounts:accs,journals:jrs,sources:srcs});
+    refs.forEach(r=>{ const en=ents.find(x=>String(x.id)===String(r.id)); if(en) glPrintPostedEntry(en.id); });
+  }finally{ Object.assign(glState,bak); }
+}
 async function chqViewEntry(id,direction){
   const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e) return;
   const isIn=(direction||e.direction)==="in";
@@ -22350,6 +22431,8 @@ async function chqViewEntry(id,direction){
   document.querySelector("#modalBackdrop .modal")?.classList.add("chq-modal");
   document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)")?.remove();
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
+  const mf=document.querySelector("#modalBackdrop .mfoot");
+  if(mf){ const pb=document.createElement("button"); pb.type="button"; pb.className="btn"; pb.textContent="🖨 طباعة القيد"; pb.onclick=()=>txPrintEntry(id,direction); mf.insertBefore(pb,mf.firstChild); }
 }
 
 /* ---------- إلغاء ترحيل الشيك (حذف قيوده كلها من الأصل — بدون قيود عكسية) ---------- */
