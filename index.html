@@ -7517,6 +7517,7 @@ async function inventoryBackfillSupplies(mode){
   try{
    const res=await sb.rpc("inventory_backfill_supply_policy",{p_policy:payload});if(res.error)throw res.error;
    const rd=res.data||{};
+   (window._invRpcLog=window._invRpcLog||{})[String(sh.id)]=rd;
    if(rd.error||rd.ok===false||rd.success===false) throw new Error(String(rd.error||rd.message||"رفض الخادم التسوية"));
    const ins=Number(rd.inserted_movements||0);
    done++;added+=ins;
@@ -11517,7 +11518,19 @@ async function supSettleRun(ids,pols){
       const errs=((r&&r.errors)||[]).slice();
       const named=new Set(errs.map(e=>String(e).split(":")[0].trim()));
       left.forEach(sh=>{ const no=String(sh.policyNo||sh.id); if(!named.has(no)){ const x=invPendInfo(sh); errs.push(`${no}: لم تُسجَّل حركة ${!x.r&&!x.i?"الوارد والمنصرف":!x.r?"الوارد":"المنصرف"} في المخزن`); } });
-      const msg="❌ لم تتم التسوية — تعذّر تسوية "+left.length+" بوليصة، وما زالت الحالة «غير مسوّى»:\n\n• "+errs.join("\n• ")+"\n\nصحّح البيانات المذكورة (تكلفة الشراء / الوزن الفعلي / القطر / النوع / المخزن) ثم أعد التسوية.";
+      // تشخيص: إيه اللي اتسجّل فعلاً في المخزن لكل بوليصة فاشلة
+      const diag=left.map(sh=>{
+        const sid=String(sh.id), pno=String(sh.policyNo||"");
+        const own=inventoryRows.filter(m=>String(m.source_id)===sid);
+        const near=inventoryRows.filter(m=>String(m.source_id)!==sid&&pno&&String(m.source_no)===pno);
+        const fmtM=m=>`${m.movement_type==="receipt"?"وارد":"منصرف"} | ${m.source_type||"؟"} | ${m.diameter||""} ${m.item_type||""} ${m.factory||""} | ${m.qty} طن | ${m.warehouse_name||m.warehouse_code||""}`;
+        const want=(sh.items||[]).map(it=>`${it.diameter||""} ${it.type||it.item_type||""} ${itemFactory(sh,it)||""} = ${it.actualWeight??it.weightTon??0} طن`);
+        let t=`— بوليصة ${pno||sid}\n  المطلوب: ${want.join(" ؛ ")||"لا أصناف"}\n  المسجّل بمعرّف البوليصة: ${own.length?own.map(fmtM).join(" ؛ "):"لا شيء"}`;
+        if(near.length) t+=`\n  حركات بنفس الرقم لكن بمعرّف مختلف: ${near.map(fmtM).join(" ؛ ")}`;
+        const rl=(window._invRpcLog||{})[sid]; if(rl) t+=`\n  رد الخادم: ${JSON.stringify(rl).slice(0,300)}`;
+        return t;
+      }).join("\n");
+      const msg="❌ لم تتم التسوية — تعذّر تسوية "+left.length+" بوليصة، وما زالت الحالة «غير مسوّى»:\n\n• "+errs.join("\n• ")+"\n\nصحّح البيانات المذكورة (تكلفة الشراء / الوزن الفعلي / القطر / النوع / المخزن) ثم أعد التسوية.\n\n[تفاصيل فنية للتشخيص]\n"+diag;
       try{ _igDialog({title:"⚠ فشلت التسوية",msg,ok:"حسنًا",single:true}); }catch(e){ toast(errs[0],"err"); }
     }else{
       toast("✓ تمت التسوية المخزنية بنجاح","ok");
