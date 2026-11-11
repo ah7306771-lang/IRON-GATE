@@ -11511,11 +11511,30 @@ async function supSettleRun(ids,pols){
     if(r&&r.cancelled) return;                       // المستخدم ألغى → مفيش رسائل
     try{ await inventoryLoad(); }catch(e){}
     window._supInvAt=Date.now(); window._supInvReady=true;
+    // حل احتياطي: الوارد اتسجّل والمنصرف لأ (الدالة على السيرفر بتتخطاه) → نسجّل المنصرف بنسخ حركات الوارد بنفس الكمية والتكلفة
+    const fbErrs=[];
+    for(const sh of pols){
+      const x=invPendInfo(sh); if(!(x.r&&!x.i)) continue;
+      try{
+        const sid=String(sh.id);
+        const rr=await sb.from("inventory_movements").select("*").eq("source_id",sid).eq("movement_type","receipt");
+        if(rr.error) throw rr.error;
+        const iss=await sb.from("inventory_movements").select("id").eq("source_id",sid).eq("movement_type","issue");
+        if(iss.error) throw iss.error;
+        if((iss.data||[]).length) continue;
+        const rows=(rr.data||[]).map(m=>{ const c={...m}; delete c.id; delete c.created_at; delete c.updated_at; c.movement_type="issue"; return c; });
+        if(!rows.length) throw new Error("لا توجد حركات وارد للنسخ");
+        const ins=await sb.from("inventory_movements").insert(rows);
+        if(ins.error) throw ins.error;
+      }catch(e){ fbErrs.push(`${sh.policyNo||sh.id}: تعذّر تسجيل المنصرف — ${String(e&&e.message||e)}`); }
+    }
+    if(fbErrs.length){ r.errors=(r.errors||[]).concat(fbErrs); }
+    try{ await inventoryLoad(); }catch(e){}
     const left=pols.filter(sh=>{ const x=invPendInfo(sh); return !x.r||!x.i; });
     renderSupply();
     if(left.length){
       // الأخطاء من نفس التشغيلة فقط (مش من ملخص قديم)
-      const errs=((r&&r.errors)||[]).slice();
+      const errs=((r&&r.errors)||[]).filter(e=>!/الخادم لم يضف/.test(e)||left.length).slice();
       const named=new Set(errs.map(e=>String(e).split(":")[0].trim()));
       left.forEach(sh=>{ const no=String(sh.policyNo||sh.id); if(!named.has(no)){ const x=invPendInfo(sh); errs.push(`${no}: لم تُسجَّل حركة ${!x.r&&!x.i?"الوارد والمنصرف":!x.r?"الوارد":"المنصرف"} في المخزن`); } });
       // تشخيص: إيه اللي اتسجّل فعلاً في المخزن لكل بوليصة فاشلة
