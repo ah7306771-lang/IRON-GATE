@@ -7486,8 +7486,8 @@ async function inventoryBackfillSupplies(mode){
  let docs=state.shipments||[], scope="all";
  if(mode==="pending"){docs=invPendingList().map(x=>x.sh);scope="sub";}
  else if(Array.isArray(mode)){const set=new Set(mode.map(String));docs=docs.filter(sh=>set.has(String(sh.id)));scope="sub";}
- if(!docs.length){toast(scope==="sub"?"لا توجد حركات غير مسوّاة":"لا توجد بوالص توريد مرحلة", "warn");return;}
- if(!await askConfirm(scope==="sub"?`سيتم تسوية ${docs.length} بوليصة (إضافة الوارد والمنصرف الناقص بنفس التكلفة وفي تاريخ كل بوليصة). الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`:`سيتم فحص ${docs.length} بوليصة مرحلة، وإضافة الوارد والمنصرف للوزن الفعلي بنفس التكلفة وفي تاريخ كل بوليصة. الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`))return;
+ if(!docs.length){toast(scope==="sub"?"لا توجد حركات غير مسوّاة":"لا توجد بوالص توريد مرحلة", "warn");return {cancelled:false,errors:[],done:0,added:0};}
+ if(!await askConfirm(scope==="sub"?`سيتم تسوية ${docs.length} بوليصة (إضافة الوارد والمنصرف الناقص بنفس التكلفة وفي تاريخ كل بوليصة). الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`:`سيتم فحص ${docs.length} بوليصة مرحلة، وإضافة الوارد والمنصرف للوزن الفعلي بنفس التكلفة وفي تاريخ كل بوليصة. الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`))return {cancelled:true,errors:[],done:0,added:0};
  window.invPendSel.clear();
  const box=document.getElementById("invBackfillResult");if(box)box.innerHTML="<b>جاري التسوية…</b>";
  let done=0,added=0,skipped=0,errors=[];
@@ -7514,14 +7514,23 @@ async function inventoryBackfillSupplies(mode){
   items.forEach((x,i)=>{const m=[];if(!x.diameter)m.push("القطر");if(!x.item_type)m.push("النوع");if(!(x.qty>0))m.push("الوزن الفعلي");if(!(x.unit_cost>0))m.push("تكلفة الشراء");if(m.length)missing.push(`الصنف ${i+1}: ${m.join("، ")}`);});
   if(missing.length){skipped++;errors.push(`${policyNo}: ${missing.join("؛ ")}`);continue;}
   const payload={id:String(sh.id),policy_no:String(policyNo),movement_date:movementDate,warehouse_id:String(wh.id),warehouse_code:String(wh.code||""),warehouse_name:String(wh.name||""),supplier:sh.supplier||"",customer:sh.customer||"",sale_order_no:sh.saleOrderNo||so.orderNo||"",items};
-  try{const res=await sb.rpc("inventory_backfill_supply_policy",{p_policy:payload});if(res.error)throw res.error;done++;added+=Number(res.data?.inserted_movements||0);if(!Number(res.data?.inserted_movements||0))skipped++;}
+  try{
+   const res=await sb.rpc("inventory_backfill_supply_policy",{p_policy:payload});if(res.error)throw res.error;
+   const rd=res.data||{};
+   if(rd.error||rd.ok===false||rd.success===false) throw new Error(String(rd.error||rd.message||"رفض الخادم التسوية"));
+   const ins=Number(rd.inserted_movements||0);
+   done++;added+=ins;
+   if(!ins){skipped++;errors.push(`${policyNo}: الخادم لم يضف أي حركة (وارد/منصرف) — تأكد من المخزن والكميات وتكلفة الشراء`);}
+  }
   catch(e){errors.push(`${policyNo}: ${String(e.message||e)}`);}
  }
  await inventoryLoad();
+ window._invLastBackfill={errors:errors.slice(),done,added,skipped};
  const msg=`تم فحص ${docs.length} بوليصة — تمت معالجة ${done} — حركات جديدة ${added} — متخطاة ${skipped} — أخطاء ${errors.length}`;
  inventoryBackfillSummary=`<div class="card" style="padding:12px"><b>${escapeHtml(msg)}</b>${errors.length?`<details style="margin-top:8px"><summary>تفاصيل السجلات المتخطاة والأخطاء (${errors.length})</summary><ul>${errors.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></details>`:""}</div>`;
- if(box)box.innerHTML=inventoryBackfillSummary;toast("انتهت تسوية الحركات التاريخية",errors.length?"warn":"ok");
+ if(box)box.innerHTML=inventoryBackfillSummary;if(errors.length)toast("التسوية لم تكتمل — "+errors.length+" بوليصة بها أخطاء","err");else toast("انتهت تسوية الحركات التاريخية","ok");
  const c=document.getElementById("content");if(c&&currentPage==="inventory")c.innerHTML=viewInventory();
+ return {cancelled:false,errors,done,added,skipped};
 }
 
 // ---------- شاشات المخزون الموحدة: أرصدة / تقييم / حركة / كارت الصنف (بنفس شكل شاشة الأقساط) ----------
@@ -11497,18 +11506,21 @@ async function supSettleRun(ids,pols){
   if(window._supSettling) return;
   window._supSettling=true;
   try{
-    await inventoryBackfillSupplies(ids);   // بتسأل تأكيد وبعدين بتضيف الوارد والمنصرف الناقص
+    const r=await inventoryBackfillSupplies(ids);   // بتسأل تأكيد وبعدين بتضيف الوارد والمنصرف الناقص
+    if(r&&r.cancelled) return;                       // المستخدم ألغى → مفيش رسائل
     try{ await inventoryLoad(); }catch(e){}
     window._supInvAt=Date.now(); window._supInvReady=true;
     const left=pols.filter(sh=>{ const x=invPendInfo(sh); return !x.r||!x.i; });
     renderSupply();
     if(left.length){
-      const tmp=document.createElement("div"); tmp.innerHTML=(typeof inventoryBackfillSummary==="string"?inventoryBackfillSummary:"");
-      const errs=[...tmp.querySelectorAll("li")].map(li=>li.textContent);
-      if(errs.length){
-        const msg="تعذّر تسوية "+left.length+" بوليصة:\n\n• "+errs.join("\n• ");
-        try{ _igDialog({title:"⚠ تسوية غير مكتملة",msg,ok:"حسنًا",single:true}); }catch(e){ toast(errs[0],"err"); }
-      }
+      // الأخطاء من نفس التشغيلة فقط (مش من ملخص قديم)
+      const errs=((r&&r.errors)||[]).slice();
+      const named=new Set(errs.map(e=>String(e).split(":")[0].trim()));
+      left.forEach(sh=>{ const no=String(sh.policyNo||sh.id); if(!named.has(no)){ const x=invPendInfo(sh); errs.push(`${no}: لم تُسجَّل حركة ${!x.r&&!x.i?"الوارد والمنصرف":!x.r?"الوارد":"المنصرف"} في المخزن`); } });
+      const msg="❌ لم تتم التسوية — تعذّر تسوية "+left.length+" بوليصة، وما زالت الحالة «غير مسوّى»:\n\n• "+errs.join("\n• ")+"\n\nصحّح البيانات المذكورة (تكلفة الشراء / الوزن الفعلي / القطر / النوع / المخزن) ثم أعد التسوية.";
+      try{ _igDialog({title:"⚠ فشلت التسوية",msg,ok:"حسنًا",single:true}); }catch(e){ toast(errs[0],"err"); }
+    }else{
+      toast("✓ تمت التسوية المخزنية بنجاح","ok");
     }
   }catch(e){ toast("تعذّرت التسوية: "+(e&&e.message||e),"err"); }
   finally{ window._supSettling=false; }
@@ -11717,10 +11729,16 @@ function supPostCollect(key){
   });
   return {orderNo,so,date,customer:f.customer||(so&&so.customer)||"",supplier:f.supplier||(so&&so.supplier)||"",byGroup,count:rows.length};
 }
+// فاتورة الشراء = 0 → ممنوع الترحيل
+function supPurchaseZeroMsg(c){
+  let t=0; c.byGroup.forEach(g=>{t+=(+g.buy||0);});
+  return Math.abs(t)<0.005?("فاتورة الشراء للأمر "+(c.orderNo||"")+" تساوي 0 — لا يمكن ترحيلها. راجع سعر الشراء في بوالص الأمر."):"";
+}
 async function supPostAccounts(key,kind="purchase"){
   kind=kind==="sales"?"sales":"purchase";
   const c=supPostCollect(key);
   if(!c.orderNo) return toast("الأمر ده مش مربوط برقم أمر بيع","err");
+  if(kind==="purchase"&&!window.supPostMap[c.orderNo+"|purchase"]){ const zm=supPurchaseZeroMsg(c); if(zm){ try{ _igDialog({title:"⚠ لا يمكن ترحيل المشتريات",msg:zm,ok:"حسنًا",single:true}); }catch(e){ toast(zm,"err"); } return; } }
   // Validation مُبكّر لمؤشرات GL: قولي بالضبط أي مؤشر ناقص قبل ما تحاول ترحّل
   try{ await glIndicatorsSync(true); }catch(e){}
   const _ind0 = window.glIndicators||{};
@@ -11854,6 +11872,7 @@ async function supDoPostKind(opts){
   if(X.bad||!X.postingsOk){ if(silent) return {ok:false,error:"في بنود محتاجة تصليح قبل الترحيل"}; return toast("في بنود محتاجة تصليح قبل الترحيل","err"); }
   if(!can("supply","post")){ if(silent) return {ok:false,error:"لا تملك صلاحية الترحيل"}; return toast("لا تملك صلاحية الترحيل","err"); }
   const {c,sup,cus,wh,ind,journals,kind}=X, orderNo=c.orderNo;
+  if(kind==="purchase"){ const zm=supPurchaseZeroMsg(c); if(zm){ if(silent) return {ok:false,error:zm}; return toast(zm,"err"); } }
   const btn=silent?null:document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(btn){btn.disabled=true;btn.textContent="جارٍ الترحيل…";}
   let entry=null;
   try{
@@ -11985,6 +12004,7 @@ function supBulkPrepare(key,kind,sh){
   const wid=(c.so&&c.so.warehouseId)||whDefaultId(), wh=whList().find(w=>String(w.id)===String(wid));
   const pnl=label=>{ if(!ind.trading_pnl) errs.push("مؤشر الأرباح التجارية والصناعية غير معدّ"); else acc(label,ind.trading_pnl); };
   if(kind==="purchase"){
+    { const zm=supPurchaseZeroMsg(c); if(zm) errs.push(zm); }
     acc("حساب المورد "+c.supplier,sup.accountId);
     if(!wh) errs.push("المخزن غير موجود"); else acc("حساب المخزن "+wh.name,wh.accountId);
     if(sup.applyProfitTax) pnl("حساب الأرباح التجارية والصناعية");
