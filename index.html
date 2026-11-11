@@ -11556,14 +11556,26 @@ function supToggleDet(key){
 function supDetRowHtml(g,cols){
   const canS=can("inventory","post"), ready=!!window._supInvReady&&!inventoryError;
   const pols=[...g.policies.values()].sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.policyNo||"").localeCompare(String(b.policyNo||""),undefined,{numeric:true}));
-  const lines=pols.map(sh=>{
-    const w=(sh.items||[]).reduce((a,it)=>a+(+it.actualWeight||0),0);
+  // تفاصيل الأمر: القطر / النوع / المصنع / الوزن الفعلي (مجمّعة لكل قطر + نوع + مصنع)
+  const agg=new Map(); let totW=0;
+  pols.forEach(sh=>(sh.items||[]).forEach(it=>{
+    const dia=String(it.diameter||"—"), typ=String(it.type||it.item_type||"—");
+    let fac=""; try{ fac=itemFactory(sh,it)||""; }catch(e){} fac=String(fac||it.factory||"—");
+    const k=dia+"|"+typ+"|"+fac, w=+it.actualWeight||0, o=agg.get(k)||{dia,typ,fac,w:0};
+    o.w+=w; agg.set(k,o); totW+=w;
+  }));
+  const items=[...agg.values()].sort((x,y)=>(parseFloat(x.dia)||0)-(parseFloat(y.dia)||0)||x.fac.localeCompare(y.fac,"ar"));
+  const itemLines=items.length?items.map(o=>`<div class="sup-det-line items"><b>${escapeHtml(o.dia)}</b><span>${escapeHtml(o.typ)}</span><span>${escapeHtml(o.fac)}</span><span class="num">${fmt(o.w,3)}</span></div>`).join("")
+    :`<div class="sup-det-line items"><span style="grid-column:1/-1">لا توجد أصناف</span></div>`;
+  const totLine=items.length?`<div class="sup-det-line items tot"><b>الإجمالي</b><span></span><span></span><span class="num">${fmt(totW,3)}</span></div>`:"";
+  // حالة تسوية كل بوليصة + زرار التسوية
+  const pl=pols.map(sh=>{
     const x=ready?invPendInfo(sh):null, done=!!(x&&x.r&&x.i);
     const ck=(ok,l)=>x?`<span class="sup-pchip ${ok?"ok":"bad"}">${ok?"✓":"✗"} ${l}</span>`:`<span class="sup-pchip">… ${l}</span>`;
     const act=done?`<span class="sup-pchip ok">✓ مسوّاة</span>`:(x&&canS?`<button type="button" class="sup-stk-btn" onclick="supSettlePolicy('${escapeAttr(String(sh.id))}')">⚖ تسوية</button>`:"");
-    return `<div class="sup-det-line"><b>${escapeHtml(String(sh.policyNo||"—"))}</b><span>${escapeHtml(sh.date||"—")}</span><span class="num">${fmt(w,3)}</span><span>${ck(x&&x.r,"وارد")} ${ck(x&&x.i,"منصرف")}</span><span>${act}</span></div>`;
+    return `<div class="sup-det-line pol"><b>بوليصة ${escapeHtml(String(sh.policyNo||"—"))}</b><span>${escapeHtml(sh.date||"—")}</span><span>${ck(x&&x.r,"وارد")} ${ck(x&&x.i,"منصرف")}</span><span>${act}</span></div>`;
   }).join("");
-  return `<tr class="sup-det-row"><td colspan="${cols}"><div class="sup-det-box"><div class="sup-det-title">بوالص الأمر (${pols.length})</div><div class="sup-det-line head"><span>البوليصة</span><span>التاريخ</span><span>الوزن الفعلي</span><span>الوارد / المنصرف</span><span></span></div>${lines}</div></td></tr>`;
+  return `<tr class="sup-det-row"><td colspan="${cols}"><div class="sup-det-box"><div class="sup-det-title">تفاصيل الأمر</div><div class="sup-det-line items head"><span>القطر</span><span>النوع</span><span>المصنع</span><span>الوزن الفعلي</span></div>${itemLines}${totLine}<div class="sup-det-title sub">البوالص وحالة التسوية (${pols.length})</div>${pl}</div></td></tr>`;
 }
 async function supSettlePolicy(id){
   if(window._supSettling) return;
@@ -23195,17 +23207,22 @@ async function txUnpostRun(id,direction){
 .sup-det-title{font-weight:800;color:#7a5c0b;margin-bottom:8px;font-size:12.5px}
 .sup-det-line{display:grid;grid-template-columns:110px 100px 110px 1fr auto;gap:10px;align-items:center;padding:7px 10px;border:1px solid #efe2bb;border-radius:9px;background:#fff;margin-bottom:6px;font-size:12px}
 .sup-det-line.head{background:transparent;border:0;font-weight:800;color:#8a7340;padding-bottom:0;font-size:11px}
+.sup-det-line.items{grid-template-columns:90px 140px 1fr 130px}
+.sup-det-line.items.tot{background:#fff4d5;border-color:#ecd28f;font-weight:800;color:#5c4408}
+.sup-det-line.pol{grid-template-columns:150px 100px 1fr auto}
+.sup-det-title.sub{margin-top:12px}
 .sup-pchip{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:800;background:#eef1f6;color:#475569;border:1px solid #dbe2eb;white-space:nowrap}
 .sup-pchip.ok{background:#dcfce7;color:#166534;border-color:#86efac}.sup-pchip.bad{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+#content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] td.sup-act-td .td-actions{flex-wrap:nowrap!important;min-width:max-content!important;max-width:none;justify-content:flex-start}
 /* تثبيت عمود الإجراء على الشاشات العريضة */
-@media(min-width:900px){
+@media(min-width:1300px){
   #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] thead th.sup-act-th{position:sticky;left:0;z-index:7}
   #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tbody td.sup-act-td{position:sticky;left:0;z-index:3;background:#fff;box-shadow:6px 0 8px -6px rgba(15,23,42,.28)}
   #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tbody tr:nth-child(even) td.sup-act-td{background:#fafbfd}
   #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tbody tr:hover td.sup-act-td{background:#fff7e0!important}
-  #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] td.sup-act-td .td-actions{flex-wrap:wrap!important;min-width:0!important;max-width:250px;justify-content:flex-start}
+  #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] td.sup-act-td .td-actions{flex-wrap:nowrap!important;min-width:max-content!important;max-width:none;justify-content:flex-start}
 }
-@media(max-width:700px){ .sup-det-line{grid-template-columns:1fr 1fr} .sup-det-line.head{display:none} }
+@media(max-width:700px){ .sup-det-line,.sup-det-line.items,.sup-det-line.pol{grid-template-columns:1fr 1fr} .sup-det-line.head{display:none} }
 </style>
 <script id="lg-datebar-js">
 (function(){
