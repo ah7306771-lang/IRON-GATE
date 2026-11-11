@@ -4043,7 +4043,7 @@ function renderNav(){
     const subs=g.items.map(it=>{
       if(it.sep) return `<div class="nav-sep">${it.sep}</div>`;
       const c=it.badge?(B[it.badge]||0):0;
-      return `<button class="navbtn ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
+      return `<button class="navbtn ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
     }).join("");
     return `
     <div class="ng-wrap" data-gid="${g.id}" draggable="true">
@@ -16038,7 +16038,7 @@ function salesInstallmentsExport(format){
   const cur=state.settings.currency||"ج.م",n=salesInstallmentMoney;
   const F=salesInstallmentFilters;
   const asLabel=(arr,one,many,all)=>{ const a=igMsNormArr(arr); if(!a.length) return all; if(a.length===1) return one+": "+a[0]; return many+": ("+a.length+")"; };
-  const filtersList=[asLabel(F.customer,"العميل","العملاء","كل العملاء"),asLabel(F.order,"أمر البيع","أوامر البيع","كل الأوامر"),asLabel(F.status,"الحالة","الحالات","كل الحالات"),(F.from||F.to)?"الاستحقاق: "+(F.from||"من البداية")+" إلى "+(F.to||"مفتوح"):"كل التواريخ",F.q?"البحث: "+F.q:""].filter(Boolean);
+  const filtersList=[asLabel(F.customer,"العميل","العملاء","كل العملاء"),(F.from||F.to)?"الاستحقاق: "+(F.from||"من البداية")+" إلى "+(F.to||"مفتوح"):"كل التواريخ",F.q?"البحث: "+F.q:""].filter(Boolean);
   // ألوان مطابقة للشاشة
   const statusColor = s => s==="متأخر"?{bg:"#fee2e2",fg:"#991b1b",rowBg:"#fef2f2"}
                         :s==="مسدد"?{bg:"#dcfce7",fg:"#166534",rowBg:"#f0fdf4"}
@@ -16084,11 +16084,14 @@ function salesInstallmentsExport(format){
     ${kpiCard("⏰ خلال يومين",n(twoAmt),"غداً "+tmrRows.length+" · بعده "+aftRows.length,"#7c3aed","hot")}
     ${kpiCard("قريب (7 أيام)",n(nearRows.reduce((a,r)=>a+r.remaining,0)),nearRows.length+" قسط","#eab308")}
   </div>`;
-  const scopeBar = filtersList.length ? `<div class="hscope">
+  // نطاق التقرير لكل صفحة: اسم عميل الصفحة نفسها (بدل "العملاء: (n)" أو "كل العملاء")
+  const pageFilters = cust ? filtersList.map((f,i)=>i===0?"العميل: "+cust:f) : filtersList;
+  const scopeBar = pageFilters.length ? `<div class="hscope">
     <span class="fl">نطاق التقرير</span>
-    ${filtersList.map(f=>`<span class="fchip">${escapeHtml(f)}</span>`).join("")}
+    ${pageFilters.map(f=>`<span class="fchip">${escapeHtml(f)}</span>`).join("")}
   </div>` : "";
   const today=new Date();
+  const logoSrc=(document.querySelector("aside .brand img")||{}).src||"";
   return `<div class="doc">
       <div class="hdr">
         <div class="hmain">
@@ -16099,11 +16102,13 @@ function salesInstallmentsExport(format){
               <div class="en">IRON GATE SUPPLIES — INSTALLMENTS LEDGER</div>
             </div>
           </div>
+          <div class="hc">
+            ${logoSrc?`<img src="${logoSrc}" alt="">`:""}
+            ${cust?`<div class="cn"><span>العميل</span><b>${escapeHtml(cust)}</b></div>`:""}
+          </div>
           <div class="hr">
             <div class="mi"><span>تاريخ التقرير</span><b>${today.toLocaleDateString("en-GB")}</b></div>
-            <div class="mi"><span>عدد الأقساط</span><b>${rows.length}</b></div>
             <div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div>
-            ${cust?`<div class="mi"><span>العميل</span><b>${escapeHtml(cust)}</b></div>`:""}
             ${pg&&pg.n>1?`<div class="mi"><span>الصفحة</span><b>${pg.i} / ${pg.n}</b></div>`:""}
           </div>
         </div>
@@ -16129,6 +16134,11 @@ function salesInstallmentsExport(format){
     .hdr h1{margin:0;font-size:19px;color:#fff;font-weight:900;line-height:1.2}
     .hdr .en{color:#fcd34d;font-size:10px;letter-spacing:2.5px;font-weight:700;margin-top:3px;direction:ltr;text-align:right}
     .hdr .hr{display:flex;gap:0;align-items:stretch}
+    .hdr .hc{flex:1 1 auto;display:flex;align-items:center;justify-content:center;gap:14px}
+    .hdr .hc img{width:54px;height:54px;border-radius:50%;object-fit:cover;background:#fff;flex:none;box-shadow:0 0 0 2px #1a1a1a,0 0 0 3.5px #d4a017}
+    .hdr .hc .cn{display:flex;flex-direction:column;gap:1px;text-align:right}
+    .hdr .hc .cn span{color:#9ca3af;font-size:10px;font-weight:700}
+    .hdr .hc .cn b{color:#fcd34d;font-size:19px;font-weight:900;line-height:1.2}
     .hdr .mi{display:flex;flex-direction:column;gap:2px;padding:0 14px;border-right:1px solid rgba(255,255,255,.18);text-align:center}
     .hdr .mi:last-child{border-right:0;padding-left:0}
     .hdr .mi span{color:#9ca3af;font-size:9.5px;font-weight:700}
@@ -16160,6 +16170,7 @@ function salesInstallmentsExport(format){
       body{padding:0;background:#fff}
       .doc{box-shadow:none;border-radius:0;padding:4px 6px}
       .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px 7px}
+      .hdr .hc img{width:44px;height:44px}.hdr .hc .cn b{font-size:16px}
       .hdr h1{font-size:16px}.hdr .en{font-size:9px}.hdr .hscope{margin-top:6px;padding-top:5px}.kgrid{margin-bottom:6px;gap:5px}.kc{padding:4px 5px}.kc .kv{font-size:13px}.kc.sm .kv{font-size:12px}
       tr{break-inside:avoid}
       thead{display:table-header-group}
@@ -22927,6 +22938,44 @@ async function txUnpostRun(id,direction){
 #content .sales-inst-kpis .sales-inst-kpi b{font-size:15px!important}
 #content .sales-inst-kpis .sales-inst-kpi small{font-size:11px!important;opacity:.8}
 @media(max-width:600px){#content .sales-inst-kpis .sales-inst-kpi{flex:1 1 100%!important;justify-content:space-between!important}}
+</style>
+<style id="ig-sidebar-polish">
+/* ===== تنسيق الشاشة الجانبية: لوجو أصغر + تمييز واحد للصفحة الحالية + قائمة فرعية موحّدة ===== */
+@media(min-width:901px){
+  .layout:not(.collapsed) aside .brand{padding:8px 0 7px!important}
+  .layout:not(.collapsed) aside .brand img{width:56px!important;height:56px!important;max-width:56px!important;max-height:56px!important;box-shadow:0 0 0 2px #0a1a35,0 0 0 3px #D4A017,0 6px 14px rgba(0,0,0,.45)!important}
+  .layout:not(.collapsed) aside .brand .logo-frame{margin-bottom:0!important}
+  .layout:not(.collapsed) aside .aside-search{margin:8px 10px 0!important;padding:7px 10px!important;border-radius:10px!important;font-size:12.5px!important}
+  .layout:not(.collapsed) aside nav{padding:8px 8px 12px!important}
+
+  /* القسم الرئيسي: صف مضغوط، والتمييز بلون النص فقط */
+  .layout:not(.collapsed) aside nav button.navgroup{min-height:0!important;padding:6px 10px!important;gap:9px!important;margin:0 0 3px!important;border-radius:10px!important;background:transparent!important;border:1px solid transparent!important;box-shadow:none!important;font-size:13.5px!important;color:#e6ecf8!important}
+  .layout:not(.collapsed) aside nav button.navgroup:hover{background:rgba(255,255,255,.07)!important;color:#fff!important}
+  .layout:not(.collapsed) aside nav button.navgroup.open{background:rgba(255,255,255,.04)!important;color:#fff!important}
+  .layout:not(.collapsed) aside nav button.navgroup.active{background:rgba(255,255,255,.04)!important;border-color:transparent!important;color:#F4C542!important}
+  .layout:not(.collapsed) aside nav button.navgroup.active::before{display:none!important}
+  .layout:not(.collapsed) aside nav button.navgroup .ng-icon{width:28px!important;height:28px!important;font-size:15px!important;border-radius:8px!important;background:rgba(212,160,23,.12)!important;border:1px solid rgba(212,160,23,.25)!important;box-shadow:none!important;color:#d9c07a!important}
+  .layout:not(.collapsed) aside nav button.navgroup.open .ng-icon,
+  .layout:not(.collapsed) aside nav button.navgroup.active .ng-icon{background:rgba(212,160,23,.18)!important;border-color:rgba(212,160,23,.55)!important;color:#F4C542!important;box-shadow:none!important}
+
+  /* القائمة الفرعية: خط وأيقونات موحّدة وبدون تكسير سطور */
+  .layout:not(.collapsed) aside .navsub{margin:0 22px 8px 4px!important;padding:2px 6px 2px 0!important;border-right:1px solid rgba(212,160,23,.35)!important;gap:1px!important}
+  .layout:not(.collapsed) aside nav button.navbtn{min-height:0!important;padding:6px 10px!important;gap:8px!important;border-radius:8px!important;font-size:12.5px!important;font-weight:600!important;color:#c3cee5!important;background:transparent!important;box-shadow:none!important}
+  .layout:not(.collapsed) aside nav button.navbtn:hover{background:rgba(255,255,255,.07)!important;color:#fff!important;padding:6px 10px!important}
+  .layout:not(.collapsed) aside nav button.navbtn.active{background:rgba(212,160,23,.22)!important;color:#F4C542!important;font-weight:800!important;padding:6px 10px!important;box-shadow:inset -3px 0 0 #F4C542!important}
+  .layout:not(.collapsed) aside nav button.navbtn.active::before{display:none!important}
+  .layout:not(.collapsed) aside nav button.navbtn .ic{width:18px!important;flex:none!important;text-align:center!important;font-size:13px!important;opacity:.85!important}
+  .layout:not(.collapsed) aside nav button.navbtn.active .ic{opacity:1!important}
+  .layout:not(.collapsed) aside nav button.navbtn .nl{flex:1 1 auto!important;min-width:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;text-align:right!important}
+
+  /* عناوين المجموعات داخل القائمة الفرعية */
+  .layout:not(.collapsed) aside .navsub .nav-sep{margin:9px 4px 3px!important;font-size:11px!important;font-weight:800!important;letter-spacing:.2px!important;color:#E2B93B!important;white-space:nowrap}
+
+  /* الوضع الداكن: نفس التمييز */
+  body[data-theme="dark"] .layout:not(.collapsed) aside nav button.navgroup.active{background:rgba(255,255,255,.04)!important;color:#F4C542!important}
+  body[data-theme="dark"] .layout:not(.collapsed) aside nav button.navgroup.open:not(.active){color:#fff!important}
+  body[data-theme="dark"] .layout:not(.collapsed) aside nav button.navbtn.active{background:rgba(212,160,23,.22)!important;color:#F4C542!important}
+}
 </style>
 <script id="lg-datebar-js">
 (function(){
