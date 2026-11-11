@@ -1718,6 +1718,9 @@ table[data-rs-key="supply-grouped"] tfoot td{background:#f3f6fa!important;color:
 .sup-extra-filter .inp{min-width:0;width:100%}
 @media(max-width:700px){.sup-extra-filter{min-width:calc(50% - 6px);flex:1}.sup-filters{gap:8px}.sup-grouped-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.sup-grouped-toolbar span{font-size:10px!important}}
 
+.inv-pend-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.inv-auto-lbl{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;cursor:pointer;color:var(--text-dim)}
+.inv-pend-note{margin:0 0 10px;font-size:12.5px;color:var(--text-dim);line-height:1.7}
 </style>
 
 <style id="statement-filter-polish">
@@ -7419,11 +7422,17 @@ async function inventoryLoad(){
   if(inventoryLoading)return; inventoryLoading=true; inventoryError="";
   try{ const r=await sb.from("inventory_movements").select("*").order("movement_date",{ascending:true}).order("created_at",{ascending:true}); if(r.error)throw r.error; inventoryRows=(r.data||[]).map(invExVat); }
   catch(e){ inventoryError=String(e.message||e); inventoryRows=[]; }
-  finally{ inventoryLoading=false; }
+  finally{ inventoryLoading=false; setTimeout(()=>{try{invAutoRun();}catch(e){}},400); }
 }
 function invBalances(sourceRows=inventoryRows){
-  const m=new Map(); sourceRows.forEach(r=>{const k=[r.warehouse_id,invItemKey(r)].join("::"); if(!m.has(k))m.set(k,{warehouse_id:r.warehouse_id,warehouse_code:r.warehouse_code||"",warehouse_name:r.warehouse_name||"",factories:new Set(),diameter:r.diameter||"",item_type:r.item_type||r.type||"",inQty:0,outQty:0,inValue:0,outValue:0}); const x=m.get(k); if(r.factory)x.factories.add(r.factory); const q=Number(r.qty)||0,v=Number(r.total_cost)||0; if(r.movement_type==="receipt"){x.inQty+=q;x.inValue+=v;}else{x.outQty+=q;x.outValue+=v;} });
-  return [...m.values()].map(x=>({...x,factory:[...x.factories].sort((a,b)=>a.localeCompare(b,"ar")).join("، "),balance:x.inQty-x.outQty,value:x.inValue-x.outValue,avgCost:x.inQty-x.outQty>0?(x.inValue-x.outValue)/(x.inQty-x.outQty):0})).filter(x=>Math.abs(x.balance)>0.000001||Math.abs(x.value)>0.01);
+  const m=new Map(), run=new Map();
+  const ordered=sourceRows.map((r,i)=>[r,i]).sort(typeof invMoveCmp==="function"?invMoveCmp:(a,b)=>a[1]-b[1]).map(x=>x[0]);
+  ordered.forEach(r=>{const k=[r.warehouse_id,invItemKey(r)].join("::"); if(!m.has(k))m.set(k,{warehouse_id:r.warehouse_id,warehouse_code:r.warehouse_code||"",warehouse_name:r.warehouse_name||"",factories:new Set(),diameter:r.diameter||"",item_type:r.item_type||r.type||"",inQty:0,outQty:0,inValue:0,outValue:0}); const x=m.get(k); if(r.factory)x.factories.add(r.factory);
+    const b=run.get(k)||{q:0,v:0}; const q=Math.abs(Number(r.qty)||0), sv=Math.abs(Number(r.total_cost)||0);
+    if(r.movement_type==="receipt"){const v=invR2(sv); x.inQty+=q;x.inValue+=v; b.q+=q;b.v+=v;}
+    else{const v=invAvgIssue(b,q,sv); x.outQty+=q;x.outValue+=v; b.q-=q;b.v-=v;}
+    invTidyBal(b); run.set(k,b); });
+  return [...m.entries()].map(([k,x])=>{const b=run.get(k)||{q:0,v:0}; return {...x,factory:[...x.factories].sort((a,c)=>a.localeCompare(c,"ar")).join("، "),balance:b.q,value:b.v,avgCost:b.q>0?b.v/b.q:0};}).filter(x=>Math.abs(x.balance)>0.000001||Math.abs(x.value)>0.01);
 }
 function inventoryTabDefs(){return [{id:"warehouses",label:"شجرة المخازن وربط الحسابات"},{id:"items",label:"دليل الأصناف"},{id:"balances",label:"أرصدة المخزون"},{id:"movements",label:"حركة الوارد والمنصرف"},{id:"itemCard",label:"كارت الصنف"},{id:"issue",label:"صرف مخزني"},{id:"valuation",label:"تقييم المخزون"},{id:"reports",label:"تقارير المخازن والتسوية"}];}
 function inventoryTabs(){return inventoryTabDefs().filter(t=>canTab("inventory",t.id)).map(t=>`<button class="${inventoryTab===t.id?"active":""}" onclick="inventoryTab='${t.id}';go('inventory')">${t.label}</button>`).join("")}
@@ -7442,7 +7451,7 @@ function viewInventory(){
   const inQty=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.qty||0),0), outQty=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.qty||0),0);
   const pending=(state.shipments||[]).filter(sh=>!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="receipt")||!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="issue"));
   return `<div class="tabs">${tabs}</div><div class="grid cols-4" style="margin-bottom:14px"><div class="card"><div class="body"><small>إجمالي الوارد</small><h2>${invNum(inQty)} طن</h2><b>${invNum(totalIn)} ج.م</b></div></div><div class="card"><div class="body"><small>إجمالي المنصرف</small><h2>${invNum(outQty)} طن</h2><b>${invNum(totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>صافي الكمية</small><h2>${invNum(inQty-outQty)} طن</h2><b>${invNum(totalIn-totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>بوالص توريد تحتاج مراجعة</small><h2>${pending.length}</h2><small>حسب سجل حركات المخزون</small></div></div></div>
-  <div class="card"><div class="head"><h3>تسوية الحركات التاريخية</h3><span class="chip warn">وارد + منصرف بنفس التاريخ والتكلفة</span></div><div class="body"><p style="margin-top:0">الحركات الناقصة (وارد أو منصرف) لكل بوليصة مرحلة. اختار حركات معينة أو كلها، والتسوية بتسجّل الوزن الفعلي واردًا ثم صرف نفس الوزن بنفس تكلفة الشراء وبتاريخ البوليصة، مع رقم أمر البيع والعميل والمورد، ومبتكررش الحركات المسجلة.</p>${invBackfillPendingHtml()}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn ghost" onclick="inventoryBackfillSupplies()" ${can("inventory","post")?"":"disabled"}>فحص وتسوية كل البوالص</button><button class="btn ghost" onclick="inventoryExportExcel()">تصدير تقرير المخازن Excel</button></div><div id="invBackfillResult" style="margin-top:12px">${inventoryBackfillSummary}</div></div></div>
+  <div class="card"><div class="head"><h3>تسوية الحركات التاريخية</h3><span class="chip warn">وارد + منصرف بنفس التاريخ والتكلفة</span></div><div class="body"><p class="inv-pend-note">كل بوليصة ناقصة بتتسوّى بوارد ثم منصرف بالوزن الفعلي وتكلفة الشراء وتاريخ البوليصة. حدّد صفوفًا معينة أو سيبها فاضية لتسوية الكل. الحركات المسجلة قبل كده لا تتكرر.</p>${invBackfillPendingHtml()}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn ghost" onclick="inventoryExportExcel()">⬇ تصدير Excel</button></div><div id="invBackfillResult" style="margin-top:12px">${inventoryBackfillSummary}</div></div></div>
   <div class="card"><div class="head"><h3>ملخص الحركات حسب المخزن</h3></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>المخزن</th><th>الوارد طن</th><th>المنصرف طن</th><th>الرصيد طن</th><th>قيمة الوارد</th><th>قيمة المنصرف</th><th>الصافي</th></tr></thead><tbody>${[...new Set(inventoryRows.map(x=>String(x.warehouse_id)))].map(id=>{const a=inventoryRows.filter(x=>String(x.warehouse_id)===id),w=a[0]||{};const iq=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.qty||0),0),oq=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.qty||0),0),iv=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.total_cost||0),0),ov=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.total_cost||0),0);return `<tr><td>${escapeHtml(w.warehouse_name||w.warehouse_code||"")}</td><td>${invNum(iq)}</td><td>${invNum(oq)}</td><td>${invNum(iq-oq)}</td><td>${invNum(iv)}</td><td>${invNum(ov)}</td><td>${invNum(iv-ov)}</td></tr>`}).join("")||'<tr><td colspan="7">لا توجد بيانات</td></tr>'}</tbody></table></div></div></div>`;
  }
  if(inventoryTab==="issue"){
@@ -7466,10 +7475,32 @@ function inventoryExportExcel(){const cols=["التاريخ","نوع الحرك�
 window.invPendSel=window.invPendSel||new Set();
 function invPendInfo(sh){const has=t=>inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type===t);return {r:has("receipt"),i:has("issue")};}
 function invPendingList(){return (state.shipments||[]).map(sh=>({sh,st:invPendInfo(sh)})).filter(x=>!x.st.r||!x.st.i).sort((a,b)=>String(a.sh.date||"").localeCompare(String(b.sh.date||""))||String(a.sh.policyNo||"").localeCompare(String(b.sh.policyNo||""),undefined,{numeric:true}));}
-function invPendCount(){const n=window.invPendSel.size,c=document.getElementById("invPendCnt"),b=document.getElementById("invPendBtn"),all=document.getElementById("invPendAll"),tot=document.querySelectorAll(".inv-pend-cb").length;if(c)c.textContent=n;if(b)b.disabled=!n;if(all){all.checked=tot>0&&n===tot;all.indeterminate=n>0&&n<tot;}}
+function invPendCount(){const n=window.invPendSel.size,c=document.getElementById("invPendCnt"),b=document.getElementById("invPendBtn"),all=document.getElementById("invPendAllCb"),tot=document.querySelectorAll(".inv-pend-cb").length;if(b)b.innerHTML=n?`تسوية المحدد (<span id="invPendCnt">${n}</span>)`:`تسوية الكل (<span id="invPendCnt">${tot}</span>)`;if(b)b.disabled=false;if(all){all.checked=tot>0&&n===tot;all.indeterminate=n>0&&n<tot;}}
 function invPendToggle(cb){const id=String(cb.dataset.id);cb.checked?window.invPendSel.add(id):window.invPendSel.delete(id);invPendCount();}
-function invPendAll(on){document.querySelectorAll(".inv-pend-cb").forEach(cb=>{cb.checked=on;on?window.invPendSel.add(String(cb.dataset.id)):window.invPendSel.delete(String(cb.dataset.id));});invPendCount();}
-function inventoryBackfillSelected(){const ids=[...window.invPendSel];if(!ids.length){toast("اختار حركة واحدة على الأقل","warn");return;}return inventoryBackfillSupplies(ids);}
+function invPendSelectAll(on){document.querySelectorAll(".inv-pend-cb").forEach(cb=>{cb.checked=on;on?window.invPendSel.add(String(cb.dataset.id)):window.invPendSel.delete(String(cb.dataset.id));});invPendCount();}
+// ---- تسوية ذكية: زرار واحد (المحدد لو فيه تحديد، وإلا الكل) + تسوية تلقائية اختيارية ----
+function invAutoOn(){try{return localStorage.getItem("ig_inv_autosettle")==="1";}catch(e){return false;}}
+function invAutoSet(on){try{localStorage.setItem("ig_inv_autosettle",on?"1":"0");}catch(e){} if(on) invAutoRun(); toast(on?"تم تفعيل التسوية التلقائية":"تم إيقاف التسوية التلقائية","ok");}
+function inventorySettleSmart(){
+  const dom=[...document.querySelectorAll(".inv-pend-cb:checked")].map(cb=>String(cb.dataset.id));
+  const ids=[...new Set([...dom,...window.invPendSel])];
+  return ids.length?inventoryBackfillSupplies(ids):inventoryBackfillSupplies("pending");
+}
+async function invAutoRun(){
+  if(!invAutoOn()||window._invAutoBusy||window._supSettling) return;
+  if(!can("inventory","post")||inventoryError||inventoryLoading) return;
+  if(Date.now()-(window._invAutoAt||0)<60000) return;
+  if(!invPendingList().length) return;
+  window._invAutoAt=Date.now(); window._invAutoBusy=true;
+  try{ await inventoryBackfillSupplies("pending",{silent:true}); }catch(e){}
+  finally{ window._invAutoBusy=false; }
+}
+function inventoryBackfillSelected(){
+  const dom=[...document.querySelectorAll(".inv-pend-cb:checked")].map(cb=>String(cb.dataset.id));
+  const ids=[...new Set([...dom,...window.invPendSel])];
+  if(!ids.length){toast("اختار حركة واحدة على الأقل","warn");return;}
+  return inventoryBackfillSupplies(ids);
+}
 function invBackfillPendingHtml(){
   const list=invPendingList(), ids=new Set(list.map(x=>String(x.sh.id)));
   [...window.invPendSel].forEach(x=>{if(!ids.has(x))window.invPendSel.delete(x);});
@@ -7478,8 +7509,8 @@ function invBackfillPendingHtml(){
   const rows=list.map(({sh,st})=>{const q=(sh.items||[]).reduce((a,it)=>a+(Number(String(it.actualWeight??it.weightTon??0).replace(",","."))||0),0);
     const chip=!st.r&&!st.i?'<span class="chip warn">لا وارد ولا منصرف</span>':!st.i?'<span class="chip warn">وارد فقط — ناقص المنصرف</span>':'<span class="chip warn">ناقص الوارد</span>';
     return `<tr><td><input type="checkbox" class="inv-pend-cb" data-id="${escapeAttr(String(sh.id))}" ${window.invPendSel.has(String(sh.id))?"checked":""} onchange="invPendToggle(this)" style="width:18px;height:18px"></td><td><b>${escapeHtml(String(sh.policyNo||"—"))}</b></td><td>${escapeHtml(sh.date||"—")}</td><td>${escapeHtml(String(soNo(sh)||"—"))}</td><td>${escapeHtml(sh.customer||"—")}</td><td>${escapeHtml(sh.supplier||"—")}</td><td class="num">${invNum(q)}</td><td>${chip}</td></tr>`;}).join("");
-  return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><b>حركات غير مسوّاة: ${list.length}</b><span style="flex:1"></span><button class="btn" id="invPendBtn" onclick="inventoryBackfillSelected()" ${window.invPendSel.size?"":"disabled"}>تسوية المحدد (<span id="invPendCnt">${window.invPendSel.size}</span>)</button><button class="btn ghost" onclick="inventoryBackfillSupplies('pending')">تسوية كل غير المسوّى (${list.length})</button></div>
-  <div class="tbl-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th style="width:36px"><input type="checkbox" id="invPendAll" onchange="invPendAll(this.checked)" title="تحديد الكل" style="width:18px;height:18px"></th><th>البوليصة</th><th>التاريخ</th><th>أمر البيع</th><th>العميل</th><th>المورد</th><th>الوزن (طن)</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="inv-pend-bar"><b>حركات غير مسوّاة: ${list.length}</b><span style="flex:1"></span><label class="inv-auto-lbl" title="يسوّي أي بوالص ناقصة تلقائيًا بمجرد فتح الشاشة، بدون سؤال"><input type="checkbox" ${invAutoOn()?"checked":""} onchange="invAutoSet(this.checked)"> تسوية تلقائية</label><button class="btn" id="invPendBtn" onclick="inventorySettleSmart()">${window.invPendSel.size?`تسوية المحدد (<span id="invPendCnt">${window.invPendSel.size}</span>)`:`تسوية الكل (<span id="invPendCnt">${list.length}</span>)`}</button></div>
+  <div class="tbl-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th style="width:36px"><input type="checkbox" id="invPendAllCb" ${list.length&&window.invPendSel.size===list.length?"checked":""} onchange="invPendSelectAll(this.checked)" title="تحديد الكل" style="width:18px;height:18px"></th><th>البوليصة</th><th>التاريخ</th><th>أمر البيع</th><th>العميل</th><th>المورد</th><th>الوزن (طن)</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 // يكمّل المنصرف الناقص لبوليصة: ينسخ حركات الوارد كمنصرف (نفس الكمية/التكلفة/المخزن). مفيش تكرار.
 async function invIssueFallback(sh){
@@ -7495,17 +7526,20 @@ async function invIssueFallback(sh){
   if(ins.error) return {added:0,error:"تعذّر تسجيل المنصرف — "+String(ins.error.message||ins.error)};
   return {added:rows.length,error:""};
 }
-async function inventoryBackfillSupplies(mode){
+async function inventoryBackfillSupplies(mode,opts){
+ const silent=!!(opts&&opts.silent);
  if(!can("inventory","post")){toast("ليس لديك صلاحية تسوية المخزون", "err");return;}
  let docs=state.shipments||[], scope="all";
  if(mode==="pending"){docs=invPendingList().map(x=>x.sh);scope="sub";}
  else if(Array.isArray(mode)){const set=new Set(mode.map(String));docs=docs.filter(sh=>set.has(String(sh.id)));scope="sub";}
  if(!docs.length){toast(scope==="sub"?"لا توجد حركات غير مسوّاة":"لا توجد بوالص توريد مرحلة", "warn");return {cancelled:false,errors:[],done:0,added:0};}
- if(!await askConfirm(scope==="sub"?`سيتم تسوية ${docs.length} بوليصة (إضافة الوارد والمنصرف الناقص بنفس التكلفة وفي تاريخ كل بوليصة). الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`:`سيتم فحص ${docs.length} بوليصة مرحلة، وإضافة الوارد والمنصرف للوزن الفعلي بنفس التكلفة وفي تاريخ كل بوليصة. الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`))return {cancelled:true,errors:[],done:0,added:0};
+ if(!silent&&!await askConfirm(scope==="sub"?`سيتم تسوية ${docs.length} بوليصة (إضافة الوارد والمنصرف الناقص بنفس التكلفة وفي تاريخ كل بوليصة). الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`:`سيتم فحص ${docs.length} بوليصة مرحلة، وإضافة الوارد والمنصرف للوزن الفعلي بنفس التكلفة وفي تاريخ كل بوليصة. الحركات الموجودة لن تتكرر. هل تريد المتابعة؟`))return {cancelled:true,errors:[],done:0,added:0};
  window.invPendSel.clear();
  const box=document.getElementById("invBackfillResult");if(box)box.innerHTML="<b>جاري التسوية…</b>";
  let done=0,added=0,skipped=0,errors=[];
+ let _pi=0;
  for(const sh of docs){
+  _pi++; if(box)box.innerHTML="<b>جاري التسوية… "+_pi+" / "+docs.length+"</b>";
   const so=(state.saleOrders||[]).find(o=>String(o.id)===String(sh.saleOrderId))||(state.saleOrders||[]).find(o=>sh.saleOrderNo&&String(o.orderNo)===String(sh.saleOrderNo))||{};
   const warehouseId=whDefaultId()||""; // تسوية مؤقتة: كل البوالص على المخزن الافتراضي 10201 ويُربط لاحقًا من قاعدة البيانات
   const wh=whList().find(w=>String(w.id)===String(warehouseId))||null;
@@ -7546,6 +7580,7 @@ async function inventoryBackfillSupplies(mode){
  inventoryBackfillSummary=`<div class="card" style="padding:12px"><b>${escapeHtml(msg)}</b>${errors.length?`<details style="margin-top:8px"><summary>تفاصيل السجلات المتخطاة والأخطاء (${errors.length})</summary><ul>${errors.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></details>`:""}</div>`;
  if(box)box.innerHTML=inventoryBackfillSummary;if(errors.length)toast("تمت تسوية "+(docs.length-errors.length)+" بوليصة — وتعذّرت "+errors.length+" (التفاصيل أسفل الشاشة)","warn");else toast("انتهت تسوية الحركات التاريخية","ok");
  const c=document.getElementById("content");if(c&&currentPage==="inventory")c.innerHTML=viewInventory();
+ try{ if(currentPage==="supply"&&typeof renderSupply==="function"){ window._supInvAt=Date.now(); window._supInvReady=true; renderSupply(); } }catch(e){}
  return {cancelled:false,errors,done,added,skipped};
 }
 
@@ -7608,6 +7643,13 @@ function invMoveCmp(a,b){
   const c=String(x.created_at||"").localeCompare(String(y.created_at||"")); if(c) return c;
   return a[1]-b[1];
 }
+// تقييم المنصرف بالمتوسط المتحرك لكل صنف داخل كل مخزن: لو المنصرف بيصفّر الرصيد ياخد كامل قيمة الرصيد (يمنع -0.00)
+function invR2(x){return Math.round((+x||0)*100)/100+0;}
+function invAvgIssue(b,q,stored){
+  if(b.q>0.0005){ if(q>=b.q-0.0005) return invR2(b.v); return invR2(q*b.v/b.q); }
+  return invR2(stored);
+}
+function invTidyBal(b){ b.q=Math.round(b.q*1e6)/1e6+0; b.v=invR2(b.v); if(Math.abs(b.q)<1e-6&&Math.abs(b.v)<0.01){b.q=0;b.v=0;} }
 function invScreenData(tab){
   inventoryRows=inventoryRows.map(invExVat);
   if(tab==="balances"||tab==="valuation"){
@@ -7621,16 +7663,17 @@ function invScreenData(tab){
   const withBal=[];
   asc.forEach(r=>{
     const dt=dk0(r); if(d2&&dt>d2) return;
-    const rc=r.movement_type==="receipt", q=Math.abs(+r.qty||0), v=Math.abs(+r.total_cost||0), k=[r.warehouse_id,invItemKey(r)].join("::");
+    const rc=r.movement_type==="receipt", q=Math.abs(+r.qty||0), v0=Math.abs(+r.total_cost||0), k=[r.warehouse_id,invItemKey(r)].join("::");
     const b=bal.get(k)||{q:0,v:0}; if(!meta.has(k)) meta.set(k,r);
+    let v=rc?invR2(v0):invAvgIssue(b,q,v0);
     const pre=!!d1&&dt<d1;
     if(!pre&&!opening.has(k)) opening.set(k,{q:b.q,v:b.v});
-    if(rc){b.q+=q;b.v+=v;}else{b.q-=q;b.v-=v;} bal.set(k,b);
+    if(rc){b.q+=q;b.v+=v;}else{b.q-=q;b.v-=v;} invTidyBal(b); bal.set(k,b);
     if(pre) return;
     if(rc){iq+=q;iv+=v;}else{oq+=q;ov+=v;}
     inRange.add(k);
     if(b.q<-0.0005){ const nm=[r.diameter,r.item_type,r.factory].filter(Boolean).join(" "); if(neg.indexOf(nm)<0) neg.push(nm); }
-    withBal.push({...r,qty:q,unit_cost:Math.abs(+r.unit_cost||0),total_cost:v,_bq:b.q,_bv:b.v});
+    withBal.push({...r,qty:q,unit_cost:(!rc&&q>0)?v/q:Math.abs(+r.unit_cost||0),total_cost:v,_bq:b.q,_bv:b.v});
   });
   bal.forEach((b,k)=>{ if(!opening.has(k)) opening.set(k,{q:b.q,v:b.v}); });
   let bq=0,bv=0; bal.forEach(b=>{bq+=b.q;bv+=b.v;});
@@ -7738,7 +7781,7 @@ function invErpCardHtml(d){
     const all=[];
     if(openings.length) all.push({...openings[0],_bq:openingQty,_bv:openingValue});
     let bq=openingQty,bv=openingValue;
-    moves.forEach(r=>{ const receipt=r.movement_type==="receipt",qty=Number(r.qty)||0,val=Number(r.total_cost)||0; bq+=receipt?qty:-qty; bv+=receipt?val:-val; all.push({...r,_bq:bq,_bv:bv}); });
+    moves.forEach(r=>{ const receipt=r.movement_type==="receipt",qty=Number(r.qty)||0,val=Number(r.total_cost)||0; bq+=receipt?qty:-qty; bv+=receipt?val:-val; const t={q:bq,v:bv}; invTidyBal(t); bq=t.q; bv=t.v; all.push({...r,_bq:bq,_bv:bv}); });
     for(let i=0;i<all.length;i+=PER) pages.push({rows:all.slice(i,i+PER),first:all[0],last:i+PER>=all.length,all});
   });
   const N=pages.length, e=escapeHtml, logo=(typeof QT_LOGO!=="undefined")?QT_LOGO:"";
