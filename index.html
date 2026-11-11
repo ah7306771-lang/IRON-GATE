@@ -7481,6 +7481,20 @@ function invBackfillPendingHtml(){
   return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><b>حركات غير مسوّاة: ${list.length}</b><span style="flex:1"></span><button class="btn" id="invPendBtn" onclick="inventoryBackfillSelected()" ${window.invPendSel.size?"":"disabled"}>تسوية المحدد (<span id="invPendCnt">${window.invPendSel.size}</span>)</button><button class="btn ghost" onclick="inventoryBackfillSupplies('pending')">تسوية كل غير المسوّى (${list.length})</button></div>
   <div class="tbl-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th style="width:36px"><input type="checkbox" id="invPendAll" onchange="invPendAll(this.checked)" title="تحديد الكل" style="width:18px;height:18px"></th><th>البوليصة</th><th>التاريخ</th><th>أمر البيع</th><th>العميل</th><th>المورد</th><th>الوزن (طن)</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
+// يكمّل المنصرف الناقص لبوليصة: ينسخ حركات الوارد كمنصرف (نفس الكمية/التكلفة/المخزن). مفيش تكرار.
+async function invIssueFallback(sh){
+  const sid=String(sh.id);
+  const rr=await sb.from("inventory_movements").select("*").eq("source_id",sid).eq("movement_type","receipt");
+  if(rr.error) return {added:0,error:String(rr.error.message||rr.error)};
+  if(!(rr.data||[]).length) return {added:0,error:"لم يُسجَّل وارد لهذه البوليصة في المخزن"};
+  const iss=await sb.from("inventory_movements").select("id").eq("source_id",sid).eq("movement_type","issue");
+  if(iss.error) return {added:0,error:String(iss.error.message||iss.error)};
+  if((iss.data||[]).length) return {added:0,error:""};
+  const rows=rr.data.map(m=>{const c={...m};delete c.id;delete c.created_at;delete c.updated_at;c.movement_type="issue";return c;});
+  const ins=await sb.from("inventory_movements").insert(rows);
+  if(ins.error) return {added:0,error:"تعذّر تسجيل المنصرف — "+String(ins.error.message||ins.error)};
+  return {added:rows.length,error:""};
+}
 async function inventoryBackfillSupplies(mode){
  if(!can("inventory","post")){toast("ليس لديك صلاحية تسوية المخزون", "err");return;}
  let docs=state.shipments||[], scope="all";
@@ -7520,8 +7534,9 @@ async function inventoryBackfillSupplies(mode){
    (window._invRpcLog=window._invRpcLog||{})[String(sh.id)]=rd;
    if(rd.error||rd.ok===false||rd.success===false) throw new Error(String(rd.error||rd.message||"رفض الخادم التسوية"));
    const ins=Number(rd.inserted_movements||0);
-   done++;added+=ins;
-   if(!ins){skipped++;errors.push(`${policyNo}: الخادم لم يضف أي حركة (وارد/منصرف) — تأكد من المخزن والكميات وتكلفة الشراء`);}
+   const fb=await invIssueFallback(sh);
+   if(fb.error){errors.push(`${policyNo}: ${fb.error}`);}
+   else{done++;added+=ins+fb.added;if(!ins&&!fb.added)skipped++;}
   }
   catch(e){errors.push(`${policyNo}: ${String(e.message||e)}`);}
  }
@@ -7529,7 +7544,7 @@ async function inventoryBackfillSupplies(mode){
  window._invLastBackfill={errors:errors.slice(),done,added,skipped};
  const msg=`تم فحص ${docs.length} بوليصة — تمت معالجة ${done} — حركات جديدة ${added} — متخطاة ${skipped} — أخطاء ${errors.length}`;
  inventoryBackfillSummary=`<div class="card" style="padding:12px"><b>${escapeHtml(msg)}</b>${errors.length?`<details style="margin-top:8px"><summary>تفاصيل السجلات المتخطاة والأخطاء (${errors.length})</summary><ul>${errors.map(x=>`<li>${escapeHtml(x)}</li>`).join("")}</ul></details>`:""}</div>`;
- if(box)box.innerHTML=inventoryBackfillSummary;if(errors.length)toast("التسوية لم تكتمل — "+errors.length+" بوليصة بها أخطاء","err");else toast("انتهت تسوية الحركات التاريخية","ok");
+ if(box)box.innerHTML=inventoryBackfillSummary;if(errors.length)toast("تمت تسوية "+(docs.length-errors.length)+" بوليصة — وتعذّرت "+errors.length+" (التفاصيل أسفل الشاشة)","warn");else toast("انتهت تسوية الحركات التاريخية","ok");
  const c=document.getElementById("content");if(c&&currentPage==="inventory")c.innerHTML=viewInventory();
  return {cancelled:false,errors,done,added,skipped};
 }
