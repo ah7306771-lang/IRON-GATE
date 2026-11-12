@@ -6264,7 +6264,7 @@ function dxTopGreeting(){
     if(c) c.textContent=lbl;
   }catch(e){}
 }
-function dxRefresh(){ try{ navBadges(true); renderNav(); }catch(e){} dxRerender(); toast("تم تحديث الرئيسية","ok"); }
+function dxRefresh(){ try{ navBadges(true); renderNav(); }catch(e){} _dxTrCache=null; dxRerender(); toast("تم تحديث الرئيسية","ok"); }
 // ينقل المستخدم للشاشة مع تطبيق الفلتر المناسب — النبضات في البنر الرئيسي
 // معيار "التحصيل الفعلي" الوحيد: مستخدم في كارت لوحة التحكم وفي فلتر شاشة التحصيلات عند الضغط على الكارت (علشان الرقمين يتطابقوا دايمًا)
 function dxIsCollectionEntry(e){
@@ -6378,6 +6378,57 @@ function renderManagementReports(){
 }
 
 // صافي أرصدة العملاء/الموردين الحالية (من بداية التعامل حتى الآن) — نفس طريقة إشعار "أرصدة العملاء والموردين"
+/* ===== كروت رصيد البنوك / رصيد الخزن في الداشبورد =====
+   نفس منطق كشف حساب البنك/الخزينة: أستاذ عام (أول المدة + قيود مرحّلة) + حركات تشغيلية + قيود GL يدوية.
+   بنكا الأوراق الوسيطان (أوراق قبض/دفع) مستبعدان لأنهم مش بنوك حقيقية. */
+let _dxTrCache=null, _dxTrBusy=false;
+async function dxTreasuryTotal(kind){
+  const items=treasuryStmtList(kind).filter(x=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(x)));
+  const refs=treasuryStmtPostedRefs(), linked=l=>refs.ids.has(String(l.entry_id))||refs.nos.has(String(l.no||''));
+  const net=r=>r.incoming?r.amount:-r.amount;
+  let unlinkedAcc=0;
+  const parts=await Promise.all(items.map(async it=>{
+    let gl; try{ gl=await treasuryStmtLoadGL(it.accountId,it.accountCode,'',''); }catch(e){ throw e; }
+    let bal=treasuryStmtOperationalRows(it.code,kind,'','','','all').reduce((t,r)=>t+net(r),0);
+    if(gl.available){
+      const by=new Map();
+      gl.periodLines.forEach(l=>{ if(linked(l)) return; by.set(l.entry_id,(by.get(l.entry_id)||0)+l.net); });
+      by.forEach(v=>{ if(Math.abs(v)>=0.005) bal+=v; });
+      bal+=gl.opening;
+    } else unlinkedAcc++;
+    return bal;
+  }));
+  return {total:parts.reduce((a,b)=>a+b,0), count:items.length, unlinked:unlinkedAcc};
+}
+function dxTrCell(kind){
+  const c=_dxTrCache&&_dxTrCache[kind], lbl=kind==='bank'?'بنك':'خزينة';
+  if(!c) return {val:'…',sub:'جاري حساب الرصيد…'};
+  if(c.err) return {val:'—',sub:'تعذّر حساب الرصيد'};
+  const neg=c.total<-0.004;
+  return {val:(neg?'<span style="color:#b91c1c">':'<span>')+Number(c.total||0).toLocaleString("en-US",{maximumFractionDigits:0})+'</span>',
+          sub:c.count+' '+lbl+(c.unlinked?' · '+c.unlinked+' غير مربوط بالأستاذ العام':' · الأستاذ العام + غير المرحّل')};
+}
+function dxTrPaint(){
+  ['bank','safe'].forEach(k=>{
+    const v=document.getElementById(k==='bank'?'dxBankVal':'dxSafeVal'), s=document.getElementById(k==='bank'?'dxBankSub':'dxSafeSub');
+    if(!v&&!s) return; const c=dxTrCell(k);
+    if(v) v.innerHTML=c.val; if(s) s.textContent=c.sub;
+  });
+}
+async function dxLoadTreasuryKpis(force){
+  if(!document.getElementById('dxBankVal')&&!document.getElementById('dxSafeVal')) return;
+  if(!force&&_dxTrCache&&Date.now()-_dxTrCache.ts<60000){ dxTrPaint(); return; }
+  if(_dxTrBusy) return; _dxTrBusy=true;
+  try{
+    const next={ts:Date.now()};
+    for(const k of ['bank','safe']){
+      if(!document.getElementById(k==='bank'?'dxBankVal':'dxSafeVal')) continue;
+      try{ next[k]=await dxTreasuryTotal(k); }catch(e){ next[k]={err:true}; }
+    }
+    _dxTrCache=next;
+  } finally { _dxTrBusy=false; }
+  dxTrPaint();
+}
 function dxPartyNets(){
   const sumOf=kind=>{
     const saved={...tbFilters[kind]};
@@ -6392,6 +6443,7 @@ function dxPartyNets(){
 function viewDashboard(){
   // رفع قائمة المتأخرات لـSupabase (في الخلفية، لا تؤثر على تحميل الشاشة)
   try{ if(typeof syncOverdueSnapshot==="function") setTimeout(()=>syncOverdueSnapshot(),800); }catch(e){}
+  try{ setTimeout(()=>dxLoadTreasuryKpis(),60); }catch(e){}
   const arr = key => Array.isArray(state[key]) ? state[key] : [];
   const cur = (state.settings&&state.settings.currency)||"ج.م";
   const safe = (f,d)=>{ try{ return f(); }catch(e){ return d; } };
@@ -6488,6 +6540,8 @@ function viewDashboard(){
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
       ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
+      ${safe(()=>canView("bankStatement"),false)?(()=>{ const c=dxTrCell('bank'); return kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+c.sub+'</span>','bankStatement','إجمالي أرصدة البنوك حتى الآن (بدون بنكي أوراق القبض والدفع الوسيطين) — بنفس حساب شاشة كشف حساب بنك'); })():''}
+      ${safe(()=>canView("safeStatement"),false)?(()=>{ const c=dxTrCell('safe'); return kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+c.sub+'</span>','safeStatement','إجمالي أرصدة الخزائن النقدية حتى الآن — بنفس حساب شاشة كشف حساب خزينة'); })():''}
       ${(()=>{ const n=dxPartyNets(); return (n.c===null?'':kpi('k-blue','♙','رصيد العملاء الصافي',money(n.c)+' <em>'+cur+'</em>',n.c>=0?'مستحق لنا عند العملاء':'رصيد دائن للعملاء (علينا)','clientTB','صافي أرصدة كل العملاء حتى الآن (أول المدة + المبيعات − التحصيلات)'))+(n.v===null?'':kpi('k-slate','♧','رصيد الموردين الصافي',money(n.v)+' <em>'+cur+'</em>',n.v>=0?'مستحق للموردين (علينا)':'رصيد مدين لدى الموردين (لنا)','supplierTB','صافي أرصدة كل الموردين حتى الآن (أول المدة + المشتريات − المدفوعات)')); })()}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل',"currentTab='customers';go('master')")}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل',"currentTab='suppliers';go('master')")}`;
 
@@ -6638,8 +6692,10 @@ function tradeReportRows(kind){
     const usedShip=new Set();
     (state.saleOrders||[]).forEach(so=>{
       const order=String(so.orderNo||'');
-      let docs=[...(state.shipments||[]),...(state.policies||[])].filter(d=>d.saleOrderId===so.id || (order&&soKey(d.saleOrderNo)===soKey(order)));
-      if(dash){ docs=docs.filter(d=>(state.shipments||[]).includes(d)&&inDash(d)); if(!docs.length) return; docs.forEach(d=>usedShip.add(d)); }
+      // شرط أساسي: لا يدخل التقرير إلا ما تم ترحيله من البوليصة (state.shipments) — المسودات (state.policies) مستبعدة
+      let docs=(state.shipments||[]).filter(d=>d.saleOrderId===so.id || (order&&soKey(d.saleOrderNo)===soKey(order)));
+      if(dash){ docs=docs.filter(d=>inDash(d)); }
+      if(!docs.length) return; docs.forEach(d=>usedShip.add(d));
       const customer=so.customer||(docs[0]&&docs[0].customer)||'', supplier=so.supplier||(docs[0]&&docs[0].supplier)||'';
       const date=dash?(docs.map(d=>d.date||'').sort().pop()||''):(so.date||(docs.map(d=>d.date||'').sort().pop()||''));
       if(!dash){ if(f.from&&(!date||date<f.from))return; if(f.to&&(!date||date>f.to))return; }
@@ -6650,19 +6706,22 @@ function tradeReportRows(kind){
       docs.forEach(d=>(d.items||[]).forEach(it=>{const a=supplyAmounts(d,it);totals.weight+=(+it.actualWeight||0);totals.subtotal+=(+a.subtotal||0);totals.tax+=(+a.tax||0);totals.discount+=(+a.discount||0);totals.net+=(+a.total||0);}));
       out.push({date,policy:'',order,customer,supplier,company:'',site:'',factory:'',diameter:'',type:'',qty,weight:totals.weight,...totals,docCount:docs.length,status:so.closed?'مقفول':'مفتوح'});
     });
-    // بوالص مرحّلة داخل الفترة غير مربوطة بأي أمر بيع: تظهر مجمّعة علشان الإجمالي يطابق الكارت
-    if(dash){
+    // بوالص مرحّلة غير مربوطة بأمر بيع مسجّل (رقم الأمر مكتوب يدويًا في البوليصة مثل 0076): تظهر مجمّعة حسب الرقم المكتوب
+    {
       const loose=new Map();
       (state.shipments||[]).forEach(s=>{
-        if(usedShip.has(s)||!inDash(s)) return;
+        if(usedShip.has(s)) return;
+        if(dash){ if(!inDash(s)) return; }
+        else{ if(f.from&&(!s.date||s.date<f.from))return; if(f.to&&(!s.date||s.date>f.to))return; }
         if(f.customer&&s.customer!==f.customer)return; if(f.supplier&&s.supplier!==f.supplier)return;
-        const k=String(s.saleOrderNo||'بدون أمر بيع');
+        if(q&&![s.saleOrderNo,s.customer,s.supplier,s.policyNo].some(v=>String(v||'').toLowerCase().includes(q)))return;
+        const k=String(s.saleOrderNo||'بدون أمر بيع').trim()||'بدون أمر بيع';
         const g=loose.get(k)||{date:'',order:k,customer:s.customer||'',supplier:s.supplier||'',weight:0,subtotal:0,tax:0,discount:0,net:0,docCount:0};
         if(s.date&&s.date>g.date) g.date=s.date; g.docCount++;
         (s.items||[]).forEach(it=>{const a=supplyAmounts(s,it);g.weight+=(+it.actualWeight||0);g.subtotal+=(+a.subtotal||0);g.tax+=(+a.tax||0);g.discount+=(+a.discount||0);g.net+=(+a.total||0);});
         loose.set(k,g);
       });
-      loose.forEach(g=>out.push({date:g.date,policy:'',order:g.order,customer:g.customer,supplier:g.supplier,company:'',site:'',factory:'',diameter:'',type:'',qty:0,weight:g.weight,subtotal:g.subtotal,tax:g.tax,discount:g.discount,net:g.net,docCount:g.docCount,status:'غير مربوط بأمر'}));
+      loose.forEach(g=>out.push({date:g.date,policy:'',order:g.order,customer:g.customer,supplier:g.supplier,company:'',site:'',factory:'',diameter:'',type:'',qty:0,weight:g.weight,subtotal:g.subtotal,tax:g.tax,discount:g.discount,net:g.net,docCount:g.docCount,status:'مكتوب يدويًا بالبوليصة'}));
     }
   }else{
     (state.shipments||[]).forEach(s=>{
@@ -7232,12 +7291,14 @@ function renderPartyStatement(){
   const balanceColor = final>=0 ? (customer?'#dc2626':'#059669') : (customer?'#059669':'#dc2626');
   const bal2=final>=0?(customer?'late':'ok'):(customer?'ok':'late');
   const kcards=[["عدد الحركات",rows.length,"حركة",""],["رصيد أول المدة",money(openTotal),cur,""],["إجمالي السعر الشامل",money(inclusive),cur,""],["إجمالي المدين",money(deb),cur,"late"],["إجمالي الدائن",money(cred),cur,"ok"],[balanceLabel,money(Math.abs(final)),cur,bal2]];
-  const multi=parties.length>1, ncol=multi?8:7;
+  const multi=parties.length>1, det=f.view!=='summary', ncol=(multi?8:7)+(det?4:0);
+  const detTd=r=>det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="si-num">${qty(r.quantity)}</td><td class="si-num">${(+r.actualWeight||0).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td>`:'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td>'):'';
+  const detBlank=det?'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td>':'';
   const partyTd=p=>multi?`<td class="ps-party">${escapeHtml(p||'—')}</td>`:'';
-  const openRowsHtml=parties.map(p=>`<tr class="ps-open"><td>${escapeHtml(f.from||'—')}</td>${partyTd(p)}<td>—</td><td class="ps-desc"><b>رصيد أول المدة</b></td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num ps-bal">${money(openMap.get(p)||0)}</td></tr>`).join('');
-  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td><td class="ps-desc">${escapeHtml(r.desc)}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
+  const openRowsHtml=parties.map(p=>`<tr class="ps-open"><td>${escapeHtml(f.from||'—')}</td>${partyTd(p)}<td>—</td>${detBlank}<td class="ps-desc"><b>رصيد أول المدة</b></td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num ps-bal">${money(openMap.get(p)||0)}</td></tr>`).join('');
+  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
   const emptyHtml=!parties.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">اختر ${customer?'عميلًا':'موردًا'} من الفلتر لعرض كشف الحساب</td></tr>`:(!rows.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">لا توجد حركات مطابقة للفترة</td></tr>`:'');
-  const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع','البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
+  const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع']).concat(det?['القطر','الصنف','الكمية','الوزن الفعلي (طن)']:[]).concat(['البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
   el.innerHTML=`<style>
 /* ===== كشف الحساب — تنسيق احترافي ===== */
 #content .ps-totals{margin-bottom:10px}
@@ -7270,7 +7331,7 @@ function renderPartyStatement(){
   <div class="sales-inst-table-card"><div class="sales-inst-table-head"><h3>تفاصيل الحركات</h3><span class="count">${rows.length} حركة مطابقة للفلاتر · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · ${escapeHtml(f.from||'البداية')} ← ${escapeHtml(f.to||'الآن')} · العملة ${escapeHtml(cur)}</span></div>
     <div class="sales-inst-table-wrap"><table class="sales-inst-table ps-inst-table"><thead><tr>${headCols.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${openRowsHtml}${dataRowsHtml}${emptyHtml}</tbody>
-      <tfoot><tr><td colspan="${multi?4:3}" style="text-align:right">الإجمالي</td><td class="si-num">${money(inclusive)}</td><td class="si-num">${money(deb)}</td><td class="si-num">${money(cred)}</td><td class="si-num">${money(final)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="${(multi?4:3)+(det?4:0)}" style="text-align:right">الإجمالي</td><td class="si-num">${money(inclusive)}</td><td class="si-num">${money(deb)}</td><td class="si-num">${money(cred)}</td><td class="si-num">${money(final)}</td></tr></tfoot>
     </table></div></div>`;
 }
 function openPartyStatementQueue(reports,title){
@@ -7395,7 +7456,7 @@ tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-w
 tfoot td.n{direction:ltr;font-variant-numeric:tabular-nums}
 .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
 @media print{
-  @page{size:A4 portrait;margin:6mm}
+  @page{size:A4 landscape;margin:6mm}
   body{padding:0;background:#fff}
   .doc{box-shadow:none;border-radius:0;padding:4px 6px}
   .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px 7px}
@@ -7416,17 +7477,19 @@ function psDocParts(kind,partyName){
   const kc=(l,v,s,c,cls)=>`<div class="kc ${cls||''}" style="border-top-color:${c}"><div class="kl">${l}</div><div class="kv">${v}</div><div class="ks">${s||'&nbsp;'}</div></div>`;
   const kpis=`<div class="kgrid">${kc('عدد الحركات',rows.length,'حركة','#64748b','sm')}${kc('رصيد أول المدة',money(opening),escapeHtml(cur),'#6366f1')}${kc('إجمالي السعر الشامل',money(inclusive),escapeHtml(cur),'#1e40af')}${kc('إجمالي المدين',money(totalDebit),escapeHtml(cur),'#b91c1c')}${kc('إجمالي الدائن',money(totalCredit),escapeHtml(cur),'#16a34a')}${kc('الرصيد الختامي',`<span style="color:${balanceColor}">${money(Math.abs(running))}</span>`,escapeHtml(balanceLabel),balanceColor)}</div>`;
   const scope=[f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار','الفترة: '+(f.from||'بداية غير محددة')+' ← '+(f.to||'نهاية غير محددة')];
-  const openRow=`<tr class="open"><td>${escapeHtml(f.from||'—')}</td><td>—</td><td class="d"><b>رصيد أول المدة</b></td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n bal">${money(opening)}</td></tr>`;
-  const body=openRow+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td class="o">${escapeHtml(String(r.order||'—'))}</td><td class="d">${escapeHtml(r.desc)}</td><td class="n">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="n dr">${+r.debit?money(r.debit):'—'}</td><td class="n cr">${+r.credit?money(r.credit):'—'}</td><td class="n bal">${money(r.balance)}</td></tr>`).join('');
+  const det=f.view!=='summary', qf=v=>Number(v||0).toLocaleString('en-US',{maximumFractionDigits:3}), wf=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3});
+  const dB=det?'<td>—</td><td>—</td><td class="n">—</td><td class="n">—</td>':'';
+  const openRow=`<tr class="open"><td>${escapeHtml(f.from||'—')}</td><td>—</td>${dB}<td class="d"><b>رصيد أول المدة</b></td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n bal">${money(opening)}</td></tr>`;
+  const body=openRow+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td class="o">${escapeHtml(String(r.order||'—'))}</td>${det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="n">${qf(r.quantity)}</td><td class="n">${wf(r.actualWeight)}</td>`:dB):''}<td class="d">${escapeHtml(r.desc)}</td><td class="n">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="n dr">${+r.debit?money(r.debit):'—'}</td><td class="n cr">${+r.credit?money(r.credit):'—'}</td><td class="n bal">${money(r.balance)}</td></tr>`).join('');
   const now=new Date();
   const html=`<div class="doc">
     <div class="hdr"><div class="hmain"><div class="hl"><div class="emoji">${customer?'🧑‍💼':'🏭'}</div><div><h1>${title}</h1><div class="en">${customer?'CUSTOMER ACCOUNT STATEMENT':'SUPPLIER ACCOUNT STATEMENT'}</div></div></div>
       <div class="hr"><div class="mi"><span>تاريخ التقرير</span><b>${now.toLocaleDateString('en-GB')}</b></div><div class="mi"><span>عدد الحركات</span><b>${rows.length}</b></div><div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div><div class="mi"><span>${customer?'العميل':'المورد'}</span><b style="direction:rtl">${escapeHtml(partyName)}</b></div></div></div>
       <div class="hscope"><span class="fl">نطاق التقرير</span>${scope.map(x=>`<span class="fchip">${escapeHtml(x)}</span>`).join('')}</div></div>
     ${kpis}
-    <table><thead><tr><th>التاريخ</th><th>أمر البيع</th><th>البيان</th><th>السعر الشامل (${escapeHtml(cur)})</th><th>مدين (${escapeHtml(cur)})</th><th>دائن (${escapeHtml(cur)})</th><th>الرصيد الجاري (${escapeHtml(cur)})</th></tr></thead>
+    <table><thead><tr><th>التاريخ</th><th>أمر البيع</th>${det?'<th>القطر</th><th>الصنف</th><th>الكمية</th><th>الوزن (طن)</th>':''}<th>البيان</th><th>السعر الشامل (${escapeHtml(cur)})</th><th>مدين (${escapeHtml(cur)})</th><th>دائن (${escapeHtml(cur)})</th><th>الرصيد الجاري (${escapeHtml(cur)})</th></tr></thead>
     <tbody>${body}</tbody>
-    <tfoot><tr><td colspan="3" style="text-align:right">💰 الإجمالي والرصيد الختامي</td><td class="n">${money(inclusive)}</td><td class="n">${money(totalDebit)}</td><td class="n">${money(totalCredit)}</td><td class="n">${money(running)}</td></tr></tfoot></table>
+    <tfoot><tr><td colspan="${3+(det?4:0)}" style="text-align:right">💰 الإجمالي والرصيد الختامي</td><td class="n">${money(inclusive)}</td><td class="n">${money(totalDebit)}</td><td class="n">${money(totalCredit)}</td><td class="n">${money(running)}</td></tr></tfoot></table>
     <div class="fnote">تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — ${now.toLocaleString('en-GB')}</div></div>`;
   return {title,css:PS_DOC_CSS,html};
 }
@@ -24246,6 +24309,8 @@ body:not(#_) #content:has(section.dx){background:#f3f5f9}
   #content section.dx .dx-kpis.dx-k2[data-n="7"]:not(#_),
   #content section.dx .dx-kpis.dx-k2[data-n="8"]:not(#_){grid-template-columns:repeat(4,minmax(0,1fr))!important}
   #content section.dx .dx-kpis.dx-k2[data-n="6"]:not(#_){grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  #content section.dx .dx-kpis.dx-k2[data-n="11"]:not(#_),
+  #content section.dx .dx-kpis.dx-k2[data-n="12"]:not(#_){grid-template-columns:repeat(6,minmax(0,1fr))!important}
   #content section.dx .dx-kpis.dx-k2>.dx-kpi:not(#_){grid-column:auto!important}
 }
 @media(max-width:900px){
