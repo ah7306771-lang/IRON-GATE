@@ -1933,6 +1933,14 @@ table[data-rs-key="supply-grouped"] tfoot td{background:#f3f6fa!important;color:
  .dx-hero:after{width:200px;height:200px;top:-90px}
  .dx-chart{margin:0 -2px}}
 
+
+/* الرئيسية: صفّان تجاريان (مبيعات/مشتريات) × 4 كروت، ثم باقي الكروت بنفس العرض */
+@media(min-width:901px){
+  .dx-kpis.dx-k4{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .dx-kpis.dx-k4>*{grid-column:auto!important}
+}
+@media(min-width:641px) and (max-width:900px){.dx-kpis.dx-k4{grid-template-columns:repeat(2,minmax(0,1fr))}.dx-kpis.dx-k4>*{grid-column:auto!important}}
+.dx-kpis.dx-k4-trade{margin-bottom:14px}
 /* الرئيسية: توحيد أحجام الكروت + آخر الحركات + ارتفاع الرسم */
 @media(min-width:901px){
   .dx-kpis:has(>:nth-child(7):last-child){grid-template-columns:repeat(12,minmax(0,1fr))}
@@ -6472,14 +6480,16 @@ function viewDashboard(){
   const chartN=Math.max(6,P.n), months=[];
   for(let i=chartN-1;i>=0;i--){ const off=P.end+i, d=new Date(now.getFullYear(),now.getMonth()-off,1); months.push({k:mkAt(off),lbl:new Intl.DateTimeFormat('ar-EG-u-nu-latn',{month:'short'}).format(d),sales:0,coll:0}); }
   const mIdx=Object.fromEntries(months.map((m,i)=>[m.k,i]));
-  let salesMonth=0, salesPrev=0, salesDueMonth=0, taxMonth=0, buyMonth=0, buyPrev=0;
+  let salesMonth=0, salesPrev=0, salesDueMonth=0, taxMonth=0, buyMonth=0, buyPrev=0, buyNetMonth=0, buyNetPrev=0, buyTaxMonth=0, salesGrossMonth=0;
   const canBuyK = safe(()=>showBuy("supply"),false);
   const stamp="اليوم، "+new Intl.DateTimeFormat('ar-EG-u-nu-latn',{hour:'numeric',minute:'2-digit'}).format(now);
   safe(()=>arr("shipments").forEach(sh=>(sh.items||[]).forEach(it=>{
     const _a=supplyAmounts(sh,it), t=+_a.subtotal||0, td=+_a.total||0;   // المبيعات محاسبياً: قبل الضريبة وقبل الخصم؛ الصافي المستحق بيُستخدم لنسبة التحصيل بس
     const k=String(sh.date||"").slice(0,7);
     const _tx=+_a.tax||0, _by=+_a.buyTotal||0;
-    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; buyMonth+=_by; } if(prevKeys.has(k)){ salesPrev+=t; buyPrev+=_by; }
+    // سعر الشراء المسجل شامل الضريبة: نفصل صافي الشراء وضريبة المدخلات بنفس نسبة بوليصة التوريد
+    const _vr=(sh.applyVat!==false)?Math.max(0,((sh.vatPct==null||sh.vatPct==="")?(+state.settings.tax||14):+sh.vatPct)):0, _byNet=_vr?_by/(1+_vr/100):_by;
+    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; } if(prevKeys.has(k)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
     if(k in mIdx) months[mIdx[k]].sales+=t;
   })));
   let collMonth=0, collPrev=0, chequeSum=0, chequeN=0;
@@ -6533,10 +6543,14 @@ function viewDashboard(){
   const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="${/\(/.test(go_)?go_:`go('${go_}')`}"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
   const moneyKpis = canMoney ? `
       ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),periodGo('salesReport'))}
+      ${kpi('k-slate','%','قيمة مضافة مبيعات '+P.s,money(taxMonth)+' <em>'+cur+'</em>','ضريبة القيمة المضافة على مبيعات الفترة','salesReport')}
+      ${canBuyK?kpi((salesMonth-buyNetMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (قبل الضريبة)',money(salesMonth-buyNetMonth)+' <em>'+cur+'</em>','هامش '+(salesMonth>0?Math.round((salesMonth-buyNetMonth)/salesMonth*100):0)+'% · مبيعات − مشتريات (قبل الضريبة)','supply','الربح التجاري = مبيعات الفترة قبل الضريبة − صافي الشراء قبل ضريبة المدخلات'):''}
+      ${kpi('k-blue','Σ','إجمالي قيمة المبيعات بعد الضرائب',money(salesGrossMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة + القيمة المضافة',periodGo('salesReport'))}
+      ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (قبل الضريبة)',money(buyNetMonth)+' <em>'+cur+'</em>',(delta(buyNetMonth,buyNetPrev)===null?'بدون مقارنة':chip(delta(buyNetMonth,buyNetPrev))+' عن '+P.cmp),'supply'):''}
+      ${canBuyK?kpi('k-slate','%','قيمة مضافة مشتريات '+P.s,money(buyTaxMonth)+' <em>'+cur+'</em>','ضريبة المدخلات المستقطعة من أسعار الشراء','supply'):''}
+      ${canBuyK?kpi((salesGrossMonth-buyMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (بعد الضريبة)',money(salesGrossMonth-buyMonth)+' <em>'+cur+'</em>','مبيعات − مشتريات (شامل الضريبة)','supply','الربح بعد الضرائب = إجمالي المبيعات شامل القيمة المضافة − إجمالي المشتريات شامل الضريبة'):''}
+      ${canBuyK?kpi('k-red','Σ','إجمالي قيمة المشتريات بعد الضرائب',money(buyMonth)+' <em>'+cur+'</em>','المشتريات قبل الضريبة + القيمة المضافة','supply'):''}
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),periodGo('receipts'))}
-      ${kpi('k-slate','%','ضريبة المبيعات '+P.s,money(taxMonth)+' <em>'+cur+'</em>','ضريبة القيمة المضافة على مبيعات الفترة','salesReport')}
-      ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (تكلفة)',money(buyMonth)+' <em>'+cur+'</em>',(delta(buyMonth,buyPrev)===null?'بدون مقارنة':chip(delta(buyMonth,buyPrev))+' عن '+P.cmp),'supply'):''}
-      ${canBuyK?kpi((salesMonth-buyMonth)>=0?'k-green':'k-red','★','إجمالي الربح '+P.s,money(salesMonth-buyMonth)+' <em>'+cur+'</em>','هامش '+(salesMonth>0?Math.round((salesMonth-buyMonth)/salesMonth*100):0)+'% · المبيعات − المشتريات','supply','الربح = مبيعات الفترة (قبل الضريبة) − تكلفة الشراء للبضاعة الموردة'):''}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
       ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
@@ -6609,7 +6623,7 @@ function viewDashboard(){
       <div class="dx-stamp"><span>آخر تحديث: <b>${stamp}</b></span><button type="button" onclick="dxRefresh()" aria-label="تحديث البيانات" title="تحديث">↻</button></div>
     </div>
 
-    <div class="dx-kpis dx-k2" data-n="${(moneyKpis.match(/class=\"dx-kpi /g)||[]).length}">${moneyKpis}</div>
+    ${(()=>{const parts=moneyKpis.split('<button class="dx-kpi ').filter(x=>x.trim()).map(x=>'<button class="dx-kpi '+x);const g=n=>parts.slice(n[0],n[1]).join('');return canMoney&&canBuyK?`<div class="dx-kpis dx-k4 dx-k4-trade">${g([0,8])}</div><div class="dx-kpis dx-k4">${g([8])}</div>`:`<div class="dx-kpis dx-k2" data-n="${parts.length}">${moneyKpis}</div>`;})()}
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
     `:""}
 
@@ -7229,7 +7243,7 @@ function partyStatementRows(kind,opts){
       const qty=+it.supplyQty||0, weight=+it.actualWeight||0;
       const desc=(customer?'مبيعات':'مشتريات')+' — أمر بيع '+order+' — قطر '+diameter+' — '+type;
       if(q&&!(order+' '+diameter+' '+type+' '+factory+' '+desc+' '+(s.notes||'')).toLowerCase().includes(q)) return;
-      rows.push({date:s.date,party,ref:'',order,orderKey:String(s.saleOrderId||s.saleOrderNo||('policy:'+s.id)),diameter,type,factory,desc,debit:customer?amount:0,credit:customer?0:amount,inclusiveTotal:amount,quantity:qty,actualWeight:weight,source:'supply',sortRef:order+'-'+idx,unique});
+      rows.push({date:s.date,party,ref:'',order,orderKey:String(s.saleOrderId||s.saleOrderNo||('policy:'+s.id)),diameter,type,factory,desc,debit:customer?amount:0,credit:customer?0:amount,inclusiveTotal:amount,quantity:qty,actualWeight:weight,unitPrice:customer?(+it.sellPrice||0):(+it.buyPrice||0),source:'supply',sortRef:order+'-'+idx,unique});
     });
   });
   // التحصيلات والمدفوعات: نحتفظ برقم السند داخلياً للبحث فقط، ولا نعرض أرقام البوالص أو السندات في الكشف.
@@ -7291,14 +7305,14 @@ function renderPartyStatement(){
   const balanceColor = final>=0 ? (customer?'#dc2626':'#059669') : (customer?'#059669':'#dc2626');
   const bal2=final>=0?(customer?'late':'ok'):(customer?'ok':'late');
   const kcards=[["عدد الحركات",rows.length,"حركة",""],["رصيد أول المدة",money(openTotal),cur,""],["إجمالي السعر الشامل",money(inclusive),cur,""],["إجمالي المدين",money(deb),cur,"late"],["إجمالي الدائن",money(cred),cur,"ok"],[balanceLabel,money(Math.abs(final)),cur,bal2]];
-  const multi=parties.length>1, det=f.view!=='summary', ncol=(multi?8:7)+(det?4:0);
-  const detTd=r=>det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="si-num">${qty(r.quantity)}</td><td class="si-num">${(+r.actualWeight||0).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td>`:'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td>'):'';
-  const detBlank=det?'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td>':'';
+  const multi=parties.length>1, det=f.view!=='summary', ncol=(multi?8:7)+(det?5:0);
+  const detTd=r=>det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="si-num">${qty(r.quantity)}</td><td class="si-num">${(+r.actualWeight||0).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td><td class="si-num">${money(r.unitPrice)}</td>`:'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td>'):'';
+  const detBlank=det?'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td>':'';
   const partyTd=p=>multi?`<td class="ps-party">${escapeHtml(p||'—')}</td>`:'';
   const openRowsHtml=parties.map(p=>`<tr class="ps-open"><td>${escapeHtml(f.from||'—')}</td>${partyTd(p)}<td>—</td>${detBlank}<td class="ps-desc"><b>رصيد أول المدة</b></td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num ps-bal">${money(openMap.get(p)||0)}</td></tr>`).join('');
   const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
   const emptyHtml=!parties.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">اختر ${customer?'عميلًا':'موردًا'} من الفلتر لعرض كشف الحساب</td></tr>`:(!rows.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">لا توجد حركات مطابقة للفترة</td></tr>`:'');
-  const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع']).concat(det?['القطر','الصنف','الكمية','الوزن الفعلي (طن)']:[]).concat(['البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
+  const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع']).concat(det?['القطر','الصنف','الكمية','الوزن الفعلي (طن)','سعر الوحدة (شامل)']:[]).concat(['البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
   el.innerHTML=`<style>
 /* ===== كشف الحساب — تنسيق احترافي ===== */
 #content .ps-totals{margin-bottom:10px}
@@ -7331,7 +7345,7 @@ function renderPartyStatement(){
   <div class="sales-inst-table-card"><div class="sales-inst-table-head"><h3>تفاصيل الحركات</h3><span class="count">${rows.length} حركة مطابقة للفلاتر · ${f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار'} · ${escapeHtml(f.from||'البداية')} ← ${escapeHtml(f.to||'الآن')} · العملة ${escapeHtml(cur)}</span></div>
     <div class="sales-inst-table-wrap"><table class="sales-inst-table ps-inst-table"><thead><tr>${headCols.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${openRowsHtml}${dataRowsHtml}${emptyHtml}</tbody>
-      <tfoot><tr><td colspan="${(multi?4:3)+(det?4:0)}" style="text-align:right">الإجمالي</td><td class="si-num">${money(inclusive)}</td><td class="si-num">${money(deb)}</td><td class="si-num">${money(cred)}</td><td class="si-num">${money(final)}</td></tr></tfoot>
+      <tfoot><tr><td colspan="${(multi?4:3)+(det?5:0)}" style="text-align:right">الإجمالي</td><td class="si-num">${money(inclusive)}</td><td class="si-num">${money(deb)}</td><td class="si-num">${money(cred)}</td><td class="si-num">${money(final)}</td></tr></tfoot>
     </table></div></div>`;
 }
 function openPartyStatementQueue(reports,title){
@@ -7478,18 +7492,18 @@ function psDocParts(kind,partyName){
   const kpis=`<div class="kgrid">${kc('عدد الحركات',rows.length,'حركة','#64748b','sm')}${kc('رصيد أول المدة',money(opening),escapeHtml(cur),'#6366f1')}${kc('إجمالي السعر الشامل',money(inclusive),escapeHtml(cur),'#1e40af')}${kc('إجمالي المدين',money(totalDebit),escapeHtml(cur),'#b91c1c')}${kc('إجمالي الدائن',money(totalCredit),escapeHtml(cur),'#16a34a')}${kc('الرصيد الختامي',`<span style="color:${balanceColor}">${money(Math.abs(running))}</span>`,escapeHtml(balanceLabel),balanceColor)}</div>`;
   const scope=[f.view==='summary'?'إجمالي حسب أمر البيع':'تفصيلي بالأقطار','الفترة: '+(f.from||'بداية غير محددة')+' ← '+(f.to||'نهاية غير محددة')];
   const det=f.view!=='summary', qf=v=>Number(v||0).toLocaleString('en-US',{maximumFractionDigits:3}), wf=v=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3});
-  const dB=det?'<td>—</td><td>—</td><td class="n">—</td><td class="n">—</td>':'';
+  const dB=det?'<td>—</td><td>—</td><td class="n">—</td><td class="n">—</td><td class="n">—</td>':'';
   const openRow=`<tr class="open"><td>${escapeHtml(f.from||'—')}</td><td>—</td>${dB}<td class="d"><b>رصيد أول المدة</b></td><td class="n">—</td><td class="n">—</td><td class="n">—</td><td class="n bal">${money(opening)}</td></tr>`;
-  const body=openRow+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td class="o">${escapeHtml(String(r.order||'—'))}</td>${det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="n">${qf(r.quantity)}</td><td class="n">${wf(r.actualWeight)}</td>`:dB):''}<td class="d">${escapeHtml(r.desc)}</td><td class="n">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="n dr">${+r.debit?money(r.debit):'—'}</td><td class="n cr">${+r.credit?money(r.credit):'—'}</td><td class="n bal">${money(r.balance)}</td></tr>`).join('');
+  const body=openRow+rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td><td class="o">${escapeHtml(String(r.order||'—'))}</td>${det?(r.source==='supply'?`<td>${escapeHtml(String(r.diameter||'—'))}</td><td>${escapeHtml(String(r.type||'—'))}</td><td class="n">${qf(r.quantity)}</td><td class="n">${wf(r.actualWeight)}</td><td class="n">${money(r.unitPrice)}</td>`:dB):''}<td class="d">${escapeHtml(r.desc)}</td><td class="n">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="n dr">${+r.debit?money(r.debit):'—'}</td><td class="n cr">${+r.credit?money(r.credit):'—'}</td><td class="n bal">${money(r.balance)}</td></tr>`).join('');
   const now=new Date();
   const html=`<div class="doc">
     <div class="hdr"><div class="hmain"><div class="hl"><div class="emoji">${customer?'🧑‍💼':'🏭'}</div><div><h1>${title}</h1><div class="en">${customer?'CUSTOMER ACCOUNT STATEMENT':'SUPPLIER ACCOUNT STATEMENT'}</div></div></div>
       <div class="hr"><div class="mi"><span>تاريخ التقرير</span><b>${now.toLocaleDateString('en-GB')}</b></div><div class="mi"><span>عدد الحركات</span><b>${rows.length}</b></div><div class="mi"><span>العملة</span><b>${escapeHtml(cur)}</b></div><div class="mi"><span>${customer?'العميل':'المورد'}</span><b style="direction:rtl">${escapeHtml(partyName)}</b></div></div></div>
       <div class="hscope"><span class="fl">نطاق التقرير</span>${scope.map(x=>`<span class="fchip">${escapeHtml(x)}</span>`).join('')}</div></div>
     ${kpis}
-    <table><thead><tr><th>التاريخ</th><th>أمر البيع</th>${det?'<th>القطر</th><th>الصنف</th><th>الكمية</th><th>الوزن (طن)</th>':''}<th>البيان</th><th>السعر الشامل (${escapeHtml(cur)})</th><th>مدين (${escapeHtml(cur)})</th><th>دائن (${escapeHtml(cur)})</th><th>الرصيد الجاري (${escapeHtml(cur)})</th></tr></thead>
+    <table><thead><tr><th>التاريخ</th><th>أمر البيع</th>${det?'<th>القطر</th><th>الصنف</th><th>الكمية</th><th>الوزن (طن)</th><th>سعر الوحدة (شامل)</th>':''}<th>البيان</th><th>السعر الشامل (${escapeHtml(cur)})</th><th>مدين (${escapeHtml(cur)})</th><th>دائن (${escapeHtml(cur)})</th><th>الرصيد الجاري (${escapeHtml(cur)})</th></tr></thead>
     <tbody>${body}</tbody>
-    <tfoot><tr><td colspan="${3+(det?4:0)}" style="text-align:right">💰 الإجمالي والرصيد الختامي</td><td class="n">${money(inclusive)}</td><td class="n">${money(totalDebit)}</td><td class="n">${money(totalCredit)}</td><td class="n">${money(running)}</td></tr></tfoot></table>
+    <tfoot><tr><td colspan="${3+(det?5:0)}" style="text-align:right">💰 الإجمالي والرصيد الختامي</td><td class="n">${money(inclusive)}</td><td class="n">${money(totalDebit)}</td><td class="n">${money(totalCredit)}</td><td class="n">${money(running)}</td></tr></tfoot></table>
     <div class="fnote">تم إنشاء التقرير بواسطة نظام IRON GATE SUPPLIES — ${now.toLocaleString('en-GB')}</div></div>`;
   return {title,css:PS_DOC_CSS,html};
 }
