@@ -4167,7 +4167,7 @@ function go(page){
   document.getElementById("pageCrumb").textContent = t[1];
   const c = document.getElementById("content");
   if(page==="dashboard") c.innerHTML = viewDashboard();
-  if(page==="dashboard") dxTopGreeting();
+  if(page==="dashboard"){ dxTopGreeting(); try{ dxFixPeriodScroll(); }catch(_){} }
   else if(page==="master") { c.innerHTML = viewMaster(); bindMaster(); }
   else if(page==="inventory") { const allowed=inventoryTabDefs().filter(t=>canTab("inventory",t.id)); if(!allowed.some(t=>t.id===inventoryTab))inventoryTab=allowed.length?allowed[0].id:"warehouses"; c.innerHTML = viewInventory(); if(inventoryTab!=="warehouses"&&inventoryTab!=="items") inventoryLoad().then(()=>{if(currentPage==="inventory"){const el=document.getElementById("content");if(el)el.innerHTML=viewInventory();}}); }
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
@@ -6252,7 +6252,8 @@ const DASH_PERIODS=[
   {k:"12m",l:"آخر 12 شهر",s:"12 شهر",n:12,end:0,cmp:"الفترة السابقة"}];
 function dxSetPeriod(k){ dashPeriod=k; try{ localStorage.setItem("irongate_dash_period",k); }catch(e){} dxRerender(); }
 let _dxRz=null; window.addEventListener("resize",()=>{ clearTimeout(_dxRz); _dxRz=setTimeout(()=>{ try{ if(currentPage==="dashboard") dxRerender(); }catch(_){} },250); });
-function dxRerender(){ if(currentPage!=="dashboard") return; const c=document.getElementById("content"); if(c) c.innerHTML=viewDashboard(); }
+function dxFixPeriodScroll(){ try{ const b=document.querySelector(".dx-periods button.on"); if(b&&b.scrollIntoView) b.scrollIntoView({inline:"center",block:"nearest"}); }catch(e){} }
+function dxRerender(){ if(currentPage!=="dashboard") return; const c=document.getElementById("content"); if(c){ c.innerHTML=viewDashboard(); dxFixPeriodScroll(); } }
 function dxTopGreeting(){
   try{
     const now=new Date(), hr=now.getHours(), greet=hr<12?"صباح الخير":(hr<18?"مساء الخير":"مساء النور");
@@ -6419,12 +6420,12 @@ function viewDashboard(){
   const chartN=Math.max(6,P.n), months=[];
   for(let i=chartN-1;i>=0;i--){ const off=P.end+i, d=new Date(now.getFullYear(),now.getMonth()-off,1); months.push({k:mkAt(off),lbl:new Intl.DateTimeFormat('ar-EG-u-nu-latn',{month:'short'}).format(d),sales:0,coll:0}); }
   const mIdx=Object.fromEntries(months.map((m,i)=>[m.k,i]));
-  let salesMonth=0, salesPrev=0;
+  let salesMonth=0, salesPrev=0, salesDueMonth=0;
   const stamp="اليوم، "+new Intl.DateTimeFormat('ar-EG-u-nu-latn',{hour:'numeric',minute:'2-digit'}).format(now);
   safe(()=>arr("shipments").forEach(sh=>(sh.items||[]).forEach(it=>{
-    const t=+supplyAmounts(sh,it).total||0;
+    const _a=supplyAmounts(sh,it), t=+_a.subtotal||0, td=+_a.total||0;   // المبيعات محاسبياً: قبل الضريبة وقبل الخصم؛ الصافي المستحق بيُستخدم لنسبة التحصيل بس
     const k=String(sh.date||"").slice(0,7);
-    if(periodKeys.has(k)) salesMonth+=t; if(prevKeys.has(k)) salesPrev+=t;
+    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; } if(prevKeys.has(k)) salesPrev+=t;
     if(k in mIdx) months[mIdx[k]].sales+=t;
   })));
   let collMonth=0, collPrev=0, chequeSum=0, chequeN=0;
@@ -6477,7 +6478,7 @@ function viewDashboard(){
   const chqFollowTotal=chqRows.reduce((sum,x)=>sum+(Number(x.e.amount)||0),0);
   const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="${/\(/.test(go_)?go_:`go('${go_}')`}"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
   const moneyKpis = canMoney ? `
-      ${kpi('k-gold','◈','مبيعات '+P.s,money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),periodGo('salesReport'))}
+      ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),periodGo('salesReport'))}
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
@@ -6556,7 +6557,7 @@ function viewDashboard(){
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>المبيعات مقابل التحصيل</h3><small>${P.end===0?`آخر ${chartN} ${chartN>10?'شهر':'شهور'}`:`${chartN} شهور حتى ${months[months.length-1].lbl}`}</small></div><div class="dx-legend"><span><i class="l1"></i>مبيعات</span><span><i class="l2"></i>تحصيل</span></div></div>
         ${canMoney?svg:`<div class="dx-empty">لا تملك صلاحية عرض الأرقام المالية</div>`}
-        ${canMoney?`<div class="dx-sum"><div><small>تحصيلات ${P.l} ÷ مبيعاتها</small><b>${salesMonth>0?Math.round(collMonth/salesMonth*100):0}%</b></div><div><small>${salesMonth>=collMonth?"مبيعات لم تُحصَّل بعد":"تحصيل زائد عن المبيعات"}</small><b>${money(Math.abs(salesMonth-collMonth))} ${cur}</b></div></div>`:""}
+        ${canMoney?`<div class="dx-sum"><div><small>تحصيلات ${P.l} ÷ صافي مبيعاتها (شامل الضريبة)</small><b>${salesDueMonth>0?Math.round(collMonth/salesDueMonth*100):0}%</b></div><div><small>${salesDueMonth>=collMonth?"مبيعات لم تُحصَّل بعد":"تحصيل زائد عن المبيعات"}</small><b>${money(Math.abs(salesDueMonth-collMonth))} ${cur}</b></div></div>`:""}
       </div>
       <div class="dx-card">
         <div class="dx-card-h"><div><h3>آخر الحركات</h3><small>أحدث العمليات في النظام</small></div></div>
@@ -6671,7 +6672,7 @@ function trDashChip(net){
   const f=tradeReportFilters.salesReport, d=f&&f.dashRange;
   if(!d||d.from!==f.from||d.to!==f.to) return "";
   const cur=state.settings.currency||'جنيه', m=Number(net||0).toLocaleString('en-US',{maximumFractionDigits:0});
-  return `<div class="tx-dash-chip" role="status"><span>↗ من لوحة التحكم: مبيعات من <b>${escapeHtml(d.from)}</b> إلى <b>${escapeHtml(d.to)}</b> — صافي المبيعات <b>${m}</b> ${escapeHtml(cur)} (نفس رقم الكارت)</span><button type="button" class="btn ghost sm" onclick="tradeReportFilters.salesReport.dashRange=null;tradeReportFilters.salesReport.from=igYearStart();tradeReportFilters.salesReport.to=igYearEnd();go('salesReport')">✕ كل السنة</button></div>`;
+  return `<div class="tx-dash-chip" role="status"><span>↗ من لوحة التحكم: مبيعات من <b>${escapeHtml(d.from)}</b> إلى <b>${escapeHtml(d.to)}</b> — المبيعات قبل الضريبة <b>${m}</b> ${escapeHtml(cur)} (نفس رقم الكارت)</span><button type="button" class="btn ghost sm" onclick="tradeReportFilters.salesReport.dashRange=null;tradeReportFilters.salesReport.from=igYearStart();tradeReportFilters.salesReport.to=igYearEnd();go('salesReport')">✕ كل السنة</button></div>`;
 }
 function tradeReportQuickRange(kind,range){
   const f=tradeReportFilters[kind], now=new Date(), iso=d=>{const x=new Date(d.getTime()-d.getTimezoneOffset()*60000);return x.toISOString().slice(0,10);};
@@ -6717,7 +6718,7 @@ function renderTradeReport(){
     const head=['التاريخ','رقم أمر البيع','العميل','المورد','الكمية المطلوبة (طن)','الوزن المورد (طن)','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','الحالة'];
     const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" aria-label="عرض تفاصيل أمر البيع" onclick="tradeReportOpenRow('${kind}',${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tradeReportOpenRow('${kind}',${i})}"><td>${escapeHtml(r.date||'—')}</td><td><b>${escapeHtml(r.order||'—')}</b></td><td>${escapeHtml(r.customer||'—')}</td><td>${escapeHtml(r.supplier||'—')}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.subtotal)}</td><td class="num">${money(r.tax)}</td><td class="num">${money(r.discount)}</td><td class="num"><b>${money(r.net)}</b></td><td><span class="chip ${r.status==='مقفول'?'ok':'warn'}">${r.status}</span></td></tr>`).join('');
     const total=`<td colspan="4">إجمالي النتائج المفلترة</td><td class="num">${sum('qty').toFixed(3)}</td><td class="num">${sum('weight').toFixed(3)}</td><td class="num">${money(sum('subtotal'))}</td><td class="num">${money(sum('tax'))}</td><td class="num">${money(sum('discount'))}</td><td class="num">${money(sum('net'))}</td><td></td>`;
-    el.innerHTML=trDashChip(sum('net'))+trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد أوامر البيع'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد أوامر البيع'?'أمر بيع':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>ملخص المبيعات حسب أمر البيع</h3><span class="count">${rows.length} أمر بيع مطابق للفلاتر · بدون تفاصيل البوالص</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="min-width:1050px"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد أوامر بيع مطابقة للفلاتر</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${total}</tr></tfoot>`:''}</table></div></div></div>`;
+    el.innerHTML=trDashChip(sum('subtotal'))+trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد أوامر البيع'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد أوامر البيع'?'أمر بيع':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>ملخص المبيعات حسب أمر البيع</h3><span class="count">${rows.length} أمر بيع مطابق للفلاتر · بدون تفاصيل البوالص</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" style="min-width:1050px"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد أوامر بيع مطابقة للفلاتر</div></td></tr>`}</tbody>${rows.length?`<tfoot><tr>${total}</tr></tfoot>`:''}</table></div></div></div>`;
     el.innerHTML += trBar('ana','trAnaBar','📈 التحليلات والملخصات التفصيلية')+`<div id="trAna" style="${trUi.ana?'':'display:none'}">${renderSalesAnalytics(rows)}</div>`;
     return;
   }
@@ -11146,6 +11147,7 @@ function viewSupply(){
     ${canTab("supply","customer")?`<button type="button" role="tab" aria-selected="${supBreak==='customer'}" class="supply-tab ${supBreak==='customer'?'active':''}" onclick="supToggleBreak('customer')">♙ مبالغ العملاء</button>`:""}
     ${canTab("supply","supplier")?`<button type="button" role="tab" aria-selected="${supBreak==='supplier'}" class="supply-tab ${supBreak==='supplier'?'active':''}" onclick="supToggleBreak('supplier')">▦ مبالغ الموردين</button>`:""}
     ${canTab("supply","grouped")?`<button type="button" role="tab" aria-selected="${supFilter.grouped&&!supBreak}" class="supply-tab ${supFilter.grouped&&!supBreak?'active':''}" onclick="supSetView(true)">▧ تجميع حسب أمر البيع</button>`:""}
+    <span class="sup-stk-slot" id="supStkSlot"></span>
   </div>
   <div id="supOrderChip"></div>
   <div class="sup-sum-bar ${supFiltOpen?'':'closed'}" id="supFiltBar" onclick="supToggleFilt()"><span class="arr">▾</span> 🔍 البحث والفلاتر<span id="supFiltBadge" class="chip warn" style="display:none"></span><span class="hint">اضغط للإخفاء / الإظهار</span></div>
@@ -11302,6 +11304,7 @@ function renderSupply(){
     const active=i===0?!supBreak&&!supFilter.grouped:i===1?supBreak==="customer":i===2?supBreak==="supplier":supFilter.grouped&&!supBreak;
     tab.classList.toggle("active",active); tab.setAttribute("aria-selected",String(active));
   });
+  { const _sl=document.getElementById("supStkSlot"); if(_sl && !(supFilter.grouped&&!supBreak)) _sl.innerHTML=""; }
   const fb=document.getElementById("supFiltBadge");
   if(fb){ const n=supFiltCount(); fb.textContent=n?`${n} فلتر مفعّل`:""; fb.style.display=n?"":"none"; }
   const container = document.getElementById("supView");
@@ -12085,7 +12088,10 @@ function supStkBarHtml(){
   const ready=!!window._supInvReady&&!inventoryError, n=v=>ready?v:"…";
   const cur=igMsNormArr(supFilter.groupStock).map(String), one=cur.length===1?cur[0]:"";
   const chip=(v,label,num,cls)=>`<button type="button" class="sup-qchip ${cls}${((v===""&&!cur.length)||(v!==""&&one===v))?" on":""}" onclick="supStockQuick('${v}')" title="فلتر سريع: ${label}"><span>${label}</span><b>${num}</b></button>`;
-  return `<div class="sup-qbar" role="group" aria-label="فلتر سريع للتسوية المخزنية">${chip("","كل الأوامر",c.total,"all")}${chip("unsettled","غير مسوّى",n(c.unsettled),"bad")}${chip("partial","مسوّى جزئيًا",n(c.partial),"mid")}${chip("settled","مسوّى",n(c.settled),"ok")}</div>`;
+  const _h=`<div class="sup-qbar" role="group" aria-label="فلتر سريع للتسوية المخزنية">${chip("","كل الأوامر",c.total,"all")}${chip("unsettled","غير مسوّى",n(c.unsettled),"bad")}${chip("partial","مسوّى جزئيًا",n(c.partial),"mid")}${chip("settled","مسوّى",n(c.settled),"ok")}</div>`;
+  const _slot=document.getElementById("supStkSlot");
+  if(_slot){ _slot.innerHTML=_h; return ""; }
+  return _h;
 }
 function supStockQuick(v){
   const cur=igMsNormArr(supFilter.groupStock).map(String);
@@ -20312,8 +20318,8 @@ function renderManagementReports(){
  const cur=state.settings.currency||'ج.م',money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),arr=k=>Array.isArray(state[k])?state[k]:[];
  const shipments=arr('shipments').filter(s=>igMgmtInRange(s.date||s.shipDate)),entries=arr('treasuryEntries').filter(e=>igMgmtInRange(e.date));
  const q=igMgmtFilter.q.trim().toLocaleLowerCase('ar');const matches=n=>!q||String(n||'').toLocaleLowerCase('ar').includes(q);
- const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0;
- shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;
+ const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0,subTot=0,outVat=0,inVat=0,profTax=0;
+ shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;subTot+=+a.subtotal||0;outVat+=+a.tax||0;profTax+=+a.discount||0;{const _ap=sh.applyVat!==false,_pc=(sh.vatPct==null||sh.vatPct==='')?(+state.settings.tax||14):(+sh.vatPct||0);if(_ap)inVat+=cost-cost/(1+Math.max(0,_pc)/100);}
  if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
  const order=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');let o=orders.get(order)||{sale:0,cost:0,qty:0,customer:c};o.sale+=sale;o.cost+=cost;o.qty+=qty;orders.set(order,o);
  }));
@@ -20322,11 +20328,12 @@ function renderManagementReports(){
  const inst=(()=>{try{return salesInstallmentBaseRows()}catch(e){return []}})().filter(x=>igMgmtInRange(x.due));
  const table=(id,heads,rows,foot='')=>`<div class="tbl-wrap"><table id="${id}" class="trade-report-table" style="width:100%;min-width:720px"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات مطابقة</td></tr>`}</tbody>${foot?`<tfoot>${foot}</tfoot>`:''}</table></div>`;
  const tools=id=>`<div class="ig-mgmt-tools"><button class="btn sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','print')">🖨 طباعة / PDF</button><button class="btn ghost sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','excel')">📊 Excel</button></div>`;
+const clientFiltered=[...clients].filter(([n])=>matches(n));const vendorFiltered=[...vendors].filter(([n])=>matches(n));
  const clientRows=clientFiltered.sort((a,b)=>(b[1].sale-b[1].cost)-(a[1].sale-a[1].cost)).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.sale)}</td><td>${money(x.qty)}</td><td>${money(coll.get(n)||0)}</td><td>${money(x.sale-(coll.get(n)||0))}</td><td>${money(x.sale-x.cost)}</td></tr>`).join('');
  const vendorRows=vendorFiltered.sort((a,b)=>b[1].buy-a[1].buy).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.buy)}</td><td>${money(paid.get(n)||0)}</td><td>${money(x.buy-(paid.get(n)||0))}</td><td>${money(x.qty)}</td><td>${x.qty?money(x.buy/x.qty):'—'}</td></tr>`).join('');
  const chequeSource=arr('treasuryEntries').filter(e=>e.method==='bank'&&igMgmtInRange(e.dueDate||e.date)&&matches(e.customer||e.supplier));
  const chequeRows=chequeSource.map(e=>`<tr><td>${escapeHtml(e.no||'—')}</td><td>${escapeHtml(e.customer||e.supplier||'—')}</td><td>${escapeHtml(e.dueDate||'—')}</td><td>${money(e.amount)}</td><td>${escapeHtml(({receivable:'مستحق',pending:'تحت التحصيل',deposited:'مودع',collected:'محصّل',returned:'مرتجع'})[e.status]||e.status||'—')}</td></tr>`).join('');
- const clientFiltered=[...clients].filter(([n])=>matches(n));const vendorFiltered=[...vendors].filter(([n])=>matches(n));
+ 
  const cTotals=clientFiltered.reduce((a,[n,x])=>{a.sale+=x.sale;a.qty+=x.qty;a.collected+=coll.get(n)||0;a.balance+=x.sale-(coll.get(n)||0);a.margin+=x.sale-x.cost;return a},{sale:0,qty:0,collected:0,balance:0,margin:0});
  const vTotals=vendorFiltered.reduce((a,[n,x])=>{a.buy+=x.buy;a.paid+=paid.get(n)||0;a.balance+=x.buy-(paid.get(n)||0);a.qty+=x.qty;return a},{buy:0,paid:0,balance:0,qty:0});
  const chTotals=chequeSource.reduce((a,e)=>{a.count++;a.amount+=+e.amount||0;const st=String(e.status||'').toLowerCase();if(st==='collected')a.collected+=+e.amount||0;else if(st==='returned')a.returned+=+e.amount||0;else a.open+=+e.amount||0;return a},{count:0,amount:0,collected:0,returned:0,open:0});
@@ -20334,7 +20341,7 @@ function renderManagementReports(){
  const supplierTimingNote='لا يوجد تاريخ استحقاق/موعد توريد مخطط موحد في البيانات الحالية؛ لذلك لا تُعرض نسبة الالتزام بالمواعيد حتى لا تكون تقديرية.';
  const vendorMetrics=`<p class="ig-mgmt-note">${supplierTimingNote} متوسط سعر الشراء محسوب من تكلفة التوريد المسجلة ÷ الوزن الفعلي.</p>`;
  el.innerHTML=`<section class="card"><div class="head"><h3>📌 فلاتر تقارير الإدارة</h3></div><div class="body"><div class="ig-mgmt-filter"><label>من تاريخ <input class="inp" type="date" value="${igMgmtFilter.from}" onchange="igMgmtFilter.from=this.value;renderManagementReports()"></label><label>إلى تاريخ <input class="inp" type="date" value="${igMgmtFilter.to}" onchange="igMgmtFilter.to=this.value;renderManagementReports()"></label><label>بحث عميل / مورد <input class="inp" value="${escapeAttr(igMgmtFilter.q)}" placeholder="اكتب الاسم" oninput="igMgmtFilter.q=this.value;renderManagementReports()"></label><button class="btn ghost sm" onclick="igMgmtFilter={from:'',to:'',q:''};renderManagementReports()">مسح الفلاتر</button></div></div></section>
- <section class="card"><div class="head"><h3>📊 لوحة مؤشرات الأداء KPI</h3><span class="count">حسب الفترة المحددة</span></div><div class="body"><div class="kpis"><div class="kpi"><div class="lbl">قيمة المبيعات</div><div class="val">${money(totalSales)} ${cur}</div></div><div class="kpi"><div class="lbl">تكلفة الشراء</div><div class="val">${money(totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">هامش الربح المسجل</div><div class="val">${money(totalSales-totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">الكمية الموردة</div><div class="val">${money(totalQty)} طن</div></div><div class="kpi"><div class="lbl">التحصيلات المسجلة</div><div class="val">${money([...coll.values()].reduce((a,b)=>a+b,0))} ${cur}</div></div><div class="kpi"><div class="lbl">الأقساط المتأخرة</div><div class="val">${money(overdue)} ${cur}</div></div><div class="kpi"><div class="lbl">أوامر البيع المفتوحة</div><div class="val">${ordersOpen}</div></div></div><p class="ig-mgmt-note">مؤشر الربح هنا فرق قيمة البيع وتكلفة الشراء للتوريدات المسجلة فقط؛ لا يشمل المصروفات العامة أو العهد، ولا يمثل صافي الربح المحاسبي.</p></div></section>
+ <section class="card"><div class="head"><h3>📊 لوحة مؤشرات الأداء KPI</h3><span class="count">حسب الفترة المحددة</span></div><div class="body"><div class="kpis"><div class="kpi"><div class="lbl">صافي المبيعات المستحق (شامل الضريبة بعد الخصم)</div><div class="val">${money(totalSales)} ${cur}</div></div><div class="kpi"><div class="lbl">تكلفة الشراء</div><div class="val">${money(totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">هامش الربح المسجل</div><div class="val">${money(totalSales-totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">الكمية الموردة</div><div class="val">${money(totalQty)} طن</div></div><div class="kpi"><div class="lbl">التحصيلات المسجلة</div><div class="val">${money([...coll.values()].reduce((a,b)=>a+b,0))} ${cur}</div></div><div class="kpi"><div class="lbl">الأقساط المتأخرة</div><div class="val">${money(overdue)} ${cur}</div></div><div class="kpi"><div class="lbl">أوامر البيع المفتوحة</div><div class="val">${ordersOpen}</div></div></div><div class="kpis" style="margin-top:10px"><div class="kpi"><div class="lbl">المبيعات قبل الضريبة</div><div class="val">${money(subTot)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مبيعات (مخرجات)</div><div class="val">${money(outVat)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مشتريات (مدخلات)</div><div class="val">${money(inVat)} ${cur}</div></div><div class="kpi"><div class="lbl">${outVat-inVat>=0?'صافي القيمة المضافة المستحقة':'صافي القيمة المضافة (رصيد قابل للخصم)'}</div><div class="val" style="color:${outVat-inVat>=0?'#b91c1c':'#15803d'}">${money(Math.abs(outVat-inVat))} ${cur}</div></div><div class="kpi"><div class="lbl">خصم ضريبة الأرباح التجارية والصناعية</div><div class="val">${money(profTax)} ${cur}</div></div><div class="kpi"><div class="lbl">قيمة المشتريات (قبل الضريبة)</div><div class="val">${money(totalCost-inVat)} ${cur}</div></div><div class="kpi"><div class="lbl">الربح (المبيعات − المشتريات قبل الضريبة)</div><div class="val" style="color:${subTot-(totalCost-inVat)>=0?'#15803d':'#b91c1c'}">${money(subTot-(totalCost-inVat))} ${cur}</div></div></div><p class="ig-mgmt-note">الربح = المبيعات قبل الضريبة − المشتريات قبل الضريبة للتوريدات المسجلة فقط، ولا يشمل المصروفات العامة، وخصم الأرباح التجارية والصناعية لا يُحسب مصروفًا. ضريبة المشتريات = تكلفة الشراء (شاملة الضريبة) ÷ (1 + نسبة الضريبة) بنسبة كل بوليصة، وللبوالص المطبّق عليها ضريبة فقط. خصم الأرباح التجارية والصناعية هو المخصوم من العملاء الخاضعين له (1%).</p><p class="ig-mgmt-note">مؤشر الربح هنا فرق قيمة البيع وتكلفة الشراء للتوريدات المسجلة فقط؛ لا يشمل المصروفات العامة أو العهد، ولا يمثل صافي الربح المحاسبي.</p></div></section>
  <section class="card"><div class="head"><h3>🏆 أفضل وأسوأ العملاء</h3><span class="count">ترتيب من الأعلى إلى الأقل حسب فرق البيع والشراء المسجل (ليس صافي ربح)</span></div><div class="body">${tools('igMgmtClients')}${table('igMgmtClients',['العميل','المبيعات ('+cur+')','الكمية (طن)','التحصيل ('+cur+')','المتبقي التقديري ('+cur+')','فرق البيع والشراء ('+cur+')'],clientRows,`<tr><th>الإجمالي</th><th>${money(cTotals.sale)}</th><th>${money(cTotals.qty)}</th><th>${money(cTotals.collected)}</th><th>${money(cTotals.balance)}</th><th>${money(cTotals.margin)}</th></tr>`)}</div></section>
  <section class="card"><div class="head"><h3>🏭 أداء الموردين</h3><span class="count">الأسعار والكميات والمدفوعات</span></div><div class="body">${vendorMetrics}${tools('igMgmtVendors')}${table('igMgmtVendors',['المورد','قيمة المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي التقديري ('+cur+')','الكمية الموردة (طن)','متوسط سعر الطن ('+cur+')'],vendorRows,`<tr><th>الإجمالي</th><th>${money(vTotals.buy)}</th><th>${money(vTotals.paid)}</th><th>${money(vTotals.balance)}</th><th>${money(vTotals.qty)}</th><th>${vTotals.qty?money(vTotals.buy/vTotals.qty):'—'}</th></tr>`)}</div></section>
  <section class="card"><div class="head"><h3>🧾 تقرير الشيكات</h3><span class="count">مستحق ومحصل ومرتجع وتواريخ الاستحقاق</span></div><div class="body">${tools('igMgmtCheques')}${table('igMgmtCheques',['رقم الشيك','العميل / المورد','تاريخ الاستحقاق','القيمة ('+cur+')','الحالة'],chequeRows,`<tr><th>الإجمالي (${chTotals.count} شيك)</th><th></th><th></th><th>${money(chTotals.amount)}</th><th>محصل: ${money(chTotals.collected)} · مرتجع: ${money(chTotals.returned)} · غير محصل/قيد المتابعة: ${money(chTotals.open)}</th></tr>`)}</div></section>`;
@@ -22831,6 +22838,160 @@ ${trLbl&&trLbl!=="—"?`<div class="f"><small>${trName}</small><b>${esc(trLbl)}<
 ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th>المبلغ</th></tr></thead><tbody>${glRows}</tbody><tfoot><tr><td colspan="4">إجمالي الحسابات</td><td class="m">${f2(glTot)}</td></tr></tfoot></table>`:""}
 <div class="sg"><div>${isIn?"المستلم":"المُصرِّف"}</div><div>المحاسب</div><div>المدير المالي</div><div>${isIn?"المُسلِّم (توقيع الدافع)":"المستلم (توقيع المورد)"}</div></div>
 <div class="ft"><span>طُبع بواسطة: ${esc(who||"—")}</span><span>${esc(now)}</span></div>
+
+<style id="dx-pro-final">
+/* ==========================================================================
+   لوحة التحكم — طبقة التنسيق النهائية (تغلب كل التعديلات السابقة على .dx)
+   نظام موحّد: مسافات 12/14px، زوايا 14px، لون الحدّ #dfe5ef، لون التمييز يدل على نوع المؤشر
+   ========================================================================== */
+#content .dx{--dxg:14px;--dx-r:14px;--dx-bd:#dfe5ef;--dx-sub:#5b6678;--dx-soft:#f6f8fb;--dx-navy:#0f2a52;display:block;max-width:1500px;margin-inline:auto}
+#content .dx :where(button){font-family:inherit}
+#content .dx button:focus-visible,#content .dx .dx-kpi:focus-visible{outline:2px solid var(--gold,#d4a017);outline-offset:2px}
+
+/* ---- شريط التنبيهات العلوي ---- */
+#content .dx .dx-pulse-hero{margin:0 0 var(--dxg)!important}
+#content .dx .dph-pulses{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:8px!important}
+#content .dx .dx-pulse{min-height:44px;padding:9px 14px!important;font-size:12.5px;line-height:1.55;border-radius:12px!important;flex:none}
+#content .dx .dx-pulse .dp-txt{overflow-wrap:anywhere}
+
+/* ---- شريط الفترة + آخر تحديث ---- */
+#content .dx .dx-bar{display:flex;align-items:center;justify-content:space-between;gap:10px 14px;flex-wrap:wrap;margin:0 0 var(--dxg)!important}
+#content .dx .dx-periods{display:inline-flex;gap:2px!important;padding:3px!important;background:#e8edf5;border-radius:12px;max-width:100%;overflow-x:auto;scrollbar-width:none}
+#content .dx .dx-periods::-webkit-scrollbar{display:none}
+#content .dx .dx-periods button{min-height:36px!important;padding:6px 16px!important;border:0!important;border-radius:9px!important;background:transparent!important;color:#334257;font-size:12.5px!important;font-weight:700;box-shadow:none}
+#content .dx .dx-periods button:hover{background:rgba(255,255,255,.7)!important}
+#content .dx .dx-periods button.on{background:var(--dx-navy)!important;color:#fff!important;box-shadow:0 3px 10px rgba(15,42,82,.28)}
+#content .dx .dx-stamp{display:flex;align-items:center;gap:8px;font-size:11.5px!important;color:var(--dx-sub)}
+#content .dx .dx-stamp button{width:34px!important;height:34px!important;font-size:16px!important;border:1px solid var(--dx-bd);background:#fff}
+
+/* ---- كروت المؤشرات: شبكة 12 عمود، الصف الأخير يتوزع بالتساوي ---- */
+#content .dx .dx-kpis{display:grid!important;grid-template-columns:repeat(12,minmax(0,1fr))!important;gap:12px!important;margin:0 0 10px!important}
+#content .dx .dx-kpis>*{grid-column:span 3!important}
+#content .dx .dx-kpis:has(>:nth-child(7):last-child)>:nth-child(n+5){grid-column:span 4!important}
+#content .dx .dx-kpis:has(>:nth-child(6):last-child)>*{grid-column:span 4!important}
+#content .dx .dx-kpis:has(>:nth-child(5):last-child)>*{grid-column:span 4!important}
+#content .dx .dx-kpis:has(>:nth-child(5):last-child)>:nth-child(n+4){grid-column:span 6!important}
+#content .dx .dx-kpis:has(>:nth-child(3):last-child)>*{grid-column:span 4!important}
+#content .dx .dx-kpi{display:flex!important;flex-direction:row!important;align-items:center!important;gap:12px!important;width:100%;min-height:84px;padding:14px 16px!important;border:1px solid var(--dx-bd)!important;border-inline-start:4px solid var(--kc,#9aa7bb)!important;border-radius:var(--dx-r)!important;background:#fff;box-shadow:0 1px 3px rgba(15,42,82,.05),0 6px 16px rgba(15,42,82,.04)!important;text-align:start}
+#content .dx .k-gold{--kc:#d4a017}#content .dx .k-green{--kc:#1f9d5c}#content .dx .k-blue{--kc:#2f6db5}#content .dx .k-red{--kc:#d4493b}#content .dx .k-slate{--kc:#64748b}
+#content .dx .dx-kpi-ic{width:40px!important;height:40px!important;border-radius:11px!important;font-size:19px!important;flex:none}
+#content .dx .dx-kpi-body{gap:3px!important;flex:1;min-width:0}
+#content .dx .dx-kpi-lbl{font-size:12px!important;line-height:1.45;color:var(--dx-sub);font-weight:700}
+#content .dx .dx-kpi strong{display:flex;align-items:baseline;flex-wrap:wrap;gap:2px 5px;font-size:clamp(18px,1.55vw,22px)!important;line-height:1.25;font-weight:800;white-space:normal!important;font-variant-numeric:tabular-nums;color:#16233b}
+#content .dx .dx-kpi strong em{font-size:11px!important;color:var(--dx-sub)}
+#content .dx .dx-kpi small{font-size:11px!important;line-height:1.5;color:var(--dx-sub)}
+@media(hover:hover){#content .dx .dx-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(15,42,82,.12)!important}}
+#content .dx .dx-note{margin:0 2px var(--dxg)!important;font-size:11px!important;color:var(--dx-sub);line-height:1.7}
+
+/* ---- البطاقات والأقسام ---- */
+#content .dx .dx-grid2{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:var(--dxg)!important;margin-bottom:var(--dxg)!important;align-items:stretch}
+#content .dx .dx-grid2b{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)}
+#content .dx .dx-card{padding:16px 18px!important;border:1px solid var(--dx-bd)!important;border-radius:var(--dx-r)!important;background:#fff;box-shadow:0 1px 3px rgba(15,42,82,.05),0 6px 16px rgba(15,42,82,.04)!important;margin-bottom:0!important;min-width:0}
+#content .dx .dx-chq{margin-top:var(--dxg)!important}
+#content .dx .dx-card-h{align-items:center!important;gap:10px;margin:0 0 12px!important;padding-bottom:10px;border-bottom:1px solid #eaeef5}
+#content .dx .dx-card-h h3{font-size:15px!important;font-weight:800;line-height:1.4;color:var(--dx-navy)}
+#content .dx .dx-card-h small{display:block;margin-top:2px;font-size:11.5px!important;color:var(--dx-sub);line-height:1.5}
+#content .dx .dx-link{min-height:34px;padding:4px 12px;border-radius:99px;background:#fbf4de;color:#7a5800!important;font-size:12px!important;font-weight:800;white-space:nowrap}
+#content .dx .dx-link:hover{background:#f5e8bb}
+#content .dx .dx-legend{align-items:center;gap:12px!important;font-size:11.5px!important;flex-wrap:wrap}
+
+/* ---- الرسم البياني + ملخص التحصيل ---- */
+#content .dx .dx-chart{width:100%;height:auto;max-height:300px}
+#content .dx .dx-sum{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important;margin-top:14px!important;padding:12px!important;border:0!important;border-radius:12px;background:var(--dx-soft)}
+#content .dx .dx-sum>div{min-width:0}
+#content .dx .dx-sum small{display:block;font-size:11.5px!important;line-height:1.5;color:var(--dx-sub)}
+#content .dx .dx-sum b{display:block;margin-top:3px;font-size:17px!important;font-weight:800;font-variant-numeric:tabular-nums;color:#16233b}
+
+/* ---- آخر الحركات ---- */
+#content .dx .dx-list>li{min-height:58px;padding:10px 4px!important;border-bottom:1px solid #eef1f6;gap:12px}
+#content .dx .dx-list>li:last-child{border-bottom:0}
+@media(hover:hover){#content .dx .dx-list>li:hover{background:var(--dx-soft);border-radius:10px}}
+#content .dx .dx-ico{width:36px!important;height:36px!important;border-radius:10px}
+#content .dx .dx-li-main>small{display:block;margin-top:2px;font-size:11.5px!important;line-height:1.6;color:var(--dx-sub);overflow-wrap:anywhere}
+
+/* ---- الجداول داخل الكروت ---- */
+#content .dx .dx-tbl{width:100%;border-collapse:separate;border-spacing:0}
+#content .dx .dx-tbl th{padding:9px 10px!important;font-size:11.5px!important;font-weight:800;color:var(--dx-sub);background:var(--dx-soft)!important;border-bottom:1px solid var(--dx-bd)!important;text-align:start}
+#content .dx .dx-tbl th:first-child{border-start-start-radius:9px}#content .dx .dx-tbl th:last-child{border-start-end-radius:9px}
+#content .dx .dx-tbl td{padding:11px 10px!important;font-size:13px!important;border-bottom:1px solid #eef1f6!important;vertical-align:middle}
+#content .dx .dx-tbl tr:last-child td{border-bottom:0!important}
+#content .dx .dx-tbl td b{display:block;overflow-wrap:anywhere;line-height:1.5}
+#content .dx .dx-tbl td small{margin-top:2px;font-size:11px!important;line-height:1.5;overflow-wrap:anywhere}
+#content .dx .dx-tbl .num{text-align:end;font-weight:800}
+@media(hover:hover){#content .dx .dx-tbl tbody tr:hover td{background:#fbfcfe!important}}
+#content .dx .dx-pill{padding:3px 10px;font-size:11px;font-weight:800}
+#content .dx .dx-empty{padding:22px 10px;font-size:13px;border-radius:12px;background:var(--dx-soft)}
+#content .dx .dx-empty.ok{background:#eaf7ef}
+
+/* ---- دورة العمل ---- */
+#content .dx .dx-flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr;align-items:stretch;gap:6px}
+#content .dx .dx-flow button{min-height:78px;padding:12px 6px!important;border-radius:12px}
+#content .dx .dx-flow b{font-size:21px;line-height:1.2}
+#content .dx .dx-flow span{font-size:11.5px!important;line-height:1.45}
+#content .dx .dx-mini{gap:10px}
+#content .dx .dx-mini button{min-height:46px}
+
+/* ---- تابلت ---- */
+@media(max-width:1100px){
+  #content .dx .dx-grid2,#content .dx .dx-grid2b{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:900px){
+  #content .dx .dx-kpis>*,#content .dx .dx-kpis:has(>:nth-child(n)):not(#_)>*{grid-column:span 6!important}
+  #content .dx .dx-kpis>:last-child:nth-child(odd){grid-column:1/-1!important}
+}
+
+/* ---- موبايل ---- */
+@media(max-width:640px){
+  #content .dx{--dxg:10px;--dx-r:13px}
+  #content .dx .dph-pulses{grid-template-columns:minmax(0,1fr)}
+  #content .dx .dx-pulse{min-height:42px;padding:8px 11px!important;font-size:12px}
+  #content .dx .dx-bar{gap:8px}
+  #content .dx .dx-periods{display:flex;width:100%}
+  #content .dx .dx-periods button{flex:1 0 auto;min-height:38px!important;padding:6px 12px!important}
+  #content .dx .dx-stamp{width:100%;justify-content:space-between}
+  /* كروت المؤشرات: عمودين، المحتوى رأسي علشان الأرقام الكبيرة متتقصش */
+  #content .dx .dx-kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}
+  #content .dx .dx-kpis>*{grid-column:auto!important}
+  #content .dx .dx-kpis>:last-child:nth-child(odd){grid-column:1/-1!important}
+  #content .dx .dx-kpi{flex-direction:column!important;align-items:flex-start!important;gap:7px!important;min-height:0;padding:11px 12px!important}
+  #content .dx .dx-kpi-ic{width:30px!important;height:30px!important;font-size:15px!important;border-radius:9px!important}
+  #content .dx .dx-kpi-body{width:100%}
+  #content .dx .dx-kpi-lbl{font-size:11px!important}
+  #content .dx .dx-kpi strong{font-size:17px!important}
+  #content .dx .dx-kpi strong em{font-size:10px!important}
+  #content .dx .dx-kpi small{font-size:10px!important}
+  #content .dx .dx-card{padding:12px!important}
+  #content .dx .dx-card-h{flex-wrap:wrap;margin-bottom:8px!important;padding-bottom:8px}
+  #content .dx .dx-card-h h3{font-size:14px!important}
+  #content .dx .dx-card-h small{font-size:11px!important}
+  #content .dx .dx-link{min-height:36px}
+  #content .dx .dx-sum{grid-template-columns:minmax(0,1fr)!important;gap:8px!important;padding:10px!important}
+  #content .dx .dx-sum b{font-size:16px!important}
+  #content .dx .dx-list>li{min-height:54px;padding:9px 2px!important;gap:9px}
+  #content .dx .dx-ico{width:32px!important;height:32px!important}
+  /* الجداول: تتحول لبطاقات صغيرة بدل ما تتقطع */
+  #content .dx .dx-tbl thead{display:none}
+  #content .dx .dx-tbl,#content .dx .dx-tbl tbody,#content .dx .dx-tbl tr,#content .dx .dx-tbl td{display:block;width:100%}
+  #content .dx .dx-tbl tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:10px 2px;border-bottom:1px solid #eef1f6}
+  #content .dx .dx-tbl tr:last-child{border-bottom:0}
+  #content .dx .dx-tbl td{padding:0!important;border:0!important;font-size:12.5px!important}
+  #content .dx .dx-tbl td:first-child{grid-column:1/2;grid-row:1/3}
+  #content .dx .dx-tbl td.num{grid-column:2/3;grid-row:1;text-align:end;font-size:14px!important}
+  #content .dx .dx-tbl td:last-child:not(.num){grid-column:2/3;grid-row:2;text-align:end}
+  /* دورة العمل 2×2 */
+  #content .dx .dx-flow{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #content .dx .dx-flow i{display:none}
+  #content .dx .dx-flow button{min-height:68px}
+  #content .dx .dx-mini{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:340px){
+  #content .dx .dx-kpis{grid-template-columns:minmax(0,1fr)!important}
+}
+@media print{
+  #content .dx .dx-kpi,#content .dx .dx-card{box-shadow:none!important;break-inside:avoid}
+  #content .dx .dx-periods,#content .dx .dx-stamp button,#content .dx .dx-link{display:none!important}
+}
+</style>
 </body></html>`;
   if(typeof openReportPreview==="function") openReportPreview(html,title+" "+(e.no||""));
   else{ const w=window.open("","_blank"); if(w){ w.document.open(); w.document.write(html); w.document.close(); } }
@@ -23762,6 +23923,286 @@ async function txUnpostRun(id,direction){
   #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] td.sup-act-td .td-actions{flex-wrap:nowrap!important;min-width:max-content!important;max-width:none;justify-content:flex-start}
 }
 @media(max-width:700px){ .sup-det-line,.sup-det-line.items,.sup-det-line.pol{grid-template-columns:1fr 1fr} .sup-det-line.head{display:none} }
+</style>
+<style id="dx-pro">
+/* =====================================================================
+   IRON GATE — لوحة التحكم: تنسيق نهائي موحّد (ديسكتوب + تابلت + موبايل)
+   الطبقة دي بتلغي التعارض بين الطبقات القديمة (dx-compact / dx-final...)
+   ومحصورة بالكامل داخل #content section.dx — مفيش أي شاشة تانية بتتأثر.
+   ===================================================================== */
+body:not(#_) #content:has(section.dx){background:#f3f5f9}
+
+#content section.dx{
+  --ink:#16233b; --sub:#5b6678; --line:#e1e6ef; --line-2:#edf0f6; --soft:#f5f7fb;
+  --navy:#0f2a52; --gold:#d4a017; --gold-ink:#7a5800; --gold-soft:#fbf4de;
+  --ok:#1f8a52; --ok-bg:#e8f6ee; --bad:#c4382b; --bad-bg:#fdecea;
+  --warn:#9a6208; --warn-bg:#fff2d9; --info:#2f6db5; --info-bg:#e6effb;
+  --gap:10px; --r:14px;
+  container-type:inline-size; container-name:dx;
+  display:grid!important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--gap); align-content:start;
+  width:100%; max-width:1480px; margin:0 auto!important;
+  color:var(--ink); font-size:13px; line-height:1.6;
+  font-variant-numeric:tabular-nums;
+}
+#content section.dx *{box-sizing:border-box}
+#content section.dx>*{grid-column:1/-1; margin:0!important; min-width:0}
+#content section.dx button{font-family:inherit}
+#content section.dx button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* ---------- 1) شريط التنبيهات ---------- */
+#content section.dx .dx-pulse-hero{background:none!important;border:0!important;box-shadow:none!important;padding:0!important;border-radius:0!important;display:block!important;overflow:visible}
+#content section.dx .dx-pulse-hero::after{content:none!important;display:none!important}
+#content section.dx .dph-pulses{display:grid!important;grid-template-columns:minmax(0,1fr);gap:8px!important;flex-direction:initial}
+#content section.dx .dx-pulse{
+  --pc:#a47c0a; --pb:#fdf7e4; --pl:#efdca0;
+  display:flex!important; align-items:center; gap:10px; width:100%; min-height:48px; flex:none;
+  padding:9px 12px!important; text-align:start;
+  background:var(--pb)!important; color:var(--ink)!important;
+  border:1px solid var(--pl)!important; border-inline-start:4px solid var(--pc)!important;
+  border-radius:12px!important; box-shadow:none!important; font-size:12.5px!important; line-height:1.55;
+  transition:background .15s,border-color .15s;
+}
+#content section.dx .dx-pulse.p-red{--pc:#c4382b;--pb:#fdf1ef;--pl:#f4cdc7}
+#content section.dx .dx-pulse.p-amber{--pc:#b7791f;--pb:#fff6e3;--pl:#f3dca4}
+#content section.dx .dx-pulse.p-gold{--pc:#a47c0a;--pb:#fdf7e4;--pl:#efdca0}
+#content section.dx .dx-pulse.p-green,#content section.dx .dx-pulse.p-ok{--pc:#1f8a52;--pb:#eaf7ef;--pl:#c2e4d0}
+#content section.dx .dx-pulse .dp-ic{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:#fff;border:1px solid var(--pl);font-size:14px;line-height:1}
+#content section.dx .dx-pulse .dp-txt{flex:1;min-width:0;color:var(--ink)!important;overflow-wrap:anywhere}
+#content section.dx .dx-pulse .dp-txt b{color:var(--ink)!important;font-weight:800}
+#content section.dx .dx-pulse .dp-txt small{color:var(--sub)!important;font-size:11.5px;margin:0}
+#content section.dx .dx-pulse:not(.p-ok)::after{content:"‹";flex:none;margin-inline-start:2px;font-size:22px;line-height:1;color:var(--sub)}
+@media(hover:hover){#content section.dx .dx-pulse:not(.p-ok):hover{filter:brightness(.97);transform:none!important}}
+#content section.dx .dx-pulse.p-ok{cursor:default}
+
+/* ---------- 2) الفترة + آخر تحديث ---------- */
+#content section.dx .dx-bar{display:flex!important;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 14px}
+#content section.dx .dx-periods{
+  display:inline-flex!important; gap:2px!important; padding:3px!important; max-width:100%;
+  background:#e6ebf3; border-radius:12px; border:0!important;
+  overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; scroll-snap-type:x proximity;
+}
+#content section.dx .dx-periods::-webkit-scrollbar{display:none}
+#content section.dx .dx-periods button{
+  flex:none; min-height:36px!important; padding:5px 15px!important; border:0!important; border-radius:9px!important;
+  background:transparent!important; color:#334257!important; font-size:12.5px!important; font-weight:700; white-space:nowrap;
+  box-shadow:none!important; scroll-snap-align:center; transition:background .15s,color .15s;
+}
+@media(hover:hover){#content section.dx .dx-periods button:not(.on):hover{background:rgba(255,255,255,.75)!important}}
+#content section.dx .dx-periods button.on{background:var(--navy)!important;color:#fff!important;box-shadow:0 2px 8px rgba(15,42,82,.28)!important}
+#content section.dx .dx-stamp{display:flex!important;align-items:center;gap:8px;font-size:11.5px!important;color:var(--sub)!important}
+#content section.dx .dx-stamp b{color:var(--ink)!important;font-weight:700}
+#content section.dx .dx-stamp button{width:36px!important;height:36px!important;display:grid;place-items:center;border-radius:50%!important;border:1px solid var(--line)!important;background:#fff!important;color:var(--navy)!important;font-size:17px!important;line-height:1;text-align:center}
+#content section.dx .dx-stamp button:active{background:var(--soft)!important}
+
+/* ---------- 3) كروت المؤشرات ---------- */
+#content section.dx .dx-kpis{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:var(--gap)!important;align-items:stretch}
+#content section.dx .dx-kpis>*{grid-column:auto!important}
+#content section.dx .dx-kpis>:last-child:nth-child(odd){grid-column:1/-1!important}
+#content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2){grid-column:1/-1!important}
+
+#content section.dx .dx-kpi{
+  display:grid!important; grid-template-columns:auto minmax(0,1fr)!important;
+  grid-template-areas:"ic lbl" "val val" "sub sub"!important;
+  align-items:center; align-content:start; gap:6px 9px!important;
+  width:100%; min-height:0!important; padding:12px!important; margin:0;
+  background:#fff!important; color:var(--ink);
+  border:1px solid var(--line)!important; border-inline-start:3px solid var(--kc,#94a3b8)!important;
+  border-radius:var(--r)!important; box-shadow:0 1px 2px rgba(15,42,82,.04)!important;
+  text-align:start; transition:box-shadow .18s,transform .18s;
+}
+#content section.dx .k-gold{--kc:#d4a017}#content section.dx .k-green{--kc:#1f9d5c}
+#content section.dx .k-blue{--kc:#2f6db5}#content section.dx .k-red{--kc:#d4493b}#content section.dx .k-slate{--kc:#64748b}
+#content section.dx .dx-kpi-body{display:contents!important}
+#content section.dx .dx-kpi-ic{grid-area:ic;width:30px!important;height:30px!important;border-radius:9px!important;font-size:15px!important;display:grid;place-items:center;flex:none}
+#content section.dx .dx-kpi-lbl{grid-area:lbl;min-width:0;font-size:11.5px!important;font-weight:700;line-height:1.45;color:var(--sub)!important}
+#content section.dx .dx-kpi strong{
+  grid-area:val; display:flex; align-items:baseline; flex-wrap:wrap; gap:0 5px; min-width:0;
+  font-size:19px!important; font-weight:800; line-height:1.3; white-space:normal!important; color:var(--ink)!important; letter-spacing:-.2px;
+}
+#content section.dx .dx-kpi strong em{font-style:normal;font-size:11px!important;font-weight:700;color:var(--sub)!important;letter-spacing:0}
+#content section.dx .dx-kpi small{grid-area:sub;display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0;font-size:11px!important;line-height:1.55;color:var(--sub)!important;overflow-wrap:anywhere}
+#content section.dx .dx-delta{display:inline-block;padding:1px 8px;border-radius:99px;font-size:10.5px;font-weight:800;line-height:1.6}
+#content section.dx .dx-delta.up{background:var(--ok-bg);color:var(--ok)}
+#content section.dx .dx-delta.down{background:var(--bad-bg);color:var(--bad)}
+/* أول كارتين (المبيعات + التحصيلات) أكبر */
+#content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2) strong{font-size:24px!important}
+#content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2) .dx-kpi-ic{width:34px!important;height:34px!important;font-size:17px!important}
+#content section.dx .dx-kpi:active{transform:scale(.985)}
+@media(hover:hover){#content section.dx .dx-kpi:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(15,42,82,.10)!important}}
+#content section.dx .dx-note{padding:0 4px;margin-top:-4px!important;font-size:11px!important;line-height:1.7;color:var(--sub)!important}
+
+/* ---------- 4) الكروت العامة ---------- */
+#content section.dx .dx-card{
+  background:#fff!important; padding:14px!important; margin:0!important; min-width:0;
+  border:1px solid var(--line)!important; border-radius:var(--r)!important;
+  box-shadow:0 1px 2px rgba(15,42,82,.04),0 4px 14px rgba(15,42,82,.03)!important;
+}
+#content section.dx .dx-card-h{display:flex!important;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 10px;margin:0 0 10px!important;padding:0 0 10px;border-bottom:1px solid var(--line-2)}
+#content section.dx .dx-card-h>div:first-child{min-width:0;flex:1 1 160px}
+#content section.dx .dx-card-h h3{font-size:14.5px!important;font-weight:800;line-height:1.4;color:var(--navy)!important;margin:0}
+#content section.dx .dx-card-h small{display:block;margin-top:1px;font-size:11.5px!important;line-height:1.5;color:var(--sub)!important}
+#content section.dx .dx-link{
+  display:inline-flex;align-items:center;min-height:36px;padding:4px 13px;border-radius:99px;
+  background:var(--gold-soft)!important;color:var(--gold-ink)!important;font-size:12px!important;font-weight:800;white-space:nowrap;text-align:center;
+}
+@media(hover:hover){#content section.dx .dx-link:hover{background:#f5e8bb!important}}
+#content section.dx .dx-legend{display:flex;align-items:center;gap:12px!important;font-size:11.5px!important;color:var(--sub)!important;font-weight:700}
+#content section.dx .dx-legend span{display:inline-flex;align-items:center;gap:5px}
+#content section.dx .dx-legend i{margin:0!important;display:inline-block;width:10px;height:10px;border-radius:3px}
+
+/* الأقسام */
+#content section.dx .dx-grid2,#content section.dx .dx-grid2b{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:var(--gap)!important;align-items:stretch}
+
+/* ---------- 5) الرسم البياني + ملخص التحصيل ---------- */
+#content section.dx .dx-chart{display:block;width:100%;height:auto;max-height:300px;margin:0}
+#content section.dx .dx-grid{stroke:#e9edf3}
+#content section.dx .dx-ax{fill:#6b7587;font-size:10px}
+#content section.dx .dx-sum{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important;margin-top:12px!important;padding:10px 12px!important;border:0!important;border-radius:12px;background:var(--soft)}
+#content section.dx .dx-sum>div{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
+#content section.dx .dx-sum small{display:block;margin:0;font-size:11.5px!important;line-height:1.5;color:var(--sub)!important}
+#content section.dx .dx-sum b{display:block;margin:0;flex:none;font-size:15px!important;font-weight:800;color:var(--ink)!important;white-space:nowrap}
+
+/* ---------- 6) آخر الحركات ---------- */
+#content section.dx .dx-list{margin:0;padding:0;list-style:none}
+#content section.dx .dx-list>li{display:flex;align-items:center;gap:11px;min-height:56px;padding:9px 4px!important;border-bottom:1px solid var(--line-2)}
+#content section.dx .dx-list>li:last-child{border-bottom:0}
+#content section.dx .dx-list>li:active{background:var(--soft)}
+@media(hover:hover){#content section.dx .dx-list>li:hover{background:var(--soft);border-radius:10px}}
+#content section.dx .dx-ico{flex:none;width:34px!important;height:34px!important;border-radius:10px;font-size:14px}
+#content section.dx .dx-li-main{flex:1;min-width:0}
+#content section.dx .dx-li-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+#content section.dx .dx-li-main .dx-li-top>b{flex:1 1 auto;min-width:0;display:block;font-size:13px;font-weight:800;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+#content section.dx .dx-li-date{flex:none;padding:1px 9px;border-radius:99px;background:#eef2f8;color:#566377;font-size:10.5px;direction:ltr;white-space:nowrap}
+#content section.dx .dx-li-main>small{display:block;margin-top:1px;font-size:11.5px!important;line-height:1.6;color:var(--sub)!important;white-space:normal;overflow-wrap:anywhere}
+#content section.dx .dx-li-main>small strong{color:var(--ink);font-weight:700}
+
+/* ---------- 7) الجداول داخل الكروت ---------- */
+#content section.dx .dx-tbl{width:100%;border-collapse:separate;border-spacing:0}
+#content section.dx .dx-tbl th{padding:9px 10px!important;font-size:11.5px!important;font-weight:800;text-align:start;color:var(--sub)!important;background:var(--soft)!important;border-bottom:1px solid var(--line)!important;white-space:nowrap}
+#content section.dx .dx-tbl th:first-child{border-start-start-radius:9px}
+#content section.dx .dx-tbl th:last-child{border-start-end-radius:9px}
+#content section.dx .dx-tbl td{padding:10px!important;font-size:13px!important;vertical-align:middle;border-bottom:1px solid var(--line-2)!important;background:none!important}
+#content section.dx .dx-tbl tr:last-child td{border-bottom:0!important}
+#content section.dx .dx-tbl td b{display:block;line-height:1.5;overflow-wrap:anywhere;color:var(--ink)}
+#content section.dx .dx-tbl td small{display:block;margin-top:2px;font-size:11px!important;line-height:1.5;color:var(--sub)!important;overflow-wrap:anywhere}
+#content section.dx .dx-tbl .num{text-align:end;font-weight:800;white-space:nowrap}
+@media(hover:hover){#content section.dx .dx-tbl tbody tr:hover td{background:#fafbfe!important}}
+
+#content section.dx .dx-pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:800;line-height:1.6;white-space:nowrap}
+#content section.dx .dx-pill.red{background:var(--bad-bg);color:var(--bad)}
+#content section.dx .dx-pill.amber{background:var(--warn-bg);color:var(--warn)}
+#content section.dx .dx-pill.green{background:var(--ok-bg);color:var(--ok)}
+#content section.dx .dx-empty{padding:22px 12px;border-radius:12px;background:var(--soft);text-align:center;font-size:13px;color:var(--sub)}
+#content section.dx .dx-empty.ok{background:var(--ok-bg);color:var(--ok);font-weight:700}
+
+/* ---------- 8) دورة العمل ---------- */
+#content section.dx .dx-flow{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#content section.dx .dx-flow i{display:none}
+#content section.dx .dx-flow button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:70px;padding:10px 6px!important;border-radius:12px;background:var(--soft)!important;border:1px solid var(--line)!important;text-align:center;transition:border-color .15s,background .15s}
+#content section.dx .dx-flow b{font-size:20px;line-height:1.2;font-weight:800;color:var(--navy)}
+#content section.dx .dx-flow span{font-size:11.5px!important;line-height:1.45;color:var(--sub)!important}
+@media(hover:hover){#content section.dx .dx-flow button:hover{border-color:var(--gold)!important;background:#fffaf0!important}}
+#content section.dx .dx-mini{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+#content section.dx .dx-mini button{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:46px;padding:10px 14px!important;border-radius:12px;background:var(--soft)!important;border:1px solid var(--line)!important}
+#content section.dx .dx-mini span{font-size:12px;font-weight:700;color:var(--sub)!important}
+#content section.dx .dx-mini b{font-size:16px;font-weight:800;color:var(--navy)}
+
+/* ---------- تابلت: ≥ 560px عرض فعلي للصفحة ---------- */
+@container dx (min-width:560px){
+  #content section.dx{--gap:12px}
+  #content section.dx .dph-pulses{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  #content section.dx .dx-kpis{grid-template-columns:repeat(12,minmax(0,1fr))!important;gap:12px!important}
+  #content section.dx .dx-kpis>*,
+  #content section.dx .dx-kpis>:last-child:nth-child(odd),
+  #content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2){grid-column:span 4!important}
+  #content section.dx .dx-kpis:has(>:nth-child(4):last-child)>*{grid-column:span 3!important}
+  #content section.dx .dx-kpis:has(>:nth-child(5):last-child)>:nth-child(-n+2){grid-column:span 6!important}
+  #content section.dx .dx-kpis:has(>:nth-child(6):last-child)>:nth-child(-n+2){grid-column:span 6!important}
+  #content section.dx .dx-kpis:has(>:nth-child(6):last-child)>:nth-child(n+3){grid-column:span 3!important}
+  #content section.dx .dx-kpis:has(>:nth-child(7):last-child)>:nth-child(-n+2){grid-column:span 6!important}
+  #content section.dx .dx-kpis:has(>:nth-child(7):last-child)>:nth-child(n+6){grid-column:span 6!important}
+  #content section.dx .dx-flow{grid-template-columns:1fr auto 1fr auto 1fr auto 1fr}
+  #content section.dx .dx-flow i{display:block;align-self:center;color:#c2a54c;font-style:normal;font-size:20px}
+}
+/* ---------- ديسكتوب: ≥ 720px ---------- */
+@container dx (min-width:720px){
+  #content section.dx .dx-kpi{padding:14px 16px!important;gap:8px 11px!important}
+  #content section.dx .dx-kpi-ic{width:36px!important;height:36px!important;font-size:17px!important}
+  #content section.dx .dx-kpi-lbl{font-size:12.5px!important}
+  #content section.dx .dx-kpi strong{font-size:22px!important}
+  #content section.dx .dx-kpi strong em{font-size:12px!important}
+  #content section.dx .dx-kpi small{font-size:11.5px!important}
+  #content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2) strong{font-size:28px!important}
+  #content section.dx .dx-kpis:has(>:nth-child(5))>:nth-child(-n+2) .dx-kpi-ic{width:40px!important;height:40px!important;font-size:19px!important}
+  #content section.dx .dx-card{padding:16px 18px!important}
+  #content section.dx .dx-card-h h3{font-size:15px!important}
+  #content section.dx .dx-sum{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:14px!important;padding:12px 14px!important}
+  #content section.dx .dx-sum>div{flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:2px}
+  #content section.dx .dx-sum b{font-size:18px!important}
+}
+/* ---------- عريض: ≥ 900px ---------- */
+@container dx (min-width:900px){
+  #content section.dx .dx-grid2{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)!important}
+  #content section.dx .dx-grid2b{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr)!important}
+}
+/* ---------- أعرض: ≥ 1100px — شيكات + عهد جنب بعض ---------- */
+@container dx (min-width:1100px){
+  #content section.dx .dx-chq:has(+ .dx-chq){grid-column:1/2}
+  #content section.dx .dx-chq + .dx-chq{grid-column:2/3}
+}
+
+/* ---------- موبايل ---------- */
+@media(max-width:640px){
+  body:not(#_) #content:has(section.dx){padding:10px 10px calc(24px + env(safe-area-inset-bottom,0px))!important}
+  /* التنبيهات: شريط أفقي بسحب بدل ما تاخد نص الشاشة */
+  #content section.dx .dph-pulses{display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:8px!important;overflow-x:auto;margin-inline:-10px;padding:0 10px 2px;scroll-snap-type:x mandatory;scroll-padding-inline:10px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  #content section.dx .dph-pulses::-webkit-scrollbar{display:none}
+  #content section.dx .dx-pulse{flex:0 0 88%!important;width:auto;min-height:56px;font-size:12px!important;scroll-snap-align:start}
+  #content section.dx .dph-pulses:has(>:only-child)>.dx-pulse{flex-basis:100%!important}
+  #content section.dx .dx-bar{gap:8px}
+  #content section.dx .dx-periods{display:flex!important;width:100%}
+  #content section.dx .dx-periods button{flex:1 0 auto;min-height:40px!important;padding:6px 14px!important}
+  #content section.dx .dx-stamp{width:100%;justify-content:space-between}
+  #content section.dx .dx-card{padding:12px!important}
+  #content section.dx .dx-link{min-height:40px}
+  #content section.dx .dx-list>li{min-height:54px;gap:10px}
+  /* الجداول تتحول لصفوف بطاقات بدل ما تتقطع */
+  #content section.dx .dx-tbl thead{display:none}
+  #content section.dx .dx-tbl,#content section.dx .dx-tbl tbody,#content section.dx .dx-tbl tr,#content section.dx .dx-tbl td{display:block;width:100%}
+  #content section.dx .dx-tbl tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:11px 2px;border-bottom:1px solid var(--line-2)}
+  #content section.dx .dx-tbl tr:last-child{border-bottom:0}
+  #content section.dx .dx-tbl tr[onclick]:active{background:var(--soft)}
+  #content section.dx .dx-tbl td{padding:0!important;border:0!important;font-size:12.5px!important}
+  #content section.dx .dx-tbl td:first-child{grid-column:1/2;grid-row:1/3}
+  #content section.dx .dx-tbl td.num{grid-column:2/3;grid-row:1;text-align:end;font-size:14.5px!important}
+  #content section.dx .dx-tbl td:last-child:not(.num){grid-column:2/3;grid-row:2;text-align:end}
+}
+@container dx (max-width:339px){
+  #content section.dx .dx-kpis{grid-template-columns:minmax(0,1fr)!important}
+  #content section.dx .dx-kpis>*{grid-column:1/-1!important}
+}
+@media print{
+  #content section.dx .dx-kpi,#content section.dx .dx-card{box-shadow:none!important;break-inside:avoid}
+  #content section.dx .dx-periods,#content section.dx .dx-stamp button,#content section.dx .dx-link{display:none!important}
+}
+</style>
+
+<style id="sup-stk-top">
+/* فلاتر حالة التسوية جوه صندوق التابات (بدل صف لوحده فوق الجدول) */
+.supply-page .sup-stk-slot{display:none}
+.supply-page .sup-stk-slot:not(:empty){display:flex;align-items:center;flex:0 0 auto;margin-inline-start:auto;padding-inline-start:10px;border-inline-start:1px solid #e1e6ef}
+.supply-page .sup-stk-slot .sup-qbar{margin:0;gap:5px;flex-wrap:nowrap}
+.supply-page .sup-stk-slot .sup-qchip{gap:6px;padding:3px 4px 3px 10px;font-size:12px;white-space:nowrap}
+.supply-page .sup-stk-slot .sup-qchip b{min-width:20px;padding:0 6px;font-size:11px}
+@media(min-width:901px){
+  .supply-page>.supply-tabs{flex-wrap:wrap!important}
+  .supply-page>.supply-tabs .supply-tab{padding:6px 11px!important}
+}
+@media(max-width:900px){
+  #content:has(.supply-page) .supply-tabs .sup-stk-slot:not(:empty){grid-column:1/-1;margin:2px 0 0;padding:8px 0 0;border-inline-start:0;border-top:1px solid #e5eaf1;display:block}
+  .supply-page .sup-stk-slot .sup-qbar{flex-wrap:wrap;width:100%}
+  .supply-page .sup-stk-slot .sup-qchip{flex:1 1 calc(50% - 5px);justify-content:space-between;min-height:38px}
+}
 </style>
 <script id="lg-datebar-js">
 (function(){
