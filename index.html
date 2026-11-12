@@ -4078,10 +4078,11 @@ function renderNav(){
     const activeCls = isCurrentIn ? "active" : "";
     const late=g.items.reduce((a,it)=>a+(it.badge==="late"?(B.late||0):0),0), chq=g.items.reduce((a,it)=>a+(it.badge==="chq"?(B.chq||0):0),0);
     const gb=(late||chq)?`<span class="nb ${late?"late":"chq"}">${fmtN(late+chq)}</span>`:"";
+    let _inSep=false;   // عناصر بعد عنوان فرعي (sep) تتميّز بصريًا
     const subs=g.items.map(it=>{
-      if(it.sep) return `<div class="nav-sep">${it.sep}</div>`;
+      if(it.sep){ _inSep=true; return `<div class="nav-sep">${it.sep}</div>`; }
       const c=it.badge?(B[it.badge]||0):0;
-      return `<button class="navbtn ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
+      return `<button class="navbtn ${_inSep?'navbtn-sub ':''}${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
     }).join("");
     return `
     <div class="ng-wrap" data-gid="${g.id}" draggable="true">
@@ -6418,7 +6419,7 @@ function dxTrCell(kind){
   if(!c) return {val:'…',sub:'جاري حساب الرصيد…'};
   if(c.err) return {val:'—',sub:'تعذّر حساب الرصيد'};
   const neg=c.total<-0.004;
-  return {val:(neg?'<span style="color:#b91c1c">':'<span>')+Number(c.total||0).toLocaleString("en-US",{maximumFractionDigits:0})+'</span>',
+  return {val:(neg?'<span style="color:#b91c1c">\u200E':'<span>')+Number(c.total||0).toLocaleString("en-US",{maximumFractionDigits:0})+'</span>',
           sub:c.count+' '+lbl+(c.unlinked?' · '+c.unlinked+' غير مربوط بالأستاذ العام':' · الأستاذ العام + غير المرحّل')};
 }
 function dxTrPaint(){
@@ -6466,7 +6467,7 @@ function viewDashboard(){
   const todayLbl = new Intl.DateTimeFormat('ar-EG-u-nu-latn',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(now);
   const hr=now.getHours(), greet = hr<12?"صباح الخير":(hr<18?"مساء الخير":"مساء النور");
   const uName = safe(()=>curU().name||curU().username||"",""); 
-  const money = n => Number(n||0).toLocaleString("en-US",{maximumFractionDigits:0});
+  const money = n => { const v=Number(n||0), t=v.toLocaleString("en-US",{maximumFractionDigits:0}); return v<0 ? "\u200E"+t : t; };
   const shortAr = n => { n=+n||0; const a=Math.abs(n); return a>=1e6?(n/1e6).toFixed(a>=1e7?1:2).replace(/\.0+$/,'').replace(/(\.\d)0$/,'$1')+" مليون":a>=1e3?(n/1e3).toFixed(a>=1e5?0:1).replace(/\.0$/,'')+" ألف":String(Math.round(n)); };
   const short = n => { n=+n||0; const a=Math.abs(n); return a>=1e6?(n/1e6).toFixed(a>=1e7?1:2).replace(/\.0+$/,'')+"M":a>=1e3?(n/1e3).toFixed(a>=1e5?0:1).replace(/\.0$/,'')+"K":String(Math.round(n)); };
 
@@ -6479,6 +6480,10 @@ function viewDashboard(){
   const mkAt=off=>{ const d=new Date(now.getFullYear(),now.getMonth()-off,1); return d.getFullYear()+"-"+pad(d.getMonth()+1); };
   const periodKeys=new Set(), prevKeys=new Set();
   for(let i=0;i<P.n;i++){ periodKeys.add(mkAt(P.end+i)); prevKeys.add(mkAt(P.end+P.n+i)); }
+  // مقارنة عادلة: لو الفترة الحالية لسه ماخلصتش (تشمل الشهر الجاري) نقارنها بنفس عدد الأيام المنقضية من الفترة السابقة، مش بالفترة السابقة كاملة
+  const _partial=P.end===0, _cutDay=now.getDate(), _prevNear=mkAt(P.end+P.n);
+  const inPrev=(k,dt)=>prevKeys.has(k)&&(!_partial||k!==_prevNear||(parseInt(String(dt||"").slice(8,10),10)||0)<=_cutDay);
+  const cmpLbl=_partial?(P.n===1?"الشهر السابق حتى يوم "+_cutDay:"الفترة السابقة بنفس المدة"):P.cmp;
   const _pk=[...periodKeys].sort(), _lastY=+_pk[_pk.length-1].slice(0,4), _lastM=+_pk[_pk.length-1].slice(5,7);
   const periodFrom=_pk[0]+"-01", periodTo=dk(new Date(_lastY,_lastM,0));
   const periodGo=t=>`dxPulseGoto('${t}',{from:'${periodFrom}',to:'${periodTo}'${t==='receipts'?',collected:true':''}})`;
@@ -6494,7 +6499,7 @@ function viewDashboard(){
     const _tx=+_a.tax||0, _by=+_a.buyTotal||0;
     // سعر الشراء المسجل شامل الضريبة: نفصل صافي الشراء وضريبة المدخلات بنفس نسبة بوليصة التوريد
     const _vr=(sh.applyVat!==false)?Math.max(0,((sh.vatPct==null||sh.vatPct==="")?(+state.settings.tax||14):+sh.vatPct)):0, _byNet=_vr?_by/(1+_vr/100):_by;
-    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; } if(prevKeys.has(k)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
+    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; } if(inPrev(k,sh.date)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
     if(k in mIdx) months[mIdx[k]].sales+=t;
   })));
   let collMonth=0, collPrev=0, chequeSum=0, chequeN=0;
@@ -6503,7 +6508,7 @@ function viewDashboard(){
     if(!dxIsCollectionEntry(e)) return;   // نفس معيار شاشة التحصيلات (الشيكات غير المحصّلة يُحسب إجماليها من سجل الشيكات أسفل)
     const amt=+e.amount||0;
     const k=String(e.date||"").slice(0,7);
-    if(periodKeys.has(k)) collMonth+=amt; if(prevKeys.has(k)) collPrev+=amt;
+    if(periodKeys.has(k)) collMonth+=amt; if(inPrev(k,e.date)) collPrev+=amt;
     if(k in mIdx) months[mIdx[k]].coll+=amt;
   });
   // شيكات تحت التحصيل: نفس مصدر شاشة سجل الشيكات والجدول أدناه علشان الرقم والجدول يتطابقوا
@@ -6547,17 +6552,17 @@ function viewDashboard(){
   const chqFollowTotal=chqRows.reduce((sum,x)=>sum+(Number(x.e.amount)||0),0);
   const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="${/\(/.test(go_)?go_:`go('${go_}')`}"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
   const moneyKpis = canMoney ? `
-      ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+P.cmp),periodGo('salesReport'))}
+      ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+cmpLbl),periodGo('salesReport'))}
       ${kpi('k-slate','%','قيمة مضافة مبيعات '+P.s,money(taxMonth)+' <em>'+cur+'</em>','ضريبة القيمة المضافة على مبيعات الفترة','salesReport')}
       ${canBuyK?kpi((salesMonth-buyNetMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (قبل الضريبة)',money(salesMonth-buyNetMonth)+' <em>'+cur+'</em>','هامش '+(salesMonth>0?Math.round((salesMonth-buyNetMonth)/salesMonth*100):0)+'% · مبيعات − مشتريات (قبل الضريبة)','supply','الربح التجاري = مبيعات الفترة قبل الضريبة − صافي الشراء قبل ضريبة المدخلات'):''}
       ${kpi('k-blue','Σ','إجمالي قيمة المبيعات بعد الضرائب',money(salesGrossMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة + القيمة المضافة',periodGo('salesReport'))}
-      ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (قبل الضريبة)',money(buyNetMonth)+' <em>'+cur+'</em>',(delta(buyNetMonth,buyNetPrev)===null?'بدون مقارنة':chip(delta(buyNetMonth,buyNetPrev))+' عن '+P.cmp),'supply'):''}
+      ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (قبل الضريبة)',money(buyNetMonth)+' <em>'+cur+'</em>',(delta(buyNetMonth,buyNetPrev)===null?'بدون مقارنة':chip(delta(buyNetMonth,buyNetPrev))+' عن '+cmpLbl),'supply'):''}
       ${canBuyK?kpi('k-slate','%','قيمة مضافة مشتريات '+P.s,money(buyTaxMonth)+' <em>'+cur+'</em>','ضريبة المدخلات المستقطعة من أسعار الشراء','supply'):''}
       ${canBuyK?kpi((salesGrossMonth-buyMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (بعد الضريبة)',money(salesGrossMonth-buyMonth)+' <em>'+cur+'</em>','مبيعات − مشتريات (شامل الضريبة)','supply','الربح بعد الضرائب = إجمالي المبيعات شامل القيمة المضافة − إجمالي المشتريات شامل الضريبة'):''}
       ${canBuyK?kpi('k-red','Σ','إجمالي قيمة المشتريات بعد الضرائب',money(buyMonth)+' <em>'+cur+'</em>','المشتريات قبل الضريبة + القيمة المضافة','supply'):''}
-      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+P.cmp),periodGo('receipts'))}
+      ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+cmpLbl),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
-      ${kpi('k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
+      ${kpi(lateTotal>0?'k-red dx-kpi-late':'k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
       ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
       ${safe(()=>canView("bankStatement"),false)?(()=>{ const c=dxTrCell('bank'); return kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+c.sub+'</span>','bankStatement','إجمالي أرصدة البنوك حتى الآن (بدون بنكي أوراق القبض والدفع الوسيطين) — بنفس حساب شاشة كشف حساب بنك'); })():''}
       ${safe(()=>canView("safeStatement"),false)?(()=>{ const c=dxTrCell('safe'); return kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+c.sub+'</span>','safeStatement','إجمالي أرصدة الخزائن النقدية حتى الآن — بنفس حساب شاشة كشف حساب خزينة'); })():''}
@@ -24417,12 +24422,31 @@ body:not(#_) #content:has(section.dx){background:#f3f5f9}
 @media(min-width:1280px){
   #content .dx .dx-kpis.dx-k4:not(#_){grid-template-columns:repeat(8,minmax(0,1fr))!important;gap:8px!important;margin-bottom:8px!important}
   #content .dx .dx-kpis.dx-k4:not(#_)>*:not(#_){grid-column:auto!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi{flex-direction:column!important;align-items:flex-start!important;gap:6px!important;min-height:0!important;padding:10px 10px!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi-ic{width:28px!important;height:28px!important;font-size:14px!important;border-radius:8px!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi-body{width:100%;gap:2px!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi-lbl{font-size:10.5px!important;line-height:1.35}
+  #content .dx .dx-kpis.dx-k4 .dx-kpi{padding:10px!important;gap:5px 7px!important}
   #content .dx .dx-kpis.dx-k4 .dx-kpi strong{font-size:clamp(14px,1.05vw,17px)!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi strong em{font-size:9.5px!important}
-  #content .dx .dx-kpis.dx-k4 .dx-kpi small{font-size:9.5px!important;line-height:1.35}
 }
+/* خطوط أكبر وأوضح للنصوص الصغيرة */
+#content .dx .dx-kpi-lbl{font-size:12px!important}
+#content .dx .dx-kpi small{font-size:11px!important;line-height:1.45!important}
+#content .dx .dx-kpi strong em{font-size:11px!important}
+#content .dx .dx-ax,#content section.dx .dx-ax{font-size:12px!important;fill:#566377!important}
+@media(max-width:640px){
+  #content .dx .dx-ax,#content section.dx .dx-ax{font-size:11px!important}
+  #content .dx .dx-kpi-lbl{font-size:11.5px!important}
+  #content .dx .dx-kpi small{font-size:10.5px!important;line-height:1.4!important;gap:2px 4px!important}
+  #content .dx .dx-kpi small .dx-delta{white-space:nowrap}
+}
+#content section.dx .dx-li-date{font-size:11.5px!important}
+#content .dx .dx-note{font-size:12px!important}
+/* إطار بارز لكارت المتأخرات */
+#content section.dx .dx-kpi.dx-kpi-late{border:1.5px solid #d4493b!important;border-inline-start-width:4px!important;background:#fff7f6!important;box-shadow:0 0 0 3px rgba(212,73,59,.10),0 4px 14px rgba(212,73,59,.12)!important}
+#content section.dx .dx-kpi.dx-kpi-late .dx-kpi-lbl{color:#b3372b!important}
+#content section.dx .dx-kpi.dx-kpi-late strong{color:#b3372b!important}
+/* تمييز "البيانات الأساسية للأصناف" داخل قائمة المخازن */
+.layout:not(.collapsed) aside .navsub .nav-sep{margin:12px 2px 4px!important;padding:4px 10px!important;border-radius:8px 8px 0 0;background:rgba(212,160,23,.16);color:#F4C542!important}
+.layout:not(.collapsed) aside .navsub .nav-sep::after{display:none!important}
+.layout:not(.collapsed) aside nav button.navbtn.navbtn-sub:not(.active){background:rgba(212,160,23,.07)!important;border-radius:0!important;margin:0 2px!important;border-inline-end:2px solid rgba(212,160,23,.55)!important;color:#dfe6f5!important}
+.layout:not(.collapsed) aside nav button.navbtn.navbtn-sub:not(.active):hover{background:rgba(212,160,23,.16)!important}
+.layout:not(.collapsed) aside nav button.navbtn.navbtn-sub .ic{color:#F4C542!important;opacity:1!important}
+.layout:not(.collapsed) aside nav button.navbtn.navbtn-sub:last-child{border-radius:0 0 8px 8px!important}
 </style>
