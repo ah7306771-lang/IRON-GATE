@@ -3388,6 +3388,8 @@ const SCREENS = [
   { id:"clientStatement", label:"كشف حساب عميل", icon:"📒", acts:["print"], prices:true },
   { id:"purchaseReport", label:"تقرير المشتريات", icon:"📊", acts:["print"], prices:true },
   { id:"supplierStatement", label:"كشف حساب مورد", icon:"📒", acts:["print"], prices:true },
+  { id:"bankStatement", label:"كشف حساب بنك", icon:"📒", acts:["print"] },
+  { id:"safeStatement", label:"كشف حساب خزينة", icon:"📒", acts:["print"] },
   { id:"clientTB", label:"ميزان مراجعة العملاء", icon:"⚖", acts:["edit","print"], prices:true },
   { id:"supplierTB", label:"ميزان مراجعة الموردين", icon:"⚖", acts:["edit","print"], prices:true },
   { id:"receipts",  label:"التحصيلات",         icon:"↓",  acts:["add","edit","delete","post","print"], tabs:[
@@ -3953,11 +3955,13 @@ const navGroups = [
     { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
     { id:"payments", icon:"↑", label:"المدفوعات" },
     { id:"treasuryBulkPost", icon:"📥", label:"ترحيل التحصيلات والمدفوعات" },
+    { id:"safeStatement", icon:"📒", label:"كشف حساب خزينة" },
     { sep:"البيانات الأساسية للخزينة" },
     { id:"master", tab:"safes", icon:"🗄", label:"الخزائن" },
     { id:"master", tab:"sysInd", from:"treasury", icon:"🎚", label:"مؤشرات النظام (يوميات الترحيل)" }
   ]},
   { id:"banking", icon:"🏦", label:"البنوك", items:[
+    { id:"bankStatement", icon:"📒", label:"كشف حساب بنك" },
     { id:"chequeRegister", icon:"🧾", label:"أوراق القبض وشيكات تحت التحصيل", badge:"chq" },
     { sep:"البيانات الأساسية للبنوك" },
     { id:"master", tab:"banks", icon:"🏦", label:"البنوك" }
@@ -4143,6 +4147,8 @@ function go(page){
     supplierStatement:["كشف حساب مورد","حركة المورد والرصيد الافتتاحي والرصيد الجاري"],
     clientTB:["ميزان مراجعة العملاء","أرصدة أول المدة وحركات الفترة وأرصدة آخر المدة لكل العملاء"],
     supplierTB:["ميزان مراجعة الموردين","أرصدة أول المدة وحركات الفترة وأرصدة آخر المدة لكل الموردين"],
+    bankStatement:["كشف حساب بنك","حركة البنك ورصيد أول المدة من الأستاذ العام مع مطابقة التحصيلات والمدفوعات"],
+    safeStatement:["كشف حساب خزينة","حركة الخزينة ورصيد أول المدة من الأستاذ العام مع مطابقة التحصيلات والمدفوعات"],
     receipts:["التحصيلات","شيكات وتحويلات ونقدية من العملاء"],
     chequeRegister:["أوراق القبض وشيكات تحت التحصيل","متابعة الشيكات الواردة مباشرة من شاشة التحصيلات"],
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
@@ -4182,6 +4188,7 @@ function go(page){
   else if(page==="managementReports"){ c.innerHTML=viewManagementReports(); renderManagementReports(); }
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
+  else if(page==="bankStatement"||page==="safeStatement"){ c.innerHTML=viewTreasuryAccountStatement(page); renderTreasuryAccountStatement(page); }
   else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
   else if(page==="customerAdjustments"){ c.innerHTML = viewAdjustments("in"); renderAdjustments("in"); }
   else if(page==="supplierAdjustments"){ c.innerHTML = viewAdjustments("out"); renderAdjustments("out"); }
@@ -6719,6 +6726,50 @@ function renderTradeReport(){
   const body=rows.map((r,i)=>`<tr class="trade-detail-row" tabindex="0" role="button" onclick="tradeReportOpenRow('${kind}',${i})"><td>${escapeHtml(r.date)}</td><td>${escapeHtml(r.policy)}</td><td>${escapeHtml(r.order)}</td><td>${escapeHtml(r.customer)}</td><td>${escapeHtml(r.supplier)}</td><td>${escapeHtml(r.company)}</td><td>${escapeHtml(r.site)}</td><td>${escapeHtml(r.factory)}</td><td>${escapeHtml(r.diameter)}</td><td>${escapeHtml(r.type)}</td><td class="num">${r.qty.toFixed(3)}</td><td class="num">${r.weight.toFixed(3)}</td><td class="num">${money(r.weight?r.buy/r.weight:0)}</td><td class="num"><b>${money(r.buy)}</b></td></tr>`).join('');
   el.innerHTML=trKpiWrap(`<div class="kpis compact">${cards.map(([l,v])=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small">${typeof v==='number'&&l!=='عدد الأصناف'?money(v):v}</div><div class="sub">${l.includes('طن')?'طن':(l==='عدد الأصناف'?'سجل':cur)}</div></div>`).join('')}</div>`)+`<div class="card"><div class="head"><h3>تفاصيل المشتريات</h3><span class="count">نتائج الفلتر: ${rows.length} صنف</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${head.length}"><div class="empty" style="padding:28px">لا توجد بيانات مطابقة</div></td></tr>`}</tbody></table></div></div></div>`;
 }
+/* ===== مولّد PDF للمشاركة بنفس تنسيق الطباعة (A4 عرضي، رأس الجدول يتكرر، الصفوف ما تتقطعش) ===== */
+async function igReportToPdf(win,h2c,JS){
+  const doc=win.document, jsPDF=JS.jsPDF;
+  const st=doc.createElement('style'); st.setAttribute('data-pdf-print','1');
+  let css='.report-preview-toolbar{display:none!important}';
+  doc.querySelectorAll('style:not([data-pdf-print])').forEach(function(s){
+    const t=s.textContent||''; const re=/@media\s+print\s*\{/g; let m;
+    while((m=re.exec(t))){ let d=1,i=re.lastIndex; while(i<t.length&&d>0){ const c=t[i++]; if(c==='{')d++; else if(c==='}')d--; }
+      css+=t.slice(re.lastIndex,i-1).replace(/@page\s*\{[^}]*\}/g,''); }
+  });
+  st.textContent=css; doc.head.appendChild(st);
+  const secs=Array.prototype.slice.call(doc.querySelectorAll('[data-share-page]'));
+  const main=doc.querySelector('.doc,.rprt-doc')||Array.prototype.slice.call(doc.body.children).find(function(e){return !e.classList.contains('report-preview-toolbar')&&e.tagName!=='SCRIPT'&&e.tagName!=='STYLE';})||doc.body;
+  const targets=secs.length>1?secs:[main];
+  const pdf=new jsPDF('l','mm','a4'); const PW=297,PH=210,M=5,UW=PW-2*M,UH=PH-2*M, CSSW=1085; let page=0;
+  try{
+    for(const tg of targets){
+      const w0=tg.style.width, mw0=tg.style.maxWidth; tg.style.width=CSSW+'px'; tg.style.maxWidth='none';
+      try{
+        const rect=tg.getBoundingClientRect();
+        const canvas=await h2c(tg,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false,windowWidth:CSSW+40,scrollX:0,scrollY:0});
+        const k=canvas.width/rect.width, pxMm=canvas.width/UW, pageH=Math.floor(UH*pxMm);
+        const rows=Array.prototype.slice.call(tg.querySelectorAll('tbody tr,tfoot tr')).map(function(r){return Math.round((r.getBoundingClientRect().bottom-rect.top)*k);});
+        const th=tg.querySelector('thead'); let hTop=0,hH=0;
+        if(th){ const r=th.getBoundingClientRect(); hTop=Math.round((r.top-rect.top)*k); hH=Math.round(r.height*k); }
+        let y=0, first=true;
+        while(y<canvas.height){
+          const avail=first?pageH:pageH-hH;
+          let end=Math.min(y+avail,canvas.height);
+          if(end<canvas.height){ let best=0; for(let i=0;i<rows.length;i++){ const b=rows[i]; if(b>y+avail*0.4&&b<=end&&b>best) best=b; } if(best) end=best; }
+          const h=end-y, extra=(first||!hH)?0:hH;
+          const part=doc.createElement('canvas'); part.width=canvas.width; part.height=h+extra;
+          const ctx=part.getContext('2d'); ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,part.width,part.height);
+          if(extra) ctx.drawImage(canvas,0,hTop,canvas.width,hH,0,0,canvas.width,hH);
+          ctx.drawImage(canvas,0,y,canvas.width,h,0,extra,canvas.width,h);
+          if(page++) pdf.addPage();
+          pdf.addImage(part.toDataURL('image/jpeg',0.94),'JPEG',M,M,UW,part.height/pxMm,undefined,'FAST');
+          y=end; first=false;
+        }
+      } finally { tg.style.width=w0; tg.style.maxWidth=mw0; }
+    }
+  } finally { st.remove(); }
+  return pdf;
+}
 function openReportPreview(html,title,fileBase){
   const w=window.open('','_blank');
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
@@ -6726,29 +6777,14 @@ function openReportPreview(html,title,fileBase){
   const safePdfBase=(fileBase&&String(fileBase).replace(/[^0-9A-Za-z_-]/g,''))||igSafeFileName(String(title||'Report').replace(/<[^>]*>/g,'').trim(),'').replace(/\s+/g,'_');
   const shareScript=`<script>
   const SAFE_PDF_BASE=${JSON.stringify(safePdfBase)};
+  ${igReportToPdf.toString()}
   async function shareReportPreview(){
     const title=document.title||'تقرير IRON GATE SUPPLIES';
     const btn=document.querySelector('.report-preview-toolbar button');
     try{
       if(!window.html2canvas||!window.jspdf||!window.jspdf.jsPDF) throw new Error('مكتبات إنشاء PDF غير متاحة');
       if(btn){btn.disabled=true;btn.textContent='جارٍ تجهيز PDF…';}
-      const target=document.querySelector('.doc')||Array.from(document.body.children).find(el=>!el.classList.contains('report-preview-toolbar'))||document.body;
-      const secs=Array.from(document.querySelectorAll('[data-share-page]'));
-      const targets=secs.length>1?secs:[target];
-      const {jsPDF}=window.jspdf; const pdf=new jsPDF('l','mm','a4');
-      const pageW=297,pageH=210,margin=5,usableW=pageW-margin*2,usableH=pageH-margin*2;
-      let page=0;
-      for(const tg of targets){
-        const canvas=await html2canvas(tg,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false,windowWidth:Math.max(tg.scrollWidth,1200),scrollX:0,scrollY:0});
-        const pxPerMm=canvas.width/usableW, sliceH=Math.floor(usableH*pxPerMm);
-        let y=0;
-        while(y<canvas.height){
-          const h=Math.min(sliceH,canvas.height-y),part=document.createElement('canvas');part.width=canvas.width;part.height=h;
-          part.getContext('2d').drawImage(canvas,0,y,canvas.width,h,0,0,canvas.width,h);
-          const img=part.toDataURL('image/jpeg',0.94),drawH=h/pxPerMm;
-          if(page++)pdf.addPage();pdf.addImage(img,'JPEG',margin,margin,usableW,drawH,undefined,'FAST');y+=h;
-        }
-      }
+      const pdf=await igReportToPdf(window,window.html2canvas,window.jspdf);
       const blob=pdf.output('blob'),file=new File([blob],SAFE_PDF_BASE+'_'+new Date().toISOString().slice(0,10)+'.pdf',{type:'application/pdf'});
       if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title,text:title});}
       else {pdf.save(file.name);alert('المشاركة المباشرة غير مدعومة في هذا المتصفح؛ تم تنزيل التقرير PDF بنفس تنسيق الطباعة لتتمكن من إرساله.');}
@@ -7395,6 +7431,110 @@ function partyStatementExport(kind,format){
   else openReportPreview(html,title);
 }
 
+// ================= كشوف حساب البنوك والخزائن — تشغيلية + مطابقة GL =================
+const treasuryStmtFilters={bank:{account:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"},safe:{account:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"}};
+const treasuryStmtCache={};
+const treasuryStmtMoney=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+function treasuryStmtIsRealMovement(e){
+  if(!e||!e.treasury||!['in','out'].includes(e.direction)) return false;
+  if(!['cash','bank','transfer'].includes(e.method)) return false;
+  if(e.method==='transfer_supplier' || e.status==='guarantee') return false;
+  // الشيك البنكي لا يؤثر على الرصيد النقدي إلا بعد التحصيل؛ والمرتد يعكس الحركة فقط إذا سبق تحصيله.
+  if(e.method==='bank' && e.status!=='collected' && !(e.status==='returned'&&e.wasCollected)) return false;
+  if(e.status==='returned'&&!e.wasCollected) return false;
+  return Number(e.amount)>0;
+}
+function viewTreasuryAccountStatement(page){
+  const kind=page==='bankStatement'?'bank':'safe', f=treasuryStmtFilters[kind], list=treasuryAll().filter(x=>x.kind===kind);
+  const title=kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة', label=kind==='bank'?'البنك':'الخزينة';
+  return `<div class="trade-report" dir="rtl">
+    <div class="page-head"><div><h2>${kind==='bank'?'🏦':'🗄'} ${title}</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">كشف حركة تفصيلي من التحصيلات والمدفوعات مع رصيد افتتاحي من الأستاذ العام ومطابقة مستقلة</div></div><div class="spacer"></div><button class="btn ghost" onclick="treasuryStmtAction('${kind}','print')">🖨 عرض / طباعة PDF</button><button class="btn" onclick="treasuryStmtAction('${kind}','excel')">⬇ Excel</button><button class="btn ghost" onclick="treasuryStmtAction('${kind}','share')">↗ مشاركة</button></div>
+    <div class="sales-inst-filter-card"><div class="sales-inst-filter-grid">
+      <div class="fld"><label>اختر ${label}</label><select class="inp" id="tsAccount" onchange="treasuryStmtFilters['${kind}'].account=this.value;renderTreasuryAccountStatement('${page}')"><option value="">— اختر ${label} —</option>${list.map(x=>`<option value="${escapeAttr(x.code)}" ${f.account===x.code?'selected':''}>${escapeHtml(x.code+' — '+x.name)}</option>`).join('')}</select></div>
+      <div class="fld"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="treasuryStmtFilters['${kind}'].from=this.value;renderTreasuryAccountStatement('${page}')"></div>
+      <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="treasuryStmtFilters['${kind}'].to=this.value;renderTreasuryAccountStatement('${page}')"></div>
+      <div class="fld"><label>نوع الحركة</label><select class="inp" onchange="treasuryStmtFilters['${kind}'].direction=this.value;renderTreasuryAccountStatement('${page}')"><option value="all" ${f.direction==='all'?'selected':''}>كل الحركات</option><option value="in" ${f.direction==='in'?'selected':''}>وارد فقط</option><option value="out" ${f.direction==='out'?'selected':''}>منصرف فقط</option></select></div>
+      <div class="fld"><label>بحث</label><input class="inp" placeholder="رقم السند أو الطرف أو البيان" value="${escapeAttr(f.q)}" oninput="treasuryStmtFilters['${kind}'].q=this.value;renderTreasuryAccountStatement('${page}')"></div>
+      <div class="fld" style="justify-content:end"><label>&nbsp;</label><button class="btn ghost" onclick="treasuryStmtFilters['${kind}']={account:'',from:igYearStart(),to:igYearEnd(),q:'',direction:'all'};go('${page}')">مسح الفلاتر</button></div>
+    </div></div><div id="treasuryStmtResults"><div class="empty"><h3>اختر ${label} لعرض الكشف</h3><p>يتم جلب رصيد أول المدة والحركات المرحلة من الأستاذ العام عند اختيار الحساب.</p></div></div></div>`;
+}
+async function treasuryStmtLoadGL(accountId,accountCode,from,to){
+  let accR;
+  if(accountId) accR=await sb.from('gl_accounts').select('*').eq('id',accountId).maybeSingle();
+  else if(accountCode) accR=await sb.from('gl_accounts').select('*').eq('account_code',accountCode).maybeSingle();
+  else return {opening:0,period:0,closing:0,available:false,lines:0};
+  if(accR.error) throw accR.error;
+  const acc=accR.data; if(!acc) return {opening:0,period:0,closing:0,available:false,lines:0};
+  const base=Number(acc.opening_debit||0)-Number(acc.opening_credit||0)+Number(acc.opening_balance||0);
+  let all=[],off=0;
+  while(true){const r=await sb.from('gl_entry_lines').select('entry_id,debit,credit').eq('account_id',accountId).range(off,off+999);if(r.error)throw r.error;const a=r.data||[];all.push(...a);if(a.length<1000)break;off+=1000;}
+  const ids=[...new Set(all.map(x=>x.entry_id).filter(Boolean))], entries=[];
+  for(let i=0;i<ids.length;i+=400){const r=await sb.from('gl_entries').select('id,entry_date,status').in('id',ids.slice(i,i+400));if(r.error)throw r.error;entries.push(...(r.data||[]));}
+  const em=new Map(entries.map(e=>[e.id,e]));let prior=base,period=0,lines=0;
+  all.forEach(l=>{const e=em.get(l.entry_id);if(!e||e.status!=='posted')return;const net=Number(l.debit||0)-Number(l.credit||0);if(String(e.entry_date||'')<(from||'0000-01-01'))prior+=net;else if((!to||String(e.entry_date||'')<=to)){period+=net;lines++;}});
+  return {opening:prior,period,closing:prior+period,available:true,lines,account:acc};
+}
+function treasuryStmtOperationalRows(code,kind,from,to,q,direction){
+  const seen=new Set(), out=[], needle=String(q||'').trim().toLowerCase();
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(!treasuryStmtIsRealMovement(e)||String(e.treasury)!==String(code))return;
+    if(kind==='safe'&&e.method!=='cash')return;
+    if(kind==='bank'&&!['bank','transfer'].includes(e.method))return;
+    const id=String(e.id||[e.no,e.date,e.direction,e.amount].join('|'));if(seen.has(id))return;seen.add(id);
+    if(from&&String(e.date||'')<from||to&&String(e.date||'')>to)return;
+    if(direction!=='all'&&e.direction!==direction)return;
+    const party=e.customer||e.supplier||'';
+    const method=({cash:'نقدي',bank:'شيك بنكي',transfer:'تحويل'})[e.method]||e.method||'';
+    const status=({cash:'نقدي',transfer:'تحويل',collected:'محصل',returned:'مرتد'})[e.status]||e.status||'';
+    const desc=[e.direction==='in'?'تحصيل':'مدفوعات',party,method,status,e.notes].filter(Boolean).join(' — ');
+    const search=[e.no,e.refNo,party,desc,e.notes].join(' ').toLowerCase();if(needle&&!search.includes(needle))return;
+    const returned=e.status==='returned'&&e.wasCollected;
+    const incoming=(e.direction==='in')!==returned;
+    out.push({id,date:String(e.date||''),no:e.no||e.refNo||'—',party,desc,method,amount:Number(e.amount)||0,incoming,posted:!!e.postedEntryId,glRef:e.postedEntryNo||'',source:e});
+  });
+  return out.sort((a,b)=>a.date.localeCompare(b.date)||txEntryCmp(a.source,b.source)||String(a.no).localeCompare(String(b.no),'ar',{numeric:true})||a.id.localeCompare(b.id));
+}
+async function renderTreasuryAccountStatement(page){
+  const kind=page==='bankStatement'?'bank':'safe',f=treasuryStmtFilters[kind],el=document.getElementById('treasuryStmtResults');if(!el)return;
+  const item=treasuryAll().find(x=>x.kind===kind&&x.code===f.account);
+  if(!item){el.innerHTML='<div class="empty"><h3>اختر '+(kind==='bank'?'البنك':'الخزينة')+' أولاً</h3></div>';return;}
+  el.innerHTML='<div class="empty"><h3>جاري حساب الرصيد الافتتاحي ومطابقة الأستاذ العام…</h3></div>';
+  try{
+    const gl=await treasuryStmtLoadGL(item.accountId,item.accountCode,f.from,f.to), rows=treasuryStmtOperationalRows(item.code,kind,f.from,f.to,f.q,f.direction);
+    const before=treasuryStmtOperationalRows(item.code,'',f.from?new Date(new Date(f.from+'T00:00:00').getTime()-86400000).toISOString().slice(0,10):'', '', 'all');
+    const openNet=before.reduce((s,r)=>s+(r.incoming?r.amount:-r.amount),0);
+    const open=gl.opening, incoming=rows.filter(r=>r.incoming).reduce((s,r)=>s+r.amount,0),outgoing=rows.filter(r=>!r.incoming).reduce((s,r)=>s+r.amount,0);
+    const closing=open+incoming-outgoing, opNet=incoming-outgoing,variance=opNet-gl.period;
+    const cur=state.settings.currency||'ج.م',money=v=>treasuryStmtMoney(v)+' '+escapeHtml(cur);
+    let running=open;
+    const body=rows.map((r,i)=>{running+=r.incoming?r.amount:-r.amount;return `<tr><td>${i+1}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.no))}</td><td>${escapeHtml(r.party||'—')}</td><td>${escapeHtml(r.desc)}</td><td>${escapeHtml(r.method)}</td><td style="color:${r.incoming?'#15803d':'#b91c1c'};font-weight:800">${r.incoming?'وارد':'منصرف'}</td><td class="n">${money(r.amount)}</td><td class="n" style="font-weight:800">${money(running)}</td><td>${r.posted?'مرحل'+(r.glRef?' — '+escapeHtml(r.glRef):''):'غير مرحل'}</td></tr>`;}).join('');
+    const openingRow=`<tr style="background:#eff6ff;font-weight:800"><td>—</td><td>${escapeHtml(f.from||'')}</td><td>—</td><td>—</td><td>رصيد أول المدة من الأستاذ العام</td><td>—</td><td>افتتاحي</td><td class="n">—</td><td class="n">${money(open)}</td><td>GL</td></tr>`;
+    const html=`<div class="sales-inst-totals-card" style="margin-top:14px"><div class="sales-inst-filter-head"><div><h3>${escapeHtml(item.name)} — ${escapeHtml(item.code)}</h3><small>رصيد أول المدة من GL · الحركات من التحصيلات والمدفوعات · ${escapeHtml(f.from||'البداية')} إلى ${escapeHtml(f.to||'النهاية')}</small></div><span class="badge">${kind==='bank'?'بنك':'خزينة'}</span></div><div class="ps-kpis">
+      <div class="ps-kpi"><span class="ps-kl">رصيد أول المدة GL</span><b class="ps-kv">${money(open)}</b><small class="ps-ku">${gl.available?'حساب مربوط':'لا يوجد ربط حساب GL'}</small></div>
+      <div class="ps-kpi"><span class="ps-kl">إجمالي الوارد التشغيلي</span><b class="ps-kv" style="color:#15803d">${money(incoming)}</b><small class="ps-ku">${rows.filter(r=>r.incoming).length} حركة</small></div>
+      <div class="ps-kpi"><span class="ps-kl">إجمالي المنصرف التشغيلي</span><b class="ps-kv" style="color:#b91c1c">${money(outgoing)}</b><small class="ps-ku">${rows.filter(r=>!r.incoming).length} حركة</small></div>
+      <div class="ps-kpi"><span class="ps-kl">الرصيد الختامي التشغيلي</span><b class="ps-kv">${money(closing)}</b><small class="ps-ku">افتتاحي GL + صافي الحركات التشغيلية</small></div>
+      <div class="ps-kpi"><span class="ps-kl">صافي حركة GL خلال الفترة</span><b class="ps-kv">${gl.available?money(gl.period):'—'}</b><small class="ps-ku">${gl.lines||0} سطر أستاذ مرحل</small></div>
+      <div class="ps-kpi"><span class="ps-kl">فرق المطابقة</span><b class="ps-kv" style="color:${gl.available&&Math.abs(variance)<0.01?'#15803d':'#b45309'}">${gl.available?money(variance):'—'}</b><small class="ps-ku">صافي التشغيل − صافي GL</small></div>
+    </div></div>
+    <div class="sales-inst-table-card" style="margin-top:12px"><div class="sales-inst-table-head"><h3>دفتر حركة الحساب</h3><span class="count">${rows.length} حركة · رصيد جارٍ محسوب من افتتاحي GL</span></div><div class="sales-inst-table-wrap"><table class="sales-inst-table"><thead><tr><th>م</th><th>التاريخ</th><th>رقم السند</th><th>الطرف</th><th>البيان</th><th>الوسيلة</th><th>الحركة</th><th>القيمة</th><th>الرصيد الجاري</th><th>حالة الترحيل</th></tr></thead><tbody>${openingRow}${body||'<tr><td colspan="10" class="muted">لا توجد حركات مطابقة للفلاتر</td></tr>'}</tbody><tfoot><tr><td colspan="7">إجمالي الوارد / المنصرف</td><td class="n">${money(incoming)} / ${money(outgoing)}</td><td class="n">${money(closing)}</td><td>—</td></tr></tfoot></table></div></div>
+    <div style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fffdf6;font-size:12px;color:var(--text-dim)">ملاحظة المطابقة: كشف الحركة لا يعيد إدراج قيود الأستاذ العام كحركات تشغيلية؛ بل يعرضها كمقارنة مستقلة. الشيكات غير المحصلة والضمان والتسويات غير النقدية والتحويلات غير المرتبطة بحساب خزينة مستبعدة من الرصيد النقدي. ${gl.available?'':'اربط الحساب من البيانات الأساسية ثم أعد فتح الكشف.'}</div>`;
+    treasuryStmtCache[kind]={html:`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة'}</title></head><body>${html}</body></html>`,title:(kind==='bank'?'كشف حساب بنك ':'كشف حساب خزينة ')+item.name};
+    el.innerHTML=html;
+  }catch(err){el.innerHTML=`<div class="empty"><h3>تعذر تجهيز المطابقة</h3><p>${escapeHtml(err.message||err)}</p><button class="btn" onclick="renderTreasuryAccountStatement('${page}')">إعادة المحاولة</button></div>`;}
+}
+function treasuryStmtAction(kind,action){
+  const item=treasuryAll().find(x=>x.kind===kind&&x.code===treasuryStmtFilters[kind].account),d=treasuryStmtCache[kind];
+  if(!item||!d)return toast('اختر الحساب وانتظر ظهور الكشف أولاً','err');
+  const file=igSafeFileName((kind==='bank'?'كشف_حساب_بنك_':'كشف_حساب_خزينة_')+item.code+'_'+new Date().toISOString().slice(0,10));
+  if(action==='excel'){igSaveXlsx(d.html,file);toast('تم تجهيز ملف Excel','ok');return;}
+  if(action==='print'){openReportPreview(d.html,d.title);return;}
+  const f=treasuryStmtFilters[kind],textBody=document.getElementById('treasuryStmtResults')?.innerText||d.title;
+  if(navigator.share){navigator.share({title:d.title,text:textBody}).then(()=>toast('تم فتح المشاركة','ok')).catch(()=>{});}
+  else if(navigator.clipboard?.writeText){navigator.clipboard.writeText(textBody).then(()=>toast('تم نسخ ملخص الكشف للمشاركة','ok')).catch(()=>toast('تعذر النسخ من المتصفح','err'));}
+  else toast('المشاركة غير مدعومة في هذا المتصفح؛ استخدم الطباعة أو Excel','err');
+}
+
 function viewSoon(){
   return `
     <div class="empty">
@@ -7434,7 +7574,121 @@ function invBalances(sourceRows=inventoryRows){
     invTidyBal(b); run.set(k,b); });
   return [...m.entries()].map(([k,x])=>{const b=run.get(k)||{q:0,v:0}; return {...x,factory:[...x.factories].sort((a,c)=>a.localeCompare(c,"ar")).join("، "),balance:b.q,value:b.v,avgCost:b.q>0?b.v/b.q:0};}).filter(x=>Math.abs(x.balance)>0.000001||Math.abs(x.value)>0.01);
 }
-function inventoryTabDefs(){return [{id:"warehouses",label:"شجرة المخازن وربط الحسابات"},{id:"items",label:"دليل الأصناف"},{id:"balances",label:"أرصدة المخزون"},{id:"movements",label:"حركة الوارد والمنصرف"},{id:"itemCard",label:"كارت الصنف"},{id:"issue",label:"صرف مخزني"},{id:"valuation",label:"تقييم المخزون"},{id:"reports",label:"تقارير المخازن والتسوية"}];}
+// ============================================================================
+// شاشة "إعادة تسعير المخزون"
+// الفلتر: من/إلى تاريخ، من/إلى مخزن، من/إلى صنف → معاينة → تنفيذ
+// بيستعمل RPC: inventory_reprice_authorized(..., p_dry_run)
+// ============================================================================
+var invRepriceF={d1:"",d2:"",w1:"",w2:"",i1:"",i2:""};
+var invRepriceLast=null;  // آخر نتيجة معاينة
+function invRepriceEnsureDefaults(){ if(!invRepriceF.d2) invRepriceF.d2=today(); }
+function invRepriceItemKeys(){
+  // "القطر|النوع" بنفس ترتيب الـ SQL
+  var keys=new Set();
+  (inventoryRows||[]).forEach(function(r){ var k=(r.diameter||"")+"|"+(r.item_type||""); keys.add(k); });
+  return Array.from(keys).sort();
+}
+function invRepriceFilterHtml(){
+  var F=invRepriceF;
+  var whs=whList().filter(function(w){return !whHasKids(w.id)}).map(function(w){return {id:String(w.id),nm:w.name||w.code||""}}).sort(function(a,b){return a.nm.localeCompare(b.nm,"ar")});
+  var opt=function(v,l,sel){return '<option value="'+escapeAttr(v)+'"'+(String(sel)===String(v)?' selected':'')+'>'+escapeHtml(l)+'</option>'};
+  var whOpts=function(sel){return '<option value="">الكل</option>'+whs.map(function(w){return opt(w.id,w.nm,sel)}).join("")};
+  var items=invRepriceItemKeys();
+  var itOpts=function(sel){return '<option value="">الكل</option>'+items.map(function(k){var d=k.split("|");return opt(k,"قطر "+(d[0]||"-")+" | "+(d[1]||"-"),sel)}).join("")};
+  return '<div class="sales-inst-filter-card"><div class="sales-inst-filter-head"><div style="flex:1"><h3>فلتر إعادة التسعير</h3><small>حدد النطاق الزمني، المخازن، والأصناف — ثم "عرض الفروقات" قبل التنفيذ</small></div><button class="btn ghost" type="button" onclick="invRepriceReset()">↺ مسح الكل</button></div>'+
+    '<div class="sales-inst-filter-grid" style="grid-template-columns:repeat(6,1fr)">'+
+    '<div class="fld"><label>من تاريخ</label><input class="inp" type="date" value="'+escapeAttr(F.d1||"")+'" onchange="invRepriceF.d1=this.value"></div>'+
+    '<div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" value="'+escapeAttr(F.d2||"")+'" onchange="invRepriceF.d2=this.value"></div>'+
+    '<div class="fld"><label>من مخزن</label><select class="inp" onchange="invRepriceF.w1=this.value">'+whOpts(F.w1)+'</select></div>'+
+    '<div class="fld"><label>إلى مخزن</label><select class="inp" onchange="invRepriceF.w2=this.value">'+whOpts(F.w2)+'</select></div>'+
+    '<div class="fld"><label>من صنف</label><select class="inp" onchange="invRepriceF.i1=this.value">'+itOpts(F.i1)+'</select></div>'+
+    '<div class="fld"><label>إلى صنف</label><select class="inp" onchange="invRepriceF.i2=this.value">'+itOpts(F.i2)+'</select></div>'+
+    '</div>'+
+    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;padding:0 14px 14px">'+
+    '<button class="btn" type="button" onclick="invRepricePreview()">🔎 عرض الفروقات</button>'+
+    '<button class="btn" type="button" onclick="invRepriceExecute()" style="background:var(--gold,#d4a017);color:#111;font-weight:800">⚡ تنفيذ إعادة التسعير وتحديث القيود</button>'+
+    '</div></div>';
+}
+function invRepriceReset(){ invRepriceF={d1:"",d2:today(),w1:"",w2:"",i1:"",i2:""}; invRepriceLast=null; var h=document.getElementById("invRepriceFilterHost"); if(h) h.innerHTML=invRepriceFilterHtml(); invRepriceRender(); }
+function invRepriceRender(){ var h=document.getElementById("invRepriceHost"); if(h) h.innerHTML=invRepriceResultsHtml(); }
+function invRepriceResultsHtml(){
+  if(!invRepriceLast) return '<div class="card"><div class="body" style="padding:22px;color:var(--text-dim);text-align:center">اختر الفلتر واضغط "عرض الفروقات" لمعاينة ما سيتم تعديله قبل التنفيذ.</div></div>';
+  var L=invRepriceLast, diffs=L.diffs||[];
+  var head='<div class="sales-inst-kpis">'+
+    '<div class="sales-inst-kpi"><span>الحركات في النطاق</span><b>'+(L.scanned_movements||0)+'</b><small>حركة</small></div>'+
+    '<div class="sales-inst-kpi"><span>حركات ستتغير تكلفتها</span><b>'+(L.changed_movements||0)+'</b><small>حركة</small></div>'+
+    '<div class="sales-inst-kpi"><span>قيود ستُحدَّث</span><b>'+(L.entries_affected||0)+'</b><small>قيد</small></div>'+
+    '<div class="sales-inst-kpi"><span>سطور قيود مُحدَّثة</span><b>'+(L.lines_updated||0)+'</b><small>سطر</small></div>'+
+    '</div>';
+  if(!diffs.length) return head+'<div class="card"><div class="body" style="padding:18px;text-align:center;color:#059669;font-weight:800">✓ مفيش أي فرق — كل التكاليف في النطاق مطابقة للمتوسط المتحرك فعلاً.</div></div>';
+  var body=diffs.map(function(d){
+    var tag=d.movement_type==="receipt"?'<span style="padding:2px 10px;border-radius:4px;background:#c6efce;color:#006100;font-weight:800">وارد</span>':'<span style="padding:2px 10px;border-radius:4px;background:#ffc7ce;color:#9c0006;font-weight:800">منصرف</span>';
+    var k=String(d.item_key||"").split("|");
+    var delta=Number(d.delta||0);
+    var dcolor=delta>0?"#059669":delta<0?"#b91c1c":"#64748b";
+    return '<tr><td>'+escapeHtml(String(d.mv_date||"").slice(0,10))+'</td><td>'+tag+'</td><td>'+escapeHtml(k[0]||"")+'</td><td>'+escapeHtml(k[1]||"")+'</td><td class="inv-num">'+invNum(d.qty)+'</td><td class="inv-num">'+invMoney(d.old_unit_cost)+'</td><td class="inv-num">'+invMoney(d.new_unit_cost)+'</td><td class="inv-num">'+invMoney(d.old_total)+'</td><td class="inv-num">'+invMoney(d.new_total)+'</td><td class="inv-num" style="color:'+dcolor+';font-weight:800">'+invMoney(d.delta)+'</td><td>'+escapeHtml(String(d.order_no||""))+'</td></tr>';
+  }).join("");
+  var tbl='<div class="sales-inst-table-card"><div class="sales-inst-table-head"><h3>قائمة الفروقات</h3><span class="count">'+diffs.length+' حركة ستتغير</span></div><div class="sales-inst-table-wrap"><table class="sales-inst-table"><thead><tr><th>التاريخ</th><th>النوع</th><th>القطر</th><th>النوع</th><th>الكمية</th><th>تكلفة قديمة/وحدة</th><th>تكلفة جديدة/وحدة</th><th>إجمالي قديم</th><th>إجمالي جديد</th><th>الفرق</th><th>أمر البيع</th></tr></thead><tbody>'+body+'</tbody></table></div></div>';
+  return head+tbl;
+}
+function invRepriceScreenHtml(){
+  invRepriceEnsureDefaults();
+  return '<style>#content .inv-num{font-variant-numeric:tabular-nums;direction:ltr}</style>'+
+    '<div class="sales-inst-page"><div class="sales-inst-head"><div><h2 style="margin:0">⚡ إعادة تسعير المخزون</h2><div class="si-note">يعيد حساب تكلفة الحركات بالمتوسط المتحرك لكل مخزن، ويحدّث سطور التكلفة في القيود المرحّلة تلقائياً — الفترة لازم تكون مفتوحة</div></div></div>'+
+    '<div id="invRepriceFilterHost">'+invRepriceFilterHtml()+'</div>'+
+    '<div id="invRepriceHost">'+invRepriceResultsHtml()+'</div></div>';
+}
+async function invRepricePreview(){
+  var F=invRepriceF;
+  if(!F.d1||!F.d2){ toast("حدد تاريخ البداية والنهاية","err"); return; }
+  if(F.d1>F.d2){ toast("تاريخ البداية بعد تاريخ النهاية","err"); return; }
+  toast("جارٍ حساب الفروقات…","ok");
+  try{
+    var r=await sb.rpc("inventory_reprice_authorized",{
+      p_date_from:F.d1, p_date_to:F.d2,
+      p_wh_from:F.w1||null, p_wh_to:F.w2||null,
+      p_item_from:F.i1||null, p_item_to:F.i2||null,
+      p_dry_run:true
+    });
+    if(r.error) throw r.error;
+    invRepriceLast=r.data||null;
+    invRepriceRender();
+    toast("✓ تم حساب الفروقات","ok");
+  }catch(e){
+    var msg=String((e&&e.message)||e||"");
+    if(msg.indexOf("FY_CLOSED")>=0){ await askConfirm("الفترة مغلقة أو جزء من النطاق خارج فترة محاسبية مفتوحة. افتح الفترة من \"السنة المالية\" ثم أعد المحاولة.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"}); }
+    else toast("فشل: "+msg,"err");
+  }
+}
+async function invRepriceExecute(){
+  var F=invRepriceF;
+  if(!F.d1||!F.d2){ toast("حدد تاريخ البداية والنهاية","err"); return; }
+  if(!invRepriceLast||!(invRepriceLast.diffs||[]).length){
+    toast("اعمل \"عرض الفروقات\" الأول للتأكد من التعديلات","err"); return;
+  }
+  var ok=await askConfirm("هيتم تحديث "+invRepriceLast.changed_movements+" حركة و"+invRepriceLast.entries_affected+" قيد محاسبي تلقائياً. العملية داخل transaction واحد ولو فشل جزء منها بترجع كلها. متأكد؟",{title:"⚠ تأكيد التنفيذ",ok:"نعم، نفّذ",cancel:"إلغاء",danger:true});
+  if(!ok) return;
+  toast("جارٍ التنفيذ…","ok");
+  try{
+    var r=await sb.rpc("inventory_reprice_authorized",{
+      p_date_from:F.d1, p_date_to:F.d2,
+      p_wh_from:F.w1||null, p_wh_to:F.w2||null,
+      p_item_from:F.i1||null, p_item_to:F.i2||null,
+      p_dry_run:false
+    });
+    if(r.error) throw r.error;
+    invRepriceLast=r.data||null;
+    await inventoryLoad();
+    invRepriceRender();
+    toast("✓ تم تحديث "+(r.data&&r.data.changed_movements||0)+" حركة و"+(r.data&&r.data.entries_affected||0)+" قيد","ok");
+  }catch(e){
+    var msg=String((e&&e.message)||e||"");
+    if(msg.indexOf("FY_CLOSED")>=0){ await askConfirm("الفترة مغلقة. فيه تاريخ في النطاق خارج أي فترة محاسبية مفتوحة، فالتعديل اتوقف.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"}); }
+    else await askConfirm("فشل التنفيذ: "+msg,{title:"⚠ خطأ",ok:"حسنًا",cancel:"إغلاق",danger:true});
+  }
+}
+
+function inventoryTabDefs(){return [{id:"warehouses",label:"شجرة المخازن وربط الحسابات"},{id:"items",label:"دليل الأصناف"},{id:"balances",label:"أرصدة المخزون"},{id:"movements",label:"حركة الوارد والمنصرف"},{id:"itemCard",label:"كارت الصنف"},{id:"issue",label:"صرف مخزني"},{id:"valuation",label:"تقييم المخزون"},{id:"reprice",label:"إعادة تسعير"},{id:"reports",label:"تقارير المخازن والتسوية"}];}
 function inventoryTabs(){return inventoryTabDefs().filter(t=>canTab("inventory",t.id)).map(t=>`<button class="${inventoryTab===t.id?"active":""}" onclick="inventoryTab='${t.id}';go('inventory')">${t.label}</button>`).join("")}
 function viewInventory(){
  const allowedInvTabs=inventoryTabDefs().filter(t=>canTab("inventory",t.id));
@@ -7446,6 +7700,7 @@ function viewInventory(){
  if(inventoryError)return `<div class="tabs">${tabs}</div><div class="card"><div class="body"><b>قاعدة بيانات حركات المخزون غير مهيأة أو تعذر الاتصال.</b><p>${escapeHtml(inventoryError)}</p><p>شغّل ملف <b>irongate_inventory_setup.sql</b> في SQL Editor داخل Supabase ثم أعد فتح الشاشة.</p><button class="btn" onclick="inventoryLoad().then(()=>go('inventory'))">إعادة المحاولة</button></div></div>`;
  if(inventoryLoading)return `<div class="tabs">${tabs}</div><div class="empty">جاري تحميل سجل المخزون…</div>`;
   if(["balances","valuation","movements","itemCard"].includes(inventoryTab)) return `<div class="tabs">${tabs}</div>${invScreenHtml(inventoryTab)}`;
+ if(inventoryTab==="reprice") return `<div class="tabs">${tabs}</div>${invRepriceScreenHtml()}`;
  if(inventoryTab==="reports"){
   const totalIn=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.total_cost||0),0), totalOut=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.total_cost||0),0);
   const inQty=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.qty||0),0), outQty=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.qty||0),0);
@@ -7634,6 +7889,7 @@ function invOrdNo(r){ const m=String(r.sale_order_no||"").match(/\d+/); return m
 function invMoveCmp(a,b){
   const x=a[0], y=b[0];
   const d=String(x.movement_date||"").slice(0,10).localeCompare(String(y.movement_date||"").slice(0,10)); if(d) return d;
+  { const cx=String(x.created_at||""), cy=String(y.created_at||""); if(cx&&cy&&cx!==cy) return cx<cy?-1:1; }   // أول حركة دخلت في اليوم تظهر الأول
   const rx=x.movement_type==="receipt"?0:1, ry=y.movement_type==="receipt"?0:1;
   const nx=invOrdNo(x), ny=invOrdNo(y);
   const kx=nx==null?(rx===0?-Infinity:Infinity):nx, ky=ny==null?(ry===0?-Infinity:Infinity):ny;
@@ -10491,6 +10747,9 @@ function saveShipment(){
   if(supLockCheck(prevSoNo,rec.saleOrderNo)) return;
   const list=editingSrc==="shipments"?state.shipments:state.policies;
   const idx=list.findIndex(s=>s.id===rec.id);
+  // نحتفظ بنسخة من البوليصة قبل التعديل عشان نقارن buyPrice (للربط التلقائي بإعادة التسعير)
+  const oldRec=(idx>=0)?JSON.parse(JSON.stringify(list[idx])):null;
+  const wasPosted=(editingSrc==="shipments");
   if(idx>=0) list[idx]=rec; else list.push(rec);
   if(editingSrc==="new") editingSrc="policies";
   commitOrderTerms(rec);
@@ -10498,7 +10757,65 @@ function saveShipment(){
   editingId=rec.id; saveState();
   draft=toDraft(rec); viewOnly=true; dirty=false;
   toast(`تم حفظ البوليصة ${rec.policyNo}`,"ok");
+  // ربط تلقائي: لو البوليصة مرحّلة وسعر شراء أي صنف اتغيّر → ننده إعادة التسعير تلقائياً
+  if(wasPosted && oldRec && invAutoRepriceChanged_(oldRec,rec)){
+    invAutoRepriceOnBuyPriceChange_(rec,oldRec).catch(function(e){ console.error("auto-reprice failed",e); });
+  }
   go("shipments");
+}
+
+// ---------- ربط تلقائي: إعادة تسعير عند تغيير buyPrice في بوليصة مرحّلة ----------
+function invAutoRepriceChanged_(oldR,newR){
+  // بنعمل map للسعر القديم بمفتاح القطر|النوع، وبنقارن بالجديد
+  var map={};
+  (oldR.items||[]).forEach(function(it){ map[(it.diameter||"")+"|"+(it.type||"")]=Number(it.buyPrice||0); });
+  var items=(newR.items||[]);
+  for(var i=0;i<items.length;i++){
+    var it=items[i], k=(it.diameter||"")+"|"+(it.type||"");
+    var oldP=(map[k]==null)?null:map[k];
+    var newP=Number(it.buyPrice||0);
+    // أي اختلاف > 0.5 قرش يعتبر تغيير
+    if(oldP===null || Math.abs(newP-oldP)>0.005) return true;
+  }
+  return false;
+}
+async function invAutoRepriceOnBuyPriceChange_(rec,oldRec){
+  // التاريخ: تاريخ البوليصة فقط (عشان نقلّل أثر الحسابات)
+  var d=String(rec.date||"").slice(0,10);
+  if(!d){ return; }
+  // المخزن: مخزن البوليصة فقط
+  var wh=rec.warehouseId?String(rec.warehouseId):null;
+  // الأصناف: أقل وأعلى مفتاح قطر|نوع من بنود البوليصة
+  var keys=(rec.items||[]).map(function(it){return (it.diameter||"")+"|"+(it.type||"")}).sort();
+  var i1=keys.length?keys[0]:null, i2=keys.length?keys[keys.length-1]:null;
+  // لو أمر البيع مرتبط، نمدّ النطاق ليومنا هو عشان القيود اللاحقة للصنف تتعدّل برده
+  var d2=today();
+  try{
+    toast("جارٍ المزامنة التلقائية للمخزون والقيود…","ok");
+    var r=await sb.rpc("inventory_reprice_authorized",{
+      p_date_from:d, p_date_to:d2,
+      p_wh_from:wh, p_wh_to:wh,
+      p_item_from:i1, p_item_to:i2,
+      p_dry_run:false
+    });
+    if(r.error) throw r.error;
+    var n=r.data||{};
+    try{ await inventoryLoad(); }catch(_){}
+    if(Number(n.changed_movements||0)>0){
+      toast("✓ تم إعادة تسعير "+n.changed_movements+" حركة وتحديث "+n.entries_affected+" قيد تلقائياً","ok");
+    }else{
+      // مفيش فروقات (التكلفة أصلاً مطابقة للمتوسط) — طبيعي لو التغيير بسيط أو مفيش منصرف
+      toast("تم الحفظ — مفيش فروقات محاسبية مطلوبة","ok");
+    }
+  }catch(e){
+    var msg=String((e&&e.message)||e||"");
+    if(msg.indexOf("FY_CLOSED")>=0){
+      await askConfirm("تم حفظ البوليصة بالسعر الجديد، لكن المزامنة التلقائية اتوقفت لأن تاريخ البوليصة في فترة محاسبية مغلقة. افتح الفترة من \"السنة المالية\" ثم اعمل إعادة تسعير يدوياً.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"});
+    }else{
+      console.error("auto-reprice failed",e);
+      toast("تم حفظ البوليصة لكن فشلت المزامنة التلقائية: "+msg,"warn");
+    }
+  }
 }
 
 // ---------- ترحيل لبيانات التوريد ----------
@@ -10614,13 +10931,18 @@ function supColValues(key){
   (state.shipments||[]).forEach(s=>(s.items||[]).forEach(it=>{ const v=String(g({s,it})==null?"":g({s,it})).trim(); const k=v||SUP_BLANK; if(!m.has(k)) m.set(k,v||"(فارغ)"); }));
   return [...m].map(([v,label])=>({v,label})).sort((a,b)=>a.v===SUP_BLANK?1:b.v===SUP_BLANK?-1:a.label.localeCompare(b.label,"ar",{numeric:true}));
 }
+/* سيريال دخول البوليصة (من createdAt أو من id = sh_<ts>) — داخل اليوم أول بوليصة دخلت تظهر الأولى */
+function shSerial(s){ const c=+(s&&s.createdAt); if(c>0) return c; const m=/^sh_(\d{10,})/.exec(String((s&&s.id)||"")); return m?+m[1]:0; }
+function shEntryCmp(a,b){ const x=shSerial(a), y=shSerial(b); return (x&&y&&x!==y)?x-y:0; }
+function grpSerial(g){ let m=0; try{ (g&&g.policies?[...g.policies.values()]:[]).forEach(function(sh){ const v=shSerial(sh); if(v&&(!m||v<m)) m=v; }); }catch(e){} return m; }
+function grpEntryCmp(a,b){ const x=grpSerial(a), y=grpSerial(b); return (x&&y&&x!==y)?x-y:0; }
 function supplyLines(){
   const q=supFilter.q.trim().toLowerCase(), out=[];
   const nz=(x,y)=>String(y||"").localeCompare(String(x||""),undefined,{numeric:true});
   const fe=supEff("flat"), byDate=fe.key==="date";
   // الترتيب بالتاريخ بيتم على مستوى البوليصة (فتفضل أصناف كل بوليصة متجمعة)؛ الفارغ دايماً في الآخر
   const ordK=supFilter.order?supOrderNumberKey(supFilter.order):"", ordSo=ordK?(state.saleOrders||[]).find(x=>supOrderNumberKey(x.orderNo)===ordK):null;
-  const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
+  const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||shEntryCmp(a,b)||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
   list.forEach(s=>{
     if(ordK&&supOrderNumberKey(s.saleOrderNo)!==ordK&&!(ordSo&&s.saleOrderId===ordSo.id)) return;
     if(!supColMatch("supplier", s.supplier)) return;
@@ -11183,7 +11505,7 @@ function supReportHtml(C,xl){
       if(!g.supplier&&s.supplier) g.supplier=s.supplier; if(!g.customer&&s.customer) g.customer=s.customer;
     });
     groups.forEach(g=>{ const od=soDateFor(g.order); if(od) g.date=od; });   // تاريخ الأمر نفسه
-    const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items,g.order);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||supCmp(a.order,b.order,false,1));
+    const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items,g.order);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||grpEntryCmp(a,b)||supCmp(a.order,b.order,false,1));
     const maxSchedule=Math.max(SUP_IMPORTED_MAX_SCHEDULE,supMaxScheduleAcrossAllSupplyOrders(),...data.map(g=>g.payment.schedule.length));
     const cols=["أمر البيع","عدد البوالص","التاريخ","المورد","العميل","إجمالي كمية التوريد","إجمالي الوزن الفعلي"];
     if(SB) cols.push("إجمالي الشراء"); if(SS) cols.push("إجمالي البيع قبل الضريبة","ضريبة القيمة المضافة","الخصم","صافي البيع بعد الضريبة والخصم");
@@ -11657,7 +11979,7 @@ function supToggleDet(key){
 }
 function supDetRowHtml(g,cols){
   const canS=can("inventory","post"), ready=!!window._supInvReady&&!inventoryError;
-  const pols=[...g.policies.values()].sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.policyNo||"").localeCompare(String(b.policyNo||""),undefined,{numeric:true}));
+  const pols=[...g.policies.values()].sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||shEntryCmp(a,b)||String(a.policyNo||"").localeCompare(String(b.policyNo||""),undefined,{numeric:true}));
   // تفاصيل الأمر: القطر / النوع / المصنع / الوزن الفعلي (مجمّعة لكل قطر + نوع + مصنع)
   const agg=new Map(); let totW=0;
   pols.forEach(sh=>(sh.items||[]).forEach(it=>{
@@ -11743,6 +12065,7 @@ function renderSupplyGrouped(L){
   const rows=[...groups.values()].sort((a,b)=>
     supCmp(gget(a),gget(b),gnum,ge.dir)
     || supCmp(a.date,b.date,false,1)
+    || grpEntryCmp(a,b)
     || supCmp(a.orderNo,b.orderNo,false,1)
   ).map(g=>{
     const totals=g.totals;
@@ -12250,7 +12573,7 @@ function supOpenGroupPolicy(key){
     if(!pol.has(s.id)) pol.set(s.id,{s,w:0,n:0});
     const p=pol.get(s.id); p.w+=(+it.actualWeight||0); p.n++;
   });
-  const list=[...pol.values()].sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||String(a.s.policyNo||"").localeCompare(String(b.s.policyNo||""),undefined,{numeric:true}));
+  const list=[...pol.values()].sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||shEntryCmp(a.s,b.s)||String(a.s.policyNo||"").localeCompare(String(b.s.policyNo||""),undefined,{numeric:true}));
   if(!list.length){ toast("لم يتم العثور على بوليصة لهذا الأمر","err"); return; }
   if(list.length===1){ editShipment(list[0].s.id); return; }
   const rows=list.map(({s,w,n})=>`<tr>
@@ -14175,6 +14498,9 @@ function treasuryUsed(code){ return (state.treasuryEntries||[]).some(e=>e.treasu
 function treasuryList(direction){
   return (state.treasuryEntries||[]).filter(e=>e.direction===direction);
 }
+/* سيريال دخول الحركة: createdAt لو موجود، وإلا الطابع الزمني المخزن في id (tx_<ts>_...) — بيحدد أول حركة دخلت في اليوم */
+function txSerial(e){ const c=+(e&&e.createdAt); if(c>0) return c; const m=/^tx_(\d{10,})/.exec(String((e&&e.id)||"")); return m?+m[1]:0; }
+function txEntryCmp(a,b){ const x=txSerial(a), y=txSerial(b); if(x&&y&&x!==y) return x-y; return (+a.no||0)-(+b.no||0); }
 function nextTxNo(direction){
   const list = treasuryList(direction);
   const max = list.reduce((a,e)=>Math.max(a,+e.no||0),0);
@@ -14327,7 +14653,7 @@ function txFilteredSorted(direction){
   });
   const sg = txSortGetter(txSort.key,direction), dir = txSort.dir==="desc"?-1:1;
   const empty = v => v===null || v===undefined || v==="";
-  const cmpBase = (a,b)=>(a.date||"").localeCompare(b.date||"")||((+a.no||0)-(+b.no||0));
+  const cmpBase = (a,b)=>(a.date||"").localeCompare(b.date||"")||txEntryCmp(a,b);
   return rows.sort((a,b)=>{
     const x=sg.g(a), y=sg.g(b), ex=empty(x), ey=empty(y);
     if(ex&&ey) return cmpBase(a,b);
@@ -14570,7 +14896,7 @@ function adjustmentsList(direction){
       const hay = [e[isIn?"customer":"supplier"], e.amount, e.notes, e.no].map(v=>String(v||"").toLowerCase()).join(" ");
       return hay.includes(q);
     })
-    .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))|| (+b.no||0)-(+a.no||0));
+    .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||txEntryCmp(b,a));
 }
 function renderAdjustments(direction){
   const isIn = direction==="in";
@@ -14755,7 +15081,7 @@ function chequeRegisterAll(){
   return (state.treasuryEntries||[])
     .filter(e=>e.direction==="in" && e.method==="bank" && ["receivable","pending","deposited"].includes(e.status))
     .slice()
-    .sort((a,b)=>String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")) || String(a.date||"").localeCompare(String(b.date||"")) || (+a.no||0)-(+b.no||0));
+    .sort((a,b)=>String(a.dueDate||"9999-12-31").localeCompare(String(b.dueDate||"9999-12-31")) || String(a.date||"").localeCompare(String(b.date||"")) || txEntryCmp(a,b));
 }
 function chequeStatusLabel(e){ return e.status==="receivable"?"أوراق قبض":"شيكات تحت التحصيل"; }
 function chequeDays(e){
@@ -14986,34 +15312,16 @@ function exportChequeRegisterExcel(){
 async function chequeBuildPdf(){
   const rows=chequeRegisterFiltered(); if(!rows.length){toast("لا توجد بيانات للتصدير","err");return null;}
   if(!window.html2canvas||!window.jspdf?.jsPDF){toast("مولد PDF غير متاح الآن — استخدم الطباعة ثم حفظ كـ PDF","err");return null;}
-  const host=document.createElement("div");host.dir="rtl";host.style.cssText="position:fixed;left:-20000px;top:0;width:1500px;background:#fff;padding:24px;color:#172033;font-family:Tahoma,Arial;z-index:-1";
-  host.innerHTML=`<h2 style="text-align:center">أوراق القبض وشيكات تحت التحصيل</h2><p style="text-align:center">عدد السجلات: ${rows.length} — الإجمالي: ${fmt(sumChequeAmounts(rows))} ${escapeHtml(state.settings.currency||"ج.م")} — ${new Date().toLocaleDateString("en-GB")}</p>${chequeReportHTML()}`;
-  document.body.appendChild(host);
+  // نفس HTML الطباعة بالظبط (chequeReportHTML) يتحمّل في iframe مخفي بعرض A4 عرضي ثم يتحوّل PDF
+  const fr=document.createElement("iframe");
+  fr.style.cssText="position:fixed;left:-20000px;top:0;width:1125px;height:900px;border:0;visibility:hidden";
+  document.body.appendChild(fr);
   try{
-    const canvas=await html2canvas(host,{scale:2,backgroundColor:"#ffffff",useCORS:true,windowWidth:1600});
-    const {jsPDF}=window.jspdf; const pdf=new jsPDF("l","mm","a4");
-    const pageW=277,pageH=190;
-    const fullPageHeightPx = Math.floor(canvas.width*pageH/pageW);
-    const pageCanvas=document.createElement("canvas"),ctx=pageCanvas.getContext("2d");
-    let y=0,first=true;
-    while(y<canvas.height){
-      const sliceH = Math.min(fullPageHeightPx, canvas.height-y);
-      // اضبط حجم pageCanvas على طول الشريحة الفعلية فقط — عشان الصفحة الأخيرة ما يكونش فيها مساحة سوداء فاضية
-      pageCanvas.width = canvas.width;
-      pageCanvas.height = sliceH;
-      // املأ خلفية بيضاء (JPEG ما بيدعمش شفافية — لو فضل فاضي بيبقى أسود)
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0,0,pageCanvas.width,sliceH);
-      ctx.drawImage(canvas,0,y,canvas.width,sliceH,0,0,canvas.width,sliceH);
-      const hMm = sliceH*pageW/canvas.width; // الارتفاع بالمليمتر يطابق محتوى الصفحة بالظبط
-      if(!first) pdf.addPage();
-      pdf.addImage(pageCanvas.toDataURL("image/jpeg",.92),"JPEG",10,10,pageW,hMm);
-      first=false;
-      y += sliceH;
-    }
-    return pdf;
+    await new Promise(function(res){ fr.onload=res; fr.srcdoc=chequeReportHTML(); setTimeout(res,2500); });
+    try{ if(fr.contentDocument.fonts&&fr.contentDocument.fonts.ready) await fr.contentDocument.fonts.ready; }catch(e){}
+    return await igReportToPdf(fr.contentWindow,window.html2canvas,window.jspdf);
   }catch(e){console.error(e);toast("تعذر إنشاء PDF؛ يمكنك استخدام الطباعة ثم حفظ كـ PDF","err");return null;}
-  finally{host.remove();}
+  finally{fr.remove();}
 }
 // تحويل أسماء الملفات العربية لصيغة ASCII آمنة عشان المشاركة والتحميل ما يبوظش الاسم
 function igArToLatin(str){
@@ -15159,7 +15467,7 @@ function openTxForm(direction, existing){
   const partyField = isIn ? "customer" : "supplier";
   const draft = existing ? JSON.parse(JSON.stringify(existing)) : {
     id: "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),
-    direction, no: nextTxNo(direction),
+    direction, no: nextTxNo(direction), createdAt: Date.now(),
     date: new Date().toISOString().slice(0,10),
     [partyField]: "",
     method: window.__forceAdjustmentNext ? "adjustment" : "",
@@ -15421,7 +15729,7 @@ function openTxForm(direction, existing){
         const payment = {
           id: "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),
           direction: "out",
-          no: nextTxNo("out"),
+          no: nextTxNo("out"), createdAt: Date.now()+1,
           date: d.date,
           supplier: targetSupplierVal,
           method: "transfer",
@@ -22123,7 +22431,7 @@ function txBulkList(){
   return (state.treasuryEntries||[])
     .filter(e=>kinds.includes(e.direction)&&(!B.from||(e.date&&e.date>=B.from))&&(!B.to||(e.date&&e.date<=B.to)))
     .slice()
-    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||(+a.no||0)-(+b.no||0)||(a.direction===b.direction?0:(a.direction==="in"?-1:1)));
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||txEntryCmp(a,b)||(a.direction===b.direction?0:(a.direction==="in"?-1:1)));
 }
 /* اختيار حركات معيّنة للترحيل/الفحص: لو فيه محدد بيتنفّذ على المحدد فقط، ولو مفيش بيتنفّذ على كل الجاهز */
 function txBulkTodo(){
