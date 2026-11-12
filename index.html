@@ -6770,6 +6770,22 @@ async function igReportToPdf(win,h2c,JS){
   } finally { st.remove(); }
   return pdf;
 }
+async function igSharePdfFromHtml(html,baseName,title){
+  if(!window.html2canvas||!window.jspdf?.jsPDF){ toast("مولد PDF غير متاح الآن — استخدم الطباعة ثم حفظ كـ PDF","err"); return; }
+  toast("جاري تجهيز ملف PDF للمشاركة…","ok");
+  const fr=document.createElement("iframe");
+  fr.style.cssText="position:fixed;left:-20000px;top:0;width:1125px;height:900px;border:0;visibility:hidden";
+  document.body.appendChild(fr);
+  try{
+    await new Promise(function(res){ fr.onload=res; fr.srcdoc=html; setTimeout(res,2500); });
+    try{ if(fr.contentDocument.fonts&&fr.contentDocument.fonts.ready) await fr.contentDocument.fonts.ready; }catch(e){}
+    const pdf=await igReportToPdf(fr.contentWindow,window.html2canvas,window.jspdf);
+    const file=new File([pdf.output("blob")],(baseName||"report")+".pdf",{type:"application/pdf"});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:title||baseName}); }
+    else { pdf.save(file.name); toast("المشاركة المباشرة غير متاحة في المتصفح ده — تم تحميل ملف PDF لتشاركه يدويًا","ok"); }
+  }catch(e){ if(!(e&&e.name==="AbortError")){ console.error(e); toast("تعذّر تجهيز ملف المشاركة: "+((e&&e.message)||e),"err"); } }
+  finally{ fr.remove(); }
+}
 function openReportPreview(html,title,fileBase){
   const w=window.open('','_blank');
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
@@ -7432,11 +7448,20 @@ function partyStatementExport(kind,format){
 }
 
 // ================= كشوف حساب البنوك والخزائن — تشغيلية + مطابقة GL =================
-const treasuryStmtFilters={bank:{account:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"},safe:{account:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"}};
+const treasuryStmtFilters={bank:{accFrom:"",accTo:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"},safe:{accFrom:"",accTo:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"}};
+const treasuryStmtToken={};
+/* قائمة البنوك/الخزائن مرتبة بالكود — اختيار «من … إلى …» بياخد كل اللي بينهم */
+function treasuryStmtList(kind){ return treasuryAll().filter(x=>x.kind===kind).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ar',{numeric:true})); }
+function treasuryStmtSelected(kind){
+  const f=treasuryStmtFilters[kind], list=treasuryStmtList(kind), a=f.accFrom||f.accTo, b=f.accTo||f.accFrom; if(!a) return [];
+  let i=list.findIndex(x=>x.code===a), j=list.findIndex(x=>x.code===b); if(i<0||j<0) return [];
+  if(i>j){ const t=i; i=j; j=t; }
+  return list.slice(i,j+1);
+}
 const treasuryStmtCache={};
 const treasuryStmtMoney=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 function treasuryStmtIsRealMovement(e){
-  if(!e||!e.treasury||!['in','out'].includes(e.direction)) return false;
+  if(!e||!(e.treasury||e.actualBank)||!['in','out'].includes(e.direction)) return false;
   if(!['cash','bank','transfer'].includes(e.method)) return false;
   if(e.method==='transfer_supplier' || e.status==='guarantee') return false;
   // الشيك البنكي لا يؤثر على الرصيد النقدي إلا بعد التحصيل؛ والمرتد يعكس الحركة فقط إذا سبق تحصيله.
@@ -7445,94 +7470,190 @@ function treasuryStmtIsRealMovement(e){
   return Number(e.amount)>0;
 }
 function viewTreasuryAccountStatement(page){
-  const kind=page==='bankStatement'?'bank':'safe', f=treasuryStmtFilters[kind], list=treasuryAll().filter(x=>x.kind===kind);
+  const kind=page==='bankStatement'?'bank':'safe', f=treasuryStmtFilters[kind], list=treasuryStmtList(kind);
   const title=kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة', label=kind==='bank'?'البنك':'الخزينة';
   return `<div class="trade-report" dir="rtl">
     <div class="page-head"><div><h2>${kind==='bank'?'🏦':'🗄'} ${title}</h2><div style="color:var(--text-dim);font-size:12px;margin-top:4px">كشف حركة تفصيلي من التحصيلات والمدفوعات مع رصيد افتتاحي من الأستاذ العام ومطابقة مستقلة</div></div><div class="spacer"></div><button class="btn ghost" onclick="treasuryStmtAction('${kind}','print')">🖨 عرض / طباعة PDF</button><button class="btn" onclick="treasuryStmtAction('${kind}','excel')">⬇ Excel</button><button class="btn ghost" onclick="treasuryStmtAction('${kind}','share')">↗ مشاركة</button></div>
     <div class="sales-inst-filter-card"><div class="sales-inst-filter-grid">
-      <div class="fld"><label>اختر ${label}</label><select class="inp" id="tsAccount" onchange="treasuryStmtFilters['${kind}'].account=this.value;renderTreasuryAccountStatement('${page}')"><option value="">— اختر ${label} —</option>${list.map(x=>`<option value="${escapeAttr(x.code)}" ${f.account===x.code?'selected':''}>${escapeHtml(x.code+' — '+x.name)}</option>`).join('')}</select></div>
+      <div class="fld"><label>من ${label}</label><select class="inp" onchange="treasuryStmtFilters['${kind}'].accFrom=this.value;renderTreasuryAccountStatement('${page}')"><option value="">— اختر ${label} —</option>${list.map(x=>`<option value="${escapeAttr(x.code)}" ${f.accFrom===x.code?'selected':''}>${escapeHtml(x.code+' — '+x.name)}</option>`).join('')}</select></div>
+      <div class="fld"><label>إلى ${label}</label><select class="inp" onchange="treasuryStmtFilters['${kind}'].accTo=this.value;renderTreasuryAccountStatement('${page}')"><option value="">— نفس البداية —</option>${list.map(x=>`<option value="${escapeAttr(x.code)}" ${f.accTo===x.code?'selected':''}>${escapeHtml(x.code+' — '+x.name)}</option>`).join('')}</select><small style="color:var(--text-dim)">لو اخترت أكثر من ${label} كل واحد يظهر في كشف وصفحة مستقلة، و${label} هو الماستر.</small></div>
       <div class="fld"><label>من تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.from)}" onchange="treasuryStmtFilters['${kind}'].from=this.value;renderTreasuryAccountStatement('${page}')"></div>
       <div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" value="${escapeAttr(f.to)}" onchange="treasuryStmtFilters['${kind}'].to=this.value;renderTreasuryAccountStatement('${page}')"></div>
       <div class="fld"><label>نوع الحركة</label><select class="inp" onchange="treasuryStmtFilters['${kind}'].direction=this.value;renderTreasuryAccountStatement('${page}')"><option value="all" ${f.direction==='all'?'selected':''}>كل الحركات</option><option value="in" ${f.direction==='in'?'selected':''}>وارد فقط</option><option value="out" ${f.direction==='out'?'selected':''}>منصرف فقط</option></select></div>
       <div class="fld"><label>بحث</label><input class="inp" placeholder="رقم السند أو الطرف أو البيان" value="${escapeAttr(f.q)}" oninput="treasuryStmtFilters['${kind}'].q=this.value;renderTreasuryAccountStatement('${page}')"></div>
-      <div class="fld" style="justify-content:end"><label>&nbsp;</label><button class="btn ghost" onclick="treasuryStmtFilters['${kind}']={account:'',from:igYearStart(),to:igYearEnd(),q:'',direction:'all'};go('${page}')">مسح الفلاتر</button></div>
+      <div class="fld" style="justify-content:end"><label>&nbsp;</label><button class="btn ghost" onclick="treasuryStmtFilters['${kind}']={accFrom:'',accTo:'',from:igYearStart(),to:igYearEnd(),q:'',direction:'all'};go('${page}')">مسح الفلاتر</button></div>
     </div></div><div id="treasuryStmtResults"><div class="empty"><h3>اختر ${label} لعرض الكشف</h3><p>يتم جلب رصيد أول المدة والحركات المرحلة من الأستاذ العام عند اختيار الحساب.</p></div></div></div>`;
 }
 async function treasuryStmtLoadGL(accountId,accountCode,from,to){
+  const none={opening:0,period:0,closing:0,available:false,lines:0,periodLines:[]};
   let accR;
   if(accountId) accR=await sb.from('gl_accounts').select('*').eq('id',accountId).maybeSingle();
   else if(accountCode) accR=await sb.from('gl_accounts').select('*').eq('account_code',accountCode).maybeSingle();
-  else return {opening:0,period:0,closing:0,available:false,lines:0};
+  else return none;
   if(accR.error) throw accR.error;
-  const acc=accR.data; if(!acc) return {opening:0,period:0,closing:0,available:false,lines:0};
+  const acc=accR.data; if(!acc) return none;
   const base=Number(acc.opening_debit||0)-Number(acc.opening_credit||0)+Number(acc.opening_balance||0);
+  // الاستعلام بـ acc.id (مش accountId) علشان يشتغل حتى لو الحساب اتحدد بالكود فقط
   let all=[],off=0;
-  while(true){const r=await sb.from('gl_entry_lines').select('entry_id,debit,credit').eq('account_id',accountId).range(off,off+999);if(r.error)throw r.error;const a=r.data||[];all.push(...a);if(a.length<1000)break;off+=1000;}
+  while(true){const r=await sb.from('gl_entry_lines').select('entry_id,debit,credit,description').eq('account_id',acc.id).range(off,off+999);if(r.error)throw r.error;const a=r.data||[];all.push(...a);if(a.length<1000)break;off+=1000;}
   const ids=[...new Set(all.map(x=>x.entry_id).filter(Boolean))], entries=[];
-  for(let i=0;i<ids.length;i+=400){const r=await sb.from('gl_entries').select('id,entry_date,status').in('id',ids.slice(i,i+400));if(r.error)throw r.error;entries.push(...(r.data||[]));}
-  const em=new Map(entries.map(e=>[e.id,e]));let prior=base,period=0,lines=0;
-  all.forEach(l=>{const e=em.get(l.entry_id);if(!e||e.status!=='posted')return;const net=Number(l.debit||0)-Number(l.credit||0);if(String(e.entry_date||'')<(from||'0000-01-01'))prior+=net;else if((!to||String(e.entry_date||'')<=to)){period+=net;lines++;}});
-  return {opening:prior,period,closing:prior+period,available:true,lines,account:acc};
+  for(let i=0;i<ids.length;i+=400){const r=await sb.from('gl_entries').select('*').in('id',ids.slice(i,i+400));if(r.error)throw r.error;entries.push(...(r.data||[]));}
+  const em=new Map(entries.map(e=>[e.id,e]));let prior=base,period=0;const periodLines=[];
+  all.forEach(l=>{const e=em.get(l.entry_id);if(!e||e.status!=='posted')return;const net=Number(l.debit||0)-Number(l.credit||0),d=String(e.entry_date||'');
+    if(d<(from||'0000-01-01'))prior+=net;
+    else if(!to||d<=to){period+=net;periodLines.push({entry_id:l.entry_id,date:d,ts:Date.parse(e.created_at||e.createdAt||'')||0,no:e.entry_no||'',desc:e.description||l.description||'',net});}});
+  return {opening:prior,period,closing:prior+period,available:true,lines:periodLines.length,account:acc,periodLines};
 }
 function treasuryStmtOperationalRows(code,kind,from,to,q,direction){
   const seen=new Set(), out=[], needle=String(q||'').trim().toLowerCase();
   (state.treasuryEntries||[]).forEach(e=>{
-    if(!treasuryStmtIsRealMovement(e)||String(e.treasury)!==String(code))return;
+    if(!treasuryStmtIsRealMovement(e))return;
+    // الشيك المحصّل يدخل في البنك اللي اتحصّل فيه فعلاً (actualBank) وبتاريخ التحصيل (collectDate) بدل بيانات الشيك الأصلية
+    const isColl=e.method==='bank'&&(e.status==='collected'||(e.status==='returned'&&!!e.wasCollected));
+    const acct=String((isColl&&e.actualBank)||e.treasury||''), mdate=String((isColl&&e.collectDate)||e.date||'');
+    if(acct!==String(code))return;
     if(kind==='safe'&&e.method!=='cash')return;
     if(kind==='bank'&&!['bank','transfer'].includes(e.method))return;
     const id=String(e.id||[e.no,e.date,e.direction,e.amount].join('|'));if(seen.has(id))return;seen.add(id);
-    if(from&&String(e.date||'')<from||to&&String(e.date||'')>to)return;
-    if(direction!=='all'&&e.direction!==direction)return;
+    if(from&&mdate<from||to&&mdate>to)return;
+    if(direction&&direction!=='all'&&e.direction!==direction)return;
     const party=e.customer||e.supplier||'';
     const method=({cash:'نقدي',bank:'شيك بنكي',transfer:'تحويل'})[e.method]||e.method||'';
     const status=({cash:'نقدي',transfer:'تحويل',collected:'محصل',returned:'مرتد'})[e.status]||e.status||'';
-    const desc=[e.direction==='in'?'تحصيل':'مدفوعات',party,method,status,e.notes].filter(Boolean).join(' — ');
+    const desc=[e.direction==='in'?'تحصيل':'مدفوعات',party,method,status,(isColl&&e.collectDate&&e.date&&e.collectDate!==e.date)?('تاريخ الشيك '+e.date):'',e.notes].filter(Boolean).join(' — ');
     const search=[e.no,e.refNo,party,desc,e.notes].join(' ').toLowerCase();if(needle&&!search.includes(needle))return;
     const returned=e.status==='returned'&&e.wasCollected;
-    const incoming=(e.direction==='in')!==returned;
-    out.push({id,date:String(e.date||''),no:e.no||e.refNo||'—',party,desc,method,amount:Number(e.amount)||0,incoming,posted:!!e.postedEntryId,glRef:e.postedEntryNo||'',source:e});
+    const incoming=(e.direction==='in');   // سطر التحصيل نفسه؛ الارتداد بيتضاف كسطر عكسي منفصل تحته
+    const ts=isColl?(+e.collectedAt||Date.parse(e.postedAt||'')||txSerial(e)):txSerial(e);
+    out.push({id,date:mdate,ts,no:e.no||e.refNo||'—',ref:String(e.refNo||''),party,desc,method,amount:Number(e.amount)||0,incoming,posted:!!e.postedEntryId,glRef:e.postedEntryNo||'',source:e});
+    if(returned) out.push({id:id+'#ret',date:mdate,ts:ts+1,no:e.no||e.refNo||'—',ref:String(e.refNo||''),party,desc:'ارتداد شيك — '+desc,method,amount:Number(e.amount)||0,incoming:!incoming,posted:!!e.postedEntryId,glRef:e.postedEntryNo||'',source:e});
   });
-  return out.sort((a,b)=>a.date.localeCompare(b.date)||txEntryCmp(a.source,b.source)||String(a.no).localeCompare(String(b.no),'ar',{numeric:true})||a.id.localeCompare(b.id));
+  return out.sort(treasuryStmtRowCmp);
+}
+/* ids / أرقام قيود الأستاذ العام اللي اتولدت من حركات التحصيلات والمدفوعات (علشان قيود GL اليدوية بس هي اللي تتعرض كصفوف إضافية) */
+function treasuryStmtPostedRefs(){
+  const ids=new Set(), nos=new Set();
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.postedEntryId) ids.add(String(e.postedEntryId));
+    (e.chequeEntries||[]).forEach(d=>{ if(d&&d.id) ids.add(String(d.id)); if(d&&d.no) nos.add(String(d.no)); });
+    String(e.postedEntryNo||'').split(/\s*[·,،]\s*/).forEach(n=>{ n=n.trim(); if(n) nos.add(n); });
+  });
+  return {ids,nos};
+}
+/* طبيعة الرصيد: موجب = مدين، سالب = دائن (الدائن بالأحمر) */
+function treasuryStmtNat(v){ v=Number(v)||0; return v>0.004?'مدين':(v<-0.004?'دائن':'—'); }
+function treasuryStmtNatCell(v){ const n=treasuryStmtNat(v); return `<td style="font-weight:800;${n==='دائن'?'color:#b91c1c':''}">${n}</td>`; }
+/* ترتيب الحركات: التاريخ، وفي نفس اليوم بترتيب الدخول (اللي دخل الأول يظهر الأول) — الشيك المحصّل بوقت التحصيل، وقيود GL اليدوية بوقت إنشاء القيد */
+function treasuryStmtRowCmp(a,b){
+  if(a.date!==b.date) return a.date<b.date?-1:1;
+  const x=a.ts||0, y=b.ts||0; if(x&&y&&x!==y) return x-y;
+  if(a.source&&b.source){ const c=(+a.source.no||0)-(+b.source.no||0); if(c) return c; }
+  if(!!a.source!==!!b.source) return a.source?-1:1;
+  return String(a.no).localeCompare(String(b.no),'ar',{numeric:true})||String(a.id).localeCompare(String(b.id));
+}
+const treasuryStmtUi={kpi:false};
+function treasuryStmtToggleKpi(){
+  treasuryStmtUi.kpi=!treasuryStmtUi.kpi; const o=treasuryStmtUi.kpi;
+  document.querySelectorAll('#treasuryStmtResults .tsm-kpibody').forEach(el=>{el.style.display=o?'':'none';});
+  document.querySelectorAll('#treasuryStmtResults .tsm-mini').forEach(el=>{el.style.display=o?'none':'';});
+  document.querySelectorAll('#treasuryStmtResults .tsm-kpibtn').forEach(b=>{b.textContent=o?'▲ طي الملخص':'▼ عرض الملخص';});
+}
+function treasuryStmtPrevDay(d){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(d||'')); return m?new Date(Date.UTC(+m[1],+m[2]-1,+m[3]-1)).toISOString().slice(0,10):''; }
+async function treasuryStmtBuild(kind,item,f){
+    const lblK=kind==='bank'?'البنك':'الخزينة';
+    const masterBanner=`<div class="rprt-master"><span class="lbl">${lblK}:</span><span class="name" style="direction:ltr">${escapeHtml(item.code)}</span><span class="name">${escapeHtml(item.name)}</span></div>`;
+    const screenMaster=`<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-radius:12px;background:linear-gradient(135deg,#fffaf0,#f6f8fc);border:1px solid #e8d7ad;border-right:6px solid #d4a017"><span style="font-size:20px">${kind==='bank'?'🏦':'🗄'}</span><span style="color:#8a6a19;font-weight:700">${lblK}:</span><b style="font-size:17px;color:#172b49;direction:ltr">${escapeHtml(item.code)}</b><b style="font-size:17px;color:#172b49">${escapeHtml(item.name)}</b></div>`;
+    const gl=await treasuryStmtLoadGL(item.accountId,item.accountCode,f.from,f.to);
+    const net=r=>r.incoming?r.amount:-r.amount, sum=a=>a.reduce((t,r)=>t+net(r),0);
+    // كل حركات الفترة (بدون فلتر بحث/اتجاه) — الأرصدة والإجماليات بتتحسب عليها، والفلاتر للعرض فقط
+    const opRows=treasuryStmtOperationalRows(item.code,kind,f.from,f.to,'','all');
+    const prior=f.from?treasuryStmtOperationalRows(item.code,kind,'',treasuryStmtPrevDay(f.from),'','all'):[];
+    const refs=treasuryStmtPostedRefs(), linked=l=>refs.ids.has(String(l.entry_id))||refs.nos.has(String(l.no||''));
+    const glRows=[];
+    if(gl.available){
+      const by=new Map();
+      gl.periodLines.forEach(l=>{ if(linked(l)) return; const g=by.get(l.entry_id)||{id:'gl:'+l.entry_id,date:l.date,ts:l.ts||0,no:l.no||'—',desc:l.desc||'',net:0}; g.net+=l.net; by.set(l.entry_id,g); });
+      by.forEach(g=>{ if(Math.abs(g.net)<0.005) return; glRows.push({id:g.id,date:String(g.date||''),ts:g.ts||0,no:g.no,ref:'',party:'—',desc:g.desc||'قيد أستاذ عام',method:'قيد GL',amount:Math.abs(g.net),incoming:g.net>0,posted:true,glRef:g.no,source:null,isGl:true}); });
+    }
+    const all=[...opRows,...glRows].sort(treasuryStmtRowCmp);
+    // رصيد أول المدة = أستاذ عام + حركات تشغيلية قبل الفترة لسه مش مرحّلة (ولو الحساب مش مربوط: كل الحركات التشغيلية السابقة)
+    const priorUnposted=sum(prior.filter(r=>!r.posted));
+    const open=gl.available?gl.opening+priorUnposted:sum(prior);
+    let running=open; all.forEach(r=>{ running+=net(r); r.bal=running; });
+    const incoming=all.filter(r=>r.incoming).reduce((t,r)=>t+r.amount,0), outgoing=all.filter(r=>!r.incoming).reduce((t,r)=>t+r.amount,0);
+    const closing=open+incoming-outgoing;
+    const unposted=priorUnposted+sum(opRows.filter(r=>!r.posted));
+    const glLinkedNet=gl.available?gl.periodLines.filter(linked).reduce((t,l)=>t+l.net,0):0;
+    const variance=sum(opRows.filter(r=>r.posted))-glLinkedNet;
+    const needle=String(f.q||'').trim().toLowerCase();
+    const shown=all.filter(r=>(f.direction==='all'||(f.direction==='in'?r.incoming:!r.incoming))&&(!needle||[r.no,r.glRef,r.ref,r.party,r.desc].join(' ').toLowerCase().includes(needle)));
+    const shIn=shown.filter(r=>r.incoming).reduce((t,r)=>t+r.amount,0), shOut=shown.filter(r=>!r.incoming).reduce((t,r)=>t+r.amount,0);
+    const cur=state.settings.currency||'ج.م', M=treasuryStmtMoney, money=v=>M(v)+' '+escapeHtml(cur);
+    const noLabel=r=>r.isGl?String(r.no):((r.source&&r.source.direction==='in'?'ت-':'د-')+r.no);
+    const title=kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة';
+    const filtersActive=f.direction!=='all'||!!needle;
+    const rowHtml=(r,i,pro)=>`<tr${r.isGl?' style="background:#fefce8"':''}><td>${i+1}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(noLabel(r))}</td><td style="font-weight:800">${escapeHtml(String(r.glRef||'—'))}</td><td>${escapeHtml(r.ref||'—')}</td><td>${escapeHtml(r.party||'—')}</td><td${pro?'':' style="text-align:right"'}>${escapeHtml(r.desc)}</td><td>${escapeHtml(r.method)}</td><td class="n" style="color:#15803d;font-weight:800;background:#f0fdf4;border-inline:2px solid #e5e7eb">${M(r.incoming?r.amount:0)}</td><td class="n" style="color:#b91c1c;font-weight:800;background:#fef2f2;border-inline:2px solid #e5e7eb">${M(r.incoming?0:r.amount)}</td><td class="n" style="font-weight:800${r.bal<-0.004?';color:#b91c1c':''}">${M(Math.abs(r.bal))}</td>${treasuryStmtNatCell(r.bal)}<td>${r.isGl?'قيد GL':(r.posted?'مرحل':'غير مرحل')}</td></tr>`;
+    const openingRow=`<tr style="background:#eff6ff;font-weight:800"><td>—</td><td>${escapeHtml(f.from||'')}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>رصيد أول المدة</td><td>—</td><td class="n">${M(0)}</td><td class="n" style="color:#b91c1c">${M(0)}</td><td class="n"${open<-0.004?' style="color:#b91c1c"':''}>${M(Math.abs(open))}</td>${treasuryStmtNatCell(open)}<td>${gl.available?'GL + غير مرحّل':'من الحركات'}</td></tr>`;
+    const thead='<thead><tr><th>م</th><th>التاريخ</th><th>رقم السند</th><th>رقم القيد</th><th>المرجع</th><th>الطرف</th><th>البيان</th><th>الوسيلة</th><th style="background:#15803d;border-inline:2px solid #fff">وارد</th><th style="background:#b91c1c;border-inline:2px solid #fff">منصرف</th><th>الرصيد الجاري</th><th>طبيعة الرصيد</th><th>الترحيل</th></tr></thead>';
+    const tfoot=`<tfoot><tr><td colspan="8" style="text-align:right">${filtersActive?'إجمالي المعروض (بعد الفلتر)':'إجمالي الحركة'}</td><td class="n" style="color:#14532d;font-weight:900;border-inline:2px solid #fff">${M(shIn)}</td><td class="n" style="color:#b91c1c;font-weight:900;border-inline:2px solid #fff">${M(shOut)}</td><td colspan="3">—</td></tr><tr><td colspan="10" style="text-align:right">الرصيد الختامي للكشف</td><td class="n"${closing<-0.004?' style="color:#b91c1c"':''}>${M(Math.abs(closing))}</td>${treasuryStmtNatCell(closing)}<td>—</td></tr></tfoot>`;
+    const bodyScreen=shown.map((r,i)=>rowHtml(r,i,false)).join('')||'<tr><td colspan="13" class="muted">لا توجد حركات مطابقة للفلاتر</td></tr>';
+    const bodyPro=shown.map((r,i)=>rowHtml(r,i,true)).join('')||'<tr><td colspan="13" style="padding:24px;color:#9ca3af">لا توجد حركات مطابقة للفلاتر</td></tr>';
+    const varColor=gl.available&&Math.abs(variance)<0.01?'#15803d':'#b45309';
+    const html=screenMaster+`<div class="sales-inst-totals-card" style="margin-top:14px"><div class="sales-inst-filter-head"><div><h3>${escapeHtml(item.name)} — ${escapeHtml(item.code)}</h3><small>أول المدة: أستاذ عام + حركات غير مرحّلة قبل الفترة · ${escapeHtml(f.from||'البداية')} إلى ${escapeHtml(f.to||'النهاية')}</small></div><span class="badge">${kind==='bank'?'بنك':'خزينة'}</span><button type="button" class="btn ghost sm tsm-kpibtn" onclick="treasuryStmtToggleKpi()">${treasuryStmtUi.kpi?'▲ طي الملخص':'▼ عرض الملخص'}</button></div>
+    <div class="tsm-mini" style="display:${treasuryStmtUi.kpi?'none':''};padding:9px 14px;font-size:12.5px;display:${treasuryStmtUi.kpi?'none':'flex'};gap:18px;flex-wrap:wrap;color:var(--text-dim)"><span>أول المدة: <b style="color:#1e40af">${M(Math.abs(open))} ${treasuryStmtNat(open)}</b></span><span>وارد: <b style="color:#15803d">${M(incoming)}</b></span><span>منصرف: <b style="color:#b91c1c">${M(outgoing)}</b></span><span>الرصيد الختامي: <b${closing<-0.004?' style="color:#b91c1c"':''}>${M(Math.abs(closing))} ${treasuryStmtNat(closing)}</b></span><span>فرق المطابقة: <b style="color:${varColor}">${gl.available?M(variance):'—'}</b></span></div>
+    <div class="tsm-kpibody" style="display:${treasuryStmtUi.kpi?'':'none'}"><div class="ps-kpis">
+      <div class="ps-kpi"><span class="ps-kl">رصيد أول المدة</span><b class="ps-kv"${open<-0.004?' style="color:#b91c1c"':''}>${money(Math.abs(open))} ${treasuryStmtNat(open)}</b><small class="ps-ku">${gl.available?'GL '+M(gl.opening)+' + غير مرحّل '+M(priorUnposted):'لا يوجد ربط حساب GL — محسوب من الحركات'}</small></div>
+      <div class="ps-kpi"><span class="ps-kl">الوارد خلال الفترة</span><b class="ps-kv" style="color:#15803d">${money(incoming)}</b><small class="ps-ku">${all.filter(r=>r.incoming).length} حركة</small></div>
+      <div class="ps-kpi"><span class="ps-kl">المنصرف خلال الفترة</span><b class="ps-kv" style="color:#b91c1c">${money(outgoing)}</b><small class="ps-ku">${all.filter(r=>!r.incoming).length} حركة</small></div>
+      <div class="ps-kpi"><span class="ps-kl">الرصيد الختامي (الكشف)</span><b class="ps-kv"${closing<-0.004?' style="color:#b91c1c"':''}>${money(Math.abs(closing))} ${treasuryStmtNat(closing)}</b><small class="ps-ku">أول المدة + وارد − منصرف (بدون تأثر بالفلاتر)</small></div>
+      <div class="ps-kpi"><span class="ps-kl">الرصيد الختامي GL</span><b class="ps-kv">${gl.available?money(gl.closing):'—'}</b><small class="ps-ku">${gl.lines||0} سطر أستاذ مرحل في الفترة</small></div>
+      <div class="ps-kpi"><span class="ps-kl">حركات غير مرحّلة (صافي)</span><b class="ps-kv">${money(unposted)}</b><small class="ps-ku">تفسّر الفرق بين الكشف والـ GL</small></div>
+      <div class="ps-kpi"><span class="ps-kl">فرق المطابقة</span><b class="ps-kv" style="color:${varColor}">${gl.available?money(variance):'—'}</b><small class="ps-ku">المرحّل من الحركات − سطور GL المرتبطة بها</small></div>
+    </div></div></div>
+    <div class="sales-inst-table-card" style="margin-top:12px"><div class="sales-inst-table-head"><h3>دفتر حركة الحساب</h3><span class="count">${shown.length}${filtersActive?' من '+all.length:''} حركة${glRows.length?' · '+glRows.length+' قيد GL يدوي (أصفر)':''}</span></div><div class="sales-inst-table-wrap"><table class="sales-inst-table">${thead}<tbody>${openingRow}${bodyScreen}</tbody>${tfoot}</table></div></div>
+    <div style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fffdf6;font-size:12px;color:var(--text-dim)">ملاحظة: الأرصدة والإجماليات محسوبة على كل حركات الفترة ولا تتأثر بفلتر البحث أو نوع الحركة. قيود الأستاذ العام اليدوية (غير الناتجة من التحصيلات والمدفوعات) بتظهر كصفوف صفراء. الشيكات غير المحصلة والضمان والتسويات غير النقدية والتحويلات غير المرتبطة بحساب خزينة مستبعدة. ${gl.available?'':'اربط الحساب من البيانات الأساسية ثم أعد فتح الكشف.'}</div>`;
+    // نسخة الطباعة / PDF / Excel / المشاركة: القالب الاحترافي الموحّد
+    const chips=['الحساب: '+item.code+' — '+item.name,'الفترة: '+(f.from||'البداية')+' → '+(f.to||'النهاية')];
+    if(f.direction!=='all') chips.push('الحركة: '+(f.direction==='in'?'وارد فقط':'منصرف فقط'));
+    if(needle) chips.push('بحث: '+f.q);
+    const sign='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:28px;margin:18px 24px 4px;break-inside:avoid">'+(kind==='bank'?['المحاسب','المدير المالي','المدير العام']:['أمين الخزينة','المحاسب','المدير المالي']).map(t=>`<div style="text-align:center;font-size:11px;font-weight:800;color:#374151">${t}<i style="display:block;height:34px;border-bottom:1px solid #9ca3af;margin-top:4px"></i></div>`).join('')+'</div>';
+    const tableHtml=masterBanner+`<table class="rprt-tbl">${thead}<tbody>${openingRow}${bodyPro}</tbody>${tfoot}</table>${sign}`;
+    const proHtml=igProReportHtml({emoji:kind==='bank'?'🏦':'🗄',title:title+' — '+item.name,titleEn:kind==='bank'?'BANK ACCOUNT STATEMENT':'CASH ACCOUNT STATEMENT',sub:shown.length+' حركة',filters:chips,
+      kpis:[{lbl:'أول المدة',val:M(Math.abs(open))+' '+treasuryStmtNat(open),color:open<-0.004?'#b91c1c':'#1e40af'},{lbl:'وارد',val:M(incoming),color:'#15803d'},{lbl:'منصرف',val:M(outgoing),color:'#b91c1c'},{lbl:'الرصيد الختامي',val:M(Math.abs(closing))+' '+treasuryStmtNat(closing),color:closing<-0.004?'#b91c1c':'#1a1a1a'},{lbl:'الرصيد GL',val:gl.available?M(gl.closing):'—',color:'#64748b'},{lbl:'غير مرحّل',val:M(unposted),color:'#d97706'},{lbl:'فرق المطابقة',val:gl.available?M(variance):'—',color:gl.available&&Math.abs(variance)<0.01?'#15803d':'#d97706'}],
+      tableHtml});
+    return {html,proHtml,name:item.name};
 }
 async function renderTreasuryAccountStatement(page){
   const kind=page==='bankStatement'?'bank':'safe',f=treasuryStmtFilters[kind],el=document.getElementById('treasuryStmtResults');if(!el)return;
-  const item=treasuryAll().find(x=>x.kind===kind&&x.code===f.account);
-  if(!item){el.innerHTML='<div class="empty"><h3>اختر '+(kind==='bank'?'البنك':'الخزينة')+' أولاً</h3></div>';return;}
+  const lbl=kind==='bank'?'البنك':'الخزينة', items=treasuryStmtSelected(kind);
+  if(!items.length){ delete treasuryStmtCache[kind]; el.innerHTML='<div class="empty"><h3>اختر '+lbl+' أولاً</h3></div>'; return; }
+  const token=(treasuryStmtToken[kind]=(treasuryStmtToken[kind]||0)+1);
   el.innerHTML='<div class="empty"><h3>جاري حساب الرصيد الافتتاحي ومطابقة الأستاذ العام…</h3></div>';
   try{
-    const gl=await treasuryStmtLoadGL(item.accountId,item.accountCode,f.from,f.to), rows=treasuryStmtOperationalRows(item.code,kind,f.from,f.to,f.q,f.direction);
-    const before=treasuryStmtOperationalRows(item.code,'',f.from?new Date(new Date(f.from+'T00:00:00').getTime()-86400000).toISOString().slice(0,10):'', '', 'all');
-    const openNet=before.reduce((s,r)=>s+(r.incoming?r.amount:-r.amount),0);
-    const open=gl.opening, incoming=rows.filter(r=>r.incoming).reduce((s,r)=>s+r.amount,0),outgoing=rows.filter(r=>!r.incoming).reduce((s,r)=>s+r.amount,0);
-    const closing=open+incoming-outgoing, opNet=incoming-outgoing,variance=opNet-gl.period;
-    const cur=state.settings.currency||'ج.م',money=v=>treasuryStmtMoney(v)+' '+escapeHtml(cur);
-    let running=open;
-    const body=rows.map((r,i)=>{running+=r.incoming?r.amount:-r.amount;return `<tr><td>${i+1}</td><td>${escapeHtml(r.date)}</td><td>${escapeHtml(String(r.no))}</td><td>${escapeHtml(r.party||'—')}</td><td>${escapeHtml(r.desc)}</td><td>${escapeHtml(r.method)}</td><td style="color:${r.incoming?'#15803d':'#b91c1c'};font-weight:800">${r.incoming?'وارد':'منصرف'}</td><td class="n">${money(r.amount)}</td><td class="n" style="font-weight:800">${money(running)}</td><td>${r.posted?'مرحل'+(r.glRef?' — '+escapeHtml(r.glRef):''):'غير مرحل'}</td></tr>`;}).join('');
-    const openingRow=`<tr style="background:#eff6ff;font-weight:800"><td>—</td><td>${escapeHtml(f.from||'')}</td><td>—</td><td>—</td><td>رصيد أول المدة من الأستاذ العام</td><td>—</td><td>افتتاحي</td><td class="n">—</td><td class="n">${money(open)}</td><td>GL</td></tr>`;
-    const html=`<div class="sales-inst-totals-card" style="margin-top:14px"><div class="sales-inst-filter-head"><div><h3>${escapeHtml(item.name)} — ${escapeHtml(item.code)}</h3><small>رصيد أول المدة من GL · الحركات من التحصيلات والمدفوعات · ${escapeHtml(f.from||'البداية')} إلى ${escapeHtml(f.to||'النهاية')}</small></div><span class="badge">${kind==='bank'?'بنك':'خزينة'}</span></div><div class="ps-kpis">
-      <div class="ps-kpi"><span class="ps-kl">رصيد أول المدة GL</span><b class="ps-kv">${money(open)}</b><small class="ps-ku">${gl.available?'حساب مربوط':'لا يوجد ربط حساب GL'}</small></div>
-      <div class="ps-kpi"><span class="ps-kl">إجمالي الوارد التشغيلي</span><b class="ps-kv" style="color:#15803d">${money(incoming)}</b><small class="ps-ku">${rows.filter(r=>r.incoming).length} حركة</small></div>
-      <div class="ps-kpi"><span class="ps-kl">إجمالي المنصرف التشغيلي</span><b class="ps-kv" style="color:#b91c1c">${money(outgoing)}</b><small class="ps-ku">${rows.filter(r=>!r.incoming).length} حركة</small></div>
-      <div class="ps-kpi"><span class="ps-kl">الرصيد الختامي التشغيلي</span><b class="ps-kv">${money(closing)}</b><small class="ps-ku">افتتاحي GL + صافي الحركات التشغيلية</small></div>
-      <div class="ps-kpi"><span class="ps-kl">صافي حركة GL خلال الفترة</span><b class="ps-kv">${gl.available?money(gl.period):'—'}</b><small class="ps-ku">${gl.lines||0} سطر أستاذ مرحل</small></div>
-      <div class="ps-kpi"><span class="ps-kl">فرق المطابقة</span><b class="ps-kv" style="color:${gl.available&&Math.abs(variance)<0.01?'#15803d':'#b45309'}">${gl.available?money(variance):'—'}</b><small class="ps-ku">صافي التشغيل − صافي GL</small></div>
-    </div></div>
-    <div class="sales-inst-table-card" style="margin-top:12px"><div class="sales-inst-table-head"><h3>دفتر حركة الحساب</h3><span class="count">${rows.length} حركة · رصيد جارٍ محسوب من افتتاحي GL</span></div><div class="sales-inst-table-wrap"><table class="sales-inst-table"><thead><tr><th>م</th><th>التاريخ</th><th>رقم السند</th><th>الطرف</th><th>البيان</th><th>الوسيلة</th><th>الحركة</th><th>القيمة</th><th>الرصيد الجاري</th><th>حالة الترحيل</th></tr></thead><tbody>${openingRow}${body||'<tr><td colspan="10" class="muted">لا توجد حركات مطابقة للفلاتر</td></tr>'}</tbody><tfoot><tr><td colspan="7">إجمالي الوارد / المنصرف</td><td class="n">${money(incoming)} / ${money(outgoing)}</td><td class="n">${money(closing)}</td><td>—</td></tr></tfoot></table></div></div>
-    <div style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fffdf6;font-size:12px;color:var(--text-dim)">ملاحظة المطابقة: كشف الحركة لا يعيد إدراج قيود الأستاذ العام كحركات تشغيلية؛ بل يعرضها كمقارنة مستقلة. الشيكات غير المحصلة والضمان والتسويات غير النقدية والتحويلات غير المرتبطة بحساب خزينة مستبعدة من الرصيد النقدي. ${gl.available?'':'اربط الحساب من البيانات الأساسية ثم أعد فتح الكشف.'}</div>`;
-    treasuryStmtCache[kind]={html:`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة'}</title></head><body>${html}</body></html>`,title:(kind==='bank'?'كشف حساب بنك ':'كشف حساب خزينة ')+item.name};
-    el.innerHTML=html;
+    const res=[];
+    for(const it of items){ res.push(await treasuryStmtBuild(kind,it,f)); if(token!==treasuryStmtToken[kind]) return; }
+    const title=kind==='bank'?'كشف حساب بنك':'كشف حساب خزينة', multi=res.length>1;
+    treasuryStmtCache[kind]={reports:res.map(r=>r.proHtml),items,title:multi?(title+' — '+res.length+(kind==='bank'?' بنوك':' خزائن')):(title+' '+items[0].name)};
+    const bar=multi?`<div style="margin-top:12px;padding:10px 14px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;font-size:13px;font-weight:700">عدد ${kind==='bank'?'البنوك':'الخزائن'} المختارة: ${res.length} — كل ${lbl} له كشف مستقل، وفي الطباعة والـ PDF والـ Excel كل ${lbl} في صفحة منفصلة.</div>`:'';
+    el.innerHTML='<style>#treasuryStmtResults,#treasuryStmtResults *{font-weight:800!important}</style>'+bar+res.map((r,i)=>`<div style="margin-top:${i||multi?26:0}px">${r.html}</div>`).join('');
   }catch(err){el.innerHTML=`<div class="empty"><h3>تعذر تجهيز المطابقة</h3><p>${escapeHtml(err.message||err)}</p><button class="btn" onclick="renderTreasuryAccountStatement('${page}')">إعادة المحاولة</button></div>`;}
 }
+/* دمج كشوف عدة بنوك في مستند واحد: كل بنك في صفحة */
+function treasuryStmtCombine(reports,title){
+  if(reports.length===1) return reports[0];
+  const styles=(reports[0].match(/<style[^>]*>[\s\S]*?<\/style>/gi)||[]).join('');
+  const bodies=reports.map((h,i)=>{ const m=/<body[^>]*>([\s\S]*)<\/body>/i.exec(h); return `<div data-share-page="1" style="${i<reports.length-1?'page-break-after:always;break-after:page;':''}">${m?m[1]:h}</div>`; }).join('');
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${escapeHtml(title||'')}</title>${styles}</head><body>${bodies}</body></html>`;
+}
 function treasuryStmtAction(kind,action){
-  const item=treasuryAll().find(x=>x.kind===kind&&x.code===treasuryStmtFilters[kind].account),d=treasuryStmtCache[kind];
-  if(!item||!d)return toast('اختر الحساب وانتظر ظهور الكشف أولاً','err');
-  const file=igSafeFileName((kind==='bank'?'كشف_حساب_بنك_':'كشف_حساب_خزينة_')+item.code+'_'+new Date().toISOString().slice(0,10));
-  if(action==='excel'){igSaveXlsx(d.html,file);toast('تم تجهيز ملف Excel','ok');return;}
-  if(action==='print'){openReportPreview(d.html,d.title);return;}
-  const f=treasuryStmtFilters[kind],textBody=document.getElementById('treasuryStmtResults')?.innerText||d.title;
-  if(navigator.share){navigator.share({title:d.title,text:textBody}).then(()=>toast('تم فتح المشاركة','ok')).catch(()=>{});}
-  else if(navigator.clipboard?.writeText){navigator.clipboard.writeText(textBody).then(()=>toast('تم نسخ ملخص الكشف للمشاركة','ok')).catch(()=>toast('تعذر النسخ من المتصفح','err'));}
-  else toast('المشاركة غير مدعومة في هذا المتصفح؛ استخدم الطباعة أو Excel','err');
+  const d=treasuryStmtCache[kind];
+  if(!d||!d.reports||!d.reports.length)return toast('اختر الحساب وانتظر ظهور الكشف أولاً','err');
+  const multi=d.reports.length>1, item=d.items[0], day=new Date().toISOString().slice(0,10);
+  const html=treasuryStmtCombine(d.reports,d.title);
+  const base=igSafeFileName(multi?((kind==='bank'?'كشوف_حساب_بنوك_':'كشوف_حساب_خزائن_')+day):((kind==='bank'?'كشف_حساب_بنك_':'كشف_حساب_خزينة_')+item.code+'_'+day));
+  if(action==='excel'){igSaveXlsx(html,base);toast(multi?'تم تجهيز ملف Excel — كل '+(kind==='bank'?'بنك':'خزينة')+' في صفحة':'تم تجهيز ملف Excel','ok');return;}
+  if(action==='print'){openReportPreview(html,d.title,igArToLatin(d.title)||base);return;}
+  igSharePdfFromHtml(html,String(base).replace(/\.[A-Za-z0-9]+$/,''),d.title);   // مشاركة PDF بنفس تنسيق الطباعة
 }
 
 function viewSoon(){
@@ -23066,7 +23187,7 @@ async function chqCollectDo(){
     e.chequeEntries=(e.chequeEntries||[]).concat(done);
     e.postedEntryId=done[done.length-1].id; e.postedEntryNo=e.chequeEntries.map(d=>d.no).join(" · ");
     e.postedAt=now; e.postedBy=by; e.postedJournal=String(j.journal_code); e.chq2=true; e.chqMode=plan.full?"full":"direct";
-    if(stage!=="receipt"){ e.statusBeforeCollect=e.status; e.status="collected"; e.actualBank=bank; e.collectDate=date; }
+    if(stage!=="receipt"){ e.statusBeforeCollect=e.status; e.status="collected"; e.actualBank=bank; e.collectDate=date; e.collectedAt=Date.now(); }
     for(const d of done){ try{ await sb.from("gl_posting_sources").insert({entry_id:d.id,source_system:"التحصيلات والمدفوعات",source_ref:plan.ref}); }catch(_){} }
     audit("chq_collect",`${stage==="receipt"?"ترحيل "+(direction==="in"?"استلام":"إصدار"):(direction==="in"?"تحصيل":"صرف")} شيك ${title} رقم ${e.no} بقيود ${e.postedEntryNo} — بنك ${bank} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState();
@@ -23200,12 +23321,12 @@ async function chqUnpostRun(id,direction,scope){
     else ["postedEntryId","postedEntryNo","postedAt","postedBy","postedJournal","chequeEntries","chqMode"].forEach(k=>{ delete e[k]; });
   };
   if(failed){
-    sync(); if(all.some(r=>r.kind==="collect")&&!left.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
+    sync(); if(all.some(r=>r.kind==="collect")&&!left.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
     saveState(); if(typeof renderTreasury==="function"&&document.getElementById("txBody")) renderTreasury(direction);
     return chqDialog("err","تعذّر إكمال إلغاء الترحيل","تم حذف "+removed.length+" من "+refs.length+" قيود، ثم حدث خطأ: "+String(failed.message||failed)+"\nالقيود المتبقية ما زالت مُرحّلة. راجع المحاسب أو أعد المحاولة.");
   }
   sync();
-  if(all.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
+  if(all.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
   const nos=refs.map(r=>r.no).join("، ");
   e.editLog=(e.editLog||[]).concat([{at:new Date().toISOString(),by,changes:[{f:"إلغاء "+what,from:"قيود "+nos,to:stepBack?"أوراق قبض/دفع":"غير مُرحّل"}]}]);
   audit("chq_unpost",`إلغاء ${what} للشيك رقم ${e.no} — حُذفت القيود ${nos}`);
