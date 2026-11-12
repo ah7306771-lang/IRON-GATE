@@ -3383,6 +3383,7 @@ const SCREENS = [
   { id:"quoteList", label:"سجل عروض السعر",    icon:"📑", acts:["edit","delete"] },
   { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post","print"], prices:true },
+  { id:"salesInvoices", label:"فواتير المبيعات", icon:"🧾", acts:["add","edit","delete","post","print"], prices:true },
   { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete","print","post"], prices:true, tabs:[
     {id:"flat",label:"العرض العادي"},
     {id:"customer",label:"مبالغ العملاء"},
@@ -3616,8 +3617,9 @@ function canView(page){
   return can(page,"view");
 }
 function canSys(k){ const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !!(u.perms&&u.perms.sys&&u.perms.sys[k]); }
-function showBuy(scr){  const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].buy); }
-function showSell(scr){ const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].sell); }
+var SI_MODE=false; const isSIdoc=r=>!!r&&r.docKind==="sales"; const SIP=()=>SI_MODE?"salesInvoices":"shipments";
+function showBuy(scr){ if(SI_MODE&&(scr==="shipments"||scr==="salesInvoices")) return false; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].buy); }
+function showSell(scr){ if(SI_MODE&&scr==="shipments") scr="salesInvoices"; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].sell); }
 function firstAllowedPage(){ if(can("dashboard","view")) return "dashboard"; const s=SCREENS.find(x=>can(x.id,"view")); return s?s.id:null; }
 function activeAdmins(){ return (state.users||[]).filter(u=>u.role==="admin"&&u.active!==false); }
 
@@ -3929,6 +3931,7 @@ const navGroups = [
     { id:"quoteList", icon:"📑", label:"سجل عروض السعر" },
     { id:"saleOrder", icon:"📝", label:"أمر البيع" },
     { id:"shipments", icon:"📦", label:"إدخال البوليصة" },
+    { id:"salesInvoices", icon:"🧾", label:"فواتير المبيعات" },
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
     { id:"supplyBulkPost", icon:"📥", label:"ترحيل بيانات التوريد" },
     { sep:"التقارير والمتابعة" },
@@ -4128,6 +4131,7 @@ function wireNavDnD(){
 
 function soon(){ toast("هذه الشاشة ضمن المراحل التالية","ok"); }
 function go(page){
+  { const _m=(page==="salesInvoices"); if((page==="shipments"||_m)&&_m!==SI_MODE){ SI_MODE=_m; draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; } }
   _navTrack(page);
   currentPage = page;
   try{ tbClose(); }catch(e){}
@@ -4142,6 +4146,7 @@ function go(page){
     quote:["عرض سعر","إنشاء عرض سعر — طباعة ومشاركة PDF"],
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
+    salesInvoices:["فواتير المبيعات","فاتورة مبيعات بدون مورد أو سعر شراء — تُستدعى من أمر بيع"],
     supply:["بيانات التوريد","كل البوالص والأصناف"],
     treasuryBulkPost:["ترحيل التحصيلات والمدفوعات","ترحيل جماعي تلقائي لقيود التحصيلات والمدفوعات حسب التاريخ — قيد مستقل لكل حركة"],
     supplyBulkPost:["ترحيل بيانات التوريد","ترحيل جماعي لقيود المشتريات والمبيعات حسب تاريخ التوريد ونطاق أوامر البيع"],
@@ -4185,7 +4190,7 @@ function go(page){
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
   else if(page==="quote"){ c.innerHTML = viewQuote(); bindQuote(); }
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
-  else if(page==="shipments"){ c.innerHTML = viewShipments(); bindShipments(); }
+  else if(page==="shipments"||page==="salesInvoices"){ c.innerHTML = viewShipments(); bindShipments(); }
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
   else if(page==="supplyBulkPost"){ c.innerHTML = viewSupplyBulk(); renderSupplyBulk(); }
   else if(page==="treasuryBulkPost"){ c.innerHTML = viewTxBulk(); renderTxBulk(); }
@@ -6739,6 +6744,7 @@ function tradeReportRows(kind){
     }
   }else{
     (state.shipments||[]).forEach(s=>{
+      if(isSIdoc(s))return;
       if(f.from&&(!s.date||s.date<f.from))return; if(f.to&&(!s.date||s.date>f.to))return;
       if(f.customer&&s.customer!==f.customer)return; if(f.supplier&&s.supplier!==f.supplier)return;
       if(q&&![s.policyNo,s.saleOrderNo,s.customer,s.supplier,s.company,s.site,s.notes].some(v=>String(v||'').toLowerCase().includes(q)))return;
@@ -7931,7 +7937,7 @@ function viewInventory(){
  if(inventoryTab==="reports"){
   const totalIn=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.total_cost||0),0), totalOut=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.total_cost||0),0);
   const inQty=inventoryRows.filter(x=>x.movement_type==="receipt").reduce((a,x)=>a+Number(x.qty||0),0), outQty=inventoryRows.filter(x=>x.movement_type==="issue").reduce((a,x)=>a+Number(x.qty||0),0);
-  const pending=(state.shipments||[]).filter(sh=>!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="receipt")||!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="issue"));
+  const pending=(state.shipments||[]).filter(sh=>!isSIdoc(sh)).filter(sh=>!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="receipt")||!inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type==="issue"));
   return `<div class="tabs">${tabs}</div><div class="grid cols-4" style="margin-bottom:14px"><div class="card"><div class="body"><small>إجمالي الوارد</small><h2>${invNum(inQty)} طن</h2><b>${invNum(totalIn)} ج.م</b></div></div><div class="card"><div class="body"><small>إجمالي المنصرف</small><h2>${invNum(outQty)} طن</h2><b>${invNum(totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>صافي الكمية</small><h2>${invNum(inQty-outQty)} طن</h2><b>${invNum(totalIn-totalOut)} ج.م</b></div></div><div class="card"><div class="body"><small>بوالص توريد تحتاج مراجعة</small><h2>${pending.length}</h2><small>حسب سجل حركات المخزون</small></div></div></div>
   <div class="card"><div class="head"><h3>تسوية الحركات التاريخية</h3><span class="chip warn">وارد + منصرف بنفس التاريخ والتكلفة</span></div><div class="body"><p class="inv-pend-note">كل بوليصة ناقصة بتتسوّى بوارد ثم منصرف بالوزن الفعلي وتكلفة الشراء وتاريخ البوليصة. حدّد صفوفًا معينة أو سيبها فاضية لتسوية الكل. الحركات المسجلة قبل كده لا تتكرر.</p>${invBackfillPendingHtml()}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn ghost" onclick="inventoryExportExcel()">⬇ تصدير Excel</button></div><div id="invBackfillResult" style="margin-top:12px">${inventoryBackfillSummary}</div></div></div>
   <div class="card"><div class="head"><h3>ملخص الحركات حسب المخزن</h3></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>المخزن</th><th>الوارد طن</th><th>المنصرف طن</th><th>الرصيد طن</th><th>قيمة الوارد</th><th>قيمة المنصرف</th><th>الصافي</th></tr></thead><tbody>${[...new Set(inventoryRows.map(x=>String(x.warehouse_id)))].map(id=>{const a=inventoryRows.filter(x=>String(x.warehouse_id)===id),w=a[0]||{};const iq=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.qty||0),0),oq=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.qty||0),0),iv=a.filter(x=>x.movement_type==="receipt").reduce((n,x)=>n+Number(x.total_cost||0),0),ov=a.filter(x=>x.movement_type==="issue").reduce((n,x)=>n+Number(x.total_cost||0),0);return `<tr><td>${escapeHtml(w.warehouse_name||w.warehouse_code||"")}</td><td>${invNum(iq)}</td><td>${invNum(oq)}</td><td>${invNum(iq-oq)}</td><td>${invNum(iv)}</td><td>${invNum(ov)}</td><td>${invNum(iv-ov)}</td></tr>`}).join("")||'<tr><td colspan="7">لا توجد بيانات</td></tr>'}</tbody></table></div></div></div>`;
@@ -7956,7 +7962,7 @@ function inventoryExportExcel(){const cols=["التاريخ","نوع الحرك�
 // ---- تسوية الحركات: عرض غير المسوّى + اختيار حركات معينة أو الكل ----
 window.invPendSel=window.invPendSel||new Set();
 function invPendInfo(sh){const has=t=>inventoryRows.some(m=>m.source_type==="policy"&&String(m.source_id)===String(sh.id)&&m.movement_type===t);return {r:has("receipt"),i:has("issue")};}
-function invPendingList(){return (state.shipments||[]).map(sh=>({sh,st:invPendInfo(sh)})).filter(x=>!x.st.r||!x.st.i).sort((a,b)=>String(a.sh.date||"").localeCompare(String(b.sh.date||""))||String(a.sh.policyNo||"").localeCompare(String(b.sh.policyNo||""),undefined,{numeric:true}));}
+function invPendingList(){return (state.shipments||[]).filter(sh=>!isSIdoc(sh)).map(sh=>({sh,st:invPendInfo(sh)})).filter(x=>!x.st.r||!x.st.i).sort((a,b)=>String(a.sh.date||"").localeCompare(String(b.sh.date||""))||String(a.sh.policyNo||"").localeCompare(String(b.sh.policyNo||""),undefined,{numeric:true}));}
 function invPendCount(){const n=window.invPendSel.size,c=document.getElementById("invPendCnt"),b=document.getElementById("invPendBtn"),all=document.getElementById("invPendAllCb"),tot=document.querySelectorAll(".inv-pend-cb").length;if(b)b.innerHTML=n?`تسوية المحدد (<span id="invPendCnt">${n}</span>)`:`تسوية الكل (<span id="invPendCnt">${tot}</span>)`;if(b)b.disabled=false;if(all){all.checked=tot>0&&n===tot;all.indeterminate=n>0&&n<tot;}}
 function invPendToggle(cb){const id=String(cb.dataset.id);cb.checked?window.invPendSel.add(id):window.invPendSel.delete(id);invPendCount();}
 function invPendSelectAll(on){document.querySelectorAll(".inv-pend-cb").forEach(cb=>{cb.checked=on;on?window.invPendSel.add(String(cb.dataset.id)):window.invPendSel.delete(String(cb.dataset.id));});invPendCount();}
@@ -10117,7 +10123,7 @@ function viewShipments(){
   return `
   <div class="page-head">
     ${typeof igBackBtn==="function"?igBackBtn():""}
-    <h2>${isNew?"إدخال بوليصة جديدة":`بوليصة رقم ${escapeHtml(d.policyNo)}`}</h2>
+    <h2>${SI_MODE?(isNew?"فاتورة مبيعات جديدة":`فاتورة مبيعات رقم ${escapeHtml(d.policyNo)}`):(isNew?"إدخال بوليصة جديدة":`بوليصة رقم ${escapeHtml(d.policyNo)}`)}</h2>
     ${status}${(!viewOnly&&!isNew)?'<span class="chip gold">وضع التعديل</span>':""}
     <div class="spacer"></div>
     <div class="ig-actions">
@@ -10145,13 +10151,13 @@ function viewShipments(){
   </div></div>`:""}
   ${pendingPanel()}
   </div>
-  <div class="card ig-pol-head"><div class="head"><h3>بيانات البوليصة والربط بأمر البيع</h3></div><div class="body">
+  <div class="card ig-pol-head"><div class="head"><h3>${SI_MODE?"بيانات الفاتورة والربط بأمر البيع":"بيانات البوليصة والربط بأمر البيع"}</h3></div><div class="body">
     <div class="fgrid">
       ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<input class="inp" id="f_soNoManual" type="text" inputmode="text" autocomplete="off" placeholder="✎ أو اكتب رقم الأمر" title="لو الأمر مش في القائمة اكتب رقمه بإيدك (زي ما هو في الداتا بيز) واضغط Enter" onchange="setSoNoManual(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" style="width:150px;flex:0 0 auto"><button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
-      ${F("رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
+      ${F(SI_MODE?"رقم الفاتورة":"رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
-      ${F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
-      ${F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
+      ${SI_MODE?"":F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
+      ${SI_MODE?"":F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
       ${F("العميل",`<select class="inp" ${ro} onchange="setF('customer',this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>`)}
       ${F("الشركة",`<input class="inp" ${ro} list="dlCompany" value="${escapeAttr(d.company)}" oninput="setF('company',this.value)" placeholder="اسم الشركة"><datalist id="dlCompany">${polyHist("company")}</datalist>`)}
       ${F("الموقع",`<input class="inp" ${ro} list="dlSite" value="${escapeAttr(d.site)}" oninput="setF('site',this.value)" placeholder="موقع التوريد / المشروع"><datalist id="dlSite">${polyHist("site")}</datalist>`)}
@@ -10383,7 +10389,7 @@ async function pickSO(id){
   draft.saleOrderId = so.id;
   draft.saleOrderNo = so.orderNo;
   draft.customer = so.customer || draft.customer;
-  draft.supplier = so.supplier || draft.supplier;
+  draft.supplier = SI_MODE?"":(so.supplier || draft.supplier);
   // دمج ملاحظات الصنف من أمر البيع إن وجدت (نلاقي الصنف المطابق بالقطر+النوع)
   const soNoteMap = {};
   (so.items||[]).forEach(it=>{
@@ -10405,14 +10411,14 @@ async function pickSO(id){
   }
   if(newItems.length===0){ toast("لا يوجد كميات متبقية في هذا الأمر","ok"); return; }
   draft.items = newItems;
-  dirty = true; closeModal(); go("shipments");
+  dirty = true; closeModal(); go(SIP());
   toast(`تم ربط البوليصة بأمر البيع #${so.orderNo} — ${newItems.length} صنف`,"ok");
 }
 
 async function unlinkSO(){
   if(!draft || !draft.saleOrderId) return;
   if(!await askConfirm("فك الربط بين البوليصة وأمر البيع؟ (البيانات الحالية هتفضل)")) return;
-  draft.saleOrderId = ""; draft.saleOrderNo = ""; dirty = true; go("shipments");
+  draft.saleOrderId = ""; draft.saleOrderNo = ""; dirty = true; go(SIP());
 }
 
 function supOrderPaymentPlanPanel(orderNo){
@@ -10438,7 +10444,7 @@ async function shipmentToggleOrderClosed(){
   if(!await askConfirm(next?`إقفال أمر البيع ${so.orderNo}؟ لن يظهر ضمن أوامر البيع المتاحة للاستدعاء.`:`إعادة فتح أمر البيع ${so.orderNo}؟`)) return;
   try{
     await persistSaleOrderClosure(so,next,next?"إقفال من شاشة البوليصة":"");
-    toast(next?"تم تأكيد إقفال أمر البيع في قاعدة البيانات":"تم تأكيد إعادة فتح أمر البيع في قاعدة البيانات","ok"); go("shipments");
+    toast(next?"تم تأكيد إقفال أمر البيع في قاعدة البيانات":"تم تأكيد إعادة فتح أمر البيع في قاعدة البيانات","ok"); go(SIP());
   }catch(e){toast("لم يتم تحديث حالة أمر البيع في قاعدة البيانات: "+(e.message||e),"err");}
 }
 function openPostedOrderSupply(){
@@ -10524,7 +10530,7 @@ function openItemNote(i){
   });
   setTimeout(()=>document.getElementById("itemNoteInp")?.focus(), 50);
 }
-function allRecords(){ return [...state.policies.map(r=>({r,src:"policies"})),...state.shipments.map(r=>({r,src:"shipments"}))]; }
+function allRecords(){ return [...state.policies.map(r=>({r,src:"policies"})),...state.shipments.map(r=>({r,src:"shipments"}))].filter(({r})=>isSIdoc(r)===SI_MODE); }
 function checkDup(){
   const el=document.getElementById("dupWarn"); if(!el) return;
   const p=String(draft.policyNo).trim();
@@ -10766,7 +10772,7 @@ async function goOrderScreen(no){
   soVirtualMode=false; soDraft=JSON.parse(JSON.stringify(so)); soLoadedId=so.id; go("saleOrder");
 }
 function soReturnToPolicy(){
-  if(!soReturnContext){go("shipments");return;}
+  if(!soReturnContext){go(SIP());return;}
   const c=soReturnContext; soReturnContext=null; soVirtualMode=false;
   if(c.policyId&&c.policySrc){ loadRecord(c.policySrc,c.policyId,!c.viewOnly); } else go(c.page||"shipments");
 }
@@ -10829,13 +10835,14 @@ function toDraft(r){
 }
 function loadRecord(src,id,editMode){
   const r=(src==="shipments"?state.shipments:state.policies).find(x=>x.id===id); if(!r) return;
-  draft=toDraft(r); editingId=id; editingSrc=src; viewOnly=!editMode; dirty=false; go("shipments");
+  SI_MODE=isSIdoc(r);
+  draft=toDraft(r); editingId=id; editingSrc=src; viewOnly=!editMode; dirty=false; go(SIP());
 }
 async function newPolicy(){
   if(!(await guard())) return;
-  draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
+  draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go(SIP());
 }
-function startEdit(){ if(editingSrc==="new") return; viewOnly=false; go("shipments"); }
+function startEdit(){ if(editingSrc==="new") return; viewOnly=false; go(SIP()); }
 async function cancelEdit(){
   if(dirty&&!await askConfirm("تلغي التعديلات اللي عملتها؟")) return;
   loadRecord(editingSrc,editingId,false);
@@ -10844,7 +10851,7 @@ async function deletePolicy(){
   if(editingSrc!=="policies") return;
   if(!await askConfirm(`حذف البوليصة ${draft.policyNo} (غير مرحّلة)؟`)) return;
   const _no=draft.saleOrderNo; state.policies=state.policies.filter(x=>x.id!==editingId); syncOrderDate(_no); saveState();
-  toast("تم الحذف","ok"); draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
+  toast("تم الحذف","ok"); draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go(SIP());
 }
 
 // ---------- حفظ ----------
@@ -10861,7 +10868,7 @@ function missingList(d){
   return m;
 }
 function showMissing(m){
-  if(viewOnly){ viewOnly=false; go("shipments"); }
+  if(viewOnly){ viewOnly=false; go(SIP()); }
   m.forEach(e=>{
     if(e.key.startsWith("t_")){ const el=document.getElementById(e.key); if(el) el.classList.add("bad"); }
     else e.lines.forEach(n=>{ const el=document.querySelector(`#itemsBody tr:nth-child(${n}) [data-k="${e.key}"]`); if(el) el.classList.add("bad"); });
@@ -10876,7 +10883,7 @@ function buildRecord(strict){
   // أمر البيع غير المسجل لا يمنع الحفظ/التعديل: يتم الاحتفاظ برقمه كما هو بدون ربط (saleOrderId فارغ)
   { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; }
   if(!d.date) return err("اختر التاريخ");
-  if(!d.supplier&&!d.customer) return err("اختر المورد أو العميل على الأقل");
+  if(SI_MODE){ if(!d.customer) return err("اختر العميل"); } else if(!d.supplier&&!d.customer) return err("اختر المورد أو العميل على الأقل");
   const blank=termsBlank(d.terms);
   let cp=null,n=0,days=0;
   if(!blank){
@@ -10901,13 +10908,13 @@ function buildRecord(strict){
   const items=rows.map(it=>{
     const c=calcItem(it,opts);
     return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
-      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:(has(it.sellPrice)?+it.sellPrice:0),
+      actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),buyPrice:SI_MODE?0:(has(it.buyPrice)?+it.buyPrice:0),sellPrice:(has(it.sellPrice)?+it.sellPrice:0),
       tax:c.tax,discount:c.discount,total:c.total,notes:(it.notes||"").trim()};
   });
   const t=draftTotals();
   return {
-    id:editingId||("sh_"+Date.now()), policyNo:p, date:d.date,
-    supplier:d.supplier, customer:d.customer, warehouseId:String(d.warehouseId||((state.saleOrders||[]).find(x=>String(x.id)===String(d.saleOrderId))||{}).warehouseId||whDefaultId()),
+    id:editingId||("sh_"+Date.now()), policyNo:p, date:d.date, ...(SI_MODE?{docKind:"sales"}:{}),
+    supplier:SI_MODE?"":d.supplier, customer:d.customer, warehouseId:String(d.warehouseId||((state.saleOrders||[]).find(x=>String(x.id)===String(d.saleOrderId))||{}).warehouseId||whDefaultId()),
     company:(d.company||"").trim(), site:(d.site||"").trim(),
     saleOrderId:d.saleOrderId||"", saleOrderNo:d.saleOrderNo||"",
     paymentSchedule:(d.paySchedule&&Array.isArray(d.paySchedule.rows))?d.paySchedule.rows.map((x,i)=>({id:paymentScheduleRowId(x,i),label:x.label||((+x.no||0)===0?"نقدي":"قسط "+(+x.no||i)),policy:x.policy||"—",no:+x.no||0,amount:(x.amount===""||x.amount==null)?0:+x.amount,due:String(x.due||x.date||"")})):null,
@@ -10983,12 +10990,12 @@ function saveShipment(){
   syncOrderDate(rec.saleOrderNo); if(prevSoNo&&soKey(prevSoNo)!==soKey(rec.saleOrderNo)) syncOrderDate(prevSoNo);
   editingId=rec.id; saveState();
   draft=toDraft(rec); viewOnly=true; dirty=false;
-  toast(`تم حفظ البوليصة ${rec.policyNo}`,"ok");
+  toast(`تم حفظ ${SI_MODE?"الفاتورة":"البوليصة"} ${rec.policyNo}`,"ok");
   // ربط تلقائي: لو البوليصة مرحّلة وسعر شراء أي صنف اتغيّر → ننده إعادة التسعير تلقائياً
   if(wasPosted && oldRec && invAutoRepriceChanged_(oldRec,rec)){
     invAutoRepriceOnBuyPriceChange_(rec,oldRec).catch(function(e){ console.error("auto-reprice failed",e); });
   }
-  go("shipments");
+  go(SIP());
 }
 
 // ---------- ربط تلقائي: إعادة تسعير عند تغيير buyPrice في بوليصة مرحّلة ----------
@@ -11071,26 +11078,28 @@ async function postShipment(){
   rec.postReview=review;
   const mismatch=review.status!=="matched";
   const reviewText=review.status==="unlinked"?`\nتنبيه: البوليصة غير مرتبطة بأمر بيع؛ سيتم الترحيل مع تسجيل ذلك.`:mismatch?`\n\nتنبيه مراجعة: يوجد فرق بين المتبقي في أمر البيع والكمية المعتمدة في البوليصة.\nكمية أمر البيع المتبقية قبل البوليصة: ${review.expected.toFixed(3)} طن\nالكمية المعتمدة في البوليصة: ${review.actual.toFixed(3)} طن\nالفرق (المعتمد − المتبقي): ${review.difference>0?"+":""}${review.difference.toFixed(3)} طن\n\nسيتم الترحيل مع حفظ نتيجة المراجعة دون تعديل الكميات.`:`\n\nالمطابقة سليمة: الكميات متوافقة مع المتبقي في أمر البيع.`;
-  if(!await askConfirm(`ترحيل البوليصة ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟${reviewText}\n\nهل تريد الاستمرار؟`)) return;
+  if(!await askConfirm(`ترحيل ${SI_MODE?"الفاتورة":"البوليصة"} ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟${reviewText}\n\nهل تريد الاستمرار؟`)) return;
   // سعر الشراء صفر مسموح (يُرحَّل بتكلفة صفر).
   // الوارد المخزني مستقل عن وجود عميل أو أمر بيع: كل بوليصة مرحّلة تُدخل البضاعة للمخزن المحدد.
   const wh=whList().find(w=>String(w.id)===String(rec.warehouseId));
-  if(!wh){ toast("لا يمكن الترحيل: اختر مخزنًا فعليًا صالحًا للبوليصة.","err"); return; }
+  if(!wh&&!SI_MODE){ toast("لا يمكن الترحيل: اختر مخزنًا فعليًا صالحًا للبوليصة.","err"); return; }
   try{
+    if(!SI_MODE){
     const stockPayload={id:rec.id,policy_no:rec.policyNo,movement_date:rec.date,warehouse_id:String(rec.warehouseId),warehouse_code:String(wh.code||""),warehouse_name:String(wh.name||""),supplier:rec.supplier||"",customer:rec.customer||"",items:(rec.items||[]).map((it,i)=>({line_no:i+1,factory:it.factory||"",diameter:it.diameter||"",item_type:it.type||"",qty:Number(it.actualWeight||it.weightTon||0),unit_cost:Number(it.buyPrice||0),unit:"طن"}))};
     const stockRes=await sb.rpc("inventory_receive_policy",{p_policy:stockPayload});
     if(stockRes.error) throw stockRes.error;
+    }
   }catch(stockErr){ console.error("Inventory receipt failed",stockErr); toast("تعذر ترحيل البوليصة للمخزون. تأكد من تشغيل ملف إعداد المخزون في Supabase ثم أعد المحاولة. "+String(stockErr.message||stockErr),"err"); return; }
   state.policies=state.policies.filter(x=>x.id!==rec.id);
   state.shipments.push(rec); commitOrderTerms(rec); syncOrderDate(rec.saleOrderNo); saveState(); lastPostedOrderNoForSupply=String(rec.saleOrderNo||"");
   toast(mismatch?`تم الترحيل مع حفظ ملاحظة المراجعة للبوليصة ${rec.policyNo}`:`تم ترحيل البوليصة ${rec.policyNo} — بوليصة جديدة جاهزة`,mismatch?"warn":"ok");
-  draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go("shipments");
+  draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; go(SIP());
 }
 
 // ---------- لوحة البوالص اللي لم تُرحَّل ----------
 let pendQ="";
 function pendList(){
-  const L=[...state.policies].sort((a,b)=>String(a.policyNo).localeCompare(String(b.policyNo),undefined,{numeric:true}));
+  const L=[...state.policies.filter(r=>isSIdoc(r)===SI_MODE)].sort((a,b)=>String(a.policyNo).localeCompare(String(b.policyNo),undefined,{numeric:true}));
   const q=pendQ.trim().toLowerCase();
   const shown=L.filter(r=>!q||[r.policyNo,r.customer,r.supplier].some(v=>String(v||"").toLowerCase().includes(q)));
   if(!L.length) return '<span style="color:var(--text-dim);font-size:13px">مفيش بوالص معلّقة — كل اللي اتحفظ اترحّل ✓</span>';
@@ -11102,8 +11111,8 @@ function pendList(){
   }).join("");
 }
 function pendingPanel(){
-  const L=state.policies, ready=L.filter(r=>!missingList(toDraft(r)).length).length;
-  return `<div class="card pend"><div class="head"><h3>بوالص لم تُرحَّل <span class="count">${L.length}</span></h3>
+  const L=state.policies.filter(r=>isSIdoc(r)===SI_MODE), ready=L.filter(r=>!missingList(toDraft(r)).length).length;
+  return `<div class="card pend"><div class="head"><h3>${SI_MODE?"فواتير":"بوالص"} لم تُرحَّل <span class="count">${L.length}</span></h3>
     ${L.length?`<div class="pleg"><span><i style="background:var(--ok)"></i>جاهزة للترحيل (${ready})</span><span><i style="background:var(--warn)"></i>ناقصها بيانات (${L.length-ready})</span></div>`:""}
     ${L.length>6?`<input class="inp" style="max-width:210px" placeholder="بحث برقم البوليصة / العميل" value="${escapeAttr(pendQ)}" oninput="pendQ=this.value;document.getElementById('pendList').innerHTML=pendList()">`:""}
   </div><div class="body"><div class="pwrap" id="pendList">${pendList()}</div></div></div>`;
@@ -17358,7 +17367,7 @@ function noAccessHtml(){
 
   // شاشة البوليصة الجديدة تتفتح للعرض فقط لو المستخدم مالوش صلاحية "إضافة"
   const _vs=window.viewShipments;
-  window.viewShipments=function(){ if(editingSrc==="new"&&!can("shipments","add")) viewOnly=true; return _vs.apply(this,arguments); };
+  window.viewShipments=function(){ if(editingSrc==="new"&&!can(SI_MODE?"salesInvoices":"shipments","add")) viewOnly=true; return _vs.apply(this,arguments); };
 
   // 2) حماية الشاشات (التنقل)
   const _go=window.go;
@@ -19118,7 +19127,7 @@ window.igSoReset=function(){ igSoObj=null; };
 window.igSoDirty=function(){
   try{ return currentPage==="saleOrder"&&!!soDraft&&igSoObj===soDraft&&JSON.stringify(soDraft)!==igSoStr; }catch(e){ return false; }
 };
-const shipDirty=()=>{ try{ return currentPage==="shipments"&&!!dirty&&!viewOnly; }catch(e){ return false; } };
+const shipDirty=()=>{ try{ return (currentPage==="shipments"||currentPage==="salesInvoices")&&!!dirty&&!viewOnly; }catch(e){ return false; } };
 function discardEdits(){
   try{
     if(shipDirty()){ draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false; }
@@ -19455,7 +19464,7 @@ hints(document.body);
 const _go=window.go;
 window.go=function(page){
   let prev=null; try{ prev=currentPage; }catch(e){}
-  if(page==="shipments"&&prev&&prev!=="shipments") backTo=prev;
+  if((page==="shipments"||page==="salesInvoices")&&prev&&prev!=="shipments"&&prev!=="salesInvoices") backTo=prev;
   const r=_go.apply(this,arguments);
   try{ dedupTitle(); actBar(); }catch(e){}
   return r;
@@ -20187,7 +20196,7 @@ window.igExitScreen=async function(){
  const kind=window.igActiveDirty?igActiveDirty():"";
  if(kind){const label=kind==="saleOrder"?"أمر البيع":kind==="shipments"?"البوليصة":"عرض السعر";if(!(await igResolveDirty(label)))return;}
  // تصفير المسودات فقط بعد الحفظ أو اختيار الخروج بدون حفظ.
- try{if(currentPage==="shipments"&&!dirty){draft=newDraft();editingId=null;editingSrc="new";viewOnly=false;}}
+ try{if((currentPage==="shipments"||currentPage==="salesInvoices")&&!dirty){draft=newDraft();editingId=null;editingSrc="new";viewOnly=false;}}
  catch(e){}
  try{if(currentPage==="saleOrder"&&!igSoDirty()){soVirtualMode=false;}}
  catch(e){}
