@@ -6542,8 +6542,8 @@ function viewDashboard(){
       const k=String(sh.date||"").slice(0,7);
       const _tx=+_a.tax||0, _by=+_a.buyTotal||0;
       // سعر الشراء شامل الضريبة: نفصل صافي الشراء وضريبة المدخلات بنفس نسبة بوليصة التوريد
-      const _vr=(sh.applyVat!==false)?Math.max(0,((sh.vatPct==null||sh.vatPct==="")?(+state.settings.tax||14):+sh.vatPct)):0, _byNet=_vr?_by/(1+_vr/100):_by;
-      if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; salesWithholdingMonth+=(+_a.discount||0); buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; }
+      const _vr=shipBuyVatRate(sh), _byNet=_vr?Math.round((_by/(1+_vr/100)+Number.EPSILON)*100)/100:_by;
+      if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; salesWithholdingMonth+=(+_a.discount||0); buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx-(+_a.discount||0); }
       if(inPrev(k,sh.date)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
       if(k in mIdx) months[mIdx[k]].sales+=t;
       _shipmentBuyNet+=_byNet;
@@ -6606,10 +6606,10 @@ function viewDashboard(){
   const moneyKpis = canMoney ? `
       ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+cmpLbl),periodGo('salesReport'))}
       ${kpi((taxMonth-salesWithholdingMonth)>=0?'k-slate':'k-green','%','صافي ضرائب المبيعات',money(taxMonth-salesWithholdingMonth)+' <em>'+cur+'</em>','القيمة المضافة '+money(taxMonth)+' − خصم أ.ت.ص '+money(salesWithholdingMonth),'salesReport','صافي ضريبة المبيعات = ضريبة القيمة المضافة − خصم أ.ت.ص المستقطع من العملاء')}
-      ${kpi('k-blue','Σ','إجمالي قيمة المبيعات بعد الضرائب',money(salesGrossMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة + القيمة المضافة',periodGo('salesReport'))}
+      ${kpi('k-blue','Σ','إجمالي قيمة المبيعات بعد الضرائب',money(salesGrossMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة + القيمة المضافة − خصم أ.ت.ص',periodGo('salesReport'))}
       ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (قبل الضريبة)',money(buyNetMonth)+' <em>'+cur+'</em>',(delta(buyNetMonth,buyNetPrev)===null?'بدون مقارنة':chip(delta(buyNetMonth,buyNetPrev))+' عن '+cmpLbl),'supply'):''}
       ${canBuyK?kpi((buyTaxMonth-buyWithholdingMonth)>=0?'k-slate':'k-green','%','صافي ضرائب المشتريات',money(buyTaxMonth-buyWithholdingMonth)+' <em>'+cur+'</em>','القيمة المضافة '+money(buyTaxMonth)+' − خصم أ.ت.ص '+money(buyWithholdingMonth),'supply','صافي ضريبة المشتريات = ضريبة المدخلات − خصم أ.ت.ص المستقطع من الموردين المفعّل عليهم الخصم'):''}
-      ${canBuyK?kpi('k-red','Σ','إجمالي قيمة المشتريات بعد الضرائب',money(buyMonth)+' <em>'+cur+'</em>','المشتريات قبل الضريبة + القيمة المضافة','supply'):''}
+      ${canBuyK?kpi('k-red','Σ','إجمالي قيمة المشتريات بعد الضرائب',money(buyMonth-buyWithholdingMonth)+' <em>'+cur+'</em>','المشتريات قبل الضريبة + القيمة المضافة − خصم أ.ت.ص','supply'):''}
       ${canBuyK?kpi((salesMonth-buyNetMonth)>=0?'k-green':'k-red','★','صافي ربح الفترة',money(salesMonth-buyNetMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة − المشتريات قبل الضريبة','supply','هامش تجاري قبل المصروفات العامة: المبيعات قبل الضريبة ناقص صافي تكلفة المشتريات قبل ضريبة المدخلات'):''}
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+cmpLbl),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
@@ -7835,13 +7835,25 @@ let inventoryTab="warehouses", inventoryRows=[], inventoryLoading=false, invento
 const invNum=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:3});
 const invItemKey=(r)=>[r.diameter||"",r.item_type||r.type||""].join(" | ");
 // سعر الشراء المسجل شامل الضريبة؛ تكلفة المخزون (وحدة وإجمالي) تُعرض وتُحسب بدون ضريبة المدخلات
-function invVatRate(){ return Math.max(0,+((state.settings||{}).tax)||14); }
+/* ضريبة المشتريات: نفس منطق البوليصة بالظبط — سعر الشراء شامل الضريبة، والنسبة من بيانات البوليصة (applyVat / vatPct)،
+   ولو النسبة فاضية تتاخد من الإعدادات العامة (وصفر مسموح). كل الشاشات بتستخدم الدالة دي. */
+/* نسبة القيمة المضافة من الإعدادات العامة: الصفر مسموح، والافتراضي 14 بس لو الإعداد فاضي */
+function settingsVatPct(){ const v=(state.settings||{}).tax; if(v==null||v==="") return 14; const n=+v; return (isFinite(n)&&n>=0)?n:14; }
+function shipBuyVatRate(sh){
+  if(!sh||sh.applyVat===false) return 0;
+  let v=sh.vatPct; if(v==null||v==="") v=(state.settings||{}).tax;
+  v=(v==null||v==="")?14:+v;
+  return (isFinite(v)&&v>0)?v:0;
+}
+function invVatRate(){ return Math.max(0,settingsVatPct()); }
 function invSoOf(r){ const no=String((r&&r.sale_order_no)||"").trim(); if(!no) return null; return (state.saleOrders||[]).find(o=>String(o.orderNo).trim()===no)||null; }
 // أمر البيع ضريبي → التكلفة ÷ (1+نسبة الضريبة) · غير ضريبي (أو بدون أمر بيع) → التكلفة كما هي
 function invExVat(r){
   const ru=(r&&r._rawUnit!==undefined)?r._rawUnit:(+r.unit_cost||0), rt=(r&&r._rawTotal!==undefined)?r._rawTotal:(+r.total_cost||0);
   const so=invSoOf(r); let k=1;
-  if(so && so.applyVat!==false){ const pc=(so.vatPct==null||so.vatPct==="")?invVatRate():(+so.vatPct||0); k=1+Math.max(0,pc)/100; }
+  const _sh=(state.shipments||[]).find(x=>String(x.id)===String(r&&r.source_id));
+  if(_sh){ k=1+shipBuyVatRate(_sh)/100; }
+  else if(so && so.applyVat!==false){ const pc=(so.vatPct==null||so.vatPct==="")?invVatRate():(+so.vatPct||0); k=1+Math.max(0,pc)/100; }
   return {...r,_rawUnit:ru,_rawTotal:rt,unit_cost:ru/k,total_cost:rt/k,_exVat:true};
 }
 async function inventoryLoad(){
@@ -10067,7 +10079,7 @@ const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:""
   terms:{cashPct:0,installments:0,periodDays:0}, paySchedule:null, payScheduleReset:false, payScheduleResetImported:false, payScheduleResetOrderNo:"",
   applyDiscount:!!state.settings.discount1pct, // توافق قديم
   applyVat: true,
-  vatPct: +state.settings.tax || 14,
+  vatPct: settingsVatPct(),
   applyProfitTax: !!state.settings.discount1pct,
   profitTaxPct: +state.settings.profitTax || 1,
   notes:"",items:[blankItem()]});
@@ -10178,7 +10190,7 @@ function migrateState(s){
     if(r.saleOrderId===undefined) r.saleOrderId="";
     if(r.saleOrderNo===undefined) r.saleOrderNo="";
     if(r.applyVat===undefined) r.applyVat = true;
-    if(r.vatPct===undefined) r.vatPct = +s.settings.tax || 14;
+    if(r.vatPct===undefined) r.vatPct = (s.settings&&s.settings.tax!=null&&s.settings.tax!==""?+s.settings.tax:14);
     if(r.applyProfitTax===undefined) r.applyProfitTax = !!r.applyDiscount;
     if(r.profitTaxPct===undefined) r.profitTaxPct = +s.settings.profitTax || 1;
     (r.items||[]).forEach(it=>{
@@ -10210,11 +10222,11 @@ function calcItem(it, opts){
   let applyVat, vatPct, applyProfitTax, profitTaxPct;
   if(typeof opts === "object" && opts !== null){
     applyVat = opts.applyVat !== false;
-    vatPct = (opts.vatPct===""||opts.vatPct==null) ? (+state.settings.tax||14) : +opts.vatPct;
+    vatPct = (opts.vatPct===""||opts.vatPct==null) ? ((state.settings&&state.settings.tax!=null&&state.settings.tax!=="")?+state.settings.tax:14) : +opts.vatPct;
     applyProfitTax = !!opts.applyProfitTax;
     profitTaxPct = (opts.profitTaxPct===""||opts.profitTaxPct==null) ? (+state.settings.profitTax||1) : +opts.profitTaxPct;
   } else {
-    applyVat = true; vatPct = +state.settings.tax||14;
+    applyVat = true; vatPct = settingsVatPct();
     applyProfitTax = !!opts; profitTaxPct = 1;
   }
   const w=+it.actualWeight||0, sp=+it.sellPrice||0, bp=+it.buyPrice||0;
@@ -10950,7 +10962,7 @@ function toDraft(r){
       return (r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:0,installments:0,periodDays:0}; })(),
     applyDiscount:r.applyDiscount,
     applyVat: r.applyVat !== false,
-    vatPct: r.vatPct ?? (+state.settings.tax||14),
+    vatPct: r.vatPct ?? settingsVatPct(),
     applyProfitTax: r.applyProfitTax ?? !!r.applyDiscount,
     profitTaxPct: r.profitTaxPct ?? (+state.settings.profitTax||1),
     notes:r.notes||"",
@@ -11046,7 +11058,7 @@ function buildRecord(strict){
     terms:blank?{cashPct:null,installments:0,periodDays:0}:{cashPct:cp,installments:cp<100?n:0,periodDays:days},
     applyDiscount: !!d.applyProfitTax, // توافق قديم
     applyVat: d.applyVat !== false,
-    vatPct: (d.vatPct===""||d.vatPct==null) ? (+state.settings.tax||14) : +d.vatPct,
+    vatPct: (d.vatPct===""||d.vatPct==null) ? settingsVatPct() : +d.vatPct,
     applyProfitTax: !!d.applyProfitTax,
     profitTaxPct: (d.profitTaxPct===""||d.profitTaxPct==null) ? (+state.settings.profitTax||1) : +d.profitTaxPct,
     items,
@@ -11430,7 +11442,7 @@ function supplyCalc(s,it){
   // بدل الاعتماد على إجماليات قديمة محفوظة على مستوى الصنف.
   return calcItem(it,{
     applyVat:s.applyVat!==false,
-    vatPct:(s.vatPct==null||s.vatPct==="")?(+state.settings.tax||14):+s.vatPct,
+    vatPct:(s.vatPct==null||s.vatPct==="")?settingsVatPct():+s.vatPct,
     applyProfitTax:customerHasDiscount1Pct(s.customer),
     profitTaxPct:1
   });
@@ -12496,12 +12508,12 @@ function supPostCollect(key){
   const orderNo=String((so&&so.orderNo)||f.saleOrderNo||"");
   date=(typeof soDateFor==="function"&&soDateFor(f.saleOrderNo,f.saleOrderId))||(so&&so.date)||f.date||"";
   const byGroup=new Map();
-  const buyVatRate=Math.max(0,+((state.settings||{}).tax)||14);
-  rows.forEach(({it,a})=>{
+  rows.forEach(({s,it,a})=>{
+    const buyVatRate=shipBuyVatRate(s);
     const gid=(state.diameterGroups||{})[it.diameter]||"", g=byGroup.get(gid)||{gid,buy:0,buyNet:0,sub:0,tax:0,dis:0,total:0};
     // سعر الشراء المسجل شامل الضريبة؛ تكلفة المخزون وتكلفة المبيعات تستبعد ضريبة المدخلات.
     // تقريب صافي كل بند إلى قرش قبل التجميع حتى يتطابق الوارد مع المنصرف.
-    const lineBuyNet=r2((+a.buyTotal||0)/(1+buyVatRate/100));
+    const lineBuyNet=buyVatRate?r2((+a.buyTotal||0)/(1+buyVatRate/100)):r2(+a.buyTotal||0);
     g.buy+=a.buyTotal; g.buyNet+=lineBuyNet; g.sub+=a.subtotal; g.tax+=a.tax; g.dis+=a.discount; g.total+=a.total; byGroup.set(gid,g);
   });
   return {orderNo,so,date,customer:f.customer||(so&&so.customer)||"",supplier:f.supplier||(so&&so.supplier)||"",byGroup,count:rows.length};
@@ -12613,7 +12625,7 @@ async function supPostAccounts(key,kind="purchase"){
 // قيد المشتريات: أسعار الشراء شاملة الضريبة؛ نستخرج الضريبة منها ولا نضيفها مرة أخرى.
 function supPurchasePlan(c,ids,supplier={}){
   let gross=0; c.byGroup.forEach(g=>{gross+=g.buy;});
-  const C=v=>Math.round((+v||0)*100), rate=+((state.settings||{}).tax)||14;
+  const C=v=>Math.round((+v||0)*100), rate=settingsVatPct();
   const grossC=C(gross), stockC=[...c.byGroup.values()].reduce((sum,g)=>sum+C(g.buyNet),0), vatC=grossC-stockC;
   const apply=!!supplier.applyProfitTax, rawPct=supplier.profitTaxPct, pct=apply?Math.max(0,(rawPct==null||rawPct==="")?(+state.settings.profitTax||1):(+rawPct||0)):0;
   const whC=apply?Math.round(stockC*pct/100):0, supplierC=grossC-whC;
@@ -14269,7 +14281,7 @@ const qtDefault=()=>({
   quoteNo:String(state.qtNextNum||1).padStart(4,"0"),
   date:new Date().toISOString().slice(0,10),
   customer:"", attention:"", items:[qtItem()],
-  status:"مسودة", sentAt:"", vatPct:(+state.settings.tax||14), validHours:(+state.settings.quoteValidity||24)
+  status:"مسودة", sentAt:"", vatPct:settingsVatPct(), validHours:(+state.settings.quoteValidity||24)
 });
 let qtDraft=null, qtLoadedId=null;
 // الأنواع مربوطة بالبيانات الأساسية: اسمنت ← "أنواع الاسمنت"، غير كده ← "الأنواع"
@@ -14398,7 +14410,7 @@ function qtRenderPreview(){
   const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v||"—"; };
   set("pvQtNum",String(d.quoteNo||"").trim());
   set("pvQtDate",d.date||"");
-  set("pvQtVat",String((d.vatPct===""||d.vatPct==null)?(+state.settings.tax||14):d.vatPct));
+  set("pvQtVat",String((d.vatPct===""||d.vatPct==null)?settingsVatPct():d.vatPct));
   set("pvQtValid",String(d.validHours||24));
   set("pvQtClient",d.customer); set("pvQtAttention",(d.attention||"").trim());
   [["pvQtLogo",QT_LOGO],["pvQtStamp",QT_STAMP],["pvQtSig",QT_SIG]].forEach(([id,s])=>{ const e=document.getElementById(id); if(e&&!e.getAttribute("src")) e.src=s; });
@@ -14503,7 +14515,7 @@ function qtDoSearch(){
 }
 function qtLoad(id){
   const r=state.quotes.find(x=>x.id===id); if(!r) return;
-  qtDraft=Object.assign({status:"مسودة",sentAt:"",vatPct:(+state.settings.tax||14),validHours:(+state.settings.quoteValidity||24)},JSON.parse(JSON.stringify(r)));
+  qtDraft=Object.assign({status:"مسودة",sentAt:"",vatPct:settingsVatPct(),validHours:(+state.settings.quoteValidity||24)},JSON.parse(JSON.stringify(r)));
   qtLoadedId=id; closeModal(); go("quote");
 }
 // ---- حالة العرض ----
@@ -20556,7 +20568,7 @@ function renderManagementReports(){
  const shipments=arr('shipments').filter(s=>igMgmtInRange(s.date||s.shipDate)),entries=arr('treasuryEntries').filter(e=>igMgmtInRange(e.date));
  const q=igMgmtFilter.q.trim().toLocaleLowerCase('ar');const matches=n=>!q||String(n||'').toLocaleLowerCase('ar').includes(q);
  const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0,subTot=0,outVat=0,inVat=0,profTax=0;
- shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;subTot+=+a.subtotal||0;outVat+=+a.tax||0;profTax+=+a.discount||0;{const _ap=sh.applyVat!==false,_pc=(sh.vatPct==null||sh.vatPct==='')?(+state.settings.tax||14):(+sh.vatPct||0);if(_ap)inVat+=cost-cost/(1+Math.max(0,_pc)/100);}
+ shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;subTot+=+a.subtotal||0;outVat+=+a.tax||0;profTax+=+a.discount||0;{const _pc=shipBuyVatRate(sh);if(_pc)inVat+=cost-Math.round((cost/(1+_pc/100)+Number.EPSILON)*100)/100;}
  if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
  const order=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');let o=orders.get(order)||{sale:0,cost:0,qty:0,customer:c};o.sale+=sale;o.cost+=cost;o.qty+=qty;orders.set(order,o);
  }));
@@ -25260,6 +25272,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
   const defaults={logoData:"",companyName:"IRON GATE",subtitle:"SUPPLIES",preset:"classic",colors:palettes.classic,font:"Cairo",fontSize:"14px"};
   function cfg(){const s=(typeof state!=="undefined"&&state&&state.settings)?state.settings:{};s.branding=Object.assign({},defaults,s.branding||{});return s.branding}
   function setVal(id,v){const e=document.getElementById(id);if(e&&v)e.value=v}
+  function setTxt(e,v){if(e&&e.textContent!==v)e.textContent=v}
   function apply(c){
     if(!c)return;const root=document.documentElement, p=c.colors||palettes[c.preset]||palettes.classic;
     const vars={'gold':p.primary,'gold-2':p.dark,'gold-dim':p.dark,'gold-text':ensureContrast(isDark(p.bg)?p.accent:p.dark,p.bg,4.5),'gold-soft':p.bg,'bg':p.bg,'bg-2':p.card,'bg-3':p.bg,'card':p.card,'line':p.line,'line-2':p.line,'text':p.text,'text-dim':ensureContrast(p.muted,p.bg,4.5),'sidebar-bg':p.sidebar,'sidebar-bg-2':p.sidebar,'sidebar-text':p.sidebarText,'sidebar-text-dim':ensureContrast(p.muted,p.sidebar,4.5)};
@@ -25271,11 +25284,11 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     const logoTargets=[...document.querySelectorAll('#igLoginLogo,#igSidebarLogo,#soPaper .company-logo-lg,#qtPaper .qt-logo,#invPaper .inv-top .logo,.doc-header-lg img,.report-logo')];
     logoTargets.forEach(e=>{if(!e.dataset.igDefaultSrc)e.dataset.igDefaultSrc=e.getAttribute('src')||'';e.src=c.logoData||e.dataset.igDefaultSrc;});
     const n=c.companyName||defaults.companyName, sub=c.subtitle||defaults.subtitle;
-    const t1=document.querySelector('.brand .t1');if(t1)t1.textContent=n;
-    const t2=document.querySelector('.brand .t2');if(t2)t2.textContent=sub;
-    document.querySelectorAll('.company-name-lg').forEach(e=>e.textContent=n);
-    const loginTitle=document.querySelector('#login .box h2');if(loginTitle){loginTitle.textContent=n;loginTitle.style.letterSpacing=/[\u0600-\u06FF]/.test(n)?'0':'';}
-    const foot=document.querySelector('#login .foot');if(foot)foot.textContent=n+' © '+new Date().getFullYear();
+    setTxt(document.querySelector('.brand .t1'),n);
+    setTxt(document.querySelector('.brand .t2'),sub);
+    document.querySelectorAll('.company-name-lg').forEach(e=>setTxt(e,n));
+    const loginTitle=document.querySelector('#login .box h2');if(loginTitle){setTxt(loginTitle,n);loginTitle.style.letterSpacing=/[\u0600-\u06FF]/.test(n)?'0':'';}
+    const foot=document.querySelector('#login .foot');if(foot)setTxt(foot,n+' © '+new Date().getFullYear());
   }
   function _lum(h){const x=String(h||'#000').replace('#','');const r=parseInt(x.slice(0,2),16)/255,g=parseInt(x.slice(2,4),16)/255,b=parseInt(x.slice(4,6),16)/255;const f=c=>c<=.03928?c/12.92:Math.pow((c+.055)/1.055,2.4);return .2126*f(r)+.7152*f(g)+.0722*f(b)}
   function _cr(a,b){let x=_lum(a),y=_lum(b);if(x<y){const t=x;x=y;y=t}return (x+.05)/(y+.05)}
@@ -25303,7 +25316,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
   window.igBrandResetLogo=()=>{const c=cfg();c.logoData='';apply(c);const e=document.getElementById('igBrandPreview');if(e)e.src=document.getElementById('igLoginLogo')?.getAttribute('src')||'';};
   window.igBrandUpload=ev=>{const f=ev.target.files?.[0];if(!f)return;if(f.size>5*1024*1024){alert('حجم الصورة أكبر من 5 ميجابايت');ev.target.value='';return;}if(!/^image\/(png|jpeg|webp)$/.test(f.type)){alert('صيغة الصورة غير مدعومة');return;}
     const reader=new FileReader();reader.onload=()=>{const raw=reader.result;const im=new Image();im.onload=()=>{const max=720,scale=Math.min(1,max/Math.max(im.width,im.height)),cv=document.createElement('canvas');cv.width=Math.round(im.width*scale);cv.height=Math.round(im.height*scale);const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);ctx.drawImage(im,0,0,cv.width,cv.height);const c=cfg();c.logoData=cv.toDataURL('image/webp',.86);igRenderAppearance();};im.onerror=()=>alert('تعذر قراءة ملف الصورة');im.src=raw;};reader.readAsDataURL(f);};
-  document.addEventListener('DOMContentLoaded',()=>{try{apply(cfg());if(document.body&&window.MutationObserver){new MutationObserver(()=>apply(cfg())).observe(document.body,{childList:true,subtree:true});}}catch(e){}});
+  document.addEventListener('DOMContentLoaded',()=>{try{apply(cfg());if(document.body&&window.MutationObserver){let _igBusy=false,_igT=0;const _igMo=new MutationObserver(()=>{if(_igBusy)return;clearTimeout(_igT);_igT=setTimeout(()=>{_igBusy=true;try{apply(cfg())}catch(e){}finally{_igMo.takeRecords();_igBusy=false}},80)});_igMo.observe(document.body,{childList:true,subtree:true});}}catch(e){}});
   const oldSave=window.saveSettings; // لا نغيّر دورة حفظ الإعدادات المالية
   window.igInitAppearance=()=>igRenderAppearance();
   try{apply(cfg());}catch(e){}
