@@ -2842,7 +2842,7 @@ async function loadMaster(admin){
       if(!pr.error && pr.data) state.users = pr.data.map(mapProfile);
       if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
     }) : Promise.resolve();
-  await Promise.all([ adminP, loadDocs(), supLoadPaymentPlansFromSupabase(), txLoadTreasuryFromDb(), loadQuotesFromSupabase(), loadOpeningFromSupabase(), loadOrderTermsFromSupabase() ]);
+  await Promise.all([ adminP, loadDocs(), igPurchaseFetchAll(), supLoadPaymentPlansFromSupabase(), txLoadTreasuryFromDb(), loadQuotesFromSupabase(), loadOpeningFromSupabase(), loadOrderTermsFromSupabase() ]);
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   if(whMigrate){ state.settings.warehouses=[]; lastSnaps.warehouses="__migrate__"; lastSnaps.settings="__migrate__"; }   // يرفع المخازن القديمة للجدول الجديد أول مرة ويفضّي النسخة القديمة من الإعدادات
@@ -2898,7 +2898,9 @@ function unpackObj(row,spec,base){
   return o;
 }
 function packShipment(rec,posted){
-  const row=packObj(rec,SHIP_SPEC,["id","items"]); row.id=String(rec.id); row.is_posted=!!posted; row.updated_at=new Date().toISOString();
+  const row=packObj(rec,SHIP_SPEC,["id","items"]); row.id=String(rec.id); row.is_posted=!!posted;
+  row.gl_entry_id=rec.glEntryId||null; row.gl_posted_at=rec.glPostedAt||null; row.gl_posted_by=rec.glPostedBy||null;
+  row.updated_at=new Date().toISOString();
   const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SHIP_ITEM_SPEC); r.shipment_id=row.id; r.line_no=i+1; return r; });
   return { row, items };
 }
@@ -3070,6 +3072,7 @@ async function loadDocs(){
       state.shipments=[]; state.policies=[];
       hs.forEach(h=>{
         const rec=unpackObj(h,SHIP_SPEC,{id:h.id});
+        rec.glEntryId=h.gl_entry_id||null; rec.glPostedAt=h.gl_posted_at||null; rec.glPostedBy=h.gl_posted_by||null;
         rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SHIP_ITEM_SPEC));
         (h.is_posted?state.shipments:state.policies).push(rec);
       });
@@ -3374,6 +3377,8 @@ const SCREENS = [
   { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post","print"], prices:true },
   { id:"salesInvoices", label:"فواتير المبيعات", icon:"🧾", acts:["add","edit","delete","post","print"], prices:true },
+  { id:"purchaseOrders", label:"أوامر الشراء", icon:"🛒", acts:["add","edit","delete","print"], prices:true },
+  { id:"purchaseInvoices", label:"فواتير المشتريات", icon:"🧾", acts:["add","edit","delete","post","print"], prices:true },
   { id:"supply",    label:"بيانات التوريد",    icon:"▦",  acts:["edit","delete","print","post"], prices:true, tabs:[
     {id:"flat",label:"العرض العادي"},
     {id:"customer",label:"مبالغ العملاء"},
@@ -3947,6 +3952,8 @@ const navGroups = [
     { id:"settings", tab:"customers", icon:"⚙", label:"إعدادات العملاء" }
   ]},
   { id:"purchasing", icon:"🛍", label:"نظام المشتريات", items:[
+    { id:"purchaseOrders", icon:"🛒", label:"أوامر الشراء" },
+    { id:"purchaseInvoices", icon:"🧾", label:"فواتير المشتريات" },
     { id:"purchaseReport", icon:"📊", label:"تقرير المشتريات" },
     { id:"supplierStatement", icon:"📒", label:"كشف حساب مورد" },
     { id:"supplierTB", icon:"⚖", label:"ميزان مراجعة الموردين" },
@@ -4185,6 +4192,8 @@ function go(page){
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
     salesInvoices:["فواتير المبيعات","فاتورة مبيعات بدون مورد أو سعر شراء — تُستدعى من أمر بيع"],
+    purchaseOrders:["أوامر الشراء","أوامر شراء الموردين وربطها بأوامر البيع"],
+    purchaseInvoices:["فواتير المشتريات","فواتير الموردين والتوريد والمخزون والضرائب"],
     supply:["بيانات التوريد","كل البوالص والأصناف"],
     treasuryBulkPost:["ترحيل التحصيلات والمدفوعات","ترحيل جماعي تلقائي لقيود التحصيلات والمدفوعات حسب التاريخ — قيد مستقل لكل حركة"],
     supplyBulkPost:["ترحيل بيانات التوريد","ترحيل جماعي لقيود المشتريات والمبيعات حسب تاريخ التوريد ونطاق أوامر البيع"],
@@ -4230,6 +4239,7 @@ function go(page){
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
   else if(page==="quote"){ c.innerHTML = viewQuote(); bindQuote(); }
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
+  else if(page==="purchaseOrders"||page==="purchaseInvoices"){ c.innerHTML = igPurchaseView(); igPurchaseLoad(); }
   else if(page==="shipments"||page==="salesInvoices"){ c.innerHTML = viewShipments(); bindShipments(); }
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
   else if(page==="supplyBulkPost"){ c.innerHTML = viewSupplyBulk(); renderSupplyBulk(); }
@@ -4263,6 +4273,109 @@ function go(page){
   else c.innerHTML = viewSoon();
 }
 
+
+// ================= نظام المشتريات المستقل — أوامر شراء وفواتير موردين =================
+const IG_PUR_TABLES={orders:"purchase_orders",orderItems:"purchase_order_items",invoices:"purchase_invoices",invoiceItems:"purchase_invoice_items",receipts:"purchase_receipts",receiptItems:"purchase_receipt_items"};
+let igPurchaseDocs={orders:[],invoices:[],receipts:[]},igPurchaseLoaded=false,igPurchaseLoading=false,igPurchaseEditing=null,igPurchaseDraft=null,igPurchaseFormOpen=false,igPurchaseQuery="",igPurchaseStatus="all";
+const igPesc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const igPnum=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const igPdate=()=>new Date().toISOString().slice(0,10);
+const igPemptyLine=()=>({itemCode:"",description:"",factory:"",diameter:"",type:"",spec:"",unit:"طن",qty:1,receivedQty:1,unitPrice:0,discountPct:0,taxPct:Number(state.settings?.tax??14),notes:""});
+function igPcalc(d){const R=v=>Math.round((Number(v)+Number.EPSILON)*100)/100;let sub=0,disc=0,tax=0;const lines=(d.items||[]).map(x=>{const q=Math.max(0,Number(x.qty)||0),p=Math.max(0,Number(x.unitPrice)||0),g=R(q*p),di=R(g*Math.min(100,Math.max(0,Number(x.discountPct)||0))/100),tx=R((g-di)*Math.max(0,Number(x.taxPct)||0)/100);sub+=g;disc+=di;tax+=tx;return {...x,lineGross:g,lineDiscount:di,lineTax:tx,lineNet:g-di+tx};});const charges=(Number(d.freight)||0)+(Number(d.otherCharges)||0);const withholding=Number(d.withholding)||0;const paid=Array.isArray(d.purchasePayments)?d.purchasePayments.reduce((a,x)=>a+Math.max(0,Number(x.amount)||0),0):(Number(d.paid)||0);sub=R(sub);disc=R(disc);tax=R(tax);const net=R(sub-disc+tax+R(charges)-R(withholding));return {lines,subtotal:sub,discount:disc,tax,charges:R(charges),withholding:R(withholding),net,paid:R(paid),remaining:R(net-R(paid))};}
+function igPnew(type){const no=type==="order"?"" : "";return {id:crypto.randomUUID(),docType:type,docNo:no,date:igPdate(),allowOverReceipt:false,supplier:"",supplierInvoiceNo:"",supplierInvoiceDate:igPdate(),deliveryDate:igPdate(),dueDate:"",warehouseId:whDefaultId(),purchaseOrderId:"",purchaseOrderNo:"",sourceSaleOrderId:"",sourceSaleOrderNo:"",currency:"EGP",exchangeRate:1,paymentTerms:"آجل",paymentMethod:"آجل",referenceNo:"",transportCompany:"",vehicleNo:"",driverName:"",deliveryAddress:"",freight:0,otherCharges:0,withholding:0,paid:0,purchasePayments:[],status:"draft",notes:"",items:[igPemptyLine()]};}
+function igPdocTable(){return currentPage==="purchaseOrders"?"orders":"invoices";}
+async function igPurchaseFetchAll(){try{for(const isO of [true,false]){const head=await sb.from(isO?IG_PUR_TABLES.orders:IG_PUR_TABLES.invoices).select("*").is("deleted_at",null).order("created_at",{ascending:false});if(head.error)throw head.error;const ids=(head.data||[]).map(x=>x.id),itemT=isO?IG_PUR_TABLES.orderItems:IG_PUR_TABLES.invoiceItems;let items=[];for(let i=0;i<ids.length;i+=400){const q=await sb.from(itemT).select("*").in(isO?"purchase_order_id":"purchase_invoice_id",ids.slice(i,i+400)).order("line_no");if(q.error)throw q.error;items.push(...(q.data||[]));}const by={};items.forEach(x=>{const k=isO?x.purchase_order_id:x.purchase_invoice_id;(by[k]||(by[k]=[])).push(x.item_data||{});});igPurchaseDocs[isO?"orders":"invoices"]=(head.data||[]).map(h=>({...h,...(h.data||{}),id:h.id,docNo:isO?h.order_no:h.invoice_no,items:by[h.id]||[],status:h.status||"draft"}));}const rh=await sb.from(IG_PUR_TABLES.receipts).select("*").order("created_at",{ascending:false});if(rh.error)throw rh.error;const rids=(rh.data||[]).map(x=>x.id);let ritems=[];for(let i=0;i<rids.length;i+=400){const rq=await sb.from(IG_PUR_TABLES.receiptItems).select("*").in("receipt_id",rids.slice(i,i+400)).order("line_no");if(rq.error)throw rq.error;ritems.push(...(rq.data||[]));}const rb={};ritems.forEach(x=>(rb[x.receipt_id]||(rb[x.receipt_id]=[])).push(x.item_data||{}));igPurchaseDocs.receipts=(rh.data||[]).map(h=>({...h,...(h.data||{}),id:h.id,docNo:h.receipt_no,items:rb[h.id]||[],status:h.status||"draft"}));igPurchaseLoaded=true;return true;}catch(e){console.warn("تعذر تحميل مستندات المشتريات",e);return false;}}
+async function igPurchaseLoad(){if(igPurchaseLoading)return;igPurchaseLoading=true;try{const ok=await igPurchaseFetchAll();if(!ok)throw new Error("راجع تشغيل irongate_purchasing_setup.sql وصلاحيات الجداول");}catch(e){toast("تعذر تحميل مستندات المشتريات من Supabase: "+(e.message||e),"err");}finally{igPurchaseLoading=false;const el=document.getElementById("content");if(el&&["purchaseOrders","purchaseInvoices"].includes(currentPage))el.innerHTML=igPurchaseView();}}
+function igPoptions(arr,sel,empty="اختر") {return `<option value="">${empty}</option>`+(arr||[]).map(x=>{const v=typeof x==="object"?(x.id??x.name??x.code):x,lab=typeof x==="object"?(x.name||x.label||x.code||x.id):x;return `<option value="${igPesc(v)}" ${String(sel)===String(v)?"selected":""}>${igPesc(lab)}</option>`}).join("");}
+function igPurchaseView(){const isO=currentPage==="purchaseOrders",kind=isO?"order":"invoice",list=igPurchaseDocs[isO?"orders":"invoices"]||[];if(!igPurchaseDraft)igPurchaseDraft=igPnew(kind);const d=igPurchaseDraft,edit=!!igPurchaseEditing,calc=igPcalc(d),F=(label,key,type="text",extra="")=>`<label class="fld"><span>${label}</span><input class="inp" type="${type}" value="${igPesc(d[key]??"")}" ${extra} oninput="igPurchaseDraft.${key}=this.value;igPurchaseRefreshTotals()"></label>`;const readOnly=!!(d.status==="posted");
+if(!igPurchaseFormOpen)return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أوامر الشراء":"فواتير المشتريات"}</h2><span class="chip">${list.length} مستند</span><div class="spacer"></div><button class="btn" onclick="igPurchaseNew('${kind}')">＋ مستند جديد</button><button class="btn ghost" onclick="igPurchaseLoad()">↻ تحديث</button></div><div class="igp-toolbar"><input class="inp" placeholder="بحث برقم المستند أو المورد أو رقم فاتورة المورد أو أمر البيع" value="${igPesc(igPurchaseQuery)}" oninput="igPurchaseQuery=this.value;igPurchaseRenderList()"><select class="inp" onchange="igPurchaseStatus=this.value;igPurchaseRenderList()"><option value="all">كل الحالات</option><option value="draft">مسودة</option><option value="posted">مرحّل</option></select><button class="btn ghost" onclick="igPurchaseExport()">⬇ تصدير CSV</button></div><div id="igPurchaseList">${igPurchaseListHtml(list,isO)}</div>`;
+return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أمر شراء":"فاتورة مشتريات"} ${edit?"رقم "+igPesc(d.docNo):"جديد"}</h2><span class="chip ${d.status==="posted"?"ok":"warn"}">${d.status==="posted"?"مرحّل":"مسودة"}</span><div class="spacer"></div><button class="btn ghost" onclick="igPurchaseBack()">↩ رجوع للقائمة</button>${!readOnly?`<button class="btn" onclick="igPurchaseSave()">💾 حفظ</button>`:""}${!isO?`<button class="btn ghost" onclick="igPurchasePrint()">🖨 طباعة الفاتورة</button>${d.status==="posted"?`<button class="btn ghost" onclick="igPurchasePrintJournal()">📒 طباعة قيد المشتريات</button><button class="btn danger" onclick="igPurchaseUnpost()">↶ إلغاء الترحيل</button>`:`<button class="btn primary" onclick="igPurchasePost()">✓ اعتماد وترحيل</button>`}`:""}${edit&&d.status!=="posted"?`<button class="btn danger" onclick="igPurchaseDelete()">حذف</button>`:""}</div>
+<div class="igp-grid"><section class="card"><div class="head"><h3>بيانات المستند والمورد</h3></div><div class="body"><div class="igp-fields">
+<label class="fld"><span>المورد *</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.supplier=this.value">${igPoptions(state.suppliers.map(x=>({id:x.name,name:x.name})),d.supplier,"اختر المورد")}</select></label>
+${F("تاريخ المستند","date","date",readOnly?"disabled":"")}${isO?F("تاريخ التسليم المتوقع","deliveryDate","date",readOnly?"disabled":""):F("رقم فاتورة المورد *","supplierInvoiceNo","text",readOnly?"disabled":"")}${!isO?F("تاريخ فاتورة المورد","supplierInvoiceDate","date",readOnly?"disabled":""):""}${!isO?F("تاريخ الاستلام الفعلي","deliveryDate","date",readOnly?"disabled":""):""}${!isO?F("تاريخ الاستحقاق","dueDate","date",readOnly?"disabled":""):""}
+<label class="fld"><span>المخزن</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.warehouseId=this.value">${igPoptions(state.warehouses.map(x=>({id:x.id,name:(x.code?x.code+" — ":"")+x.name})),d.warehouseId,"اختر المخزن")}</select></label>
+${isO?`<label class="fld" style="flex:1 1 100%;padding:10px;border:1px solid var(--line);border-radius:9px"><span style="display:flex;gap:9px;align-items:center"><input type="checkbox" ${d.allowOverReceipt!==false?"checked":""} ${readOnly?"disabled":""} onchange="igPurchaseDraft.allowOverReceipt=this.checked"> السماح بتجاوز الكمية المطلوبة عند الاستلام</span><small class="muted">مفعّل افتراضيًا. عند إلغاء الاختيار يمنع النظام استلام كمية أكبر من المتبقي.</small></label>`:""}${!isO?`<label class="fld"><span>أمر الشراء المرتبط</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseLinkOrder(this.value)">${igPoptions(igPurchaseDocs.orders.map(x=>({id:x.id,name:x.docNo+" — "+x.supplier})),d.purchaseOrderId,"فاتورة مباشرة بدون أمر")}</select></label>`:""}
+${F("رقم مرجعي / إذن استلام","referenceNo","text",readOnly?"disabled":"")}${F("شركة النقل","transportCompany","text",readOnly?"disabled":"")}${F("رقم السيارة","vehicleNo","text",readOnly?"disabled":"")}${F("اسم السائق","driverName","text",readOnly?"disabled":"")}${F("عنوان التسليم","deliveryAddress","text",readOnly?"disabled":"")}
+${F("رقم أمر البيع المصدر (إن وجد)","sourceSaleOrderNo","text","disabled")}</div></div></section>
+<section class="card"><div class="head"><h3>بيانات السداد والتكاليف</h3></div><div class="body"><div class="igp-fields">${F("شروط السداد","paymentTerms","text",readOnly?"disabled":"")}${F("طريقة السداد","paymentMethod","text",readOnly?"disabled":"")}${F("العملة","currency","text",readOnly?"disabled":"")}${F("سعر الصرف","exchangeRate","number",`step="0.000001" ${readOnly?"disabled":""}`)}${F("النقل والشحن","freight","number",`step="0.01" ${readOnly?"disabled":""}`)}${F("مصاريف إضافية","otherCharges","number",`step="0.01" ${readOnly?"disabled":""}`)}${!isO?F("خصم/استقطاع من المورد (غير مفعّل)","withholding","number",`step="0.01" disabled title="غير مفعّل حتى ربطه بحساب ضريبة الخصم"`):""}</div></div></section></div>
+${!isO?`<section class="card igp-payments"><div class="head"><h3>توزيع السداد عند الترحيل</h3><div class="spacer"></div>${!readOnly?`<button class="btn sm" onclick="igPurchaseAddPayment()">＋ إضافة دفعة</button>`:""}</div><div class="body"><p class="muted">يمكن تقسيم السداد بين أكثر من خزنة أو بنك، ويظل الفرق آجلًا على المورد. اترك الجدول فارغًا للشراء الآجل بالكامل.</p><div class="tbl-wrap"><table class="igp-lines" style="min-width:720px"><thead><tr><th>الوسيلة</th><th>الخزنة / البنك</th><th>المبلغ بعملة الفاتورة</th><th>الحساب المرتبط</th><th></th></tr></thead><tbody>${(d.purchasePayments||[]).map((x,i)=>{const opts=x.method==="cash"?(state.safes||[]).map(a=>({id:a.code,name:a.code+" — "+a.name,accountId:a.accountId})):(state.banks||[]).filter(a=>!chqIsSysBank(a)).map(a=>({id:a.code,name:a.code+" — "+a.name,accountId:a.accountId}));const selected=opts.find(a=>a.id===x.treasury);return `<tr><td><select class="inp" ${readOnly?"disabled":""} onchange="igPurchasePaymentChange(${i},'method',this.value)"><option value="cash" ${x.method==="cash"?"selected":""}>نقدًا — خزنة</option><option value="transfer" ${x.method==="transfer"?"selected":""}>تحويل — بنك</option></select></td><td><select class="inp" ${readOnly?"disabled":""} onchange="igPurchasePaymentChange(${i},'treasury',this.value)">${igPoptions(opts,x.treasury,"اختر "+(x.method==="cash"?"الخزنة":"البنك"))}</select></td><td><input class="inp" type="number" min="0.01" step="0.01" value="${igPesc(x.amount||"")}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.purchasePayments[${i}].amount=this.value;igPurchaseRefreshTotals()"></td><td>${igPesc(selected?.accountId?"مرتبط بحساب فعلي":"غير مربوط")}</td><td>${!readOnly?`<button class="btn danger sm" onclick="igPurchaseDelPayment(${i})">×</button>`:""}</td></tr>`}).join("")||`<tr><td colspan="5" class="empty">لا توجد دفعات — الفاتورة آجل بالكامل</td></tr>`}</tbody></table></div><div class="igp-totals" id="igpPayTotals">${igPurchaseTotalsHtml(d,false)}</div></div></section>`:""}
+<section class="card"><div class="head"><h3>تفاصيل الأصناف والتوريد</h3><div class="spacer"></div>${!readOnly?`<button class="btn sm" onclick="igPurchaseAddLine()">＋ إضافة صنف</button>`:""}</div><div class="body"><div class="tbl-wrap"><table class="igp-lines"><thead><tr><th>#</th><th>كود الصنف</th><th>وصف الصنف</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>المواصفة</th><th>الوحدة</th><th>الكمية${isO?" المطلوبة":" بالفاتورة"}</th>${!isO?"<th>الكمية المستلمة</th>":""}<th>سعر الوحدة</th><th>خصم %</th><th>ضريبة %</th><th>الإجمالي</th><th></th></tr></thead><tbody>${(d.items||[]).map((x,i)=>`<tr><td>${i+1}</td>${["itemCode","description","factory","diameter","type","spec","unit"].map(k=>`<td><input class="inp" value="${igPesc(x[k]||"")}" ${readOnly?"disabled":""} onchange="igPurchaseDraft.items[${i}].${k}=this.value"></td>`).join("")}<td><input class="inp" type="number" min="0" step="0.001" value="${igPesc(x.qty)}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.items[${i}].qty=this.value;igPurchaseRefreshTotals()"></td>${!isO?`<td><input class="inp" type="number" min="0" step="0.001" value="${igPesc(x.receivedQty??x.qty)}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.items[${i}].receivedQty=this.value"></td>`:""}<td><input class="inp" type="number" min="0" step="0.01" value="${igPesc(x.unitPrice)}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.items[${i}].unitPrice=this.value;igPurchaseRefreshTotals()"></td><td><input class="inp" type="number" min="0" max="100" step="0.01" value="${igPesc(x.discountPct)}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.items[${i}].discountPct=this.value;igPurchaseRefreshTotals()"></td><td><input class="inp" type="number" min="0" max="100" step="0.01" value="${igPesc(x.taxPct)}" ${readOnly?"disabled":""} oninput="igPurchaseDraft.items[${i}].taxPct=this.value;igPurchaseRefreshTotals()"></td><td class="num" id="igpLine${i}">${igPnum((Number(x.qty)||0)*(Number(x.unitPrice)||0)*(1-(Number(x.discountPct)||0)/100)*(1+(Number(x.taxPct)||0)/100))}</td><td>${!readOnly?`<button class="btn danger sm" onclick="igPurchaseDelLine(${i})">×</button>`:""}</td></tr>`).join("")}</tbody></table></div><div class="igp-notes"><label class="fld"><span>ملاحظات وشروط التوريد</span><textarea class="inp" rows="3" ${readOnly?"disabled":""} oninput="igPurchaseDraft.notes=this.value">${igPesc(d.notes)}</textarea></label></div><div class="igp-totals" id="igpTotals">${igPurchaseTotalsHtml(d,isO)}</div></div></section>
+${!isO?`<div class="igp-hint">ملاحظة محاسبية: حفظ الفاتورة لا يعني ترحيلها للأستاذ العام. يجب مراجعة ربط حساب المورد والمخزون وضريبة المدخلات ويومية المشتريات قبل اعتماد الترحيل المحاسبي.</div>`:""}`;}
+function igPurchaseCss(){return `.igp-toolbar,.igp-fields{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.igp-toolbar{padding:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-bottom:12px}.igp-toolbar input{flex:1;min-width:220px}.igp-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.igp-fields>.fld{flex:1 1 170px;min-width:150px}.igp-fields .inp{width:100%}.igp-lines{min-width:1150px;width:100%;border-collapse:collapse}.igp-lines th,.igp-lines td{padding:6px;border-bottom:1px solid var(--line);font-size:12px}.igp-lines .inp{min-width:72px;width:100%;padding:6px}.igp-lines td:nth-child(3) .inp{min-width:140px}.igp-lines .num{text-align:right;font-weight:800;white-space:nowrap}.igp-notes{margin-top:12px}.igp-totals{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}.igp-total{min-width:135px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg-2)}.igp-total b{display:block;font-size:15px;margin-top:4px}.igp-hint{margin-top:12px;padding:12px;border:1px solid #e9c46a;background:#fff9e8;color:#76540b;border-radius:9px;font-size:12px}@media(max-width:800px){.igp-grid{grid-template-columns:1fr}.igp-fields>.fld{flex-basis:100%}}`}
+function igPurchaseTotalsHtml(d,isO){const c=igPcalc(d),item=(l,v)=>`<div class="igp-total"><small>${l}</small><b>${igPnum(v)} ج.م</b></div>`;return item("إجمالي قبل الخصم",c.subtotal)+item("الخصومات",c.discount)+item("ضريبة القيمة المضافة",c.tax)+item("النقل والمصاريف",c.charges)+(isO?"":item("الاستقطاعات",c.withholding)+item("المدفوع",c.paid))+item(isO?"إجمالي أمر الشراء":"صافي الفاتورة",c.net)+(isO?"":item("المتبقي للمورد",c.remaining));}
+function igPurchaseListHtml(list,isO){const q=igPurchaseQuery.toLowerCase();const visible=list.filter(x=>!isO||(!(x.data?.closed||x.closed||x.status==="cancelled")&&!igPurchaseOrderRemaining(x).complete));const rows=visible.filter(x=>(igPurchaseStatus==="all"||x.status===igPurchaseStatus)&&[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo].some(v=>String(v||"").toLowerCase().includes(q))).map(x=>`<tr><td>${igPesc(x.docNo)}</td><td>${igPesc(x.date||"")}</td><td>${igPesc(x.supplier||"")}</td><td>${igPesc(isO?x.sourceSaleOrderNo||"—":x.supplierInvoiceNo||"—")}</td><td class="num">${igPnum(igPcalc(x).net)}</td><td><span class="chip ${x.status==="posted"?"ok":"warn"}">${isO?(Object.values(igPurchaseOrderRemaining(x).received).some(v=>v>0)?"استلام جزئي":"مفتوح"):(x.status==="posted"?"مرحّل":"مسودة")}</span></td><td>${isO?`<button class="btn sm primary" onclick="igPurchaseNewReceipt('${x.id}')" ${igPurchaseOrderRemaining(x).remainingLines.length?"":"disabled"}>إذن استلام</button>`:""}<button class="btn sm" onclick="igPurchaseOpen('${x.id}','${isO?"order":"invoice"}')">فتح</button></td></tr>`).join("");return `<div class="card"><div class="tbl-wrap"><table style="width:100%;min-width:750px"><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>${isO?"أمر البيع المصدر":"رقم فاتورة المورد"}</th><th>الإجمالي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>${rows||`<tr><td colspan="7" class="empty">لا توجد مستندات مطابقة</td></tr>`}</tbody></table></div></div>`;}
+function igPurchaseOrderRemaining(order){const posted=(igPurchaseDocs.receipts||[]).filter(r=>r.status==="posted"&&String(r.purchaseOrderId||r.purchase_order_id)===String(order.id));const received={};posted.forEach(r=>(r.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);received[k]=(received[k]||0)+(Number(it.qty)||0);}));const remainingLines=(order.items||[]).map((it,i)=>({...it,orderLineNo:i+1,orderedQty:Number(it.qty)||0,receivedQty:received[i+1]||0,remainingQty:Math.max(0,(Number(it.qty)||0)-(received[i+1]||0))})).filter(x=>x.remainingQty>0.000001);return {remainingLines,complete:remainingLines.length===0,received};}
+function igPurchaseNewReceipt(orderId){const o=igPurchaseDocs.orders.find(x=>String(x.id)===String(orderId));if(!o)return toast("أمر الشراء غير موجود","err");const rem=igPurchaseOrderRemaining(o);if(rem.complete||o.status==="cancelled"||o.data?.closed||o.closed)return toast("أمر الشراء مكتمل أو مغلق ولا يقبل استلامًا جديدًا","err");igPurchaseReceiptDraft={id:crypto.randomUUID(),purchaseOrderId:o.id,purchaseOrderNo:o.docNo,supplier:o.supplier,warehouseId:o.warehouseId||whDefaultId(),date:igPdate(),status:"draft",allowOverReceipt:o.allowOverReceipt!==false,items:rem.remainingLines.map(x=>({...x,qty:x.remainingQty,receivedQty:x.remainingQty,orderedQty:x.orderedQty,receivedBefore:x.receivedQty,remainingBefore:x.remainingQty,unitCost:Number(x.unitPrice)||0}))};igPurchaseReceiptRender();}
+function igPurchaseReceiptRender(){const d=igPurchaseReceiptDraft;if(!d)return;const c=document.getElementById("content");if(!c)return;c.innerHTML=`<style>${igPurchaseCss()}</style><div class="page-head"><h2>إذن استلام مشتريات — ${igPesc(d.purchaseOrderNo)}</h2><span class="chip warn">مسودة</span><div class="spacer"></div><button class="btn ghost" onclick="igPurchaseReceiptBack()">↩ رجوع</button><button class="btn" onclick="igPurchaseReceiptSave()">💾 حفظ الإذن</button><button class="btn primary" onclick="igPurchaseReceiptPost()">✓ ترحيل واستلام للمخزن</button></div><section class="card"><div class="body"><div class="igp-fields"><label class="fld"><span>أمر الشراء</span><input class="inp" disabled value="${igPesc(d.purchaseOrderNo)}"></label><label class="fld"><span>المورد</span><input class="inp" disabled value="${igPesc(d.supplier)}"></label><label class="fld"><span>تاريخ الاستلام</span><input class="inp" type="date" value="${igPesc(d.date)}" onchange="igPurchaseReceiptDraft.date=this.value"></label><label class="fld"><span>المخزن</span><select class="inp" onchange="igPurchaseReceiptDraft.warehouseId=this.value">${igPoptions((state.warehouses||[]).map(w=>({id:w.id,name:w.name})),d.warehouseId,"اختر المخزن")}</select></label></div></div></section><section class="card"><div class="head"><h3>الأصناف المتبقية للاستلام الجزئي أو الكامل</h3></div><div class="body"><div class="tbl-wrap"><table class="igp-lines"><thead><tr><th>الصنف</th><th>المواصفة</th><th>الكمية المطلوبة</th><th>تم استلامه سابقًا</th><th>المتبقي قبل الإذن</th><th>كمية الاستلام الآن</th><th>الزيادة عن المتبقي</th><th>تكلفة الوحدة</th></tr></thead><tbody>${d.items.map((x,i)=>`<tr><td>${igPesc(x.description||x.itemCode||"صنف")}</td><td>${igPesc([x.factory,x.diameter,x.type,x.spec].filter(Boolean).join(" / "))}</td><td>${igPnum(x.orderedQty)}</td><td>${igPnum(x.receivedBefore)}</td><td><b>${igPnum(x.remainingBefore)}</b></td><td><input class="inp" type="number" min="0" ${d.allowOverReceipt===false?`max="${x.remainingBefore}"`:""} step="0.001" value="${x.qty}" oninput="igPurchaseReceiptDraft.items[${i}].qty=this.value;document.getElementById('igpReceiptExcess${i}').textContent=igPnum(Math.max(0,Number(this.value||0)-Number(igPurchaseReceiptDraft.items[${i}].remainingBefore||0)))"></td><td><b id="igpReceiptExcess${i}">${igPnum(Math.max(0,Number(x.qty||0)-Number(x.remainingBefore||0)))}</b></td><td><input class="inp" type="number" min="0" step="0.01" value="${x.unitCost}" oninput="igPurchaseReceiptDraft.items[${i}].unitCost=this.value"></td></tr>`).join("")}</tbody></table></div><p class="muted">يمكن استلام جزء من كل صنف. الكمية غير المستلمة تظل على أمر الشراء وتظهر في إذن جديد لاحقًا. ${d.allowOverReceipt===false?"تجاوز المتبقي ممنوع حسب شرط أمر الشراء.":"مسموح تجاوز المتبقي حسب شرط أمر الشراء، وسيظهر مقدار الزيادة ضمن الكمية المستلمة."}</p></div></section>`;}
+async function igPurchaseReceiptSave(){const d=igPurchaseReceiptDraft;if(!d)return;if(!d.warehouseId)return toast("اختر المخزن","err");for(const x of d.items){if(Number(x.qty)<0||(d.allowOverReceipt===false&&Number(x.qty)>Number(x.remainingBefore)+0.000001))return toast("كمية الاستلام تتجاوز المتبقي المسموح به في أمر الشراء","err");}const items=d.items.filter(x=>Number(x.qty)>0);if(!items.length)return toast("أدخل كمية واحدة على الأقل للاستلام","err");try{const wh=(state.warehouses||[]).find(w=>String(w.id)===String(d.warehouseId))||{};const head={id:d.id,receipt_no:d.docNo||null,purchase_order_id:d.purchaseOrderId,doc_date:d.date,supplier_name:d.supplier,warehouse_id:String(d.warehouseId),status:"draft",data:{...d,warehouseCode:wh.code||"",warehouseName:wh.name||""}};let r;if(d.saved){r=await sb.from("purchase_receipts").update(head).eq("id",d.id).eq("status","draft").select().single();}else{const n=await sb.rpc("ig_purchase_next_number",{p_kind:"receipt"});if(n.error){throw n.error;}else{head.receipt_no=n.data;d.docNo=n.data;}r=await sb.from("purchase_receipts").insert(head).select().single();}if(r.error)throw r.error;const _rbk=await sb.from("purchase_receipt_items").select("*").eq("receipt_id",d.id);if(_rbk.error)throw _rbk.error;const del=await sb.from("purchase_receipt_items").delete().eq("receipt_id",d.id);if(del.error)throw del.error;const ins=await sb.from("purchase_receipt_items").insert(items.map((x,i)=>({receipt_id:d.id,line_no:i+1,item_data:{...x,qty:Number(x.qty),receivedQty:Number(x.qty),unitCost:Number(x.unitCost),orderLineNo:x.orderLineNo}})));if(ins.error){if((_rbk.data||[]).length){const rb=await sb.from("purchase_receipt_items").insert(_rbk.data.map(({id,...r})=>r));if(rb.error)console.error("تعذر استرجاع بنود الإذن",rb.error);}throw ins.error;}d.saved=true;toast("تم حفظ إذن الاستلام "+d.docNo,"ok");return true;}catch(e){toast("تعذر حفظ إذن الاستلام: "+(e.message||e),"err");return false;}}
+async function igPurchaseReceiptPost(){const d=igPurchaseReceiptDraft;if(!d)return;if(!d.saved&&!await igPurchaseReceiptSave())return;try{const r=await sb.rpc("ig_purchase_post_receipt",{p_receipt_id:d.id});if(r.error)throw r.error;toast("تم ترحيل إذن الاستلام وإضافة الكميات للمخزون","ok");igPurchaseReceiptDraft=null;await igPurchaseFetchAll();igPurchaseViewReset();}catch(e){toast("فشل ترحيل الاستلام: "+(e.message||e),"err");}}
+function igPurchaseReceiptBack(){igPurchaseReceiptDraft=null;igPurchaseViewReset();}
+function igPurchaseViewReset(){const c=document.getElementById("content");if(c)c.innerHTML=igPurchaseView();}
+let igPurchaseReceiptDraft=null;
+function igPurchaseRenderList(){const el=document.getElementById("igPurchaseList");if(el)el.innerHTML=igPurchaseListHtml(igPurchaseDocs[igPdocTable()]||[],currentPage==="purchaseOrders");}
+function igPurchaseNew(kind){igPurchaseEditing=null;igPurchaseFormOpen=true;igPurchaseDraft=igPnew(kind);igPurchaseDraft.docNo="جديد";document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseOpen(id,kind){igPurchaseFormOpen=true;const list=igPurchaseDocs[kind==="order"?"orders":"invoices"]||[],r=list.find(x=>String(x.id)===String(id));if(!r)return;igPurchaseEditing=id;igPurchaseDraft=JSON.parse(JSON.stringify(r));document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseBack(){igPurchaseEditing=null;igPurchaseFormOpen=false;igPurchaseDraft=null;document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseAddLine(){igPurchaseDraft.items.push(igPemptyLine());document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseDelLine(i){if(igPurchaseDraft.items.length<=1)return toast("لازم يكون فيه صنف واحد على الأقل","err");igPurchaseDraft.items.splice(i,1);document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseAddPayment(){if(!Array.isArray(igPurchaseDraft.purchasePayments))igPurchaseDraft.purchasePayments=[];igPurchaseDraft.purchasePayments.push({method:"cash",treasury:"",amount:0});document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseDelPayment(i){igPurchaseDraft.purchasePayments.splice(i,1);document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchasePaymentChange(i,k,v){const x=igPurchaseDraft.purchasePayments[i];x[k]=v;if(k==="method")x.treasury="";document.getElementById("content").innerHTML=igPurchaseView();}
+function igPurchaseRefreshTotals(){const el=document.getElementById("igpTotals");if(el)el.innerHTML=igPurchaseTotalsHtml(igPurchaseDraft,currentPage==="purchaseOrders");const pe=document.getElementById("igpPayTotals");if(pe)pe.innerHTML=igPurchaseTotalsHtml(igPurchaseDraft,false);(igPurchaseDraft.items||[]).forEach((x,i)=>{const c=document.getElementById("igpLine"+i);if(c)c.textContent=igPnum((Number(x.qty)||0)*(Number(x.unitPrice)||0)*(1-(Number(x.discountPct)||0)/100)*(1+(Number(x.taxPct)||0)/100));});}
+function igPurchaseLinkOrder(id){
+ const o=igPurchaseDocs.orders.find(x=>String(x.id)===String(id));igPurchaseDraft.purchaseOrderId=id;igPurchaseDraft.purchaseOrderNo=o?.docNo||"";
+ if(o){
+  const posted=(igPurchaseDocs.receipts||[]).filter(r=>r.status==="posted"&&String(r.purchaseOrderId||r.purchase_order_id)===String(o.id));
+  const received={},rcost={};posted.forEach(r=>(r.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);if(k>0){received[k]=(received[k]||0)+(Number(it.qty)||0);const _q=Number(it.qty)||0,_c=Number(it.unitCost);if(_q>0&&isFinite(_c)&&_c>0){rcost[k]=rcost[k]||{v:0,q:0};rcost[k].v+=_q*_c;rcost[k].q+=_q;}}}));
+  const invoiced={};(igPurchaseDocs.invoices||[]).filter(v=>v.status==="posted"&&String(v.purchaseOrderId||v.purchase_order_id)===String(o.id)).forEach(v=>(v.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);if(k>0)invoiced[k]=(invoiced[k]||0)+(Number(it.qty)||0);}));
+  const lines=(o.items||[]).map((x,i)=>{const n=i+1,available=Math.max(0,(received[n]||0)-(invoiced[n]||0));const rc=rcost[n];return {...x,orderLineNo:n,qty:available,receivedQty:available,unitPrice:(rc&&rc.q>0)?Math.round((rc.v/rc.q+Number.EPSILON)*10000)/10000:x.unitPrice};}).filter(x=>x.qty>0.000001);
+  if(!lines.length){igPurchaseDraft.purchaseOrderId="";igPurchaseDraft.purchaseOrderNo="";toast("لا توجد كميات مستلمة غير مفوترة لهذا الأمر. سجّل إذن الاستلام أولاً.","warn");}
+  else {igPurchaseDraft.supplier=o.supplier;igPurchaseDraft.warehouseId=o.warehouseId;igPurchaseDraft.items=lines;igPurchaseDraft.sourceSaleOrderId=o.sourceSaleOrderId||"";igPurchaseDraft.sourceSaleOrderNo=o.sourceSaleOrderNo||"";}
+ }
+ document.getElementById("content").innerHTML=igPurchaseView();
+}
+async function igPurchaseSave(){const d=igPurchaseDraft,isO=currentPage==="purchaseOrders",kind=isO?"order":"invoice",table=isO?IG_PUR_TABLES.orders:IG_PUR_TABLES.invoices,itemTable=isO?IG_PUR_TABLES.orderItems:IG_PUR_TABLES.invoiceItems;if(!d.supplier)return toast("اختار المورد أولاً","err");if(!isO&&!String(d.supplierInvoiceNo||"").trim())return toast("رقم فاتورة المورد مطلوب","err");if(!isO){const _k=String(d.supplierInvoiceNo).trim().toLowerCase(),_dup=(igPurchaseDocs.invoices||[]).find(v=>String(v.id)!==String(d.id)&&String(v.supplier||"")===String(d.supplier)&&String(v.supplierInvoiceNo||"").trim().toLowerCase()===_k);if(_dup)return toast("رقم فاتورة المورد «"+d.supplierInvoiceNo+"» مسجل بالفعل لنفس المورد (فاتورة "+(_dup.docNo||"")+")","err");}const items=(d.items||[]).filter(x=>x.description||x.factory||x.diameter||x.itemCode);if(!items.length)return toast("أضف صنفًا واحدًا على الأقل","err");for(let i=0;i<items.length;i++){if(!(Number(items[i].qty)>0))return toast("الكمية لازم تكون أكبر من صفر — سطر "+(i+1),"err");if(Number(items[i].unitPrice)<0)return toast("السعر غير صحيح","err");}if(!isO&&d.purchaseOrderId){const _o=igPurchaseDocs.orders.find(x=>String(x.id)===String(d.purchaseOrderId));if(_o){const rc={},iv={};(igPurchaseDocs.receipts||[]).filter(r=>r.status==="posted"&&String(r.purchaseOrderId||r.purchase_order_id)===String(_o.id)).forEach(r=>(r.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);if(k>0)rc[k]=(rc[k]||0)+(Number(it.qty)||0);}));(igPurchaseDocs.invoices||[]).filter(v=>v.status==="posted"&&String(v.id)!==String(d.id)&&String(v.purchaseOrderId||v.purchase_order_id)===String(_o.id)).forEach(v=>(v.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);if(k>0)iv[k]=(iv[k]||0)+(Number(it.qty)||0);}));const used={};for(const it of items){const k=Number(it.orderLineNo||0);if(k>0)used[k]=(used[k]||0)+(Number(it.qty)||0);}for(const k of Object.keys(used)){const av=(rc[k]||0)-(iv[k]||0);if(used[k]>av+0.000001)return toast("كمية الصنف رقم "+k+" ("+used[k]+") أكبر من المستلم غير المفوتر ("+Math.max(0,av)+") — سجّل إذن استلام أولاً","err");}}}const c=igPcalc(d);if(c.net<0||c.paid<0||c.paid>c.net+0.005)return toast("راجع صافي الفاتورة ومجموع الدفعات","err");for(const [i,pay] of (d.purchasePayments||[]).entries()){const list=pay.method==="cash"?(state.safes||[]):(state.banks||[]);const obj=list.find(x=>String(x.code)===String(pay.treasury));if(!(Number(pay.amount)>0)||!obj||!obj.accountId)return toast("راجع وسيلة السداد والخزنة/البنك والحساب المرتبط في الدفعة رقم "+(i+1),"err");}const whMeta=(state.warehouses||[]).find(x=>String(x.id)===String(d.warehouseId))||{};d.warehouseCode=whMeta.code||"";d.warehouseName=whMeta.name||"";const now=new Date().toISOString();const head={id:d.id,order_no:isO?(d.docNo&&d.docNo!=="جديد"?d.docNo:null):null,invoice_no:isO?null:(d.docNo&&d.docNo!=="جديد"?d.docNo:null),doc_date:d.date,supplier_name:d.supplier,supplier_invoice_no:d.supplierInvoiceNo||null,supplier_invoice_date:d.supplierInvoiceDate||null,status:d.status||"draft",source_sale_order_id:d.sourceSaleOrderId||null,source_sale_order_no:d.sourceSaleOrderNo||null,purchase_order_id:d.purchaseOrderId||null,purchase_order_no:d.purchaseOrderNo||null,warehouse_id:d.warehouseId||null,data:{...d,items:undefined,totals:c},updated_at:now};try{let saved;if(igPurchaseEditing){const r=await sb.from(table).update(head).eq("id",d.id).eq("status","draft").select("*").single();if(r.error)throw r.error;saved=r.data;}else{const seq=await sb.rpc("ig_purchase_next_number",{p_kind:kind});if(seq.error)throw seq.error;const docNo=String(seq.data);d.docNo=docNo;head[isO?"order_no":"invoice_no"]=docNo;head.data={...d,items:undefined,totals:c};const r=await sb.from(table).insert(head).select("*").single();if(r.error)throw r.error;saved=r.data;igPurchaseEditing=d.id;}const _bk=await sb.from(itemTable).select("*").eq(isO?"purchase_order_id":"purchase_invoice_id",d.id);if(_bk.error)throw _bk.error;const delLines=await sb.from(itemTable).delete().eq(isO?"purchase_order_id":"purchase_invoice_id",d.id);if(delLines.error)throw delLines.error;const lineRows=items.map((x,i)=>({[isO?"purchase_order_id":"purchase_invoice_id"]:d.id,line_no:i+1,item_data:x}));const ir=await sb.from(itemTable).insert(lineRows);if(ir.error){if((_bk.data||[]).length){const rb=await sb.from(itemTable).insert(_bk.data.map(({id,...r})=>r));if(rb.error)console.error("تعذر استرجاع البنود القديمة",rb.error);}throw ir.error;}d.docNo=isO?saved.order_no:saved.invoice_no;d.items=items;const arr=igPurchaseDocs[isO?"orders":"invoices"],idx=arr.findIndex(x=>x.id===d.id);if(idx>=0)arr[idx]={...d};else arr.unshift({...d});toast("تم حفظ "+(isO?"أمر الشراء ":"فاتورة المشتريات ")+d.docNo,"ok");igPurchaseBack();}catch(e){toast("فشل حفظ مستند المشتريات: "+(e.message||e),"err");}}
+async function igPurchaseDelete(){if(!igPurchaseEditing)return;const d=igPurchaseDraft;if(d.status==="posted")return toast("لا يمكن حذف مستند مرحّل","err");if(!await askConfirm("تأكيد حذف المستند؟"))return;const isO=currentPage==="purchaseOrders",table=isO?IG_PUR_TABLES.orders:IG_PUR_TABLES.invoices;const r=await sb.from(table).update({deleted_at:new Date().toISOString()}).eq("id",d.id);if(r.error)return toast("فشل الحذف: "+r.error.message,"err");igPurchaseDocs[isO?"orders":"invoices"]=igPurchaseDocs[isO?"orders":"invoices"].filter(x=>x.id!==d.id);toast("تم حذف المستند","ok");igPurchaseBack();}
+function igPurchasePrint(){const d=igPurchaseDraft,c=igPcalc(d),sup=(state.suppliers||[]).find(x=>x.name===d.supplier)||{};if(!d.supplier)return toast("بيانات المورد غير مكتملة","err");const rows=c.lines.map((x,i)=>`<tr><td>${i+1}</td><td>${igPesc(x.itemCode)}</td><td>${igPesc(x.description)}</td><td>${igPesc(x.factory)}</td><td>${igPesc(x.diameter)}</td><td>${igPesc(x.type)}</td><td>${igPesc(x.spec)}</td><td>${igPesc(x.unit)}</td><td>${igPnum(x.qty)}</td><td>${igPnum(x.receivedQty??x.qty)}</td><td>${igPnum(x.unitPrice)}</td><td>${igPnum(x.lineDiscount)}</td><td>${igPnum(x.lineTax)}</td><td>${igPnum(x.lineNet)}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>فاتورة مشتريات ${igPesc(d.docNo)}</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Tahoma,Arial;padding:18px;color:#18263b}h1{text-align:center;color:#17345b}table{width:100%;border-collapse:collapse;margin-top:20px}th,td{border:1px solid #b8c4d2;padding:8px;text-align:center;font-size:12px}th{background:#edf2f8}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;border:1px solid #ccd5df;padding:14px}.tot{width:360px;margin:20px 0 0 auto}.tot div{display:flex;justify-content:space-between;padding:5px;border-bottom:1px solid #ddd}.foot{margin-top:30px;display:flex;justify-content:space-around}@media print{button{display:none}}</style><h1>فاتورة مشتريات</h1><div class="meta"><div><b>رقم الفاتورة:</b> ${igPesc(d.docNo||"مسودة")}</div><div><b>تاريخ المستند:</b> ${igPesc(d.date)}</div><div><b>المورد:</b> ${igPesc(d.supplier)}</div><div><b>عنوان المورد:</b> ${igPesc(sup.address||"")}</div><div><b>تليفون المورد:</b> ${igPesc(sup.phone||"")}</div><div><b>بطاقة ضريبية:</b> ${igPesc(sup.taxCard||"")}</div><div><b>سجل تجاري:</b> ${igPesc(sup.commercialReg||"")}</div><div><b>رقم فاتورة المورد:</b> ${igPesc(d.supplierInvoiceNo)}</div><div><b>تاريخ فاتورة المورد:</b> ${igPesc(d.supplierInvoiceDate)}</div><div><b>تاريخ التوريد:</b> ${igPesc(d.deliveryDate)}</div><div><b>المخزن:</b> ${igPesc((state.warehouses.find(x=>String(x.id)===String(d.warehouseId))||{}).name||"")}</div><div><b>أمر الشراء:</b> ${igPesc(d.purchaseOrderNo||"مباشر")}</div><div><b>إذن الاستلام / المرجع:</b> ${igPesc(d.referenceNo)}</div><div><b>شركة النقل / السيارة:</b> ${igPesc(d.transportCompany)} / ${igPesc(d.vehicleNo)}</div></div><table><thead><tr><th>م</th><th>الكود</th><th>الصنف / البيان</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>المواصفة</th><th>الوحدة</th><th>الكمية بالفاتورة</th><th>المستلم</th><th>سعر الوحدة</th><th>الخصم</th><th>الضريبة</th><th>الصافي</th></tr></thead><tbody>${rows}</tbody></table><div class="tot"><div><b>الإجمالي قبل الخصم</b><b>${igPnum(c.subtotal)}</b></div><div><span>الخصومات</span><b>${igPnum(c.discount)}</b></div><div><span>ضريبة المدخلات</span><b>${igPnum(c.tax)}</b></div><div><span>النقل والمصاريف</span><b>${igPnum(c.charges)}</b></div><div><span>الاستقطاعات</span><b>${igPnum(c.withholding)}</b></div><div><b>صافي الفاتورة</b><b>${igPnum(c.net)} ج.م</b></div><div><span>المدفوع</span><b>${igPnum(c.paid)}</b></div><div><b>المتبقي</b><b>${igPnum(c.remaining)}</b></div></div><p><b>شروط السداد:</b> ${igPesc(d.paymentTerms)} — <b>طريقة السداد:</b> ${igPesc(d.paymentMethod)} — <b>تاريخ الاستحقاق:</b> ${igPesc(d.dueDate)}</p><p><b>ملاحظات:</b> ${igPesc(d.notes)}</p><div class="foot"><span>أمين المخزن</span><span>الحسابات</span><span>اعتماد الإدارة</span></div><button onclick="print()">طباعة</button><script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></html>`;const w=window.open("","_blank");if(!w)return toast("اسمح بفتح النوافذ المنبثقة للطباعة","err");w.document.write(html);w.document.close();}
+async function igPurchasePost(){
+ const d=igPurchaseDraft;if(!d||currentPage!=="purchaseInvoices")return;
+ if(!can("purchaseInvoices","post"))return toast("لا تملك صلاحية ترحيل فواتير المشتريات","err");
+ if(!d.id||!igPurchaseEditing)return toast("احفظ الفاتورة أولاً قبل الترحيل","err");
+ if(d.status==="posted")return toast("الفاتورة مرحّلة بالفعل","warn");
+ const payRows=(d.purchasePayments||[]).map(p=>{const list=p.method==="cash"?(state.safes||[]):(state.banks||[]);const t=list.find(x=>String(x.code)===String(p.treasury));return {method:p.method,treasury:p.treasury,amount:Number(p.amount)||0,account_id:t?.accountId||null};});
+ if(Number(d.withholding||0)>0)return toast("الاستقطاع يحتاج ربط حساب ضريبة الخصم قبل الترحيل","err");
+ const ok=await askConfirm(`سيتم ترحيل فاتورة المشتريات ${d.docNo} إلى يومية المشتريات 502، وإثبات ضريبة المدخلات وحساب المورد. المخزون يُثبت من أذون الاستلام المرتبطة بأمر الشراء، أما الفاتورة المباشرة فتثبت واردها عند الترحيل. لا يمكن تعديل الفاتورة بعد ذلك إلا بإلغاء الترحيل. هل تريد المتابعة؟`,{title:"اعتماد وترحيل فاتورة مشتريات",ok:"اعتماد وترحيل",cancel:"مراجعة"});if(!ok)return;
+ try{
+  const sup=(state.suppliers||[]).find(x=>String(x.name)===String(d.supplier));
+  const wh=(state.warehouses||[]).find(x=>String(x.id)===String(d.warehouseId));
+  if(!sup||!sup.accountId)throw new Error("المورد غير مربوط بحساب أستاذ عام فعلي في دليل الموردين");
+  if(!wh||!wh.accountId)throw new Error("المخزن غير مربوط بحساب مخزون في شجرة المخازن");
+  const inds=await glIndicatorsSync(true),vat=inds&&inds.vat_account;
+  const jr=await sb.from("gl_journals").select("id,journal_code,journal_name,is_active").eq("journal_code","502").maybeSingle();
+  if(jr.error)throw jr.error;if(!jr.data||!jr.data.is_active)throw new Error("يومية المشتريات 502 غير موجودة أو غير نشطة");
+  const r=await sb.rpc("ig_purchase_post_invoice_v2",{p_invoice_id:d.id,p_journal_id:jr.data.id,p_stock_account_id:wh.accountId,p_vat_account_id:vat||null,p_supplier_account_id:sup.accountId,p_payments:payRows});
+  if(r.error)throw r.error;
+  await igPurchaseFetchAll();const fresh=igPurchaseDocs.invoices.find(x=>String(x.id)===String(d.id));if(fresh)igPurchaseDraft=JSON.parse(JSON.stringify(fresh));
+  document.getElementById("content").innerHTML=igPurchaseView();
+  toast("تم ترحيل الفاتورة والقيد وإثبات وارد المخزون بنجاح — "+(r.data?.entry_no||""),"ok");
+ }catch(e){toast("تعذر ترحيل فاتورة المشتريات: "+(e.message||e),"err");}
+}
+async function igPurchaseUnpost(){
+ const d=igPurchaseDraft;if(!d||!d.id||d.status!=="posted")return;
+ if(!can("purchaseInvoices","post"))return toast("لا تملك صلاحية إلغاء الترحيل","err");
+ const ok=await askConfirm("سيتم إلغاء ترحيل القيد وإزالة حركة الوارد المرتبطة بهذه الفاتورة وإعادتها لمسودة. إذا استُهلك المخزون في حركات صرف لاحقة سيرفض النظام الإلغاء لحماية أرصدة المخزون. هل تريد المتابعة؟",{title:"إلغاء ترحيل فاتورة المشتريات",ok:"إلغاء الترحيل",cancel:"تراجع",danger:true});if(!ok)return;
+ try{const r=await sb.rpc("ig_purchase_unpost_invoice",{p_invoice_id:d.id});if(r.error)throw r.error;await igPurchaseFetchAll();const fresh=igPurchaseDocs.invoices.find(x=>String(x.id)===String(d.id));if(fresh)igPurchaseDraft=JSON.parse(JSON.stringify(fresh));document.getElementById("content").innerHTML=igPurchaseView();toast("تم إلغاء الترحيل وإرجاع الفاتورة لمسودة. القيد الأصلي محفوظ كمسودة للمراجعة.","ok");}catch(e){toast("تعذر إلغاء الترحيل: "+(e.message||e),"err");}
+}
+async function igPurchasePrintJournal(){
+ const d=igPurchaseDraft;if(!d?.id||d.status!=="posted")return toast("الفاتورة غير مرحّلة","err");
+ try{const h=await sb.from("purchase_invoices").select("gl_entry_id").eq("id",d.id).single();if(h.error)throw h.error;if(!h.data?.gl_entry_id)throw new Error("لا يوجد قيد مرتبط بالفاتورة");
+  const [er,lr,ar]=await Promise.all([sb.from("gl_entries").select("*").eq("id",h.data.gl_entry_id).single(),sb.from("gl_entry_lines").select("*").eq("entry_id",h.data.gl_entry_id).order("line_no"),sb.from("gl_accounts").select("id,account_code,account_name")]);
+  if(er.error)throw er.error;if(lr.error)throw lr.error;if(ar.error)throw ar.error;const amap=new Map((ar.data||[]).map(a=>[a.id,a]));const rows=(lr.data||[]).map(x=>{const a=amap.get(x.account_id)||{};return `<tr><td>${igPesc(a.account_code||"")}</td><td>${igPesc(a.account_name||"")}</td><td>${igPesc(x.description||"")}</td><td>${igPnum(x.debit)}</td><td>${igPnum(x.credit)}</td></tr>`}).join("");const e=er.data;
+  const w=window.open("","_blank");if(!w)return toast("اسمح بفتح النوافذ المنبثقة للطباعة","err");w.document.write(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>قيد مشتريات ${igPesc(e.entry_no)}</title><style>body{font-family:Tahoma,Arial;padding:28px;color:#172b45}h1{text-align:center;color:#17345b}table{width:100%;border-collapse:collapse;margin-top:24px}th,td{border:1px solid #b8c4d2;padding:10px;text-align:center;font-size:13px}th{background:#edf2f8}.meta{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:16px;border:1px solid #ccd5df}footer{margin-top:40px;display:flex;justify-content:space-around}@media print{button{display:none}}</style><h1>قيد يومية المشتريات</h1><div class="meta"><div><b>رقم القيد:</b> ${igPesc(e.entry_no)}</div><div><b>التاريخ:</b> ${igPesc(e.entry_date)}</div><div><b>رقم فاتورة النظام:</b> ${igPesc(d.docNo)}</div><div><b>رقم فاتورة المورد:</b> ${igPesc(d.supplierInvoiceNo)}</div><div><b>المورد:</b> ${igPesc(d.supplier)}</div><div><b>المخزن:</b> ${igPesc((state.warehouses||[]).find(x=>String(x.id)===String(d.warehouseId))?.name||"")}</div></div><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="3">الإجمالي</th><th>${igPnum(e.total_debit)}</th><th>${igPnum(e.total_credit)}</th></tr></tfoot></table><footer><span>الحسابات</span><span>المراجعة</span><span>اعتماد الإدارة</span></footer><button onclick="print()">طباعة</button><script>window.onload=()=>setTimeout(()=>window.print(),250)<\/script></html>`);w.document.close();
+ }catch(e){toast("تعذر تجهيز طباعة القيد: "+(e.message||e),"err");}
+}
+function igPurchaseExport(){const isO=currentPage==="purchaseOrders",list=igPurchaseDocs[isO?"orders":"invoices"]||[],q=igPurchaseQuery.toLowerCase(),rows=list.filter(x=>[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo].some(v=>String(v||"").toLowerCase().includes(q))).map(x=>{const c=igPcalc(x);return [x.docNo,x.date,x.supplier,x.supplierInvoiceNo||"",x.supplierInvoiceDate||"",x.deliveryDate||"",x.purchaseOrderNo||"",x.warehouseId||"",c.subtotal,c.discount,c.tax,c.charges,c.net,c.paid,c.remaining,x.status,x.notes||""];});const head=["رقم المستند","التاريخ","المورد","رقم فاتورة المورد","تاريخ فاتورة المورد","تاريخ الاستلام","أمر الشراء","المخزن","قبل الخصم","الخصم","ضريبة المدخلات","مصاريف","الصافي","المدفوع","المتبقي","الحالة","ملاحظات"];const csv="\ufeff"+[head,...rows].map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=(isO?"purchase-orders":"purchase-invoices")+".csv";a.click();URL.revokeObjectURL(url);}
+async function igConvertSaleOrderToPurchase(id){const so=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!so)return toast("أمر البيع غير موجود","err");if(!so.supplier)return toast("أمر البيع لا يحتوي على مورد؛ اختر المورد في أمر البيع أولاً","err");igPurchaseEditing=null;igPurchaseFormOpen=true;igPurchaseDraft=igPnew("order");igPurchaseDraft.supplier=so.supplier;igPurchaseDraft.sourceSaleOrderId=so.id;igPurchaseDraft.sourceSaleOrderNo=so.orderNo;igPurchaseDraft.warehouseId=so.warehouseId||whDefaultId();igPurchaseDraft.notes="تم التحويل تلقائيًا من أمر البيع رقم "+so.orderNo;igPurchaseDraft.items=(so.items||[]).map(x=>({...igPemptyLine(),description:[x.diameter,x.type,x.spec].filter(Boolean).join(" — "),diameter:x.diameter||"",type:x.type||"",spec:x.spec||"",qty:Number(x.qty)||0,receivedQty:Number(x.qty)||0,unitPrice:0}));if(!igPurchaseDraft.items.length)igPurchaseDraft.items=[igPemptyLine()];go("purchaseOrders");}
 
 // ================= المحاسبة العامة GL — واجهة تشغيل أولية =================
 let glSelectedAccountId=null;
@@ -4597,10 +4710,7 @@ function glCcBody(d){
 }
 function glCcPrint(d){
   const w=window.open('','_blank','width=1200,height=850');if(!w)return toast('اسمح بفتح النوافذ المنبثقة للطباعة','err');
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>موقف مركز تكلفة</title><style>@page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:11px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_TB_CSS}\n${GL_CC_CSS}</style></head><body>${glCcBody(d)}
-
-
-</body></html>`;
+  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>موقف مركز تكلفة</title><style>@page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{margin:0;font-size:11px}thead{display:table-header-group}tfoot{display:table-footer-group}tr{page-break-inside:avoid}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}${GL_TB_CSS}\n${GL_CC_CSS}</style></head><body>${glCcBody(d)}</body></html>`;
   w.document.open();w.document.write(html);w.document.close();w.focus();
   setTimeout(()=>{try{w.print();}catch(e){}},400);
 }
@@ -6803,6 +6913,7 @@ function tradeReportRows(kind){
       if(q&&![s.policyNo,s.saleOrderNo,s.customer,s.supplier,s.company,s.site,s.notes].some(v=>String(v||'').toLowerCase().includes(q)))return;
       (s.items||[]).forEach(it=>{const a=supplyAmounts(s,it);out.push({date:s.date||'',policy:s.policyNo||'',order:s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'',customer:s.customer||'',supplier:s.supplier||'',company:s.company||'',site:s.site||'',factory:itemFactory(s,it)||'',diameter:it.diameter||'',type:it.type||'',qty:+it.supplyQty||0,weight:+it.actualWeight||0,buy:+a.buyTotal||0,subtotal:+a.subtotal||0,tax:+a.tax||0,discount:+a.discount||0,net:+a.total||0});});
     });
+    (igPurchaseDocs.invoices||[]).forEach(inv=>{if(inv.status!=="posted")return;if(f.from&&(!inv.date||inv.date<f.from))return;if(f.to&&(!inv.date||inv.date>f.to))return;if(f.supplier&&inv.supplier!==f.supplier)return;if(q&&![inv.docNo,inv.supplier,inv.supplierInvoiceNo,inv.purchaseOrderNo,inv.notes].some(v=>String(v||"").toLowerCase().includes(q)))return;const c=igPcalc(inv);(c.lines||[]).forEach(it=>out.push({date:inv.date||"",policy:inv.docNo||"",order:inv.purchaseOrderNo||"فاتورة مباشرة",customer:"",supplier:inv.supplier||"",company:inv.transportCompany||"",site:inv.deliveryAddress||"",factory:"",diameter:it.diameter||"",type:it.type||it.description||"",qty:Number(it.qty)||0,weight:Number(it.receivedQty??it.qty)||0,buy:Number(it.lineNet)||0,subtotal:Number(it.lineGross)||0,tax:Number(it.lineTax)||0,discount:Number(it.lineDiscount)||0,net:Number(it.lineNet)||0,source:"purchaseInvoice"}));});
   }
   return out.sort((a,b)=>b.date.localeCompare(a.date)||String(b.order).localeCompare(String(a.order),'ar',{numeric:true}));
 }
@@ -7099,6 +7210,7 @@ function tbMovements(kind){
       out.push({party:name,date:s.date,debit:customer?amt:0,credit:customer?0:amt});
     });
   });
+  if(!customer)(igPurchaseDocs.invoices||[]).forEach(inv=>{if(inv.status!=="posted")return;const amount=Number((inv.totals||igPcalc(inv)).net)||0;if(inv.supplier&&inv.date&&amount)out.push({party:inv.supplier,date:inv.date,debit:0,credit:amount});});
   (state.treasuryEntries||[]).forEach(e=>{
     if(e.direction!==(customer?'in':'out')) return;
     const name=customer?e.customer:e.supplier; if(!name||!e.date) return;
@@ -7305,6 +7417,7 @@ function partyStatementRows(kind,opts){
       rows.push({date:s.date,party,ref:'',order,orderKey:String(s.saleOrderId||s.saleOrderNo||('policy:'+s.id)),diameter,type,factory,desc,debit:customer?amount:0,credit:customer?0:amount,inclusiveTotal:amount,quantity:qty,actualWeight:weight,unitPrice:customer?(+it.sellPrice||0):(+it.buyPrice||0),source:'supply',sortRef:order+'-'+idx,unique});
     });
   });
+  if(!customer)(igPurchaseDocs.invoices||[]).forEach(inv=>{if(inv.status!=="posted")return;const party=inv.supplier,amount=Number((inv.totals||igPcalc(inv)).net)||0;if(!parties.includes(party)||!inv.date||!dateOk(inv.date)||!amount)return;const unique="purchase-invoice:"+inv.id;if(seen.has(unique))return;seen.add(unique);const desc="فاتورة مشتريات رقم "+(inv.docNo||"")+(inv.purchaseOrderNo?" — أمر شراء "+inv.purchaseOrderNo:"");if(q&&!(desc+" "+(inv.supplierInvoiceNo||"")+" "+(inv.notes||"")).toLowerCase().includes(q))return;rows.push({date:inv.date,party,ref:"",order:inv.purchaseOrderNo||"—",orderKey:"purchase-invoice:"+inv.id,diameter:"—",type:"فاتورة مشتريات",factory:"—",desc,debit:0,credit:amount,inclusiveTotal:amount,quantity:(inv.items||[]).reduce((a,x)=>a+(Number(x.qty)||0),0),actualWeight:0,source:"purchaseInvoice",sortRef:inv.docNo||"",unique});});
   // التحصيلات والمدفوعات: نحتفظ برقم السند داخلياً للبحث فقط، ولا نعرض أرقام البوالص أو السندات في الكشف.
   (state.treasuryEntries||[]).forEach(e=>{
     const party=customer?e.customer:e.supplier;
@@ -7327,6 +7440,14 @@ function partyStatementRows(kind,opts){
     const desc=(customer?'تحصيل عميل':'دفعة مورد')+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');
     if(q&&!(internalRef+' '+desc+' '+(e.notes||'')).toLowerCase().includes(q)) return;
     const reversed=e.status==='returned';
+    if(customer&&!reversed&&Array.isArray(window.igSalesAllocations)){
+      const allocs=window.igSalesAllocations.filter(a=>String(a.receipt_id)===String(e.id));
+      let allocated=0;
+      allocs.forEach(a=>{const v=+a.amount||0;if(!(v>0))return;allocated+=v;const inv=(state.shipments||[]).find(x=>String(x.id)===String(a.invoice_id));const invNo=inv?.policyNo||a.invoice_id;const adesc='تحصيل عميل — مخصص على فاتورة مبيعات '+invNo+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');if(q&&!(internalRef+' '+adesc+' '+(e.notes||'')).toLowerCase().includes(q))return;rows.push({date:e.date,party,ref:'',order:'فاتورة '+invNo,orderKey:'tx:'+e.id+':invoice:'+a.invoice_id,diameter:'—',type:'تحصيل مخصص',factory:'—',desc:adesc,debit:0,credit:v,inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',sortRef:String(e.no||e.id||'')+'-'+invNo,unique:unique+':'+a.id});});
+      const left=Math.max(0,amount-allocated);
+      if(left>0.005){const adesc='تحصيل عميل — رصيد غير مخصص'+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');if(!q||(internalRef+' '+adesc+' '+(e.notes||'')).toLowerCase().includes(q))rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id+':unallocated',diameter:'—',type:'تحصيل غير مخصص',factory:'—',desc:adesc,debit:0,credit:left,inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',sortRef:String(e.no||e.id||'')+'-z',unique:unique+':unallocated'});}
+      return;
+    }
     rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id,diameter:'—',type:'—',factory:'—',desc,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0),inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',sortRef:String(e.no||e.id||''),unique});
   });
   let result=rows;
@@ -9503,7 +9624,7 @@ const BACKUP_TABLES = [
   "policy_statuses","quote_descs","cement_types","companies","sites",
   "item_groups","policy_sites","treasuries",
   // المستندات
-  "sale_orders","sale_order_items","shipments","shipment_items","sale_quotes",
+  "sale_orders","sale_order_items","shipments","shipment_items","purchase_orders","purchase_order_items","purchase_invoices","purchase_invoice_items","purchase_invoice_postings","sale_quotes",
   "sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule",
   "sale_order_postings","party_opening_balances",
   // الخزنة
@@ -9514,12 +9635,12 @@ const BACKUP_TABLES = [
   // العهد
   "custody_accounts","custody_entries",
   // المخزون
-  "inventory_items","inventory_moves",
+  "inventory_items","inventory_moves","inventory_movements",
   // إعدادات ومستخدمين وسجل
   "settings","profiles","audit_log"
 ];
 // الجداول اللي عندها soft-delete — نحمّل محذوفها كمان
-const BACKUP_SOFTDEL_TABLES = ["gl_entries","sale_orders","shipments","treasury_entries","sale_quotes"];
+const BACKUP_SOFTDEL_TABLES = ["gl_entries","sale_orders","shipments","purchase_orders","purchase_invoices","treasury_entries","sale_quotes"];
 
 function _bkStatus(msg,isErr){
   const el=document.getElementById("backupStatus"); if(!el) return;
@@ -9623,7 +9744,7 @@ async function fullBackupImport(ev){
       "customer_classes","supplier_classes","customers","suppliers","diameters","factories","warehouses","steel_types",
       "policy_statuses","quote_descs","cement_types","companies","sites","item_groups","policy_sites","treasuries",
       "gl_fiscal_years","gl_periods","gl_accounts","gl_cost_centers","gl_journals",
-      "sale_orders","shipments","sale_quotes","sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule","sale_order_postings","party_opening_balances",
+      "sale_orders","shipments","purchase_orders","purchase_invoices","sale_quotes","sale_order_terms","sale_order_payment_plans","sale_order_payment_schedule","sale_order_postings","party_opening_balances",
       "sale_order_items","shipment_items",
       "treasury_entries","app_counters",
       "gl_entries","gl_entry_lines","gl_indicators","gl_audit_log",
@@ -10074,8 +10195,26 @@ const fmt=(n,d=2)=>Number(n||0).toLocaleString("en-US",{minimumFractionDigits:d,
 const r2=n=>Math.round((n+Number.EPSILON)*100)/100;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 const blankItem=(factory)=>({factory:factory||"",diameter:"",type:"",supplyQty:"",actualWeight:"",buyPrice:0,sellPrice:0,agingStatus:"",notes:""});
+// ---- ربط فاتورة المبيعات بإذن تسليم (يلغي الصرف المباشر تلقائياً) ----
+window.__igSDNotes=window.__igSDNotes||[]; window.__igSDNotesAt=0; window.__igSDNotesBusy=false;
+function igSalesLoadNotes(){
+  if(window.__igSDNotesBusy||Date.now()-window.__igSDNotesAt<60000) return "";
+  window.__igSDNotesBusy=true;
+  Promise.resolve(sb.from("sales_delivery_notes").select("id,delivery_no,delivery_date,customer,status").neq("status","cancelled").order("delivery_date",{ascending:false}))
+    .then(r=>{ if(r.error) throw r.error; const old=JSON.stringify((window.__igSDNotes||[]).map(x=>x.id)); window.__igSDNotes=r.data||[]; window.__igSDNotesAt=Date.now();
+      if(old!==JSON.stringify(window.__igSDNotes.map(x=>x.id))&&SI_MODE&&typeof currentPage!=="undefined"&&currentPage==="salesInvoices") go(SIP()); })
+    .catch(e=>{ window.__igSDNotesAt=Date.now(); console.warn("sales delivery notes not available",e); })
+    .finally(()=>{ window.__igSDNotesBusy=false; });
+  return "";
+}
+function igNoteOpts(d){
+  const used=new Set([...(state.shipments||[]),...(state.policies||[])].filter(r=>r.id!==editingId&&r.deliveryNoteId).map(r=>String(r.deliveryNoteId)));
+  return (window.__igSDNotes||[]).filter(n=>String(n.id)===String(d.deliveryNoteId)||(String(n.customer||"")===String(d.customer||"")&&d.customer&&!used.has(String(n.id))))
+    .map(n=>`<option value="${escapeAttr(String(n.id))}" ${String(n.id)===String(d.deliveryNoteId)?"selected":""}>${escapeHtml(n.delivery_no||n.id)} — ${escapeHtml(String(n.delivery_date||""))} — ${n.status==="posted"?"مرحّل":"مسودة"}</option>`).join("");
+}
+function igSetDeliveryNote(id){ draft.deliveryNoteId=id||""; draft.directIssue=!id; dirty=true; go(SIP()); }
 const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:"",site:"",warehouseId:whDefaultId(),
-  saleOrderId:"", saleOrderNo:"",
+  saleOrderId:"", saleOrderNo:"", directIssue:true, deliveryNoteId:"", directDeliveryId:"",
   terms:{cashPct:0,installments:0,periodDays:0}, paySchedule:null, payScheduleReset:false, payScheduleResetImported:false, payScheduleResetOrderNo:"",
   applyDiscount:!!state.settings.discount1pct, // توافق قديم
   applyVat: true,
@@ -10272,8 +10411,10 @@ function viewShipments(){
       ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
     </div>
     <div class="ig-act-main">
+      ${SI_MODE?B("🚚 التسليم والتحصيل","igSalesDeliveryHome('deliveries')","ghost",true):""}
       ${B("حفظ","saveShipment()","ig-save",!viewOnly)}
-      ${B("ترحيل","postShipment()","ig-post",!posted)}
+      ${SI_MODE&&posted&&!d.glEntryId?B("ترحيل محاسبي","igSalesPostInvoice()","ig-post",true):B("ترحيل","postShipment()","ig-post",!posted)}
+      ${SI_MODE&&posted&&d.glEntryId&&d.directIssue&&!d.directDeliveryId?B("📦 صرف المخزون","igSalesIssueDirectUI()","ig-post",true):""}
     </div>
     </div>
   </div>
@@ -10292,6 +10433,7 @@ function viewShipments(){
       ${F(SI_MODE?"رقم الفاتورة":"رقم البوليصة",`<input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div>`)}
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
       ${SI_MODE?"":F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
+      ${SI_MODE?F("إذن التسليم / صرف المخزون",`${igSalesLoadNotes()}<select class="inp" ${ro} ${d.glEntryId?"disabled":""} onchange="igSetDeliveryNote(this.value)"><option value="">بدون إذن — صرف مباشر مع الفاتورة</option>${igNoteOpts(d)}</select>${d.deliveryNoteId?`<small style="color:var(--ok)">مرتبطة بإذن تسليم — لن يُصرف المخزون مع الفاتورة.</small>`:`<label style="display:flex;gap:8px;align-items:center;font-weight:700;margin-top:6px"><input type="checkbox" ${ro} ${d.glEntryId?"disabled":""} ${d.directIssue?"checked":""} onchange="setF('directIssue',this.checked);go(SIP())"> يصرف المخزون ويسجّل التكلفة مع ترحيل الفاتورة</label>${d.directIssue?`<select class="inp" style="margin-top:6px" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`:""}`}`):""}
       ${SI_MODE?"":F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
       ${F("العميل",`<select class="inp" ${ro} onchange="setF('customer',this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>`)}
       ${F("الشركة",`<input class="inp" ${ro} list="dlCompany" value="${escapeAttr(d.company)}" oninput="setF('company',this.value)" placeholder="اسم الشركة"><datalist id="dlCompany">${polyHist("company")}</datalist>`)}
@@ -10614,6 +10756,7 @@ function payAutoReset(){
   draft.payScheduleResetOrderNo=String(draft.saleOrderNo||"");
 }
 function setF(k,v){ draft[k]=v; dirty=true; if(k==="policyNo") checkDup();
+  if(k==="customer"&&draft.deliveryNoteId){ draft.deliveryNoteId=""; draft.directIssue=true; setTimeout(()=>{ if(typeof go==="function") go(SIP()); },0); }
   if(["date","applyVat","vatPct","customer"].includes(k)){ payAutoReset(); if(k==="date"||k==="customer") refreshTotals(); } }
 function setT(k,v){ draft.terms[k]=v; draft.termsEdited=true; dirty=true; if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad"); payAutoReset(); refreshTotals(); }
 function setI(i,k,v){ draft.items[i][k]=v; dirty=true; if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad"); if(k==="actualWeight"||k==="sellPrice") payAutoReset(); refreshTotals(); }
@@ -10954,7 +11097,7 @@ function refreshTotals(){
 // ---------- أزرار الشاشة ----------
 async function guard(){ return !(dirty&&!viewOnly) || await askConfirm("فيه تعديلات لم تُحفظ. تكمل وتتجاهلها؟"); }
 function toDraft(r){
-  return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",warehouseId:String(r.warehouseId||whDefaultId()),
+  return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",warehouseId:String(r.warehouseId||whDefaultId()),directIssue:!!r.directIssue,deliveryNoteId:r.deliveryNoteId||"",directDeliveryId:r.directDeliveryId||"",glEntryId:r.glEntryId||null,glPostedAt:r.glPostedAt||null,glPostedBy:r.glPostedBy||null,
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
     paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
     payScheduleReset:!!r.paymentScheduleReset, payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
@@ -11018,7 +11161,7 @@ function buildRecord(strict){
   // أمر البيع غير المسجل لا يمنع الحفظ/التعديل: يتم الاحتفاظ برقمه كما هو بدون ربط (saleOrderId فارغ)
   { const so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===soKey(d.saleOrderNo)); d.saleOrderId=so?so.id:""; }
   if(!d.date) return err("اختر التاريخ");
-  if(SI_MODE){ if(!d.customer) return err("اختر العميل"); } else if(!d.supplier&&!d.customer) return err("اختر المورد أو العميل على الأقل");
+  if(SI_MODE){ if(!d.customer) return err("اختر العميل"); if(d.deliveryNoteId&&[...state.shipments,...state.policies].some(r=>r.id!==editingId&&r.deliveryNoteId&&String(r.deliveryNoteId)===String(d.deliveryNoteId))) return err("إذن التسليم هذا مرتبط بفاتورة أخرى"); if(d.directIssue&&!d.deliveryNoteId&&!d.warehouseId) return err("اختر المخزن لصرف المخزون مع الفاتورة"); } else if(!d.supplier&&!d.customer) return err("اختر المورد أو العميل على الأقل");
   const blank=termsBlank(d.terms);
   let cp=null,n=0,days=0;
   if(!blank){
@@ -11050,7 +11193,7 @@ function buildRecord(strict){
   return {
     id:editingId||("sh_"+Date.now()), policyNo:p, date:d.date, ...(SI_MODE?{docKind:"sales"}:{}),
     supplier:SI_MODE?"":d.supplier, customer:d.customer, warehouseId:String(d.warehouseId||((state.saleOrders||[]).find(x=>String(x.id)===String(d.saleOrderId))||{}).warehouseId||whDefaultId()),
-    company:(d.company||"").trim(), site:(d.site||"").trim(),
+    company:(d.company||"").trim(), site:(d.site||"").trim(), ...(SI_MODE?{directIssue:!!d.directIssue&&!d.deliveryNoteId,deliveryNoteId:d.deliveryNoteId||"",directDeliveryId:d.directDeliveryId||""}:{}),
     saleOrderId:d.saleOrderId||"", saleOrderNo:d.saleOrderNo||"",
     paymentSchedule:(d.paySchedule&&Array.isArray(d.paySchedule.rows))?d.paySchedule.rows.map((x,i)=>({id:paymentScheduleRowId(x,i),label:x.label||((+x.no||0)===0?"نقدي":"قسط "+(+x.no||i)),policy:x.policy||"—",no:+x.no||0,amount:(x.amount===""||x.amount==null)?0:+x.amount,due:String(x.due||x.date||"")})):null,
     paymentScheduleReset:!!d.payScheduleReset,
@@ -13468,6 +13611,7 @@ const soDefault = ()=>({
   customer:"", supplier:"", attention:"", address:"", warehouseId: whDefaultId(),
   contactName:"", contactPhone:"", rep:"", notes:"",
   items: [{ id:"it-"+Math.random().toString(36).slice(2,8), diameter:"", qty:"", spec:"B500DWR", type:"", notes:"" }],
+  allowOverDelivery: true,
   closed: false, closedAt: null, closeReason: ""
 });
 let soDraft = null;
@@ -13509,6 +13653,7 @@ function viewSaleOrder(){
     <button class="btn" onclick="soSave()" style="background:var(--gold);color:#1a1a1a;font-weight:800">💾 حفظ الأمر</button>
     ${loaded?`<button class="btn ghost" onclick="soDownloadPdf()">⬇ PDF</button>`:''}
     ${loaded?(d.closed?`<button class="btn ghost sm" onclick="soReopen()">🔓 إعادة فتح</button>`:`<button class="btn ghost sm" style="color:var(--warn);border-color:var(--warn)" onclick="soClose()">🔒 إقفال</button>`):""}
+    ${loaded?`<button class="btn ghost sm" onclick="igConvertSaleOrderToPurchase('${d.id}')">🛒 تحويل لأمر شراء</button>`:""}
     <button class="btn ghost sm" onclick="soNew()">+ جديد</button>
     <button class="btn ghost sm so-unc-btn" onclick="soOpenUnclosed()" title="أوامر البيع غير المقفولة — وإقفالها من هنا">📂 غير المقفولة <span class="chip warn" style="margin-inline-start:4px">${(state.saleOrders||[]).filter(o=>!o.closed).length}</span></button>
     ${soReturnContext?'<button class="btn sm" style="border-color:var(--gold);color:var(--gold-text)" onclick="soReturnToPolicy()">↩ رجوع للبوليصة</button>':''}
@@ -13557,6 +13702,7 @@ function viewSaleOrder(){
       <div class="fld"><label>المخزن (للترحيل المحاسبي)</label>
         <select class="inp" id="soWarehouse" onchange="soDraft.warehouseId=this.value">${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||whDefaultId())===String(w.id)?"selected":""}>${escapeHtml(String(w.code||""))} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>
       </div>
+      <div class="fld" style="display:flex;align-items:center;gap:9px;padding-top:24px"><input type="checkbox" id="soAllowOverDelivery" ${d.allowOverDelivery!==false?"checked":""} onchange="soDraft.allowOverDelivery=this.checked"><label for="soAllowOverDelivery" style="margin:0">السماح بزيادة كمية التسليم عن أمر البيع</label></div>
       <div class="fld"><label>مسئول التواصل</label>
         <input class="inp" id="soContactName" value="${escapeAttr(d.contactName)}" oninput="soDraft.contactName=this.value;soRenderPreview()" placeholder="اسم مسئول التواصل">
       </div>
@@ -16396,13 +16542,14 @@ function txAllDueRows(){
 const settlementFilter = { q:"", onlyCredit:false, selected:{} };
 
 // رصيد العميل = مجموع الفلوس اللي دخلت من العميل (تحصيلات in) - اللي اتوزع فعلاً على فواتير/أقساط
+function settlementIgAllocated(e){ if(!Array.isArray(window.igSalesAllocations)) return 0; return window.igSalesAllocations.filter(a=>String(a.receipt_id)===String(e.id)).reduce((s,a)=>s+(+a.amount||0),0); }
 function settlementCustomerCredit(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   return (state.treasuryEntries||[])
     .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
     .reduce((sum,e)=>{
       const amt=+e.amount||0;
-      const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0);
+      const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0)+settlementIgAllocated(e);
       return sum + Math.max(0, amt-used);
     },0);
 }
@@ -16421,7 +16568,7 @@ function settlementCustomerPaid(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   return (state.treasuryEntries||[])
     .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
-    .reduce((sum,e)=>sum + (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0), 0);
+    .reduce((sum,e)=>sum + (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0) + settlementIgAllocated(e), 0);
 }
 // صفوف شاشة التسوية — سطر لكل عميل
 function settlementRows(){
@@ -16549,7 +16696,7 @@ function settlementAutoAllocateForCustomer(customer){
   // التحصيلات التي بها رصيد غير مخصص (مرتبة بالتاريخ)
   const openReceipts = (state.treasuryEntries||[])
     .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
-    .filter(e=>{ const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0); return (+e.amount||0) - used > 0.009; })
+    .filter(e=>{ const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0)+settlementIgAllocated(e); return (+e.amount||0) - used > 0.009; })
     .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
   if(!openReceipts.length) return {applied:0, installments:0};
 
@@ -16560,7 +16707,7 @@ function settlementAutoAllocateForCustomer(customer){
     let need = r.remaining;
     for(const e of openReceipts){
       if(need<=0.009) break;
-      const used = (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0);
+      const used = (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0)+settlementIgAllocated(e);
       const avail = Math.max(0, (+e.amount||0) - used);
       if(avail<=0.009) continue;
       const take = Math.min(need, avail);
@@ -17475,6 +17622,13 @@ function noAccessHtml(){
   guard("soDelete",S("saleOrder","delete"),{type:"so_del",counter:()=>state.saleOrders.length,info:()=>"حذف أمر بيع "+((soDraft&&soDraft.orderNo)||"")});
   guard("soClose",S("saleOrder","close")); guard("soReopen",S("saleOrder","close"));
   ["soView","soDownloadPdf","soSharePdf"].forEach(n=>guard(n,S("saleOrder","print")));
+  guard("igPurchaseSave",()=>({scr:currentPage,act:igPurchaseEditing?"edit":"add"}));
+  guard("igPurchaseDelete",()=>({scr:currentPage,act:"delete"}));
+  guard("igPurchasePrint",()=>({scr:currentPage,act:"print"}));
+  guard("igPurchasePost",()=>({scr:"purchaseInvoices",act:"post"}));
+  guard("igPurchaseUnpost",()=>({scr:"purchaseInvoices",act:"post"}));
+  guard("igPurchasePrintJournal",()=>({scr:"purchaseInvoices",act:"print"}));
+  guard("igConvertSaleOrderToPurchase",()=>({scr:"purchaseOrders",act:"add"}));
   // عروض السعر
   guard("qtNew",S("quote","add"));
   guard("qtSave",()=>({scr:"quote",act:qtLoadedId?"edit":"add"}));
@@ -19911,7 +20065,7 @@ DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
     'customers','suppliers','employees','drivers','trucks','banks','safes',
-    'shipments','shipment_items','sale_orders','sale_order_items',
+    'shipments','shipment_items','sale_orders','sale_order_items','purchase_orders','purchase_order_items','purchase_invoices','purchase_invoice_items',
     'treasury_entries','sale_order_payment_plans','sale_order_payment_schedule',
     'quotes','opening_balances','order_terms','app_counters','settings'
   ] LOOP
@@ -20565,11 +20719,11 @@ function igMgmtExport(title,tableId,mode){const t=document.getElementById(tableI
 function renderManagementReports(){
  if(currentPage!=="managementReports")return;const el=document.getElementById('managementReportsResults');if(!el)return;
  const cur=state.settings.currency||'ج.م',money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),arr=k=>Array.isArray(state[k])?state[k]:[];
- const shipments=arr('shipments').filter(s=>igMgmtInRange(s.date||s.shipDate)),entries=arr('treasuryEntries').filter(e=>igMgmtInRange(e.date));
+ const shipments=arr('shipments').filter(s=>!(typeof isSIdoc==='function'&&isSIdoc(s))&&igMgmtInRange(s.date||s.shipDate)),entries=arr('treasuryEntries').filter(e=>igMgmtInRange(e.date));
  const q=igMgmtFilter.q.trim().toLocaleLowerCase('ar');const matches=n=>!q||String(n||'').toLocaleLowerCase('ar').includes(q);
- const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0,subTot=0,outVat=0,inVat=0,profTax=0;
- shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;subTot+=+a.subtotal||0;outVat+=+a.tax||0;profTax+=+a.discount||0;{const _pc=shipBuyVatRate(sh);if(_pc)inVat+=cost-Math.round((cost/(1+_pc/100)+Number.EPSILON)*100)/100;}
- if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
+ const clients=new Map(),vendors=new Map(),orders=new Map();let totalSales=0,totalCost=0,totalQty=0,subTot=0,outVat=0,inVat=0,profTax=0,totalCostNet=0;
+ shipments.forEach(sh=>(sh.items||[]).forEach(it=>{const a=supplyAmounts(sh,it),c=String(sh.customer||'').trim(),v=String(sh.supplier||'').trim(),qty=+it.actualWeight||0,sale=+a.total||0,cost=+a.buyTotal||0;totalSales+=sale;totalCost+=cost;totalQty+=qty;subTot+=+a.subtotal||0;outVat+=+a.tax||0;profTax+=+a.discount||0;const _pc=shipBuyVatRate(sh),costNet=_pc?Math.round((cost/(1+_pc/100)+Number.EPSILON)*100)/100:cost;inVat+=cost-costNet;totalCostNet+=costNet;
+ if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0,margin:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;x.margin+=(+a.subtotal||0)-costNet;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
  const order=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');let o=orders.get(order)||{sale:0,cost:0,qty:0,customer:c};o.sale+=sale;o.cost+=cost;o.qty+=qty;orders.set(order,o);
  }));
  const coll=new Map();entries.forEach(e=>{if(e.direction==='in'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'))coll.set(String(e.customer||''),(coll.get(String(e.customer||''))||0)+(+e.amount||0))});
@@ -20578,22 +20732,23 @@ function renderManagementReports(){
  const table=(id,heads,rows,foot='')=>`<div class="tbl-wrap"><table id="${id}" class="trade-report-table" style="width:100%;min-width:720px"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات مطابقة</td></tr>`}</tbody>${foot?`<tfoot>${foot}</tfoot>`:''}</table></div>`;
  const tools=id=>`<div class="ig-mgmt-tools"><button class="btn sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','print')">🖨 طباعة / PDF</button><button class="btn ghost sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','excel')">📊 Excel</button></div>`;
 const clientFiltered=[...clients].filter(([n])=>matches(n));const vendorFiltered=[...vendors].filter(([n])=>matches(n));
- const clientRows=clientFiltered.sort((a,b)=>(b[1].sale-b[1].cost)-(a[1].sale-a[1].cost)).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.sale)}</td><td>${money(x.qty)}</td><td>${money(coll.get(n)||0)}</td><td>${money(x.sale-(coll.get(n)||0))}</td><td>${money(x.sale-x.cost)}</td></tr>`).join('');
+ const clientRows=clientFiltered.sort((a,b)=>b[1].margin-a[1].margin).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.sale)}</td><td>${money(x.qty)}</td><td>${money(coll.get(n)||0)}</td><td>${money(x.sale-(coll.get(n)||0))}</td><td>${money(x.margin)}</td></tr>`).join('');
  const vendorRows=vendorFiltered.sort((a,b)=>b[1].buy-a[1].buy).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${money(x.buy)}</td><td>${money(paid.get(n)||0)}</td><td>${money(x.buy-(paid.get(n)||0))}</td><td>${money(x.qty)}</td><td>${x.qty?money(x.buy/x.qty):'—'}</td></tr>`).join('');
  const chequeSource=arr('treasuryEntries').filter(e=>e.method==='bank'&&igMgmtInRange(e.dueDate||e.date)&&matches(e.customer||e.supplier));
- const chequeRows=chequeSource.map(e=>`<tr><td>${escapeHtml(e.no||'—')}</td><td>${escapeHtml(e.customer||e.supplier||'—')}</td><td>${escapeHtml(e.dueDate||'—')}</td><td>${money(e.amount)}</td><td>${escapeHtml(({receivable:'مستحق',pending:'تحت التحصيل',deposited:'مودع',collected:'محصّل',returned:'مرتجع'})[e.status]||e.status||'—')}</td></tr>`).join('');
+ const chequeRows=chequeSource.map(e=>`<tr><td>${escapeHtml(e.no||'—')}</td><td>${escapeHtml(e.customer||e.supplier||'—')}</td><td>${e.direction==='out'?'صادر (دفع)':'وارد (تحصيل)'}</td><td>${escapeHtml(e.dueDate||'—')}</td><td>${money(e.amount)}</td><td>${escapeHtml(({receivable:'مستحق',pending:'تحت التحصيل',deposited:'مودع',collected:'محصّل',returned:'مرتجع'})[e.status]||e.status||'—')}</td></tr>`).join('');
  
- const cTotals=clientFiltered.reduce((a,[n,x])=>{a.sale+=x.sale;a.qty+=x.qty;a.collected+=coll.get(n)||0;a.balance+=x.sale-(coll.get(n)||0);a.margin+=x.sale-x.cost;return a},{sale:0,qty:0,collected:0,balance:0,margin:0});
+ const cTotals=clientFiltered.reduce((a,[n,x])=>{a.sale+=x.sale;a.qty+=x.qty;a.collected+=coll.get(n)||0;a.balance+=x.sale-(coll.get(n)||0);a.margin+=x.margin;return a},{sale:0,qty:0,collected:0,balance:0,margin:0});
  const vTotals=vendorFiltered.reduce((a,[n,x])=>{a.buy+=x.buy;a.paid+=paid.get(n)||0;a.balance+=x.buy-(paid.get(n)||0);a.qty+=x.qty;return a},{buy:0,paid:0,balance:0,qty:0});
- const chTotals=chequeSource.reduce((a,e)=>{a.count++;a.amount+=+e.amount||0;const st=String(e.status||'').toLowerCase();if(st==='collected')a.collected+=+e.amount||0;else if(st==='returned')a.returned+=+e.amount||0;else a.open+=+e.amount||0;return a},{count:0,amount:0,collected:0,returned:0,open:0});
+ const chTotals=chequeSource.reduce((a,e)=>{a.count++;a.amount+=+e.amount||0;if(e.direction==='out')a.outAmt+=+e.amount||0;else a.inAmt+=+e.amount||0;const st=String(e.status||'').toLowerCase();if(st==='collected')a.collected+=+e.amount||0;else if(st==='returned')a.returned+=+e.amount||0;else a.open+=+e.amount||0;return a},{count:0,amount:0,inAmt:0,outAmt:0,collected:0,returned:0,open:0});
  const late=inst.filter(x=>x.status==='متأخر'&&x.remaining>0);const overdue=late.reduce((a,x)=>a+(+x.remaining||0),0);const ordersOpen=arr('saleOrders').filter(o=>!['مكتمل','مغلق','closed','completed'].includes(String(o.status||'').toLowerCase())).length;
  const supplierTimingNote='لا يوجد تاريخ استحقاق/موعد توريد مخطط موحد في البيانات الحالية؛ لذلك لا تُعرض نسبة الالتزام بالمواعيد حتى لا تكون تقديرية.';
  const vendorMetrics=`<p class="ig-mgmt-note">${supplierTimingNote} متوسط سعر الشراء محسوب من تكلفة التوريد المسجلة ÷ الوزن الفعلي.</p>`;
  el.innerHTML=`<section class="card"><div class="head"><h3>📌 فلاتر تقارير الإدارة</h3></div><div class="body"><div class="ig-mgmt-filter"><label>من تاريخ <input class="inp" type="date" value="${igMgmtFilter.from}" onchange="igMgmtFilter.from=this.value;renderManagementReports()"></label><label>إلى تاريخ <input class="inp" type="date" value="${igMgmtFilter.to}" onchange="igMgmtFilter.to=this.value;renderManagementReports()"></label><label>بحث عميل / مورد <input class="inp" value="${escapeAttr(igMgmtFilter.q)}" placeholder="اكتب الاسم" oninput="igMgmtFilter.q=this.value;renderManagementReports()"></label><button class="btn ghost sm" onclick="igMgmtFilter={from:'',to:'',q:''};renderManagementReports()">مسح الفلاتر</button></div></div></section>
- <section class="card"><div class="head"><h3>📊 لوحة مؤشرات الأداء KPI</h3><span class="count">حسب الفترة المحددة</span></div><div class="body"><div class="kpis"><div class="kpi"><div class="lbl">صافي المبيعات المستحق (شامل الضريبة بعد الخصم)</div><div class="val">${money(totalSales)} ${cur}</div></div><div class="kpi"><div class="lbl">تكلفة الشراء</div><div class="val">${money(totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">هامش الربح المسجل</div><div class="val">${money(totalSales-totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">الكمية الموردة</div><div class="val">${money(totalQty)} طن</div></div><div class="kpi"><div class="lbl">التحصيلات المسجلة</div><div class="val">${money([...coll.values()].reduce((a,b)=>a+b,0))} ${cur}</div></div><div class="kpi"><div class="lbl">الأقساط المتأخرة</div><div class="val">${money(overdue)} ${cur}</div></div><div class="kpi"><div class="lbl">أوامر البيع المفتوحة</div><div class="val">${ordersOpen}</div></div></div><div class="kpis" style="margin-top:10px"><div class="kpi"><div class="lbl">المبيعات قبل الضريبة</div><div class="val">${money(subTot)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مبيعات (مخرجات)</div><div class="val">${money(outVat)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مشتريات (مدخلات)</div><div class="val">${money(inVat)} ${cur}</div></div><div class="kpi"><div class="lbl">${outVat-inVat>=0?'صافي القيمة المضافة المستحقة':'صافي القيمة المضافة (رصيد قابل للخصم)'}</div><div class="val" style="color:${outVat-inVat>=0?'#b91c1c':'#15803d'}">${money(Math.abs(outVat-inVat))} ${cur}</div></div><div class="kpi"><div class="lbl">خصم ضريبة الأرباح التجارية والصناعية</div><div class="val">${money(profTax)} ${cur}</div></div><div class="kpi"><div class="lbl">قيمة المشتريات (قبل الضريبة)</div><div class="val">${money(totalCost-inVat)} ${cur}</div></div><div class="kpi"><div class="lbl">الربح (المبيعات − المشتريات قبل الضريبة)</div><div class="val" style="color:${subTot-(totalCost-inVat)>=0?'#15803d':'#b91c1c'}">${money(subTot-(totalCost-inVat))} ${cur}</div></div></div><p class="ig-mgmt-note">الربح = المبيعات قبل الضريبة − المشتريات قبل الضريبة للتوريدات المسجلة فقط، ولا يشمل المصروفات العامة، وخصم الأرباح التجارية والصناعية لا يُحسب مصروفًا. ضريبة المشتريات = تكلفة الشراء (شاملة الضريبة) ÷ (1 + نسبة الضريبة) بنسبة كل بوليصة، وللبوالص المطبّق عليها ضريبة فقط. خصم الأرباح التجارية والصناعية هو المخصوم من العملاء الخاضعين له (1%).</p><p class="ig-mgmt-note">مؤشر الربح هنا فرق قيمة البيع وتكلفة الشراء للتوريدات المسجلة فقط؛ لا يشمل المصروفات العامة أو العهد، ولا يمثل صافي الربح المحاسبي.</p></div></section>
- <section class="card"><div class="head"><h3>🏆 أفضل وأسوأ العملاء</h3><span class="count">ترتيب من الأعلى إلى الأقل حسب فرق البيع والشراء المسجل (ليس صافي ربح)</span></div><div class="body">${tools('igMgmtClients')}${table('igMgmtClients',['العميل','المبيعات ('+cur+')','الكمية (طن)','التحصيل ('+cur+')','المتبقي التقديري ('+cur+')','فرق البيع والشراء ('+cur+')'],clientRows,`<tr><th>الإجمالي</th><th>${money(cTotals.sale)}</th><th>${money(cTotals.qty)}</th><th>${money(cTotals.collected)}</th><th>${money(cTotals.balance)}</th><th>${money(cTotals.margin)}</th></tr>`)}</div></section>
+ <section class="card"><div class="head"><h3>📊 لوحة مؤشرات الأداء KPI</h3><span class="count">حسب الفترة المحددة</span></div><div class="body"><div class="kpis"><div class="kpi"><div class="lbl">صافي المبيعات المستحق (شامل الضريبة بعد الخصم)</div><div class="val">${money(totalSales)} ${cur}</div></div><div class="kpi"><div class="lbl">تكلفة الشراء</div><div class="val">${money(totalCost)} ${cur}</div></div><div class="kpi"><div class="lbl">هامش الربح المسجل (قبل الضريبة)</div><div class="val">${money(subTot-totalCostNet)} ${cur}</div></div><div class="kpi"><div class="lbl">الكمية الموردة</div><div class="val">${money(totalQty)} طن</div></div><div class="kpi"><div class="lbl">التحصيلات المسجلة</div><div class="val">${money([...coll.values()].reduce((a,b)=>a+b,0))} ${cur}</div></div><div class="kpi"><div class="lbl">الأقساط المتأخرة</div><div class="val">${money(overdue)} ${cur}</div></div><div class="kpi"><div class="lbl">أوامر البيع المفتوحة</div><div class="val">${ordersOpen}</div></div></div><div class="kpis" style="margin-top:10px"><div class="kpi"><div class="lbl">المبيعات قبل الضريبة</div><div class="val">${money(subTot)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مبيعات (مخرجات)</div><div class="val">${money(outVat)} ${cur}</div></div><div class="kpi"><div class="lbl">ضريبة القيمة المضافة — مشتريات (مدخلات)</div><div class="val">${money(inVat)} ${cur}</div></div><div class="kpi"><div class="lbl">${outVat-inVat>=0?'صافي القيمة المضافة المستحقة':'صافي القيمة المضافة (رصيد قابل للخصم)'}</div><div class="val" style="color:${outVat-inVat>=0?'#b91c1c':'#15803d'}">${money(Math.abs(outVat-inVat))} ${cur}</div></div><div class="kpi"><div class="lbl">خصم ضريبة الأرباح التجارية والصناعية</div><div class="val">${money(profTax)} ${cur}</div></div><div class="kpi"><div class="lbl">قيمة المشتريات (قبل الضريبة)</div><div class="val">${money(totalCostNet)} ${cur}</div></div><div class="kpi"><div class="lbl">الربح (المبيعات − المشتريات قبل الضريبة)</div><div class="val" style="color:${subTot-totalCostNet>=0?'#15803d':'#b91c1c'}">${money(subTot-totalCostNet)} ${cur}</div></div></div><p class="ig-mgmt-note">الربح = المبيعات قبل الضريبة − المشتريات قبل الضريبة للتوريدات المسجلة فقط، ولا يشمل المصروفات العامة، وخصم الأرباح التجارية والصناعية لا يُحسب مصروفًا. ضريبة المشتريات = تكلفة الشراء (شاملة الضريبة) ÷ (1 + نسبة الضريبة) بنسبة كل بوليصة، وللبوالص المطبّق عليها ضريبة فقط. خصم الأرباح التجارية والصناعية هو المخصوم من العملاء الخاضعين له (1%).</p><p class="ig-mgmt-note">مؤشر الربح هنا فرق قيمة البيع وتكلفة الشراء للتوريدات المسجلة فقط؛ لا يشمل المصروفات العامة أو العهد، ولا يمثل صافي الربح المحاسبي.</p></div></section>
+ <section class="card"><div class="head"><h3>🏆 أفضل وأسوأ العملاء</h3><span class="count">ترتيب من الأعلى إلى الأقل حسب فرق البيع والشراء المسجل (ليس صافي ربح)</span></div><div class="body">${tools('igMgmtClients')}${table('igMgmtClients',['العميل','المبيعات ('+cur+')','الكمية (طن)','التحصيل ('+cur+')','المتبقي التقديري ('+cur+')','فرق البيع والشراء قبل الضريبة ('+cur+')'],clientRows,`<tr><th>الإجمالي</th><th>${money(cTotals.sale)}</th><th>${money(cTotals.qty)}</th><th>${money(cTotals.collected)}</th><th>${money(cTotals.balance)}</th><th>${money(cTotals.margin)}</th></tr>`)}</div></section>
  <section class="card"><div class="head"><h3>🏭 أداء الموردين</h3><span class="count">الأسعار والكميات والمدفوعات</span></div><div class="body">${vendorMetrics}${tools('igMgmtVendors')}${table('igMgmtVendors',['المورد','قيمة المشتريات ('+cur+')','المدفوع ('+cur+')','المتبقي التقديري ('+cur+')','الكمية الموردة (طن)','متوسط سعر الطن ('+cur+')'],vendorRows,`<tr><th>الإجمالي</th><th>${money(vTotals.buy)}</th><th>${money(vTotals.paid)}</th><th>${money(vTotals.balance)}</th><th>${money(vTotals.qty)}</th><th>${vTotals.qty?money(vTotals.buy/vTotals.qty):'—'}</th></tr>`)}</div></section>
- <section class="card"><div class="head"><h3>🧾 تقرير الشيكات</h3><span class="count">مستحق ومحصل ومرتجع وتواريخ الاستحقاق</span></div><div class="body">${tools('igMgmtCheques')}${table('igMgmtCheques',['رقم الشيك','العميل / المورد','تاريخ الاستحقاق','القيمة ('+cur+')','الحالة'],chequeRows,`<tr><th>الإجمالي (${chTotals.count} شيك)</th><th></th><th></th><th>${money(chTotals.amount)}</th><th>محصل: ${money(chTotals.collected)} · مرتجع: ${money(chTotals.returned)} · غير محصل/قيد المتابعة: ${money(chTotals.open)}</th></tr>`)}</div></section>`;
+ <section class="card"><div class="head"><h3>🧾 تقرير الشيكات</h3><span class="count">مستحق ومحصل ومرتجع وتواريخ الاستحقاق</span></div><div class="body">${tools('igMgmtCheques')}${table('igMgmtCheques',['رقم الشيك','العميل / المورد','النوع','تاريخ الاستحقاق','القيمة ('+cur+')','الحالة'],chequeRows,`<tr><th>الإجمالي (${chTotals.count} شيك)</th><th></th><th></th><th></th><th>وارد: ${money(chTotals.inAmt)} · صادر: ${money(chTotals.outAmt)}</th><th>محصل: ${money(chTotals.collected)} · مرتجع: ${money(chTotals.returned)} · غير محصل/قيد المتابعة: ${money(chTotals.open)}</th></tr>`)}</div></section>`;
+ {const pis=(typeof igPurchaseDocs!=="undefined"?(igPurchaseDocs.invoices||[]):[]).filter(v=>v.status==="posted"&&igMgmtInRange(v.date)&&matches(v.supplier));const T=pis.reduce((a,v)=>{const c=igPcalc(v);a.net+=c.net;a.tax+=c.tax;a.paid+=c.paid;a.rem+=c.remaining;return a},{net:0,tax:0,paid:0,rem:0});const by=new Map();pis.forEach(v=>{const c=igPcalc(v),x=by.get(v.supplier)||{n:0,net:0,tax:0,paid:0,rem:0};x.n++;x.net+=c.net;x.tax+=c.tax;x.paid+=c.paid;x.rem+=c.remaining;by.set(v.supplier,x)});const rows=[...by].sort((a,b)=>b[1].net-a[1].net).map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td>${x.n}</td><td>${money(x.net)}</td><td>${money(x.tax)}</td><td>${money(x.paid)}</td><td>${money(x.rem)}</td></tr>`).join('');el.insertAdjacentHTML('beforeend',`<section class="card"><div class="head"><h3>🧾 فواتير المشتريات المرحّلة</h3><span class="count">منفصلة عن بيانات التوريد — ضريبة المدخلات هنا إضافية</span></div><div class="body">${tools('igMgmtPurInv')}${table('igMgmtPurInv',['المورد','عدد الفواتير','الصافي ('+cur+')','ضريبة المدخلات ('+cur+')','المدفوع ('+cur+')','المتبقي للمورد ('+cur+')'],rows,`<tr><th>الإجمالي</th><th>${pis.length}</th><th>${money(T.net)}</th><th>${money(T.tax)}</th><th>${money(T.paid)}</th><th>${money(T.rem)}</th></tr>`)}</div></section>`);}
 }
 
 </script>
@@ -23656,6 +23811,97 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
 })();
 
 </script>
+
+<script>
+/* IRON GATE Sales GL integration — additive wrapper around existing sales-invoice workflow. */
+(function(){
+  if(window.__igSalesGLInstalled) return;
+  window.__igSalesGLInstalled=true;
+  window.igSalesIssueDirect=async function(invoiceId){
+    const id=String(invoiceId||(editingId||''));
+    const rec=(state.shipments||[]).find(x=>String(x.id)===id);
+    if(!rec||rec.docKind!=='sales') throw new Error('فاتورة المبيعات غير موجودة');
+    if(!rec.directIssue) throw new Error('الفاتورة غير مضبوطة على صرف المخزون المباشر');
+    if(!rec.glEntryId) throw new Error('رحّل الفاتورة محاسبياً أولاً');
+    if(rec.directDeliveryId) return rec.directDeliveryId;
+    const did='SDI-'+id;
+    const ex=await sb.from('sales_delivery_notes').select('id,status').eq('id',did).maybeSingle();
+    if(ex.error) throw ex.error;
+    if(!ex.data||ex.data.status==='draft'){
+      const wh=(typeof whList==='function'?whList():(state.warehouses||[])).find(w=>String(w.id)===String(rec.warehouseId));
+      if(!wh) throw new Error('المخزن غير صالح — عدّل الفاتورة واختر المخزن');
+      const lines=(rec.items||[]).map(it=>({factory:it.factory,diameter:it.diameter,itemType:it.type,qty:Number(it.actualWeight||it.weightTon||it.supplyQty||0),orderLineNo:null,notes:'صرف مباشر مع فاتورة '+rec.policyNo})).filter(l=>l.qty>0);
+      if(!lines.length) throw new Error('لا توجد كميات للصرف');
+      await window.igSalesSaveDelivery({id:did,deliveryNo:'SDI-'+rec.policyNo,date:rec.date,saleOrderId:'',customer:rec.customer,warehouseId:rec.warehouseId,warehouseCode:wh.code||'',warehouseName:wh.name||'',notes:'صرف مباشر مع فاتورة المبيعات '+rec.policyNo,lines});
+      await window.igSalesPostDelivery(did);
+    }
+    rec.directDeliveryId=did;
+    if(typeof saveState==='function') saveState();
+    return did;
+  };
+  window.igSalesIssueDirectUI=async function(){
+    try{
+      await window.igSalesIssueDirect();
+      toast('تم صرف المخزون وتسجيل تكلفة البضاعة المباعة للفاتورة','ok');
+      if(typeof go==='function'&&typeof SIP==='function'){ const r=(state.shipments||[]).find(x=>String(x.id)===String(editingId)); if(r&&typeof toDraft==='function') draft=toDraft(r); go(SIP()); }
+    }catch(e){ toast('تعذر صرف المخزون: '+(e.message||e),'err'); }
+  };
+  window.igSalesPostInvoice=async function(invoiceId){
+    try{
+      const id=String(invoiceId||(editingId||''));
+      if(!id) throw new Error('احفظ فاتورة المبيعات أولاً');
+      const rec=(state.shipments||[]).find(x=>String(x.id)===id);
+      if(!rec || rec.docKind!=='sales') throw new Error('فاتورة المبيعات غير موجودة');
+      if(rec.glEntryId){ toast('الفاتورة مرحّلة محاسبياً بالفعل — '+rec.glEntryId,'warn'); return; }
+      if(!docsReady) throw new Error('اتصال مستندات المبيعات بقاعدة البيانات غير جاهز');
+      await syncDocs();
+      const jr=await sb.from('gl_journals').select('id,journal_code,journal_name,is_active').eq('is_active',true);
+      if(jr.error) throw jr.error;
+      const journals=jr.data||[];
+      let journal=journals.find(x=>String(x.journal_code||'').trim()==='501');
+      if(!journal){const c=journals.filter(x=>String(x.journal_name||'').includes('مبيعات'));if(c.length>1) throw new Error('يوجد أكثر من يومية مبيعات نشطة ('+c.map(x=>x.journal_name).join('، ')+') — فعّل يومية الكود 501 أو عطّل الزائد');journal=c[0];}
+      if(!journal) throw new Error('لا توجد يومية مبيعات نشطة (الكود 501 أو اسم يحتوي على مبيعات)');
+      const result=await sb.rpc('ig_sales_post_invoice_v1',{
+        p_invoice_id:id,
+        p_journal_id:journal.id,
+        p_customer_account_id:null,
+        p_stock_account_id:null
+      });
+      if(result.error) throw result.error;
+      rec.glEntryId=result.data&&result.data.entry_id||null;
+      rec.glPostedAt=new Date().toISOString();
+      await syncDocs();
+      if(typeof saveState==='function') saveState();
+      toast('تم ترحيل فاتورة المبيعات محاسبياً — قيد '+(result.data&&result.data.entry_no||''),'ok');
+      if(rec.directIssue&&!rec.directDeliveryId){ try{ await window.igSalesIssueDirect(rec.id); toast('تم صرف المخزون وتسجيل التكلفة تلقائياً مع الفاتورة','ok'); }catch(ie){ console.error('Direct stock issue failed',ie); toast('تم ترحيل الفاتورة لكن صرف المخزون فشل: '+(ie.message||ie)+' — استخدم زر «صرف المخزون» بعد المعالجة','warn'); } }
+      if(typeof go==='function' && typeof currentPage!=='undefined' && currentPage==='salesInvoices'){
+        document.getElementById('content').innerHTML=viewShipments(); bindShipments();
+      }
+      return result.data;
+    }catch(e){
+      console.error('Sales invoice GL posting failed',e);
+      toast('تعذر الترحيل المحاسبي: '+(e.message||e),'err');
+      throw e;
+    }
+  };
+  const originalPost=window.postShipment;
+  if(typeof originalPost==='function'){
+    window.postShipment=async function(){
+      const salesMode=!!SI_MODE;
+      const invoiceNo=String(draft&&draft.policyNo||'');
+      const customer=String(draft&&draft.customer||'');
+      await originalPost.apply(this,arguments);
+      if(!salesMode) return;
+      const sm=(state.shipments||[]).filter(x=>x.docKind==='sales'&&String(x.policyNo||'')===invoiceNo&&String(x.customer||'')===customer);
+      const rec=sm.filter(x=>!x.glEntryId).pop()||sm.pop();
+      if(!rec) return;
+      try{ await window.igSalesPostInvoice(rec.id); }
+      catch(e){ toast('تم اعتماد الفاتورة تشغيلياً، لكن القيد المحاسبي ما زال معلقاً. افتح الفاتورة واضغط «ترحيل محاسبي» بعد معالجة السبب.','warn'); }
+    };
+  }
+})();
+</script>
+
 </body></html>`;
   if(typeof openReportPreview==="function") openReportPreview(html,title+" "+(e.no||""));
   else{ const w=window.open("","_blank"); if(w){ w.document.open(); w.document.write(html); w.document.close(); } }
@@ -24971,6 +25217,10 @@ async function faGlBasics(){
  const out=await Promise.all(defs.map(async([k,t,o])=>{const r=await sb.from(t).select('*').order(o,{ascending:true});if(r.error)throw new Error(t+': '+r.error.message);return [k,r.data||[]];}));
  out.forEach(([k,v])=>{glState[k]=v;});
 }
+/* مجمع الإهلاك: 'max' = العمود accumulated_depreciation شامل الافتتاحي (الأكبر منهما).
+   'sum' = العمودان منفصلان (الافتتاحي + المُرحّل). تأكد بملف fa_accum_check.sql ثم غيّر القيمة. */
+const FA_ACCUM_MODE='max';
+function faAccumOf(x){const o=+x.opening_accumulated_depreciation||0,a=+x.accumulated_depreciation||0;return FA_ACCUM_MODE==='sum'?o+a:Math.max(o,a);}
 async function faDbLoad(){
  if(faDbLoading)return;faDbLoading=true;faDbError='';
  let glErr='';try{await faGlBasics();}catch(ge){console.warn('GL basics',ge);glErr='\u062a\u0639\u0630\u0631 \u062a\u062d\u0645\u064a\u0644 \u0627\u0644\u064a\u0648\u0645\u064a\u0627\u062a \u0648\u0627\u0644\u062d\u0633\u0627\u0628\u0627\u062a \u0645\u0646 \u0627\u0644\u0623\u0633\u062a\u0627\u0630 \u0627\u0644\u0639\u0627\u0645: '+faDbMsg(ge);}
@@ -24982,7 +25232,7 @@ async function faDbLoad(){
   faData.categories=(c.data||[]).map(x=>({id:x.id,code:x.category_code,name:x.category_name,parentId:x.parent_id,parent:(c.data||[]).find(p=>p.id===x.parent_id)?.category_code||'',leaf:x.is_leaf}));
   faData.orgs=(o.data||[]).map(x=>({id:x.id,code:x.unit_code,name:x.unit_name,parentId:x.parent_id,parent:(o.data||[]).find(p=>p.id===x.parent_id)?.unit_code||''}));
   faData.mappings=(m.data||[]).map(x=>({id:x.id,catId:x.category_id,orgId:x.org_unit_id,cat:faData.categories.find(y=>y.id===x.category_id)?.code||'',org:faData.orgs.find(y=>y.id===x.org_unit_id)?.code||'',assetId:x.asset_account_id,accumId:x.accum_depr_account_id,expenseId:x.depr_expense_account_id,asset:x.asset_account_id,accum:x.accum_depr_account_id,expense:x.depr_expense_account_id}));
-  faData.assets=(a.data||[]).map(x=>({id:x.id,no:x.asset_no,kind:x.registration_kind==='opening'?'opening':'new',categoryId:x.category_id,categoryCode:faData.categories.find(y=>y.id===x.category_id)?.code||'',categoryName:faData.categories.find(y=>y.id===x.category_id)?.name||'',orgId:x.org_unit_id,org:faData.orgs.find(y=>y.id===x.org_unit_id)?.code||'',name:x.asset_name,description:x.description,cost:+x.acquisition_cost,accum:Math.max(+x.opening_accumulated_depreciation||0,+x.accumulated_depreciation||0),openingAccum:+x.opening_accumulated_depreciation||0,purchaseEntryId:x.purchase_entry_id,residual:+x.residual_value,life:+x.useful_life_years,rate:+x.annual_rate||0,annual:(+x.acquisition_cost-(+x.residual_value))/(+x.useful_life_years||1),purchaseDate:x.purchase_date,readyDate:x.ready_date,costCenter:x.cost_center_id,postingStatus:x.posting_status,paymentMethod:x.payment_method,paymentAccountId:x.payment_account_id,supplier:x.supplier_name,bank:x.bank_code,safe:x.safe_code,cheque:x.cheque_ref}));
+  faData.assets=(a.data||[]).map(x=>({id:x.id,no:x.asset_no,kind:x.registration_kind==='opening'?'opening':'new',categoryId:x.category_id,categoryCode:faData.categories.find(y=>y.id===x.category_id)?.code||'',categoryName:faData.categories.find(y=>y.id===x.category_id)?.name||'',orgId:x.org_unit_id,org:faData.orgs.find(y=>y.id===x.org_unit_id)?.code||'',name:x.asset_name,description:x.description,cost:+x.acquisition_cost,accum:faAccumOf(x),openingAccum:+x.opening_accumulated_depreciation||0,purchaseEntryId:x.purchase_entry_id,residual:+x.residual_value,life:+x.useful_life_years,rate:+x.annual_rate||0,annual:(+x.acquisition_cost-(+x.residual_value))/(+x.useful_life_years||1),purchaseDate:x.purchase_date,readyDate:x.ready_date,costCenter:x.cost_center_id,postingStatus:x.posting_status,paymentMethod:x.payment_method,paymentAccountId:x.payment_account_id,supplier:x.supplier_name,bank:x.bank_code,safe:x.safe_code,cheque:x.cheque_ref}));
   faData.events=e.data||[];faData.runs=r.data||[];faData.settingsRow=s.data||null;faData.settings={...(faData.settings||{}),...(s.data||{})};if(glErr)faDbError=glErr;faDbReady=true;await faLoadPerms();
  }catch(err){faDbError=faDbMsg(err);throw err;}finally{faDbLoading=false;}
 }
@@ -25020,7 +25270,7 @@ async function faSaveSettingsImpl(){if(!faCan('manage')){toast('لا تملك ص
 const FA_PERM_ACTS=['manage','add','post','reverse'];
 let faPerm=null;
 async function faLoadPerms(){try{const rs=await Promise.all(FA_PERM_ACTS.map(a=>sb.rpc('fa_has_permission',{p_action:a})));const p={};rs.forEach((r,i)=>{if(r.error)throw r.error;p[FA_PERM_ACTS[i]]=r.data===true;});faPerm=p;}catch(e){faPerm=null;console.warn('fa_has_permission',e);}}
-function faCan(act){if(act==='print')return can('fixedAssets','print');if(faPerm)return !!faPerm[act];return can('fixedAssets',act);}
+function faCan(act){if(act==='print')return can('fixedAssets','print');if(can('fixedAssets',act))return true;if(faPerm)return !!faPerm[act];return false;}
 // ---- صلاحيات + منع الحفظ المزدوج + مساعدات النماذج
 window.FA_ACT=Object.assign(window.FA_ACT||{},{faSaveSettings:'manage',faDbAddOrg:'manage',faDbAddMapping:'manage',faAddMapping:'manage',faAddCategory:'manage',faSaveAsset:'add',faExportCsv:'print',faPostDep:'post',faRevDep:'reverse',faApprove:'post',faEvCreate:'add',faEvPost:'post',faEvReverse:'reverse'});
 function faApplyPerms(){try{document.querySelectorAll('#faBody button[onclick]').forEach(btn=>{const fn=(btn.getAttribute('onclick')||'').split('(')[0],act=FA_ACT[fn];if(act&&!faCan(act)){btn.disabled=true;btn.title='لا تملك صلاحية لهذا الإجراء';}});}catch(e){}}
@@ -25042,7 +25292,7 @@ function faCalc(e){const id=e&&e.target&&e.target.id;if(id==='faLife')faSyncRate
 // ---- معاينة الإهلاك (من تاريخ الجاهزية، بدون المسودات)
 function faPreviewDep(){const from=document.getElementById('faDepFrom').value,to=document.getElementById('faDepTo').value;if(!from||!to||to<from)return toast('حدد فترة صحيحة','err');
  const ms=s=>new Date(String(s).slice(0,10)).getTime(),f=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),drafts=[],noReady=[],noLife=[],rows=[];
- (faData.assets||[]).forEach(a=>{if(faIsUnposted(a)){drafts.push(a);return;}if(!a.readyDate){noReady.push(a);return;}const life=+a.life||0;if(life<=0){noLife.push(a);return;}const r=String(a.readyDate).slice(0,10),start=r>from?r:from;if(start>to)return;const days=(ms(to)-ms(start))/86400000+1,annual=Math.max(0,(+a.cost||0)-(+a.residual||0))/life,left=Math.max(0,(+a.cost||0)-(+a.accum||0)-(+a.residual||0)),amount=Math.min(left,annual*days/365);rows.push({a,start,days,amount});});
+ (faData.assets||[]).forEach(a=>{if(faIsUnposted(a)){drafts.push(a);return;}if(a.postingStatus&&!['posted','opening_no_entry'].includes(a.postingStatus))return;if(!a.readyDate){noReady.push(a);return;}const life=+a.life||0;if(life<=0){noLife.push(a);return;}const r=String(a.readyDate).slice(0,10),start=r>from?r:from;if(start>to)return;const endMs=Math.min(ms(to),ms(r)+Math.ceil(life*365.25)*86400000),days=Math.max(0,(endMs-ms(start))/86400000+1);if(days<=0)return;const annual=Math.max(0,(+a.cost||0)-(+a.residual||0))/life,left=Math.max(0,(+a.cost||0)-(+a.accum||0)-(+a.residual||0)),amount=Math.min(left,Math.round(annual*days/365.25*100)/100);if(amount<=0)return;rows.push({a,start,days,amount});});
  const total=rows.reduce((s,x)=>s+x.amount,0),runs=faData.runs||[],overlap=runs.filter(r=>{const e=r.period_to||r.period_end;return e&&r.period_from<=to&&e>=from;});
  const notes=[];if(drafts.length)notes.push(`${drafts.length} أصل جديد غير معتمد (مسودة شراء) غير محسوب`);if(noReady.length)notes.push(`${noReady.length} أصل بدون تاريخ جاهزية غير محسوب: ${noReady.map(a=>faEsc(a.no)).join('، ')}`);if(noLife.length)notes.push(`${noLife.length} أصل بدون عمر إنتاجي غير محسوب`);if(overlap.length)notes.push('تحذير: توجد تشغيلات إهلاك سابقة تتقاطع مع هذه الفترة');
  document.getElementById('faDepResult').innerHTML=`<p><b>إجمالي معاينة الإهلاك: ${f(total)}</b></p>${notes.length?`<div class="alert warn" style="margin:8px 0">${notes.map(n=>'• '+n).join('<br>')}</div>`:''}<div class="tbl-wrap"><table><thead><tr><th>الأصل</th><th>يبدأ من</th><th>الأيام</th><th>إهلاك الفترة</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${faEsc(x.a.no)} — ${faEsc(x.a.name)}</td><td>${faEsc(x.start)}</td><td>${x.days}</td><td>${f(x.amount)}</td></tr>`).join('')||'<tr><td colspan="4">لا توجد أصول مستحقة للإهلاك في الفترة</td></tr>'}</tbody></table></div>`;}
@@ -25606,5 +25856,277 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     }catch(e){console.error(e);}
   };
   if(['assets','additions','disposals'].includes(faTab)&&document.getElementById('faBody')){try{faRender();}catch(e){}}
+})();
+/* IRON GATE Sales delivery + receipt allocation RPC bridge. */
+(function(){
+  if(window.__igSalesDeliveryReceiptsInstalled) return;
+  window.__igSalesDeliveryReceiptsInstalled=true;
+  window.igSalesSaveDelivery=async function(payload){
+    if(!payload||!Array.isArray(payload.lines)||!payload.lines.length) throw new Error('أدخل بنود إذن التسليم أولاً');
+    const args={p_delivery_id:payload.id||null,p_delivery_no:String(payload.deliveryNo||''),p_delivery_date:payload.date||new Date().toISOString().slice(0,10),p_sale_order_id:payload.saleOrderId||null,p_customer:String(payload.customer||''),p_warehouse_id:String(payload.warehouseId||''),p_warehouse_code:payload.warehouseCode||null,p_warehouse_name:payload.warehouseName||null,p_lines:payload.lines.map((x,i)=>({factory:x.factory||null,diameter:x.diameter||null,item_type:x.itemType||x.type||'',qty:Number(x.qty||0),source_order_line_no:x.orderLineNo||null,notes:x.notes||null})),p_notes:payload.notes||null};
+    const r=await sb.rpc('ig_sales_save_delivery',args); if(r.error) throw r.error; toast('تم حفظ إذن التسليم كمسودة','ok'); return r.data;
+  };
+  window.igSalesPostDelivery=async function(deliveryId,journalId){
+    if(!deliveryId) throw new Error('رقم إذن التسليم مطلوب');
+    let jid=journalId;
+    if(!jid){const r=await sb.from('gl_journals').select('id,journal_code,journal_name,is_active').eq('is_active',true);if(r.error)throw r.error;const js=r.data||[];let j=js.find(x=>String(x.journal_code||'').trim()==='501');if(!j){for(const w of ['مبيعات','مخزون']){const c=js.filter(x=>String(x.journal_name||'').includes(w));if(c.length>1)throw new Error('يوجد أكثر من يومية نشطة باسم «'+w+'» — فعّل يومية الكود 501 أو عطّل الزائد');if(c.length){j=c[0];break;}}}if(!j)throw new Error('اختر يومية مبيعات/مخزون نشطة');jid=j.id;}
+    const r=await sb.rpc('ig_sales_post_delivery',{p_delivery_id:String(deliveryId),p_journal_id:jid});if(r.error)throw r.error;toast('تم ترحيل إذن التسليم والصرف وتكلفة البضاعة','ok');return r.data;
+  };
+  window.igSalesAllocateReceipt=async function(receiptId,invoiceId,amount){
+    const n=Number(amount);if(!receiptId||!invoiceId||!(n>0))throw new Error('حدد سند القبض والفاتورة ومبلغ التخصيص');
+    const r=await sb.rpc('ig_sales_allocate_receipt',{p_receipt_id:String(receiptId),p_invoice_id:String(invoiceId),p_amount:n});if(r.error)throw r.error;toast('تم تخصيص التحصيل على الفاتورة','ok');return r.data;
+  };
+})();
+
+/* IRON GATE | Sales delivery and receipt allocation UI */
+(function(){
+  if(window.__igSalesOperationsUIInstalled) return;
+  window.__igSalesOperationsUIInstalled=true;
+  const $=id=>document.getElementById(id);
+  const esc=v=>typeof escapeHtml==='function'?escapeHtml(v??''):String(v??'');
+  const num=v=>Number(String(v??0).replace(/,/g,''))||0;
+  const nfmt=v=>num(v).toLocaleString('en-US',{minimumFractionDigits:0,maximumFractionDigits:3});
+  const money=v=>num(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const whs=()=>((typeof whList==='function'?whList():state.warehouses)||[]).filter(w=>!w.deleted_at&&(!w.id||!whHasKids(w.id)));
+  const factoryOpts=selected=>'<option value="">اختر المصنع</option>'+((state.factories||[]).map(x=>typeof x==='string'?x:x.name).filter(Boolean)).map(v=>`<option value="${esc(v)}" ${String(v)===String(selected||'')?'selected':''}>${esc(v)}</option>`).join('');
+  const diamOpts=selected=>'<option value="">اختر القطر</option>'+((state.diameters||[]).map(x=>typeof x==='string'?x:x.name).filter(Boolean)).map(v=>`<option value="${esc(v)}" ${String(v)===String(selected||'')?'selected':''}>${esc(v)}</option>`).join('');
+  const typeOpts=selected=>'<option value="">اختر النوع</option>'+((state.types||[]).map(x=>typeof x==='string'?x:x.name).filter(Boolean)).map(v=>`<option value="${esc(v)}" ${String(v)===String(selected||'')?'selected':''}>${esc(v)}</option>`).join('');
+  let ctx={tab:'deliveries',docs:[],items:[],allocs:[],draft:null,orders:[],receipts:[],invoices:[]};
+  function content(){return $('content')||document.querySelector('#content');}
+  function pageHead(title,actions=''){return `<div class="page-head"><button class="btn ghost sm" onclick="igSalesOpsBack()">↩ رجوع لفواتير المبيعات</button><h2>${title}</h2><div class="spacer"></div>${actions}</div>`;}
+  window.igSalesOpsBack=()=>{ctx.draft=null;if(typeof go==='function')go('salesInvoices');};
+  window.igSalesDeliveryHome=async function(tab){
+    ctx.tab=tab||'deliveries';ctx.draft=null;
+    const c=content();if(!c)return;
+    c.innerHTML=pageHead('إدارة التسليم والتحصيل',`<button class="btn primary" onclick="igSDNewDirect()">+ إذن تسليم مباشر</button><button class="btn" onclick="igSDReload()">تحديث البيانات</button>`)+`<div class="tabs" style="margin:12px 0"><button class="tab ${ctx.tab==='deliveries'?'active':''}" onclick="igSalesDeliveryHome('deliveries')">أذون التسليم والصرف</button><button class="tab ${ctx.tab==='allocations'?'active':''}" onclick="igSalesDeliveryHome('allocations')">تخصيص سندات القبض</button><button class="tab ${ctx.tab==='uncovered'?'active':''}" onclick="igSalesDeliveryHome('uncovered')">فواتير بدون صرف مخزون</button></div><div id="igSalesOpsBody"><div class="card"><div class="body">جارٍ تحميل البيانات…</div></div></div>`;
+    await igSDReload();
+  };
+  window.igSDReload=async function(){
+    const host=$('igSalesOpsBody');if(host)host.innerHTML='<div class="card"><div class="body">جارٍ تحديث بيانات التسليم والتحصيل…</div></div>';
+    try{
+      const [d,i,a]=await Promise.all([sb.from('sales_delivery_notes').select('*').order('delivery_date',{ascending:false}),sb.from('sales_delivery_items').select('*').order('line_no'),sb.from('sales_receipt_allocations').select('*')]);
+      if(d.error)throw d.error;if(i.error)throw i.error;if(a.error)throw a.error;
+      ctx.docs=d.data||[];ctx.items=i.data||[];ctx.allocs=a.data||[];window.igSalesAllocations=ctx.allocs;window.igSalesAllocationsReady=true;
+      ctx.orders=(state.saleOrders||[]).filter(o=>!o.closed);
+      ctx.receipts=(state.treasuryEntries||[]).filter(e=>e&&e.direction==='in'&&e.entryKind!=='gl'&&e.postedEntryId&&e.status!=='returned'&&e.status!=='guarantee');
+      ctx.invoices=(state.shipments||[]).filter(s=>s&&s.docKind==='sales'&&s.glEntryId);
+      igSDRender();
+    }catch(e){if(host)host.innerHTML=`<div class="card"><div class="body" style="color:var(--danger)">تعذر تحميل أذون التسليم أو التخصيص: ${esc(e.message||e)}<p class="muted">تأكد من تشغيل ملف SQL الخاص بأذون التسليم وتخصيص التحصيل.</p><button class="btn" onclick="igSDReload()">إعادة المحاولة</button></div></div>`;}
+  };
+  function igSDRender(){const host=$('igSalesOpsBody');if(!host)return;host.innerHTML=ctx.tab==='deliveries'?igSDListHtml():ctx.tab==='uncovered'?igSDUncoveredHtml():igSDAllocHtml();}
+  function igSDNextNo(){let mx=0;(ctx.docs||[]).forEach(d=>{const m=String(d.delivery_no||'').match(/^SD-(\d{1,6})$/);if(m)mx=Math.max(mx,parseInt(m[1],10));});return 'SD-'+String(mx+1).padStart(4,'0');}
+  function igSDInvQty(inv){return (inv.items||[]).reduce((t,it)=>t+num(it.actualWeight||it.weightTon||it.supplyQty),0);}
+  function igSDUncoveredRows(){
+    const orderInv={},orderDel={};
+    ctx.invoices.forEach(i=>{if(i.saleOrderId)orderInv[i.saleOrderId]=(orderInv[i.saleOrderId]||0)+igSDInvQty(i);});
+    ctx.docs.filter(d=>d.status==='posted'&&d.sale_order_id).forEach(d=>{const q=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)).reduce((t,x)=>t+num(x.qty),0);orderDel[d.sale_order_id]=(orderDel[d.sale_order_id]||0)+q;});
+    return ctx.invoices.map(i=>{
+      const qty=igSDInvQty(i);let st='bad',label='بدون صرف مخزون',ref='';const cut=state.settings&&state.settings.salesIssueTrackFrom;
+      if(cut&&String(i.date||'').slice(0,10)<cut){st='ok';label='قديمة — قبل بدء تتبع الصرف';}
+      else if(i.directDeliveryId){st='ok';label='صُرف مباشرة مع الفاتورة';ref=i.directDeliveryId;}
+      else if(i.deliveryNoteId){const n=ctx.docs.find(d=>String(d.id)===String(i.deliveryNoteId));ref=n?n.delivery_no:i.deliveryNoteId;if(n&&n.status==='posted'){st='ok';label='مربوطة بإذن مرحّل';}else{st='warn';label='الإذن المرتبط غير مرحّل';}}
+      else if(i.directIssue){st='bad';label='صرف مباشر معلّق (استخدم زر صرف المخزون)';}
+      else if(i.saleOrderId&&(orderDel[i.saleOrderId]||0)>=(orderInv[i.saleOrderId]||0)-0.001&&(orderDel[i.saleOrderId]||0)>0){st='ok';label='مغطاة بأذون الأمر';}
+      else if(i.saleOrderId&&(orderDel[i.saleOrderId]||0)>0){st='warn';label='أذون الأمر أقل من المفوتر';}
+      return {i,qty,st,label,ref,orderQty:i.saleOrderId?(orderDel[i.saleOrderId]||0):null};
+    });
+  }
+  window.igSDSetCutoff=v=>{state.settings.salesIssueTrackFrom=v||'';if(typeof saveState==='function')saveState();igSDRender();};
+  window.igSDToggleCovered=v=>{ctx.hideCovered=!!v;igSDRender();};
+  function igSDUncoveredHtml(){
+    if(ctx.hideCovered===undefined)ctx.hideCovered=true;
+    if(state.settings&&!state.settings.salesIssueTrackFrom){state.settings.salesIssueTrackFrom=today();if(typeof saveState==='function')saveState();}
+    const all=igSDUncoveredRows(),rows=(ctx.hideCovered?all.filter(r=>r.st!=='ok'):all).sort((a,b)=>String(b.i.date||'').localeCompare(String(a.i.date||'')));
+    const chip=r=>`<span class="chip ${r.st==='ok'?'ok':r.st==='warn'?'warn':'danger'}">${esc(r.label)}</span>`;
+    const body=rows.map(r=>`<tr><td>${esc(r.i.policyNo)}</td><td>${esc(r.i.date||'')}</td><td>${esc(r.i.customer)}</td><td>${esc(r.i.saleOrderNo||'—')}</td><td class="num">${nfmt(r.qty)}</td><td class="num">${r.orderQty==null?'—':nfmt(r.orderQty)}</td><td>${chip(r)}${r.ref?` <small class="muted">${esc(r.ref)}</small>`:''}</td></tr>`).join('')||'<tr><td colspan="7">لا توجد فواتير تحتاج مراجعة ✓</td></tr>';
+    const need=all.filter(r=>r.st!=='ok').length;
+    return `<div class="card"><div class="head"><h3>فواتير مبيعات مرحّلة بدون صرف مخزون / تكلفة</h3><span class="count">${need} تحتاج مراجعة من ${all.length}</span></div><div class="body"><div class="fld" style="margin-bottom:8px"><label>تتبّع الصرف يبدأ من تاريخ (الفواتير قبله تُعتبر مصروفة)</label><input class="inp" type="date" value="${esc(state.settings.salesIssueTrackFrom||'')}" onchange="igSDSetCutoff(this.value)" style="max-width:200px"></div><label style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" ${ctx.hideCovered?'checked':''} onchange="igSDToggleCovered(this.checked)"> إخفاء الفواتير المغطّاة</label><div class="tbl-wrap"><table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>أمر البيع</th><th>كمية الفاتورة (طن)</th><th>المُسلَّم على الأمر (طن)</th><th>الحالة</th></tr></thead><tbody>${body}</tbody></table></div><p class="muted">الفواتير المرحّلة قبل تفعيل خيار الصرف المباشر تظهر هنا إذا لم يكن لها إذن تسليم؛ راجعها يدويًا، وليست بالضرورة خطأ إذا كانت خدمات أو بضاعة خارج المخزن.</p></div></div>`;
+  }
+  function igSDListHtml(){
+    const rows=ctx.docs.map(d=>{const its=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)),q=its.reduce((s,x)=>s+num(x.qty),0),cost=its.reduce((s,x)=>s+num(x.total_cost),0);return `<tr><td>${esc(d.delivery_no)}</td><td>${esc(d.delivery_date)}</td><td>${esc(d.customer)}</td><td>${esc(d.warehouse_code||d.warehouse_name||d.warehouse_id)}</td><td class="num">${nfmt(q)}</td><td class="num">${money(cost)}</td><td>${d.status==='posted'?'<span class="chip ok">مرحّل ومصروف</span>':d.status==='cancelled'?'<span class="chip danger">ملغي</span>':'<span class="chip warn">مسودة</span>'}</td><td>${d.status==='draft'?`<button class="btn sm ghost" onclick="igSDEdit('${esc(d.id)}')">فتح</button> <button class="btn sm primary" onclick="igSDPost('${esc(d.id)}')">ترحيل وصرف</button>`:`<button class="btn sm ghost" onclick="igSDShow('${esc(d.id)}')">عرض</button>`}</td></tr>`;}).join('')||'<tr><td colspan="8">لا توجد أذون تسليم حتى الآن</td></tr>';
+    const orderOpts=ctx.orders.map(o=>`<option value="${esc(o.id)}">${esc(o.orderNo)} — ${esc(o.customer)}</option>`).join('');
+    return `<div class="card"><div class="head"><h3>إنشاء إذن تسليم من أمر بيع</h3></div><div class="body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select class="inp" id="igSDOrder" style="min-width:260px;flex:1"><option value="">اختر أمر البيع المفتوح</option>${orderOpts}</select><button class="btn primary" onclick="igSDNewFromOrder()">إنشاء إذن من الأمر</button><small class="muted">يعرض الكميات المتبقية بعد أذون التسليم المُرحّلة فقط، ويدعم التسليم الجزئي والمتكرر.</small></div></div><div class="card"><div class="head"><h3>سجل أذون التسليم</h3><span class="count">${ctx.docs.length} إذن</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>رقم الإذن</th><th>التاريخ</th><th>العميل</th><th>المخزن</th><th>الكمية طن</th><th>التكلفة</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+  }
+  window.igSDNewDirect=function(){ctx.tab='deliveries';ctx.draft={id:'SD-'+Date.now(),deliveryNo:igSDNextNo(),date:today(),saleOrderId:'',customer:'',warehouseId:'',notes:'',allowOver:true,items:[{factory:'',diameter:'',itemType:'',qty:'',orderLineNo:null,notes:''}]};igSDForm();};
+  window.igSDNewFromOrder=async function(){ctx.tab='deliveries';const id=$('igSDOrder')?.value;if(!id)return toast('اختر أمر البيع أولاً','err');const o=ctx.orders.find(x=>String(x.id)===String(id));if(!o)return toast('أمر البيع غير موجود','err');
+    try{const orderDocs=ctx.docs.filter(d=>String(d.sale_order_id)===String(o.id)&&d.status==='posted');const delivered=ctx.items.filter(x=>orderDocs.some(d=>d.id===x.delivery_id));const items=(o.items||[]).map((it,i)=>{const line=i+1,used=delivered.filter(x=>Number(x.source_order_line_no)===line).reduce((s,x)=>s+num(x.qty),0),ordered=num(it.qty);return {...it,orderLineNo:line,orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used),qty:Math.max(0,ordered-used),factory:it.factory||'',itemType:it.type||''};}).filter(x=>x.orderedQty>0&&(o.allowOverDelivery!==false||x.remaining>0));
+      if(!items.length)return toast('الأمر لا يحتوي كميات متبقية للتسليم، أو أنه مكتمل بالفعل','err');
+      const wh=whs().find(w=>String(w.id)===String(o.warehouseId));ctx.draft={id:'SD-'+Date.now(),deliveryNo:igSDNextNo(),date:today(),saleOrderId:o.id,saleOrderNo:o.orderNo,customer:o.customer,warehouseId:String(o.warehouseId||''),warehouseCode:wh?.code||'',warehouseName:wh?.name||'',notes:'',allowOver:o.allowOverDelivery!==false,items};igSDForm();
+    }catch(e){toast('تعذر تجهيز إذن التسليم: '+(e.message||e),'err');}
+  };
+  window.igSDEdit=async function(id){const d=ctx.docs.find(x=>String(x.id)===String(id));if(!d||d.status!=='draft')return;const its=ctx.items.filter(x=>String(x.delivery_id)===String(id));
+    const o=d.sale_order_id?(state.saleOrders||[]).find(x=>String(x.id)===String(d.sale_order_id)):null;
+    const info=line=>{const it=o&&(o.items||[])[Number(line)-1];if(!it)return {};const ordered=num(it.qty);const used=ctx.items.filter(x=>String(x.delivery_id)!==String(id)&&Number(x.source_order_line_no)===Number(line)&&ctx.docs.some(dd=>String(dd.id)===String(x.delivery_id)&&dd.status==='posted'&&String(dd.sale_order_id)===String(o.id))).reduce((s,x)=>s+num(x.qty),0);return {orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used)};};
+    ctx.draft={id:d.id,deliveryNo:d.delivery_no,date:d.delivery_date,saleOrderId:d.sale_order_id||'',saleOrderNo:o?o.orderNo:'',customer:d.customer,warehouseId:String(d.warehouse_id||''),warehouseCode:d.warehouse_code||'',warehouseName:d.warehouse_name||'',notes:d.notes||'',allowOver:o?o.allowOverDelivery!==false:true,items:its.map(x=>({factory:x.factory||'',diameter:x.diameter||'',itemType:x.item_type,qty:x.qty,orderLineNo:x.source_order_line_no,notes:x.notes||'',...info(x.source_order_line_no)}))};igSDForm();};
+  function igSDForm(){const d=ctx.draft,c=content();if(!d||!c)return;const whOpts=whs().map(w=>`<option value="${esc(w.id)}" ${String(w.id)===String(d.warehouseId)?'selected':''}>${esc(w.code||'')} — ${esc(w.name||'')}</option>`).join('');
+    const rows=d.items.map((x,i)=>`<tr><td>${i+1}</td><td><select class="inp" onchange="igSDSet(${i},'factory',this.value)">${factoryOpts(x.factory)}</select></td><td><select class="inp" onchange="igSDSet(${i},'diameter',this.value)">${diamOpts(x.diameter)}</select></td><td><select class="inp" onchange="igSDSet(${i},'itemType',this.value)">${typeOpts(x.itemType)}</select></td><td>${x.orderLineNo?`<b>${esc(d.saleOrderNo||'')} / ${x.orderLineNo}</b><small class="muted">مطلوب ${nfmt(x.orderedQty)} · سُلّم ${nfmt(x.deliveredBefore)} · متبقٍ ${nfmt(x.remaining)}</small>`:'—'}</td><td><input class="inp num" type="number" min="0" step="0.001" ${!d.allowOver&&x.orderLineNo?`max="${x.remaining}"`:''} value="${esc(x.qty)}" oninput="igSDSet(${i},'qty',this.value);igSDExcess(${i})"></td><td id="igSDEx${i}" class="num">${x.orderLineNo?nfmt(Math.max(0,num(x.qty)-num(x.remaining))):'—'}</td><td><button class="btn sm danger" onclick="igSDDelLine(${i})">حذف</button></td></tr>`).join('');
+    c.innerHTML=pageHead('إذن تسليم مبيعات',`<button class="btn ghost" onclick="igSalesDeliveryHome('deliveries')">إلغاء</button><button class="btn" onclick="igSDSave()">حفظ مسودة</button><button class="btn primary" onclick="igSDSave(true)">حفظ وترحيل وصرف</button>`)+`<div class="card"><div class="body"><div class="fgrid"><div class="fld"><label>رقم الإذن</label><input class="inp" id="igSDNo" value="${esc(d.deliveryNo)}"></div><div class="fld"><label>التاريخ</label><input class="inp" id="igSDDate" type="date" value="${esc(d.date)}"></div><div class="fld"><label>العميل</label><select class="inp" id="igSDCustomer"><option value="">اختر العميل</option>${partyNames(state.customers).map(v=>`<option value="${esc(v)}" ${v===d.customer?'selected':''}>${esc(v)}</option>`).join('')}</select></div><div class="fld"><label>المخزن الفعلي</label><select class="inp" id="igSDWarehouse"><option value="">اختر المخزن</option>${whOpts}</select></div></div><p class="muted">${d.saleOrderId?`مرتبط بأمر البيع رقم <b>${esc(d.saleOrderNo||'')}</b>`:'إذن مباشر بدون أمر بيع'}</p>${d.saleOrderId?`<label class="fld" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="igSDOver" ${d.allowOver?'checked':''} onchange="igSDSetOver(this.checked)"> السماح بتجاوز الكمية المتبقية حسب سياسة أمر البيع</label>`:''}<div class="fld"><label>ملاحظات</label><input class="inp" id="igSDNotes" value="${esc(d.notes)}"></div></div></div><div class="card"><div class="head"><h3>بنود التسليم</h3>${d.saleOrderId?'':'<button class="btn sm" onclick="igSDAddLine()">+ إضافة بند</button>'}</div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>المصنع</th><th>القطر</th><th>النوع</th><th>بيانات أمر البيع</th><th>كمية التسليم الآن (طن)</th><th>زيادة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">يتم خصم المخزون عند ترحيل إذن التسليم فقط. حفظ المسودة لا يغيّر رصيد المخزون، ولا تخصم فاتورة المبيعات المخزون مرة أخرى.</p></div></div>`;
+  }
+  window.igSDSet=(i,k,v)=>{if(ctx.draft?.items[i])ctx.draft.items[i][k]=v;};
+  window.igSDSetOver=v=>{if(ctx.draft)ctx.draft.allowOver=!!v;};
+  window.igSDAddLine=()=>{ctx.draft.items.push({factory:'',diameter:'',itemType:'',qty:'',orderLineNo:null,notes:''});igSDForm();};
+  window.igSDDelLine=i=>{ctx.draft.items.splice(i,1);igSDForm();};
+  window.igSDExcess=i=>{const x=ctx.draft?.items[i],el=$('igSDEx'+i);if(x&&el)el.textContent=x.orderLineNo?nfmt(Math.max(0,num(x.qty)-num(x.remaining))):'—';};
+  window.igSDSave=async function(andPost){const d=ctx.draft;if(!d)return;d.deliveryNo=$('igSDNo')?.value.trim()||'';d.date=$('igSDDate')?.value||'';d.customer=$('igSDCustomer')?.value||'';d.warehouseId=$('igSDWarehouse')?.value||'';d.notes=$('igSDNotes')?.value||'';const wh=whs().find(w=>String(w.id)===String(d.warehouseId));
+    if(!d.deliveryNo||!d.date||!d.customer||!d.warehouseId)return toast('أكمل رقم الإذن والتاريخ والعميل والمخزن','err');if(!d.items.length)return toast('أضف بندًا واحدًا على الأقل','err');if((ctx.docs||[]).some(x=>String(x.delivery_no||'').trim()===d.deliveryNo&&String(x.id)!==String(d.id)))return toast('رقم الإذن '+d.deliveryNo+' مستخدم من قبل','err');
+    for(let i=0;i<d.items.length;i++){const x=d.items[i];if(!x.factory||!x.diameter||!x.itemType||!(num(x.qty)>0))return toast('راجع المصنع والقطر والنوع والكمية في السطر '+(i+1),'err');if(d.saleOrderId&&!d.allowOver&&x.orderLineNo&&num(x.qty)>num(x.remaining)+0.0001)return toast('كمية السطر '+(i+1)+' تتجاوز المتبقي المسموح به','err');}
+    if(!(ctx.docs||[]).some(x=>String(x.id)===String(d.id))&&/^SD-\d+$/.test(d.deliveryNo)){try{const n=await sb.rpc('ig_sales_next_number',{p_kind:'delivery'});if(!n.error&&n.data)d.deliveryNo=String(n.data);}catch(e){console.warn('ig_sales_next_number غير متاحة، تم استخدام الترقيم المحلي',e);}}
+    try{const result=await window.igSalesSaveDelivery({id:d.id,deliveryNo:d.deliveryNo,date:d.date,saleOrderId:d.saleOrderId,customer:d.customer,warehouseId:d.warehouseId,warehouseCode:wh?.code||'',warehouseName:wh?.name||'',notes:d.notes,lines:d.items.map(x=>({factory:x.factory,diameter:x.diameter,itemType:x.itemType,qty:num(x.qty),orderLineNo:x.orderLineNo,notes:x.notes||''}))});d.id=result.delivery_id||d.id;d.saved=true;if(andPost){await window.igSalesPostDelivery(d.id);ctx.tab='deliveries';await igSDReload();return;}toast('تم حفظ إذن التسليم كمسودة','ok');ctx.tab='deliveries';await igSDReload();}catch(e){toast('تعذر حفظ/ترحيل الإذن: '+(e.message||e),'err');}
+  };
+  window.igSDPost=async function(id){if(!await askConfirm('سيتم صرف الكميات من المخزون وترحيل تكلفة البضاعة المباعة. هل تريد المتابعة؟'))return;try{await window.igSalesPostDelivery(id);await igSDReload();}catch(e){toast('تعذر ترحيل الإذن: '+(e.message||e),'err');}};
+  window.igSDShow=id=>{const d=ctx.docs.find(x=>String(x.id)===String(id)),its=ctx.items.filter(x=>String(x.delivery_id)===String(id));if(!d)return;const body=`<div class="tbl-wrap"><table><thead><tr><th>المصنع</th><th>القطر</th><th>النوع</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th></tr></thead><tbody>${its.map(x=>`<tr><td>${esc(x.factory)}</td><td>${esc(x.diameter)}</td><td>${esc(x.item_type)}</td><td>${nfmt(x.qty)}</td><td>${money(x.unit_cost)}</td><td>${money(x.total_cost)}</td></tr>`).join('')}</tbody></table></div>`;openModal('تفاصيل إذن '+esc(d.delivery_no),body,()=>true);};
+  function igSDInvoiceOptions(receiptId){const receipt=ctx.receipts.find(r=>String(r.id)===String(receiptId));return ctx.invoices.filter(i=>!receipt||String(i.customer)===String(receipt.customer)).map(i=>{const used=ctx.allocs.filter(a=>String(a.invoice_id)===String(i.id)).reduce((s,a)=>s+num(a.amount),0),total=num(i.totals?.grandTotal??i.grandTotal);return total-used>0.009?`<option value="${esc(i.id)}">${esc(i.policyNo)} — ${esc(i.customer)} — متبقي ${money(total-used)}</option>`:'';}).join('');}
+  window.igSDReceiptChanged=()=>{const el=$('igSDInvoice');if(el)el.innerHTML='<option value="">اختر فاتورة</option>'+igSDInvoiceOptions($('igSDReceipt')?.value);};
+  function igSDAllocHtml(){const recOpts=ctx.receipts.map(r=>{const used=ctx.allocs.filter(a=>String(a.receipt_id)===String(r.id)).reduce((s,a)=>s+num(a.amount),0),left=Math.max(0,num(r.amount)-used);return left>0?`<option value="${esc(r.id)}">${esc(r.no||r.refNo||r.id)} — ${esc(r.customer)} — متاح ${money(left)}</option>`:'';}).join('');const invOpts=igSDInvoiceOptions('');const rows=ctx.allocs.map(a=>{const r=ctx.receipts.find(x=>String(x.id)===String(a.receipt_id)),i=ctx.invoices.find(x=>String(x.id)===String(a.invoice_id));return `<tr><td>${esc(r?.no||a.receipt_id)}</td><td>${esc(i?.policyNo||a.invoice_id)}</td><td>${esc(a.customer)}</td><td class="num">${money(a.amount)}</td><td>${esc(a.allocated_at||'')}</td></tr>`;}).join('')||'<tr><td colspan="5">لا توجد تخصيصات حتى الآن</td></tr>';
+    return `<div class="card"><div class="head"><h3>تخصيص سند قبض على فاتورة مبيعات</h3></div><div class="body"><div class="fgrid"><div class="fld"><label>سند القبض المُرحّل</label><select class="inp" id="igSDReceipt" onchange="igSDReceiptChanged()"><option value="">اختر سند قبض</option>${recOpts}</select></div><div class="fld"><label>فاتورة المبيعات المُرحّلة</label><select class="inp" id="igSDInvoice"><option value="">اختر فاتورة</option>${invOpts}</select></div><div class="fld"><label>مبلغ التخصيص</label><input class="inp num" type="number" min="0.01" step="0.01" id="igSDAmount" placeholder="0.00"></div></div><button class="btn primary" style="margin-top:12px" onclick="igSDAllocate()">تخصيص المبلغ</button><p class="muted">لا ينشأ قيد محاسبي جديد؛ التخصيص يربط سند القبض المرحّل بالفاتورة ويحدّث المتبقي في كشف العميل. لا يمكن تخصيص أكثر من رصيد السند أو المتبقي على الفاتورة.</p></div></div><div class="card"><div class="head"><h3>سجل تخصيصات التحصيل</h3><span class="count">${ctx.allocs.length} تخصيص</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>سند القبض</th><th>الفاتورة</th><th>العميل</th><th>المبلغ</th><th>تاريخ التخصيص</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
+  }
+  window.igSDAllocate=async function(){const r=$('igSDReceipt')?.value,i=$('igSDInvoice')?.value,a=num($('igSDAmount')?.value);if(!r||!i||!(a>0))return toast('اختر سند القبض والفاتورة وأدخل مبلغًا صحيحًا','err');try{await window.igSalesAllocateReceipt(r,i,a);ctx.tab='allocations';await igSDReload();}catch(e){toast('تعذر تخصيص التحصيل: '+(e.message||e),'err');}};
+  ['igSDSave','igSDPost','igSDAllocate'].forEach(n=>{const f=window[n];let busy=false;window[n]=async function(...a){if(busy)return;busy=true;try{return await f.apply(this,a);}finally{busy=false;}};});
+  window.igSalesAllocationsReady=window.igSalesAllocationsReady||false;window.igSalesAllocations=window.igSalesAllocations||[];
+  async function loadStatementAllocations(){try{const r=await sb.from('sales_receipt_allocations').select('*');if(!r.error){window.igSalesAllocations=r.data||[];window.igSalesAllocationsReady=true;if(typeof currentPage!=='undefined'&&currentPage==='clientStatement'&&typeof renderPartyStatement==='function')renderPartyStatement();}}catch(e){console.warn('Sales allocations not available for customer statement',e);}}
+  loadStatementAllocations();
+  if(typeof window.renderPartyStatement==='function'&&!window.__igAllocStatementWrapped){window.__igAllocStatementWrapped=true;const _renderPartyStatement=window.renderPartyStatement;window.renderPartyStatement=function(){if(!window.igSalesAllocationsReady){loadStatementAllocations();}return _renderPartyStatement.apply(this,arguments);};}
+})();
+
+</script>
+
+<script id="fa-ui-v4">
+/* ============================================================
+   الأصول الثابتة — v4
+   1) تقارير الأصول + لوحة الأصول: نفس حساب شاشة بطاقات الأصول (الإضافات والاستبعاد، بدون المسودات)
+   2) إدخال أصل جديد: زر ظاهر دائماً + رسائل واضحة بدل الفشل الصامت
+   ============================================================ */
+(function(){
+  if(window.__faV4)return;window.__faV4=true;
+  if(typeof faRender!=='function'||typeof faData==='undefined')return;
+  const esc=v=>faEsc(v);
+  const money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const EPS=0.005,FLOOR=1;
+  const R={from:new Date().getFullYear()+'-01-01',to:faToday(),cat:'',org:'',st:'',view:'cat'};
+
+  /* ---------- الحساب (مطابق لشاشة بطاقات الأصول) ---------- */
+  const lineAmt=l=>{for(const k of ['depreciation_amount','amount','depr_amount','depreciation','line_amount'])if(l[k]!=null&&!isNaN(+l[k]))return +l[k];return 0;};
+  const lineRun=l=>l.run_id||l.depreciation_run_id||l.dep_run_id;
+  const runEnd=r=>String(r.period_to||r.period_end||'').slice(0,10);
+  const orgName=a=>{const o=(faData.orgs||[]).find(x=>x.id===a.orgId);return o?o.code+' — '+o.name:(a.org||'بدون هيكل');};
+  function calcAll(){
+    const rm=new Map((faData.runs||[]).filter(r=>r.status==='posted').map(r=>[r.id,r])),per=new Map();
+    (faData.lines||[]).forEach(l=>{const r=rm.get(lineRun(l));if(!r)return;const e=runEnd(r);if(e>=R.from&&e<=R.to)per.set(l.asset_id,(per.get(l.asset_id)||0)+lineAmt(l));});
+    const drafts=[],rows=[];
+    (faData.assets||[]).forEach(a=>{
+      if(faIsUnposted(a)){drafts.push(a);return;}
+      const ev=(faData.events||[]).filter(e=>e.asset_id===a.id&&e.status==='posted');
+      const cost=+a.cost||0,add=ev.filter(e=>e.event_type!=='disposal').reduce((s,e)=>s+(+e.amount||0),0),acc=+a.accum||0,dis=ev.some(e=>e.event_type==='disposal');
+      const book=cost+add-acc;
+      rows.push({a,cost,add,acc,dis,book,period:per.get(a.id)||0,disVal:dis?book:0,fin:dis?0:book,full:!dis&&book<=FLOOR+EPS});
+    });
+    return {rows,drafts};
+  }
+  const keys=['cost','add','acc','period','disVal','fin'];
+  const sum=(rs,k)=>rs.reduce((s,r)=>s+r[k],0);
+  function filt(rows){
+    return rows.filter(r=>{
+      if(R.cat&&String(r.a.categoryId)!==String(R.cat))return false;
+      if(R.org&&String(r.a.orgId||'')!==String(R.org))return false;
+      if(R.st==='dis')return r.dis;if(R.st==='full')return r.full;if(R.st==='act')return !r.dis&&!r.full;
+      return true;
+    });
+  }
+  function group(rows,labelFn){
+    const m=new Map();
+    rows.forEach(r=>{const l=labelFn(r.a)||'غير محدد';if(!m.has(l))m.set(l,[]);m.get(l).push(r);});
+    return [...m.entries()].sort((x,y)=>x[0].localeCompare(y[0],'ar')).map(([l,rs])=>({l,n:rs.length,rs}));
+  }
+
+  /* ---------- شاشة التقارير ---------- */
+  const TH='<th>قيمة الشراء</th><th>الإضافات</th><th>مجمع الإهلاك</th><th>إهلاك الفترة</th><th>الاستبعاد</th><th>الصافي النهائي</th>';
+  const tds=(o,cls)=>keys.map(k=>`<td class="n ${cls||''}">${money(o[k])}</td>`).join('');
+  function reportsHtml(){
+    const {rows,drafts}=calcAll(),list=filt(rows);
+    const sel=(id,opts,cur)=>`<select class="inp" id="${id}" onchange="faRepSet()">${opts.map(x=>`<option value="${esc(x[0])}"${String(cur)===String(x[0])?' selected':''}>${esc(x[1])}</option>`).join('')}</select>`;
+    const cats=(faData.categories||[]).filter(c=>c.leaf).sort((x,y)=>String(x.code).localeCompare(String(y.code),'ar'));
+    const tot={};keys.forEach(k=>tot[k]=sum(list,k));
+    const kpi=(l,v,raw)=>`<div class="kpi"><div class="lbl">${l}</div><div class="val small" style="direction:ltr">${raw?v:money(v)}</div></div>`;
+    let body='';
+    if(R.view==='cat'||R.view==='org'){
+      const g=group(list,R.view==='cat'?(a=>a.categoryName):orgName);
+      body=`<table class="fa3-tbl"><thead><tr><th>${R.view==='cat'?'نوع الأصل':'الهيكل الإداري'}</th><th>العدد</th>${TH}</tr></thead><tbody>${g.map(x=>{const t={};keys.forEach(k=>t[k]=sum(x.rs,k));return `<tr><td>${esc(x.l)}</td><td>${x.n}</td>${tds(t)}</tr>`;}).join('')||'<tr><td colspan="8">لا توجد بيانات</td></tr>'}</tbody><tfoot><tr><td>الإجمالي</td><td>${list.length}</td>${tds(tot)}</tr></tfoot></table>`;
+    }else{
+      body=`<table class="fa3-tbl"><thead><tr><th>كود الأصل</th><th>الاسم</th><th>النوع</th><th>الهيكل</th>${TH}</tr></thead><tbody>${list.map(r=>`<tr${r.dis?' class="dis"':''}><td>${esc(r.a.no)}</td><td>${esc(r.a.name)}${r.dis?' <span class="fa3-bdg gone">مُستبعد</span>':r.full?' <span class="fa3-bdg full">مهلك — 1 ج</span>':''}</td><td>${esc(r.a.categoryName)}</td><td>${esc(orgName(r.a))}</td>${tds(r)}</tr>`).join('')||'<tr><td colspan="10">لا توجد بيانات</td></tr>'}</tbody><tfoot><tr><td colspan="4">الإجمالي (${list.length} أصل)</td>${tds(tot)}</tr></tfoot></table>`;
+    }
+    const views=[['cat','حسب نوع الأصل'],['org','حسب الهيكل الإداري'],['det','كشف تفصيلي']];
+    return `<h3>تقارير الأصول الثابتة</h3>
+      <div class="kpis compact" style="margin-bottom:10px">${kpi('عدد الأصول',list.length,true)}${kpi('إجمالي قيمة الشراء',tot.cost)}${kpi('الإضافات',tot.add)}${kpi('مجمع الإهلاك',tot.acc)}${kpi('إهلاك الفترة',tot.period)}${kpi('قيمة الاستبعاد',tot.disVal)}${kpi('الصافي النهائي',tot.fin)}</div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px">${views.map(([id,n])=>`<button class="btn ${R.view===id?'primary':'secondary'}" onclick="faRepView('${id}')">${n}</button>`).join('')}</div>
+      <div class="fa2-bar">
+        ${sel('faRCat',[['','كل الأنواع'],...cats.map(c=>[c.id,c.name])],R.cat)}
+        ${sel('faROrg',[['','كل الهياكل'],...(faData.orgs||[]).map(o=>[o.id,o.code+' — '+o.name])],R.org)}
+        ${sel('faRSt',[['','كل الأصول'],['act','قائمة (قيد الإهلاك)'],['full','مهلكة بالكامل'],['dis','مستبعدة']],R.st)}
+        <span class="fa3-lbl">إهلاك من</span><input class="inp" type="date" id="faRFrom" value="${esc(R.from)}" onchange="faRepSet()">
+        <span class="fa3-lbl">إلى</span><input class="inp" type="date" id="faRTo" value="${esc(R.to)}" onchange="faRepSet()">
+        <button class="btn ghost" onclick="faRepCsv()">⬇ Excel</button><button class="btn ghost" onclick="faRepPrint()">🖨 طباعة</button>
+      </div>
+      <div class="tbl-wrap" id="faRepTbl">${body}</div>
+      <p class="fa3-note">الصافي النهائي = قيمة الشراء + الإضافات − مجمع الإهلاك (والأصل المستبعد صافيه صفر وقيمته تظهر في عمود الاستبعاد). مسودات الشراء غير المعتمدة (${drafts.length} أصل، تكلفتها ${money(sum(drafts.map(a=>({c:+a.cost||0})),'c'))}) غير داخلة في الأرقام. «إهلاك الفترة» من تشغيلات الإهلاك المُرحّلة التي تنتهي داخل الفترة المحددة.</p>`;
+  }
+  function paint(){const b=document.getElementById('faBody');if(!b||faTab!=='reports')return;b.innerHTML=reportsHtml();}
+  window.faRepSet=()=>{const g=i=>document.getElementById(i)?.value||'';R.cat=g('faRCat');R.org=g('faROrg');R.st=g('faRSt');R.from=g('faRFrom')||R.from;R.to=g('faRTo')||R.to;paint();};
+  window.faRepView=v=>{R.view=v;paint();};
+  window.faRepCsv=()=>{
+    if(!faCan('print'))return toast('لا تملك صلاحية التصدير','err');
+    const t=document.querySelector('#faRepTbl table');if(!t)return;
+    const rows=[...t.querySelectorAll('tr')].map(tr=>[...tr.children].map(c=>c.textContent.replace(/\s+/g,' ').trim()));
+    const csv='\ufeff'+rows.map(r=>r.map(v=>'"'+v.replace(/"/g,'""')+'"').join(',')).join('\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),el=document.createElement('a');el.href=url;el.download='fixed-assets-report.csv';el.click();URL.revokeObjectURL(url);
+  };
+  window.faRepPrint=()=>{
+    if(!faCan('print'))return toast('لا تملك صلاحية الطباعة','err');
+    const t=document.querySelector('#faRepTbl table');if(!t)return;
+    const w=window.open('','_blank');if(!w)return toast('اسمح بالنوافذ المنبثقة للطباعة','err');
+    w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>تقارير الأصول الثابتة</title><style>body{font-family:Tahoma,Arial;padding:16px}h3{text-align:center}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #999;padding:4px 6px;white-space:nowrap}th{background:#eee}td.n{text-align:left;direction:ltr}tfoot td{font-weight:bold;background:#f5f5f5}</style></head><body><h3>تقارير الأصول الثابتة — إهلاك ${esc(R.from)} إلى ${esc(R.to)}</h3>${t.outerHTML}</body></html>`);
+    w.document.close();w.focus();setTimeout(()=>w.print(),300);
+  };
+  Object.assign(window.FA_ACT=window.FA_ACT||{},{faRepCsv:'print',faRepPrint:'print'});
+
+  /* ---------- لوحة الأصول بنفس الحساب ---------- */
+  function dashHtml(){
+    const {rows,drafts}=calcAll(),act=rows.filter(r=>!r.dis),dis=rows.filter(r=>r.dis);
+    const c=(l,v,raw)=>`<div class="stat-card"><small>${l}</small><strong>${raw?v:money(v)}</strong></div>`;
+    return `<div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))">${c('عدد الأصول القائمة',act.length,1)}${c('إجمالي قيمة الشراء',sum(act,'cost'))}${c('الإضافات والتحسينات',sum(act,'add'))}${c('مجمع الإهلاك',sum(act,'acc'))}${c('الصافي النهائي',sum(act,'fin'))}</div>
+      <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:10px">${c('مسودات شراء غير معتمدة',drafts.length,1)}${c('تكلفة المسودات',drafts.reduce((s,a)=>s+(+a.cost||0),0))}${c('أصول مهلكة بالكامل (1 جنيه)',act.filter(r=>r.full).length,1)}${c('أصول مستبعدة',dis.length,1)}${c('أصول بدون تاريخ جاهزية',act.filter(r=>!r.a.readyDate).length,1)}</div>
+      <p class="muted" style="margin-top:14px">الأرقام تستثني مسودات الشراء والأصول المستبعدة، وتشمل الإضافات المُرحّلة. الأصل المهلك بالكامل تبقى قيمته 1 جنيه.</p>`;
+  }
+
+  /* ---------- إدخال أصل جديد ---------- */
+  const _new=window.fa2NewAsset;
+  window.fa2NewAsset=function(){
+    try{
+      if(!faCan('add'))return toast('لا تملك صلاحية إضافة أصل — راجع صلاحية «إضافة» للأصول الثابتة','err');
+      if(!(faData.categories||[]).some(c=>c.leaf))return toast('لا توجد أنواع أصول نهائية — أنشئ نوعاً نهائياً واربطه بالحسابات من تاب «أنواع الأصول» أولاً','err');
+      return _new.apply(this,arguments);
+    }catch(e){console.error(e);toast('تعذر فتح نموذج الأصل: '+(e.message||e),'err');}
+  };
+
+  /* ---------- الرسم ---------- */
+  const prev=faRender;
+  faRender=function(){
+    if(faTab==='reports'||faTab==='dashboard'){
+      const b=document.getElementById('faBody');if(!b)return;
+      try{
+        const err=faDbError?`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${esc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`:'';
+        b.innerHTML=err+(faTab==='reports'?reportsHtml():dashHtml());faApplyPerms();
+      }catch(e){console.error(e);b.innerHTML='<div class="alert danger">تعذر عرض التقرير: '+esc(e.message||e)+'</div>';}
+      return;
+    }
+    const r=prev.apply(this,arguments);
+    try{
+      if(faTab==='assets'){
+        const p=document.getElementById('fa3Assets')||document.querySelector('#faBody .fa2-page');
+        if(p&&!document.getElementById('faNewTop')){p.insertAdjacentHTML('afterbegin','<div id="faNewTop" style="display:flex;gap:8px;margin:0 0 10px"><button type="button" class="btn primary" onclick="fa2NewAsset()" style="padding:9px 18px;font-weight:800">＋ إدخال أصل جديد</button></div>');faApplyPerms();}
+      }
+    }catch(e){console.error(e);}
+    return r;
+  };
+  if(['assets','reports','dashboard'].includes(faTab)&&document.getElementById('faBody')){try{faRender();}catch(e){}}
 })();
 </script>
