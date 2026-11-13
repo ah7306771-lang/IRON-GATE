@@ -1941,6 +1941,8 @@ table[data-rs-key="supply-grouped"] tfoot td{background:#f3f6fa!important;color:
 }
 @media(min-width:641px) and (max-width:900px){.dx-kpis.dx-k4{grid-template-columns:repeat(2,minmax(0,1fr))}.dx-kpis.dx-k4>*{grid-column:auto!important}}
 .dx-kpis.dx-k4-trade{margin-bottom:14px}
+.dx-kpis.dx-k4>.k-red:last-child,.dx-kpis.dx-k4>.k-green:last-child{min-width:0}
+@media(max-width:640px){.dx-kpis.dx-k4-trade+.dx-kpis.dx-k4>.dx-kpi:nth-child(4){grid-column:1/-1}}
 /* الرئيسية: توحيد أحجام الكروت + آخر الحركات + ارتفاع الرسم */
 @media(min-width:901px){
   .dx-kpis:has(>:nth-child(7):last-child){grid-template-columns:repeat(12,minmax(0,1fr))}
@@ -3418,7 +3420,8 @@ const SCREENS = [
   ]},
   { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
   { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
-  { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage","print"] }
+  { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage","print"] },
+  { id:"fixedAssets", label:"الأصول الثابتة", icon:"🏢", acts:["add","edit","delete","post","print","manage"] }
 ];
 const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", reverse:"عكس قيد", manage:"إدارة الإعدادات", close:"إقفال/فتح", print:"طباعة/PDF" };
 const ACT_COLS = ["view","add","edit","delete","post","reverse","manage","close","print"];
@@ -3573,6 +3576,11 @@ function securityMigrate(s){
       const roleDefaults=ROLE_PRESETS[u.role].build();
       if(roleDefaults.screens && roleDefaults.screens.salesInstallments && roleDefaults.screens.salesInstallments.view)
         u.perms.screens.salesInstallments={...roleDefaults.screens.salesInstallments};
+    }
+    // صلاحيات الأصول الثابتة الجديدة: تورّث مبدئياً صلاحيات المحاسبة العامة للمستخدمين الحاليين دون تغيير صلاحياتهم الأخرى.
+    if(u.perms && u.perms.screens && !u.perms.screens.fixedAssets){
+      const g=u.perms.screens.gl||{};
+      u.perms.screens.fixedAssets={view:g.view===true,add:g.add===true,edit:g.edit===true,delete:g.edit===true,post:g.post===true,print:g.print===true,manage:g.manage===true};
     }
     normalizePerms(u.perms);
   });
@@ -3981,6 +3989,16 @@ const navGroups = [
     { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
     { id:"custodyReport", icon:"🧾", label:"تقرير العهد" }
   ]},
+  { id:"fixedAssets", icon:"🏢", label:"الأصول الثابتة", items:[
+    { id:"fixedAssets", tab:"dashboard", icon:"▦", label:"لوحة الأصول" },
+    { id:"fixedAssets", tab:"settings", icon:"⚙", label:"إعدادات الأصول والهياكل" },
+    { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" },
+    { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
+    { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
+    { id:"fixedAssets", tab:"additions", icon:"➕", label:"إضافات وتحسينات" },
+    { id:"fixedAssets", tab:"disposals", icon:"↘", label:"استبعاد الأصول" },
+    { id:"fixedAssets", tab:"reports", icon:"📊", label:"تقارير الأصول" }
+  ]},
   { id:"gl", icon:"⚖", label:"الحسابات العامة", items:[
     { id:"gl", tab:"entries", icon:"📒", label:"اليومية العامة" },
     { id:"gl", tab:"accounts", icon:"🌳", label:"دليل الحسابات" },
@@ -4082,7 +4100,7 @@ function renderNav(){
     const subs=g.items.map(it=>{
       if(it.sep){ _inSep=true; return `<div class="nav-sep">${it.sep}</div>`; }
       const c=it.badge?(B[it.badge]||0):0;
-      return `<button class="navbtn ${_inSep?'navbtn-sub ':''}${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
+      return `<button class="navbtn ${_inSep?'navbtn-sub ':''}${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:it.id==="fixedAssets"?`faSetTab('${it.tab}')`:`glNavTab('${it.tab}')`):`go('${it.id}')`}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
     }).join("");
     return `
     <div class="ng-wrap" data-gid="${g.id}" draggable="true">
@@ -4131,6 +4149,37 @@ function wireNavDnD(){
 }
 
 function soon(){ toast("هذه الشاشة ضمن المراحل التالية","ok"); }
+
+// ================== وحدة الأصول الثابتة ==================
+// تخزين مستقل مرحلياً في المتصفح؛ لا ينشئ قيود GL ولا يغيّر أي بيانات مالية قائمة.
+let faTab="dashboard", faData={categories:[],mappings:[],assets:[],runs:[],additions:[],disposals:[],settings:{depreciation:"straight",openingMode:"detail"}};
+try{const _fa=JSON.parse(localStorage.getItem("irongate_fixed_assets_v1")||"null");if(_fa&&typeof _fa==="object")faData={...faData,..._fa};}catch(e){}
+function faSave(){try{localStorage.setItem("irongate_fixed_assets_v1",JSON.stringify(faData));}catch(e){toast("تعذر حفظ بيانات الأصول في هذا المتصفح","err");}}
+function faEsc(v){return escapeHtml(String(v??""));}
+function faSetTab(t){faTab=t;go("fixedAssets");}
+function faNextNo(cat){const code=String(cat||"FA").replace(/[^\w\u0600-\u06ff-]/g,"");const n=faData.assets.filter(a=>a.categoryCode===cat).length+1;return code+String(n).padStart(4,"0");}
+function faView(){const tabs=[ ["dashboard","لوحة الأصول"],["settings","الإعدادات"],["categories","أنواع الأصول"],["assets","بطاقات الأصول"],["depreciation","الإهلاك"],["additions","الإضافات"],["disposals","الاستبعاد"],["reports","التقارير"] ];return `<div class="card" style="padding:14px"><div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">${tabs.map(([id,n])=>`<button class="btn ${faTab===id?'primary':'secondary'}" onclick="faSetTab('${id}')">${n}</button>`).join('')}</div><div id="faBody"></div></div>`;}
+function faRender(){const el=document.getElementById("faBody");if(!el)return;const money=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+if(faTab==="dashboard"){const cost=faData.assets.reduce((s,a)=>s+(+a.cost||0),0),dep=faData.assets.reduce((s,a)=>s+(+a.accum||0),0);el.innerHTML=`<div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr))"><div class="stat-card"><small>عدد الأصول</small><strong>${faData.assets.length}</strong></div><div class="stat-card"><small>إجمالي التكلفة</small><strong>${money(cost)}</strong></div><div class="stat-card"><small>مجمع الإهلاك الافتتاحي/المسجل</small><strong>${money(dep)}</strong></div><div class="stat-card"><small>صافي القيمة الدفترية</small><strong>${money(cost-dep)}</strong></div></div><p class="muted" style="margin-top:14px">مسار الافتتاحي يسجل بيانات الأصل فقط دون إنشاء قيود أو وسائل سداد. مسار الأصل الجديد مهيأ لاستكمال دورة الشراء والترحيل بعد ربطه بخدمات GL المعتمدة.</p>`;return;}
+if(faTab==="settings"){el.innerHTML=`<h3>إعدادات نظام الأصول الثابتة</h3><div class="fgrid"><label>طريقة الإهلاك الافتراضية<select id="faMethod"><option value="straight">القسط الثابت فقط</option></select></label><label>الأرصدة الافتتاحية<select id="faOpening"><option value="detail">تفصيلي لكل أصل</option></select></label><label>يومية شراء الأصول<input id="faJournalBuy" placeholder="اختر اليومية بعد ربط دليل اليوميات"></label><label>يومية الإهلاك<input id="faJournalDep" placeholder="اختر اليومية بعد ربط دليل اليوميات"></label><label>بداية تشغيل النظام<input id="faStart" type="date"></label></div><button class="btn primary" onclick="faSaveSettings()">حفظ الإعدادات</button><hr><h3>ربط نوع الأصل بالهيكل الإداري والحسابات</h3><p class="muted">كل ربط يحتوي حساب الأصل ومجمع الإهلاك ومصروف الإهلاك. يلزم ربط مصادر بيانات دليل الحسابات والهيكل الإداري قبل اعتماد الربط النهائي.</p><div class="fgrid"><label>نوع الأصل<input id="faMapCat" placeholder="كود النوع"></label><label>كود الهيكل الإداري<input id="faMapOrg" placeholder="كود الإدارة"></label><label>حساب الأصل<input id="faMapAsset"></label><label>حساب مجمع الإهلاك<input id="faMapAccum"></label><label>حساب مصروف الإهلاك<input id="faMapExpense"></label></div><button class="btn primary" onclick="faAddMapping()">إضافة ربط الحسابات</button><div class="tbl-wrap"><table><thead><tr><th>نوع الأصل</th><th>الهيكل</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>${faData.mappings.map(m=>`<tr><td>${faEsc(m.cat)}</td><td>${faEsc(m.org)}</td><td>${faEsc(m.asset)}</td><td>${faEsc(m.accum)}</td><td>${faEsc(m.expense)}</td></tr>`).join('')||'<tr><td colspan="5">لا توجد روابط مسجلة</td></tr>'}</tbody></table></div>`;return;}
+if(faTab==="categories"){el.innerHTML=`<h3>شجرة مجموعات وأنواع الأصول</h3><div class="fgrid"><label>كود المجموعة/النوع<input id="faCatCode"></label><label>الاسم<input id="faCatName"></label><label>المجموعة الأب<select id="faCatParent"><option value="">بدون أب (رئيسية)</option>${faData.categories.map(c=>`<option value="${faEsc(c.code)}">${faEsc(c.name)}</option>`).join('')}</select></label><label>طبيعة المستوى<select id="faCatLeaf"><option value="group">مجموعة رئيسية/فرعية</option><option value="leaf">نوع أصل نهائي قابل للتسجيل</option></select></label></div><button class="btn primary" onclick="faAddCategory()">حفظ المجموعة</button><div class="tbl-wrap"><table><thead><tr><th>الكود</th><th>النوع/المجموعة</th><th>الأب</th><th>المستوى</th></tr></thead><tbody>${faData.categories.map(c=>`<tr><td>${faEsc(c.code)}</td><td>${faEsc(c.name)}</td><td>${faEsc(c.parent||'—')}</td><td>${c.leaf?'نهائي':'مجموعة'}</td></tr>`).join('')||'<tr><td colspan="4">لا توجد أنواع بعد</td></tr>'}</tbody></table></div>`;return;}
+if(faTab==="assets"){el.innerHTML=`<h3>بطاقة أصل ثابت</h3><div class="fgrid"><label>نوع التسجيل<select id="faKind" onchange="faKindChange()"><option value="opening">افتتاحي</option><option value="new">جديد</option></select></label><label>نوع الأصل النهائي<select id="faAssetCat" onchange="faUpdateNo()"><option value="">اختر نوعاً نهائياً</option>${faData.categories.filter(c=>c.leaf).map(c=>`<option value="${faEsc(c.code)}">${faEsc(c.name)} (${faEsc(c.code)})</option>`).join('')}</select></label><label>رقم الأصل<input id="faNo" readonly></label><label>اسم الأصل<input id="faName"></label><label>الهيكل الإداري<select id="faOrg" onchange="faShowAccounts()"><option value="">اختر الهيكل</option></select></label><label>مركز التكلفة<input id="faCostCenter" placeholder="كود/اسم مركز التكلفة"></label><label>تاريخ الشراء<input id="faPurchaseDate" type="date"></label><label>تاريخ الجاهزية للاستخدام<input id="faReadyDate" type="date"></label><label>تكلفة الأصل<input id="faCost" type="number" min="0" step="0.01"></label><label>مجمع الإهلاك الافتتاحي<input id="faAccum" type="number" min="0" step="0.01" value="0"></label><label>القيمة التخريدية<input id="faResidual" type="number" min="0" step="0.01" value="0"></label><label>العمر الإنتاجي (سنوات)<input id="faLife" type="number" min="0.01" step="0.01"></label><label>نسبة الإهلاك السنوية %<input id="faRate" type="number" min="0" max="100" step="0.01"></label><label>الشرح<input id="faDesc"></label></div><div id="faAccounts" class="muted" style="margin:10px 0"></div><div id="faPayment" class="fgrid"><label>نوع السداد<select id="faPayType"><option>حسابات</option><option>آجل</option><option>نقداً</option><option>تحويل بنكي</option><option>شيك</option></select></label><label>مرجع الطرف/الحساب<input id="faPayRef" placeholder="يستكمل ربطه بدليل الموردين والبنوك والخزائن"></label></div><div class="stat-card" style="margin:12px 0"><span>الإهلاك السنوي المتوقع: </span><b id="faAnnual">0.00</b>　<span>صافي القيمة الدفترية: </span><b id="faNet">0.00</b></div><button class="btn primary" onclick="faSaveAsset()">حفظ بطاقة الأصل</button><hr><div class="tbl-wrap"><table><thead><tr><th>رقم الأصل</th><th>الاسم</th><th>النوع</th><th>التسجيل</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>الصافي</th></tr></thead><tbody>${faData.assets.map(a=>`<tr><td>${faEsc(a.no)}</td><td>${faEsc(a.name)}</td><td>${faEsc(a.categoryName)}</td><td>${a.kind==='opening'?'افتتاحي':'جديد'}</td><td>${money(a.cost)}</td><td>${money(a.accum)}</td><td>${money((+a.cost||0)-(+a.accum||0))}</td></tr>`).join('')||'<tr><td colspan="7">لا توجد أصول مسجلة</td></tr>'}</tbody></table></div>`;faKindChange();['faCost','faAccum','faResidual','faLife','faRate'].forEach(id=>document.getElementById(id)?.addEventListener('input',faCalc));return;}
+if(faTab==="depreciation"){el.innerHTML=`<h3>احتساب الإهلاك – القسط الثابت</h3><div class="fgrid"><label>من تاريخ<input id="faDepFrom" type="date"></label><label>إلى تاريخ<input id="faDepTo" type="date"></label></div><button class="btn primary" onclick="faPreviewDep()">احتساب معاينة</button><div id="faDepResult"></div><p class="muted">هذه النسخة تعرض معاينة حسابية محلية فقط. الترحيل المحاسبي غير مفعّل حتى توصيل محرك قيود GL واختبار منع التكرار والفترات المقفلة.</p>`;return;}
+if(faTab==="additions"||faTab==="disposals"){el.innerHTML=`<h3>${faTab==='additions'?'إضافات وتحسينات رأسمالية':'استبعاد وبيع وتخريد الأصول'}</h3><p class="muted">واجهة المرحلة التالية. سيتم تفعيلها بعد ربط بطاقة الأصل وحركات GL ومراجعة المعالجة المحاسبية قبل السماح بالترحيل.</p><div class="tbl-wrap"><table><thead><tr><th>رقم الأصل</th><th>التاريخ</th><th>الوصف</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody><tr><td colspan="5">لا توجد حركات مسجلة</td></tr></tbody></table></div>`;return;}
+if(faTab==="reports"){el.innerHTML=`<h3>تقارير الأصول الثابتة</h3><div class="tbl-wrap"><table><thead><tr><th>رقم الأصل</th><th>الاسم</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة</th><th>نوع التسجيل</th></tr></thead><tbody>${faData.assets.map(a=>`<tr><td>${faEsc(a.no)}</td><td>${faEsc(a.name)}</td><td>${money(a.cost)}</td><td>${money(a.accum)}</td><td>${money((+a.cost||0)-(+a.accum||0))}</td><td>${a.kind==='opening'?'افتتاحي':'جديد'}</td></tr>`).join('')||'<tr><td colspan="6">لا توجد بيانات</td></tr>'}</tbody></table></div><button class="btn secondary" onclick="faExportCsv()">تصدير CSV</button>`;}
+}
+function faSaveSettings(){faData.settings={...faData.settings,depreciation:'straight',openingMode:'detail',journalBuy:document.getElementById('faJournalBuy').value,journalDep:document.getElementById('faJournalDep').value,start:document.getElementById('faStart').value};faSave();toast('تم حفظ إعدادات الأصول محلياً','ok');}
+function faAddCategory(){const code=document.getElementById('faCatCode').value.trim(),name=document.getElementById('faCatName').value.trim(),parent=document.getElementById('faCatParent').value,leaf=document.getElementById('faCatLeaf').value==='leaf';if(!code||!name)return toast('أدخل الكود والاسم','err');if(faData.categories.some(c=>c.code===code))return toast('كود النوع مستخدم بالفعل','err');if(leaf&&faData.categories.some(c=>c.parent===code))return toast('لا يمكن جعل مجموعة لها أبناء نوعاً نهائياً','err');faData.categories.push({code,name,parent,leaf});faSave();faRender();toast('تم حفظ النوع','ok');}
+function faAddMapping(){const m={cat:document.getElementById('faMapCat').value.trim(),org:document.getElementById('faMapOrg').value.trim(),asset:document.getElementById('faMapAsset').value.trim(),accum:document.getElementById('faMapAccum').value.trim(),expense:document.getElementById('faMapExpense').value.trim()};if(Object.values(m).some(x=>!x))return toast('أكمل بيانات الربط والحسابات الثلاثة','err');if(faData.mappings.some(x=>x.cat===m.cat&&x.org===m.org))return toast('هذا النوع مربوط بالفعل بنفس الهيكل','err');faData.mappings.push(m);faSave();faRender();toast('تم حفظ الربط','ok');}
+function faKindChange(){const k=document.getElementById('faKind')?.value,box=document.getElementById('faPayment');if(box)box.style.display=k==='opening'?'none':'grid';const acc=document.getElementById('faAccum');if(acc)acc.readOnly=false;}
+function faUpdateNo(){const c=document.getElementById('faAssetCat')?.value,cat=faData.categories.find(x=>x.code===c);const no=document.getElementById('faNo');if(no)no.value=c?faNextNo(c):'';const org=document.getElementById('faOrg');if(org){const opts=faData.mappings.filter(m=>m.cat===c);org.innerHTML='<option value="">اختر الهيكل الإداري المرتبط</option>'+opts.map(m=>`<option value="${faEsc(m.org)}">${faEsc(m.org)}</option>`).join('');}faShowAccounts();}
+function faShowAccounts(){const c=document.getElementById('faAssetCat')?.value,o=document.getElementById('faOrg')?.value,m=faData.mappings.find(x=>x.cat===c&&x.org===o),el=document.getElementById('faAccounts');if(el)el.textContent=m?`حساب الأصل: ${m.asset} | مجمع الإهلاك: ${m.accum} | مصروف الإهلاك: ${m.expense}`:(c?'لا توجد حسابات مرتبطة بهذا النوع والهيكل. راجع إعدادات الربط.':'');}
+function faCalc(){const cost=+document.getElementById('faCost')?.value||0,acc=+document.getElementById('faAccum')?.value||0,res=+document.getElementById('faResidual')?.value||0,life=+document.getElementById('faLife')?.value||0,rate=+document.getElementById('faRate')?.value||0;const annual=life>0?Math.max(0,cost-res)/life:cost*rate/100;const a=document.getElementById('faAnnual'),n=document.getElementById('faNet');if(a)a.textContent=annual.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});if(n)n.textContent=(cost-acc).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function faSaveAsset(){const kind=document.getElementById('faKind').value,catCode=document.getElementById('faAssetCat').value,cat=faData.categories.find(x=>x.code===catCode),org=document.getElementById('faOrg').value,cost=+document.getElementById('faCost').value||0,accum=+document.getElementById('faAccum').value||0,life=+document.getElementById('faLife').value||0,res=+document.getElementById('faResidual').value||0;if(!cat||!cat.leaf)return toast('اختر نوع أصل نهائي','err');if(!org||!faData.mappings.some(m=>m.cat===catCode&&m.org===org))return toast('لا يوجد هيكل إداري وحسابات مرتبطة صالحة','err');if(!document.getElementById('faName').value.trim()||cost<=0)return toast('أدخل اسم الأصل وتكلفة صحيحة','err');if(accum>cost||res>cost)return toast('مجمع الإهلاك أو القيمة التخريدية لا يجوز أن يتجاوز التكلفة','err');if(kind==='new'&&!document.getElementById('faPayType').value)return toast('حدد نوع السداد','err');const no=faNextNo(catCode);if(faData.assets.some(a=>a.no===no))return toast('رقم الأصل موجود؛ أعد تحميل الشاشة','err');const m=faData.mappings.find(x=>x.cat===catCode&&x.org===org);faData.assets.push({no,kind,categoryCode:catCode,categoryName:cat.name,name:document.getElementById('faName').value.trim(),org,cost,accum,residual:res,life,rate:+document.getElementById('faRate').value||0,annual:life>0?(cost-res)/life:0,purchaseDate:document.getElementById('faPurchaseDate').value,readyDate:document.getElementById('faReadyDate').value,costCenter:document.getElementById('faCostCenter').value,description:document.getElementById('faDesc').value,accounts:m,payment:kind==='new'?{type:document.getElementById('faPayType').value,ref:document.getElementById('faPayRef').value}:null,createdAt:new Date().toISOString(),postingStatus:kind==='opening'?'opening-no-journal':'draft'});faSave();faRender();toast(kind==='opening'?'تم حفظ الأصل الافتتاحي دون إنشاء قيد':'تم حفظ الأصل الجديد كمسودة دون ترحيل','ok');}
+function faPreviewDep(){const from=document.getElementById('faDepFrom').value,to=document.getElementById('faDepTo').value;if(!from||!to||to<from)return toast('حدد فترة صحيحة','err');const rows=faData.assets.filter(a=>a.readyDate&&a.readyDate<=to&&a.kind).map(a=>{const annual=+a.annual||0;const days=Math.max(0,(new Date(to)-new Date(from))/86400000+1),amount=Math.min(Math.max(0,(+a.cost||0)-(+a.accum||0)-(+a.residual||0)),annual*days/365);return {...a,amount};});const total=rows.reduce((s,a)=>s+a.amount,0);document.getElementById('faDepResult').innerHTML=`<p><b>إجمالي معاينة الإهلاك: ${total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</b></p><div class="tbl-wrap"><table><thead><tr><th>الأصل</th><th>إهلاك الفترة</th></tr></thead><tbody>${rows.map(a=>`<tr><td>${faEsc(a.no)} — ${faEsc(a.name)}</td><td>${a.amount.toFixed(2)}</td></tr>`).join('')}</tbody></table></div>`;}
+function faExportCsv(){const rows=[['رقم الأصل','الاسم','النوع','التكلفة','مجمع الإهلاك','صافي القيمة','نوع التسجيل'],...faData.assets.map(a=>[a.no,a.name,a.categoryName,a.cost,a.accum,a.cost-a.accum,a.kind])];const csv='\ufeff'+rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='fixed-assets-register.csv';a.click();URL.revokeObjectURL(url);}
+// ================== نهاية وحدة الأصول الثابتة ==================
+
 function go(page){
   { const _m=(page==="salesInvoices"); if((page==="shipments"||_m)&&_m!==SI_MODE){ SI_MODE=_m; draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; } }
   _navTrack(page);
@@ -4172,7 +4221,8 @@ function go(page){
     dataHealth:["🩺 فحص سلامة البيانات","اكتشف التناقضات والسجلات المعلّقة والمكررة قبل ما تسبّب مشاكل"],
     custodyLedger:["العهد والخزن","إدارة أكواد العهد وأصحابها وحركات الوارد والمنصرف"],
     custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"],
-    gl:["المحاسبة العامة","دليل الحسابات، مراكز التكلفة، السنوات والفترات، والقيود اليومية"]
+    gl:["المحاسبة العامة","دليل الحسابات، مراكز التكلفة، السنوات والفترات، والقيود اليومية"],
+    fixedAssets:["الأصول الثابتة","إدارة دورة حياة الأصل من التسجيل حتى الإهلاك والاستبعاد"]
   };
   const t = (titles[page] || ["",""]).slice();
   if(page==="settings"){ const _st=settingsTabs.find(x=>x.id===settingsTab); if(_st){ t[0]=_st.title; t[1]=_st.crumb; } }
@@ -4185,6 +4235,7 @@ function go(page){
   else if(page==="master") { c.innerHTML = viewMaster(); bindMaster(); }
   else if(page==="inventory") { const allowed=inventoryTabDefs().filter(t=>canTab("inventory",t.id)); if(!allowed.some(t=>t.id===inventoryTab))inventoryTab=allowed.length?allowed[0].id:"warehouses"; c.innerHTML = viewInventory(); if(inventoryTab!=="warehouses"&&inventoryTab!=="items") inventoryLoad().then(()=>{if(currentPage==="inventory"){const el=document.getElementById("content");if(el)el.innerHTML=viewInventory();}}); }
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
+  else if(page==="fixedAssets") { c.innerHTML = faView(); faRender(); }
   else if(page==="users") { c.innerHTML = viewUsers(); }
   else if(page==="trash") { c.innerHTML = viewTrash(); renderTrash(); }
   else if(page==="dataHealth") { c.innerHTML = viewDataHealth(); }
@@ -6490,18 +6541,28 @@ function viewDashboard(){
   const chartN=Math.max(6,P.n), months=[];
   for(let i=chartN-1;i>=0;i--){ const off=P.end+i, d=new Date(now.getFullYear(),now.getMonth()-off,1); months.push({k:mkAt(off),lbl:new Intl.DateTimeFormat('ar-EG-u-nu-latn',{month:'short'}).format(d),sales:0,coll:0}); }
   const mIdx=Object.fromEntries(months.map((m,i)=>[m.k,i]));
-  let salesMonth=0, salesPrev=0, salesDueMonth=0, taxMonth=0, buyMonth=0, buyPrev=0, buyNetMonth=0, buyNetPrev=0, buyTaxMonth=0, salesGrossMonth=0;
+  let salesMonth=0, salesPrev=0, salesDueMonth=0, taxMonth=0, salesWithholdingMonth=0, buyMonth=0, buyPrev=0, buyNetMonth=0, buyNetPrev=0, buyTaxMonth=0, buyWithholdingMonth=0, salesGrossMonth=0;
   const canBuyK = safe(()=>showBuy("supply"),false);
   const stamp="اليوم، "+new Intl.DateTimeFormat('ar-EG-u-nu-latn',{hour:'numeric',minute:'2-digit'}).format(now);
-  safe(()=>arr("shipments").forEach(sh=>(sh.items||[]).forEach(it=>{
-    const _a=supplyAmounts(sh,it), t=+_a.subtotal||0, td=+_a.total||0;   // المبيعات محاسبياً: قبل الضريبة وقبل الخصم؛ الصافي المستحق بيُستخدم لنسبة التحصيل بس
-    const k=String(sh.date||"").slice(0,7);
-    const _tx=+_a.tax||0, _by=+_a.buyTotal||0;
-    // سعر الشراء المسجل شامل الضريبة: نفصل صافي الشراء وضريبة المدخلات بنفس نسبة بوليصة التوريد
-    const _vr=(sh.applyVat!==false)?Math.max(0,((sh.vatPct==null||sh.vatPct==="")?(+state.settings.tax||14):+sh.vatPct)):0, _byNet=_vr?_by/(1+_vr/100):_by;
-    if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; } if(inPrev(k,sh.date)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
-    if(k in mIdx) months[mIdx[k]].sales+=t;
-  })));
+  safe(()=>arr("shipments").forEach(sh=>{
+    let _shipmentBuyNet=0;
+    (sh.items||[]).forEach(it=>{
+      const _a=supplyAmounts(sh,it), t=+_a.subtotal||0, td=+_a.total||0;   // المبيعات قبل الضريبة؛ خصم أ.ت.ص مبلغ مستقطع وليس ربحًا
+      const k=String(sh.date||"").slice(0,7);
+      const _tx=+_a.tax||0, _by=+_a.buyTotal||0;
+      // سعر الشراء شامل الضريبة: نفصل صافي الشراء وضريبة المدخلات بنفس نسبة بوليصة التوريد
+      const _vr=(sh.applyVat!==false)?Math.max(0,((sh.vatPct==null||sh.vatPct==="")?(+state.settings.tax||14):+sh.vatPct)):0, _byNet=_vr?_by/(1+_vr/100):_by;
+      if(periodKeys.has(k)){ salesMonth+=t; salesDueMonth+=td; taxMonth+=_tx; salesWithholdingMonth+=(+_a.discount||0); buyMonth+=_by; buyNetMonth+=_byNet; buyTaxMonth+=_by-_byNet; salesGrossMonth+=t+_tx; }
+      if(inPrev(k,sh.date)){ salesPrev+=t; buyPrev+=_by; buyNetPrev+=_byNet; }
+      if(k in mIdx) months[mIdx[k]].sales+=t;
+      _shipmentBuyNet+=_byNet;
+    });
+    // خصم أ.ت.ص على المشتريات لا يُحسب إلا للمورد المفعّل عليه الخصم، وبنسبته المسجلة
+    if(periodKeys.has(String(sh.date||"").slice(0,7))){
+      const _sup=findParty(arr("suppliers"),sh.supplier);
+      if(_sup&&_sup.applyProfitTax){ const _pct=Math.max(0,(_sup.profitTaxPct==null||_sup.profitTaxPct==="")?(+state.settings.profitTax||1):(+_sup.profitTaxPct||0)); buyWithholdingMonth+=Math.round(_shipmentBuyNet*_pct)/100; }
+    }
+  }));
   let collMonth=0, collPrev=0, chequeSum=0, chequeN=0;
   const soon=dk(new Date(now.getFullYear(),now.getMonth(),now.getDate()+7));
   arr("treasuryEntries").forEach(e=>{
@@ -6553,20 +6614,16 @@ function viewDashboard(){
   const kpi=(cls,ic,lbl,val,sub,go_,tip)=>`<button class="dx-kpi ${cls}" onclick="${/\(/.test(go_)?go_:`go('${go_}')`}"${tip?` title="${escapeAttr(tip)}"`:''}><span class="dx-kpi-ic">${ic}</span><span class="dx-kpi-body"><span class="dx-kpi-lbl">${lbl}</span><strong>${val}</strong><small>${sub}</small></span></button>`;
   const moneyKpis = canMoney ? `
       ${kpi('k-gold','◈','مبيعات '+P.s+' (قبل الضريبة)',money(salesMonth)+' <em>'+cur+'</em>',(delta(salesMonth,salesPrev)===null?'بدون مقارنة':chip(delta(salesMonth,salesPrev))+' عن '+cmpLbl),periodGo('salesReport'))}
-      ${kpi('k-slate','%','قيمة مضافة مبيعات '+P.s,money(taxMonth)+' <em>'+cur+'</em>','ضريبة القيمة المضافة على مبيعات الفترة','salesReport')}
-      ${canBuyK?kpi((salesMonth-buyNetMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (قبل الضريبة)',money(salesMonth-buyNetMonth)+' <em>'+cur+'</em>','هامش '+(salesMonth>0?Math.round((salesMonth-buyNetMonth)/salesMonth*100):0)+'% · مبيعات − مشتريات (قبل الضريبة)','supply','الربح التجاري = مبيعات الفترة قبل الضريبة − صافي الشراء قبل ضريبة المدخلات'):''}
+      ${kpi((taxMonth-salesWithholdingMonth)>=0?'k-slate':'k-green','%','صافي ضرائب المبيعات',money(taxMonth-salesWithholdingMonth)+' <em>'+cur+'</em>','القيمة المضافة '+money(taxMonth)+' − خصم أ.ت.ص '+money(salesWithholdingMonth),'salesReport','صافي ضريبة المبيعات = ضريبة القيمة المضافة − خصم أ.ت.ص المستقطع من العملاء')}
       ${kpi('k-blue','Σ','إجمالي قيمة المبيعات بعد الضرائب',money(salesGrossMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة + القيمة المضافة',periodGo('salesReport'))}
       ${canBuyK?kpi('k-red','⇩','مشتريات '+P.s+' (قبل الضريبة)',money(buyNetMonth)+' <em>'+cur+'</em>',(delta(buyNetMonth,buyNetPrev)===null?'بدون مقارنة':chip(delta(buyNetMonth,buyNetPrev))+' عن '+cmpLbl),'supply'):''}
-      ${canBuyK?kpi('k-slate','%','قيمة مضافة مشتريات '+P.s,money(buyTaxMonth)+' <em>'+cur+'</em>','ضريبة المدخلات المستقطعة من أسعار الشراء','supply'):''}
-      ${canBuyK?kpi((salesGrossMonth-buyMonth)>=0?'k-green':'k-red','★','أرباح تجارية '+P.s+' (بعد الضريبة)',money(salesGrossMonth-buyMonth)+' <em>'+cur+'</em>','مبيعات − مشتريات (شامل الضريبة)','supply','الربح بعد الضرائب = إجمالي المبيعات شامل القيمة المضافة − إجمالي المشتريات شامل الضريبة'):''}
+      ${canBuyK?kpi((buyTaxMonth-buyWithholdingMonth)>=0?'k-slate':'k-green','%','صافي ضرائب المشتريات',money(buyTaxMonth-buyWithholdingMonth)+' <em>'+cur+'</em>','القيمة المضافة '+money(buyTaxMonth)+' − خصم أ.ت.ص '+money(buyWithholdingMonth),'supply','صافي ضريبة المشتريات = ضريبة المدخلات − خصم أ.ت.ص المستقطع من الموردين المفعّل عليهم الخصم'):''}
       ${canBuyK?kpi('k-red','Σ','إجمالي قيمة المشتريات بعد الضرائب',money(buyMonth)+' <em>'+cur+'</em>','المشتريات قبل الضريبة + القيمة المضافة','supply'):''}
+      ${canBuyK?kpi((salesMonth-buyNetMonth)>=0?'k-green':'k-red','★','صافي ربح الفترة',money(salesMonth-buyNetMonth)+' <em>'+cur+'</em>','المبيعات قبل الضريبة − المشتريات قبل الضريبة','supply','هامش تجاري قبل المصروفات العامة: المبيعات قبل الضريبة ناقص صافي تكلفة المشتريات قبل ضريبة المدخلات'):''}
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+cmpLbl),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi(lateTotal>0?'k-red dx-kpi-late':'k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
-      ${safe(()=>canView("bankStatement"),false)?(()=>{ const c=dxTrCell('bank'); return kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+c.sub+'</span>','bankStatement','إجمالي أرصدة البنوك حتى الآن (بدون بنكي أوراق القبض والدفع الوسيطين) — بنفس حساب شاشة كشف حساب بنك'); })():''}
-      ${safe(()=>canView("safeStatement"),false)?(()=>{ const c=dxTrCell('safe'); return kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+c.val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+c.sub+'</span>','safeStatement','إجمالي أرصدة الخزائن النقدية حتى الآن — بنفس حساب شاشة كشف حساب خزينة'); })():''}
-      ${(()=>{ const n=dxPartyNets(); return (n.c===null?'':kpi('k-blue','♙','رصيد العملاء الصافي',money(n.c)+' <em>'+cur+'</em>',n.c>=0?'مستحق لنا عند العملاء':'رصيد دائن للعملاء (علينا)','clientTB','صافي أرصدة كل العملاء حتى الآن (أول المدة + المبيعات − التحصيلات)'))+(n.v===null?'':kpi('k-slate','♧','رصيد الموردين الصافي',money(n.v)+' <em>'+cur+'</em>',n.v>=0?'مستحق للموردين (علينا)':'رصيد مدين لدى الموردين (لنا)','supplierTB','صافي أرصدة كل الموردين حتى الآن (أول المدة + المشتريات − المدفوعات)')); })()}` :
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل',"currentTab='customers';go('master')")}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل',"currentTab='suppliers';go('master')")}`;
 
   const lateList = lateTop.map(r=>`<tr style="cursor:pointer" title="فتح أقساط ${escapeAttr(r.customer)} المتأخرة" onclick="dxPulseGoto('salesInstallments',{customer:${escapeAttr(JSON.stringify(r.customer))},status:'متأخر'})"><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
@@ -6633,7 +6690,7 @@ function viewDashboard(){
       <div class="dx-stamp"><span>آخر تحديث: <b>${stamp}</b></span><button type="button" onclick="dxRefresh()" aria-label="تحديث البيانات" title="تحديث">↻</button></div>
     </div>
 
-    ${(()=>{const parts=moneyKpis.split('<button class="dx-kpi ').filter(x=>x.trim()).map(x=>'<button class="dx-kpi '+x);const g=n=>parts.slice(n[0],n[1]).join('');return canMoney&&canBuyK?`<div class="dx-kpis dx-k4 dx-k4-trade">${g([0,8])}</div><div class="dx-kpis dx-k4">${g([8])}</div>`:`<div class="dx-kpis dx-k2" data-n="${parts.length}">${moneyKpis}</div>`;})()}
+    ${(()=>{const parts=moneyKpis.split('<button class="dx-kpi ').filter(x=>x.trim()).map(x=>'<button class="dx-kpi '+x);const g=(a,b)=>parts.slice(a,b).join('');if(canMoney&&canBuyK){return `<section class="dx-fin-group"><div class="dx-section-title"><span class="dx-section-mark sales"></span><div><b>أداء المبيعات</b><small>قيمة المبيعات والضريبة خلال الفترة</small></div></div><div class="dx-kpis dx-fin-grid">${g(0,3)}</div></section><section class="dx-fin-group"><div class="dx-section-title"><span class="dx-section-mark buys"></span><div><b>أداء المشتريات</b><small>تكلفة المشتريات وصافي ضريبة المدخلات</small></div></div><div class="dx-kpis dx-fin-grid">${g(3,6)}</div></section><section class="dx-profit-wrap">${g(6,7)}</section><section class="dx-fin-group"><div class="dx-section-title"><span class="dx-section-mark ops"></span><div><b>التحصيلات والمتابعة</b><small>السيولة التشغيلية والالتزامات القائمة</small></div></div><div class="dx-kpis dx-fin-grid dx-ops-grid">${g(7,parts.length)}</div></section>`;}return `<div class="dx-kpis dx-k2" data-n="${parts.length}">${moneyKpis}</div>`;})()}
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
     `:""}
 
@@ -22947,7 +23004,29 @@ function txPrintVoucher(id,direction){
 table{width:100%;border-collapse:collapse;margin:6px 0 12px;font-size:12.5px}th{background:#0f2748;color:#fff;padding:7px 8px;border:1px solid #0f2748}td{padding:6px 8px;border:1px solid #cbd5e1;text-align:center}td.nm{text-align:right;font-weight:700}td.m{direction:ltr;font-weight:700}td.c{width:34px}tfoot td{background:#eef2f8;font-weight:800}
 .sg{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:34px;text-align:center}.sg div{border-top:1.5px solid #0f2748;padding-top:6px;font-size:12px;font-weight:700;color:#334155}
 .ft{display:flex;justify-content:space-between;margin-top:18px;border-top:1px dashed #cbd5e1;padding-top:6px;font-size:10.5px;color:#6b7280}`;
-  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${title} ${esc(e.no||"")}</title><style>${css}</style></head><body>
+  const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${title} ${esc(e.no||"")}</title><style>${css}</style>
+<style id="dx-professional-refresh">
+#content .dx .dx-fin-group{margin:8px 0 18px}
+#content .dx .dx-section-title{display:flex;align-items:center;gap:10px;margin:0 2px 10px;color:#172b49}
+#content .dx .dx-section-title b{display:block;font-size:14px;font-weight:850;letter-spacing:.1px}
+#content .dx .dx-section-title small{display:block;color:#7b8798;font-size:10.5px;margin-top:2px}
+#content .dx .dx-section-mark{width:4px;height:29px;border-radius:8px;background:#3975b9;box-shadow:0 0 0 4px #eaf1fa}
+#content .dx .dx-section-mark.buys{background:#b58a38;box-shadow:0 0 0 4px #f8f1e3}
+#content .dx .dx-section-mark.ops{background:#718096;box-shadow:0 0 0 4px #eef1f5}
+#content .dx .dx-fin-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:11px;margin:0}
+#content .dx .dx-fin-grid .dx-kpi{min-height:104px;padding:15px;border-radius:15px;background:linear-gradient(145deg,#fff,#f9fbfe);border-color:#e4eaf2;box-shadow:0 3px 12px rgba(24,43,72,.045)}
+#content .dx .dx-fin-grid .dx-kpi strong{font-size:clamp(18px,1.55vw,24px);color:#172b49}
+#content .dx .dx-fin-grid .dx-kpi-lbl{font-size:12px;color:#617086}
+#content .dx .dx-profit-wrap{margin:2px 0 20px}
+#content .dx .dx-profit-wrap .dx-kpi{width:100%;min-height:112px;align-items:center;padding:19px 22px;border:1px solid #173b63;border-radius:17px;background:linear-gradient(112deg,#102b4d 0%,#1c4772 62%,#285985 100%);color:#fff;box-shadow:0 9px 24px rgba(16,43,77,.17)}
+#content .dx .dx-profit-wrap .dx-kpi-ic{width:48px;height:48px;background:rgba(255,255,255,.14);color:#f4d58a}
+#content .dx .dx-profit-wrap .dx-kpi-lbl,#content .dx .dx-profit-wrap .dx-kpi small,#content .dx .dx-profit-wrap .dx-kpi strong em{color:#d6e3f1}
+#content .dx .dx-profit-wrap .dx-kpi strong{font-size:clamp(25px,2.5vw,34px);color:#fff}
+#content .dx .dx-profit-wrap .dx-kpi small{font-size:11px}
+@media(max-width:640px){#content .dx .dx-fin-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}#content .dx .dx-fin-grid .dx-kpi{min-height:90px;padding:10px 11px;gap:7px}#content .dx .dx-fin-grid .dx-kpi strong{font-size:clamp(14px,4vw,18px)}#content .dx .dx-fin-grid .dx-kpi small{font-size:9px;line-height:1.35}#content .dx .dx-section-title{margin-bottom:8px}#content .dx .dx-profit-wrap .dx-kpi{min-height:100px;padding:14px 15px}#content .dx .dx-profit-wrap .dx-kpi strong{font-size:clamp(23px,6vw,29px)}}
+@media(min-width:641px) and (max-width:900px){#content .dx .dx-fin-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head><body>
 <header class="hd"><div><div class="co">IRON GATE SUPPLIES</div><div class="sub">نظام الإدارة — الخزينة</div></div><div class="tt"><h1>${title}</h1><div class="st ${posted?"ok":""}">${posted?"✓ مُرحَّل بقيد "+esc(String(e.postedEntryNo||"")):"غير مُرحَّل"}</div></div><div class="no"><small>رقم السند</small><b>${esc(String(e.no||"—"))}</b></div></header>
 <div class="amt"><div class="box"><small>المبلغ (${esc(cur)})</small><b>${f2(e.amount)}</b></div><div class="wd"><small>مبلغ وقدره</small><span>${esc(words)}</span></div></div>
 <div class="grid"><div class="f"><small>التاريخ</small><b>${dmy(e.date)}</b></div><div class="f"><small>طريقة ${isIn?"التحصيل":"الدفع"}</small><b>${esc(methodLbl)}</b></div>
@@ -24415,6 +24494,46 @@ body:not(#_) #content:has(section.dx){background:#f3f5f9}
   function init(){ if(!$("lgDateBar")) return; tick(); setInterval(tick,60000); weather(); setInterval(weather,30*60*1000); }
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",init); else init();
 })();
+// Fixed Assets - Supabase integration layer (safe additive implementation)
+const FA_DB={org:'fa_org_units',cat:'fa_categories',map:'fa_account_mappings',asset:'fa_assets',events:'fa_asset_events',runs:'fa_depreciation_runs',lines:'fa_depreciation_lines',settings:'fa_settings'};
+let faDbReady=false,faDbLoading=false,faDbError='';
+const faDbMsg=e=>String(e?.message||e||'خطأ غير معروف');
+const faDbDate=v=>v||null;
+async function faDbLoad(){
+ if(faDbLoading)return;faDbLoading=true;faDbError='';
+ try{
+  const [c,o,m,a,e,r,s]=await Promise.all([
+   sb.from(FA_DB.cat).select('*').order('category_code'),sb.from(FA_DB.org).select('*').order('unit_code'),sb.from(FA_DB.map).select('*'),sb.from(FA_DB.asset).select('*').order('asset_no'),sb.from(FA_DB.events).select('*').order('event_date',{ascending:false}),sb.from(FA_DB.runs).select('*').order('period_from',{ascending:false}),sb.from(FA_DB.settings).select('*').maybeSingle()
+  ]);
+  for(const x of [c,o,m,a,e,r])if(x.error)throw x.error;
+  faData.categories=(c.data||[]).map(x=>({id:x.id,code:x.category_code,name:x.category_name,parentId:x.parent_id,parent:(c.data||[]).find(p=>p.id===x.parent_id)?.category_code||'',leaf:x.is_leaf}));
+  faData.orgs=(o.data||[]).map(x=>({id:x.id,code:x.unit_code,name:x.unit_name,parentId:x.parent_id,parent:(o.data||[]).find(p=>p.id===x.parent_id)?.unit_code||''}));
+  faData.mappings=(m.data||[]).map(x=>({id:x.id,catId:x.category_id,orgId:x.org_unit_id,cat:faData.categories.find(y=>y.id===x.category_id)?.code||'',org:faData.orgs.find(y=>y.id===x.org_unit_id)?.code||'',assetId:x.asset_account_id,accumId:x.accum_depr_account_id,expenseId:x.depr_expense_account_id,asset:x.asset_account_id,accum:x.accum_depr_account_id,expense:x.depr_expense_account_id}));
+  faData.assets=(a.data||[]).map(x=>({id:x.id,no:x.asset_no,kind:x.registration_kind==='opening'?'opening':'new',categoryId:x.category_id,categoryCode:faData.categories.find(y=>y.id===x.category_id)?.code||'',categoryName:faData.categories.find(y=>y.id===x.category_id)?.name||'',orgId:x.org_unit_id,org:faData.orgs.find(y=>y.id===x.org_unit_id)?.code||'',name:x.asset_name,description:x.description,cost:+x.acquisition_cost,accum:+x.opening_accumulated_depreciation,residual:+x.residual_value,life:+x.useful_life_years,rate:+x.annual_rate||0,annual:(+x.acquisition_cost-(+x.residual_value))/(+x.useful_life_years||1),purchaseDate:x.purchase_date,readyDate:x.ready_date,costCenter:x.cost_center_id,postingStatus:x.posting_status,paymentMethod:x.payment_method,paymentAccountId:x.payment_account_id,supplier:x.supplier_name,bank:x.bank_code,safe:x.safe_code,cheque:x.cheque_ref}));
+  faData.events=e.data||[];faData.runs=r.data||[];faData.settings={...(faData.settings||{}),...(s.data||{})};faDbReady=true;
+ }catch(err){faDbError=faDbMsg(err);throw err;}finally{faDbLoading=false;}
+}
+const faOldRender=faRender;
+faRender=function(){try{faOldRender();const b=document.getElementById('faBody');if(!b)return;if(faDbError)b.insertAdjacentHTML('afterbegin',`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${faEsc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`);if(faTab==='settings'){
+ const accs=(glState?.accounts||[]).filter(x=>x.is_active&&!x.is_group&&x.allow_posting);
+ const orgs=faData.orgs||[];
+ b.insertAdjacentHTML('beforeend',`<hr><h3>شجرة الهيكل الإداري</h3><div class="fgrid"><label>كود الهيكل<input id="faOrgCode"></label><label>اسم الهيكل<input id="faOrgName"></label><label>الأب<select id="faOrgParent"><option value="">رئيسي</option>${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label></div><button class="btn primary" onclick="faDbAddOrg()">إضافة الهيكل</button><div class="tbl-wrap"><table><thead><tr><th>الكود</th><th>الهيكل</th><th>الأب</th></tr></thead><tbody>${orgs.map(x=>`<tr><td>${faEsc(x.code)}</td><td>${faEsc(x.name)}</td><td>${faEsc(x.parent||'—')}</td></tr>`).join('')||'<tr><td colspan="3">لا توجد هياكل</td></tr>'}</tbody></table></div><p class="muted">الحسابات المرتبطة تُختار من دليل الحسابات الفعلي في الأستاذ العام.</p><div class="fgrid"><label>النوع النهائي<select id="faMapCatId">${faData.categories.filter(x=>x.leaf).map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label><label>الهيكل الإداري<select id="faMapOrgId">${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label>${[['faMapAssetId','حساب الأصل'],['faMapAccumId','حساب مجمع الإهلاك'],['faMapExpenseId','حساب مصروف الإهلاك']].map(([id,label])=>`<label>${label}<select id="${id}"><option value="">اختر حساباً</option>${accs.map(x=>`<option value="${x.id}">${faEsc(x.account_code+' — '+x.account_name)}</option>`).join('')}</select></label>`).join('')}</div><button class="btn primary" onclick="faDbAddMapping()">حفظ ربط الحسابات</button>`);
+ }
+ }catch(e){console.error(e);}};
+async function faReloadDb(){try{await faDbLoad();faDbError='';faRender();toast('تم تحديث بيانات الأصول من قاعدة البيانات','ok');}catch(e){toast('تعذر التحميل: '+faDbMsg(e),'err');}}
+async function faDbAddOrg(){try{const code=document.getElementById('faOrgCode').value.trim(),name=document.getElementById('faOrgName').value.trim(),parent=document.getElementById('faOrgParent').value||null;if(!code||!name)throw new Error('أدخل الكود والاسم');const r=await sb.from(FA_DB.org).insert({unit_code:code,unit_name:name,parent_id:parent}).select().single();if(r.error)throw r.error;await faReloadDb();}catch(e){toast(faDbMsg(e),'err');}}
+async function faAddCategory(){try{const code=document.getElementById('faCatCode').value.trim(),name=document.getElementById('faCatName').value.trim(),parentCode=document.getElementById('faCatParent').value,leaf=document.getElementById('faCatLeaf').value==='leaf';if(!code||!name)throw new Error('أدخل الكود والاسم');const parent=faData.categories.find(x=>x.code===parentCode);if(parentCode&&!parent)throw new Error('المجموعة الأب غير موجودة');if(parent?.leaf)throw new Error('لا يمكن إضافة نوع أسفل نوع نهائي');const r=await sb.from(FA_DB.cat).insert({category_code:code,category_name:name,parent_id:parent?.id||null,is_leaf:leaf}).select().single();if(r.error)throw r.error;await faReloadDb();toast('تم حفظ المجموعة في قاعدة البيانات','ok');}catch(e){toast(faDbMsg(e),'err');}}
+async function faDbAddMapping(){try{const payload={category_id:document.getElementById('faMapCatId').value,org_unit_id:document.getElementById('faMapOrgId').value,asset_account_id:document.getElementById('faMapAssetId').value,accum_depr_account_id:document.getElementById('faMapAccumId').value,depr_expense_account_id:document.getElementById('faMapExpenseId').value};if(Object.values(payload).some(x=>!x))throw new Error('أكمل اختيار النوع والهيكل والحسابات الثلاثة');const r=await sb.from(FA_DB.map).upsert(payload,{onConflict:'category_id,org_unit_id'});if(r.error)throw r.error;await faReloadDb();toast('تم حفظ ربط الحسابات','ok');}catch(e){toast(faDbMsg(e),'err');}}
+async function faAddMapping(){return faDbAddMapping();}
+function faUpdateNo(){const c=document.getElementById('faAssetCat')?.value,cat=faData.categories.find(x=>x.code===c);const no=document.getElementById('faNo');if(no)no.value=c?'يُنشأ تلقائياً عند الحفظ':'';const org=document.getElementById('faOrg');if(org){const opts=faData.mappings.filter(m=>m.cat===c);org.innerHTML='<option value="">اختر الهيكل الإداري المرتبط</option>'+opts.map(m=>{const o=faData.orgs.find(x=>x.id===m.orgId);return `<option value="${faEsc(o?.id||'')}">${faEsc(o?o.code+' — '+o.name:m.org)}</option>`;}).join('');}faShowAccounts();}
+function faShowAccounts(){const c=document.getElementById('faAssetCat')?.value,o=document.getElementById('faOrg')?.value,m=faData.mappings.find(x=>x.cat===c&&x.orgId===o),el=document.getElementById('faAccounts');if(el){const a=id=>(glState?.accounts||[]).find(x=>x.id===id);el.textContent=m?`حساب الأصل: ${a(m.assetId)?.account_code||'—'} | مجمع الإهلاك: ${a(m.accumId)?.account_code||'—'} | مصروف الإهلاك: ${a(m.expenseId)?.account_code||'—'}`:'اختر نوع الأصل والهيكل المرتبط.';}}
+async function faSaveAsset(){try{const kind=document.getElementById('faKind').value,cat=faData.categories.find(x=>x.code===document.getElementById('faAssetCat').value),orgId=document.getElementById('faOrg').value,m=faData.mappings.find(x=>x.catId===cat?.id&&x.orgId===orgId),cost=+document.getElementById('faCost').value||0,accum=+document.getElementById('faAccum').value||0,res=+document.getElementById('faResidual').value||0,life=+document.getElementById('faLife').value||0,name=document.getElementById('faName').value.trim();if(!cat?.leaf||!m||!name||cost<=0||life<=0||accum>cost||res>cost)throw new Error('راجع النوع النهائي والهيكل والربط والاسم والتكلفة والعمر ومجمع الإهلاك');const date=document.getElementById('faPurchaseDate').value||null,ready=document.getElementById('faReadyDate').value||null,cc=document.getElementById('faCostCenter').value.trim();let costCenterId=null;if(cc){const q=await sb.from('gl_cost_centers').select('id,center_code,center_name').or(`center_code.eq.${cc},center_name.eq.${cc}`).limit(1).maybeSingle();if(q.error)throw q.error;if(!q.data)throw new Error('مركز التكلفة غير موجود في دليل الأستاذ العام');costCenterId=q.data.id;}
+ let result;if(kind==='opening'){result=await sb.rpc('fa_register_opening_asset',{p_category_id:cat.id,p_org_unit_id:orgId,p_asset_name:name,p_description:document.getElementById('faDesc').value||null,p_purchase_date:date,p_ready_date:ready,p_cost:cost,p_opening_accum:accum,p_residual:res,p_life:life,p_cost_center_id:costCenterId});}
+ else {const methodMap={'حسابات':'accounts','آجل':'credit','نقداً':'cash','تحويل بنكي':'bank_transfer','شيك':'cheque'},pm=methodMap[document.getElementById('faPayType').value]||document.getElementById('faPayType').value,ref=document.getElementById('faPayRef').value.trim();let payAcc=null,supplier=null,bank=null,safe=null,cheque=null;if(pm==='accounts'||pm==='cash'||pm==='bank_transfer'||pm==='cheque'){const q=await sb.from('gl_accounts').select('id,account_code,account_name').or(`account_code.eq.${ref},account_name.eq.${ref}`).limit(1).maybeSingle();if(q.error)throw q.error;if(!q.data)throw new Error('الحساب المختار غير موجود في دليل الحسابات');payAcc=q.data.id;}if(pm==='credit')supplier=ref;if(pm==='cash')safe=ref;if(pm==='bank_transfer')bank=ref;if(pm==='cheque')cheque=ref;result=await sb.rpc('fa_register_new_asset',{p_category_id:cat.id,p_org_unit_id:orgId,p_asset_name:name,p_description:document.getElementById('faDesc').value||null,p_purchase_date:date,p_ready_date:ready,p_cost:cost,p_residual:res,p_life:life,p_cost_center_id:costCenterId,p_payment_method:pm,p_payment_account_id:payAcc,p_supplier_name:supplier,p_bank_code:bank,p_safe_code:safe,p_cheque_ref:cheque});}
+ if(result.error)throw result.error;await faReloadDb();toast(kind==='opening'?'تم تسجيل الأصل الافتتاحي دون إنشاء قيد':'تم تسجيل الأصل الجديد كمسودة شراء دون ترحيل','ok');}catch(e){toast('تعذر حفظ الأصل: '+faDbMsg(e),'err');}}
+// Start DB sync only after Supabase client exists; no localStorage is used for authoritative records.
+const faOriginalGo=go;go=function(page){faOriginalGo(page);if(page==='fixedAssets'){faDbLoad().then(()=>{if(currentPage==='fixedAssets')faRender();}).catch(e=>{faDbError=faDbMsg(e);faRender();});}};
+
 </script>
 
 <style id="dx-kpis-two-rows">
