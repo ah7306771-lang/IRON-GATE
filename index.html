@@ -2383,6 +2383,16 @@ html body #content::-webkit-scrollbar-thumb,html body .content::-webkit-scrollba
 html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollbar-track,html::-webkit-scrollbar-track,body::-webkit-scrollbar-track{background:#e7ebf1}
 </style>
 <style id="coFix">#login #loginCompany option{background:#14213d;color:#fff;font-weight:700}#login #loginCompany:focus{border-color:#E6B325;box-shadow:0 0 0 4px rgba(230,179,37,.16)}</style>
+<style id="txMethodCss">
+.mth{display:inline-flex;align-items:center;gap:5px;padding:3px 12px;border-radius:999px;font-size:13px;font-weight:800;border:1.5px solid;white-space:nowrap;line-height:1.55;letter-spacing:.2px}
+.mth-cash{background:#dcf1e5;color:#13542f;border-color:#7cc59b}
+.mth-transfer{background:#dbe9fb;color:#17408a;border-color:#8fb4ec}
+.mth-bank{background:#fdecc8;color:#6e4200;border-color:#e3b25a}
+.mth-adjd{background:#fbe0dc;color:#8f2418;border-color:#e49a90}
+.mth-adjc{background:#ece0f7;color:#52277f;border-color:#bf9de0}
+.mth-ts{background:#d9f1f2;color:#0e5560;border-color:#80c6cc}
+@media print{.mth{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style>
 </head>
 <body>
 
@@ -4376,7 +4386,7 @@ function blPaint(){
     const inn=e.direction==="in", v=+e.amount||0, eff=blEffective(e);
     if(eff){ run+=inn?v:-v; if(inn)ti+=v; else to+=v; } else { if(inn)pi+=v; else po+=v; }
     const dim=eff?"":"opacity:.55;font-style:italic";
-    return `<tr style="${dim}"><td>${i+1}</td><td dir="ltr">${escapeHtml(String(e.date||"—"))}</td><td><span class="chip ${inn?"ok":"warn"}">${inn?"تحصيل":"دفعة"}</span></td><td>${escapeHtml((inn?e.customer:e.supplier)||"—")}</td><td>${escapeHtml(treasuryLabel(e.treasury))}</td><td>${escapeHtml(txMethodLabelOf(e.method))}</td><td>${txStatusChip(e.status)||"—"}</td><td>${escapeHtml(e.notes||"—")}</td><td style="color:var(--ok)">${inn?fmt(v):"—"}</td><td style="color:var(--danger)">${inn?"—":fmt(v)}</td><td>${eff?`<b style="color:${run<0?"var(--danger)":"inherit"}">${fmt(run)}</b>`:"—"}</td></tr>`;
+    return `<tr style="${dim}"><td>${i+1}</td><td dir="ltr">${escapeHtml(String(e.date||"—"))}</td><td><span class="chip ${inn?"ok":"warn"}">${inn?"تحصيل":"دفعة"}</span></td><td>${escapeHtml((inn?e.customer:e.supplier)||"—")}</td><td>${escapeHtml(treasuryLabel(e.treasury))}</td><td style="text-align:center">${txMethodBadge(e.method, e)}</td><td>${txStatusChip(e.status)||"—"}</td><td>${escapeHtml(e.notes||"—")}</td><td style="color:var(--ok)">${inn?fmt(v):"—"}</td><td style="color:var(--danger)">${inn?"—":fmt(v)}</td><td>${eff?`<b style="color:${run<0?"var(--danger)":"inherit"}">${fmt(run)}</b>`:"—"}</td></tr>`;
   }).join("")||'<tr><td colspan="11" style="text-align:center;padding:16px">لا توجد حركات بنكية بهذه الفلاتر</td></tr>';
   const b=document.getElementById("blBody"); if(b) b.innerHTML=body;
   const f=document.getElementById("blFoot"); if(f) f.innerHTML=`<tr style="font-weight:800"><td colspan="8">الإجمالي (الفعلي)</td><td style="color:var(--ok)">${fmt(ti)}</td><td style="color:var(--danger)">${fmt(to)}</td><td>${fmt(ti-to)}</td></tr>`;
@@ -15761,6 +15771,14 @@ const txStatuses = [
 // التسويات: حركة محاسبية غير نقدية — لا تؤثر على الخزنة لكنها تؤثر على رصيد الطرف
 function isAdjustment(e){ return e && e.method==="adjustment"; }
 function adjustmentIcon(kind){ return kind==="debit"?"⚠️":"✨"; }
+// شارة مميزة لطريقة السداد (نقدي / تحويل / شيك / تسوية) — للعرض على الشاشة فقط
+function txMethodBadge(v,e){
+  let cls="mth-cash",ico="",label="";
+  if(v==="transfer_supplier"){cls="mth-ts";ico="🔄";label="تحويل لمورد";}
+  else if(v==="adjustment"){const k=e&&e.adjustmentKind;cls=k==="credit"?"mth-adjc":"mth-adjd";ico="⚖";label=k==="debit"?"تسوية مدينة":k==="credit"?"تسوية دائنة":"تسوية";}
+  else{const m=txMethods.find(x=>x.v===v); if(!m) return "—"; ico=m.ico; label=m.label; cls=v==="cash"?"mth-cash":v==="transfer"?"mth-transfer":"mth-bank";}
+  return `<span class="mth ${cls}">${ico} ${escapeHtml(label)}</span>`;
+}
 function txMethodLabel(v, e){
   if(v==="transfer_supplier") return "🔄 تحويل لمورد";
   if(v==="adjustment"){
@@ -16360,7 +16378,7 @@ function renderTreasury(direction){
       <td style="color:var(--text-dim)">${e.no||""}</td>
       <td>${e.date||""}</td>
       <td><strong>${escapeHtml(e.entryKind==="transfer_view" ? e._label : e.entryKind==="gl" ? txGlLabel(e) : (partyWithCode(partyField==="customer"?"customers":"suppliers",e[partyField])||"—"))}</strong></td>
-      <td>${txMethodLabel(e.method, e)}</td>
+      <td style="text-align:center">${txMethodBadge(e.method, e)}</td>
       <td style="direction:ltr;text-align:right">${escapeHtml(e.refNo||"—")}</td>
       <td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>
       <td>${e.dueDate||"—"}</td>
