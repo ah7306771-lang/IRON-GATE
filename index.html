@@ -4200,6 +4200,7 @@ const navGroups = [
     { id:"master", tab:"sysInd", from:"treasury", icon:"🎚", label:"مؤشرات النظام (يوميات الترحيل)" }
   ]},
   { id:"banking", icon:"🏦", label:"البنوك", items:[
+    { id:"receipts", scope:"bankAll", icon:"🏦", label:"الحركة البنكية" },
     { id:"receipts", scope:"bank", icon:"🏦", label:"تحصيل بنكي" },
     { id:"payments", scope:"bank", icon:"📤", label:"مدفوع بنكي" },
     { id:"treasuryTransfer", icon:"🔁", label:"تحويل بين الخزن والبنوك" },
@@ -4327,6 +4328,76 @@ function bindCashLedger(){
   const F=window.__cl, map={clFrom:"from",clTo:"to",clType:"type",clTr:"tr",clQ:"q"};
   Object.keys(map).forEach(id=>{ const el=document.getElementById(id); if(!el) return; const h=()=>{ F[map[id]]=el.value; clPaint(); }; el.addEventListener(id==="clQ"?"input":"change",h); });
   clPaint();
+}
+// ---------- الحركة البنكية: التحصيلات والمدفوعات البنكية مع بعض بتواريخها (نظير «الحركة النقدية» للخزينة) ----------
+window.__bl = window.__bl || {from:"",to:"",q:"",type:"all",tr:"",eff:"all"};
+// الحركة بتأثر على رصيد البنك فعليًا: التحويل البنكي دايمًا، والشيك بس لما يتحصّل/يتصرف (collected)
+function blEffective(e){ if(e.method==="bank") return e.status==="collected"; return true; }
+function blRows(){
+  const F=window.__bl, q=String(F.q||"").trim().toLowerCase();
+  const okIn=(()=>{try{return canView("receipts");}catch(x){return true;}})(), okOut=(()=>{try{return canView("payments");}catch(x){return true;}})();
+  const isBank=e=>e.entryKind!=="transfer_view" && e.method!=="cash" && e.method!=="adjustment" && (e.direction==="in"?okIn:okOut);
+  const rows=(state.treasuryEntries||[]).filter(isBank).filter(e=>{
+    if(F.type==="in"&&e.direction!=="in") return false;
+    if(F.type==="out"&&e.direction!=="out") return false;
+    if(F.from&&String(e.date||"")<F.from) return false;
+    if(F.to&&String(e.date||"")>F.to) return false;
+    if(F.tr&&String(e.treasury||"")!==F.tr) return false;
+    if(F.eff==="eff"&&!blEffective(e)) return false;
+    if(F.eff==="pend"&&blEffective(e)) return false;
+    if(q){ const hay=[e.customer,e.supplier,e.notes,e.refNo,e.no,e.treasury,e.bank,e.bankName].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  });
+  rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||txEntryCmp(a,b));
+  return rows;
+}
+function viewBankLedger(){
+  const F=window.__bl;
+  const banks=treasuryAll().filter(t=>t.kind==="bank"||txIsChqSafe(t)).filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t)))
+    .map(x=>`<option value="${escapeAttr(String(x.code))}"${String(F.tr)===String(x.code)?" selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
+  return `<div class="page-head"><h2>🏦 الحركة البنكية</h2><span class="chip gold" id="blCount"></span><span class="spacer"></span><button class="btn ghost sm" type="button" id="blXls">⬇ Excel</button><button class="btn ghost sm" type="button" onclick="window.print()">🖨 طباعة</button></div>
+  <div class="card"><div class="body">
+    <div class="fgrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px">
+      <label>من تاريخ<input class="inp" type="date" id="blFrom" value="${escapeAttr(F.from)}"></label>
+      <label>إلى تاريخ<input class="inp" type="date" id="blTo" value="${escapeAttr(F.to)}"></label>
+      <label>النوع<select class="inp" id="blType"><option value="all"${F.type==="all"?" selected":""}>تحصيلات ومدفوعات</option><option value="in"${F.type==="in"?" selected":""}>تحصيلات فقط</option><option value="out"${F.type==="out"?" selected":""}>مدفوعات فقط</option></select></label>
+      <label>البنك<select class="inp" id="blTr"><option value="">كل البنوك</option>${banks}</select></label>
+      <label>التأثير على البنك<select class="inp" id="blEff"><option value="all"${F.eff==="all"?" selected":""}>الكل</option><option value="eff"${F.eff==="eff"?" selected":""}>فعلي (تحويل / شيك محصَّل)</option><option value="pend"${F.eff==="pend"?" selected":""}>معلّق (شيك لم يُحصَّل)</option></select></label>
+      <label>بحث<input class="inp" id="blQ" placeholder="عميل / مورد / ملاحظات / مرجع" value="${escapeAttr(F.q)}"></label>
+    </div>
+    <div id="blKpi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>
+    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>البنك</th><th>طريقة السداد</th><th>الحالة</th><th>البيان</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody id="blBody"></tbody><tfoot id="blFoot"></tfoot></table></div>
+    <div style="font-size:11.5px;color:var(--text-dim);margin-top:8px;line-height:1.7">الرصيد التراكمي بيحسب الحركات الفعلية بس (التحويلات البنكية والشيكات المحصَّلة) خلال الفترة المختارة. الشيكات تحت التحصيل / أوراق القبض / الضمان / المرتدة بتظهر بلون باهت ومش بتدخل في الرصيد.</div>
+  </div></div>`;
+}
+function blPaint(){
+  const rows=blRows(); let run=0,ti=0,to=0,pi=0,po=0;
+  const body=rows.map((e,i)=>{
+    const inn=e.direction==="in", v=+e.amount||0, eff=blEffective(e);
+    if(eff){ run+=inn?v:-v; if(inn)ti+=v; else to+=v; } else { if(inn)pi+=v; else po+=v; }
+    const dim=eff?"":"opacity:.55;font-style:italic";
+    return `<tr style="${dim}"><td>${i+1}</td><td dir="ltr">${escapeHtml(String(e.date||"—"))}</td><td><span class="chip ${inn?"ok":"warn"}">${inn?"تحصيل":"دفعة"}</span></td><td>${escapeHtml((inn?e.customer:e.supplier)||"—")}</td><td>${escapeHtml(treasuryLabel(e.treasury))}</td><td>${escapeHtml(txMethodLabelOf(e.method))}</td><td>${txStatusChip(e.status)||"—"}</td><td>${escapeHtml(e.notes||"—")}</td><td style="color:var(--ok)">${inn?fmt(v):"—"}</td><td style="color:var(--danger)">${inn?"—":fmt(v)}</td><td>${eff?`<b style="color:${run<0?"var(--danger)":"inherit"}">${fmt(run)}</b>`:"—"}</td></tr>`;
+  }).join("")||'<tr><td colspan="11" style="text-align:center;padding:16px">لا توجد حركات بنكية بهذه الفلاتر</td></tr>';
+  const b=document.getElementById("blBody"); if(b) b.innerHTML=body;
+  const f=document.getElementById("blFoot"); if(f) f.innerHTML=`<tr style="font-weight:800"><td colspan="8">الإجمالي (الفعلي)</td><td style="color:var(--ok)">${fmt(ti)}</td><td style="color:var(--danger)">${fmt(to)}</td><td>${fmt(ti-to)}</td></tr>`;
+  const c=document.getElementById("blCount"); if(c) c.textContent=rows.length+" حركة";
+  const k=document.getElementById("blKpi"); if(k){ const card=(l,v,col)=>`<div class="custody-kpi" style="min-width:150px"><small>${l}</small><b style="color:${col}">${fmt(v)}</b></div>`;
+    k.innerHTML=card("إجمالي التحصيلات البنكية",ti,"var(--ok)")+card("إجمالي المدفوعات البنكية",to,"var(--danger)")+card("صافي حركة البنك",ti-to,"inherit")+card("شيكات معلّقة (تحصيل)",pi,"var(--warn)")+card("شيكات معلّقة (دفع)",po,"var(--warn)"); }
+}
+function blExport(){
+  try{
+    const rows=blRows(), aoa=[["#","التاريخ","النوع","الطرف","البنك","طريقة السداد","الحالة","البيان","وارد","منصرف","الرصيد"]]; let run=0;
+    rows.forEach((e,i)=>{ const inn=e.direction==="in", v=+e.amount||0, eff=blEffective(e); if(eff) run+=inn?v:-v;
+      aoa.push([i+1,e.date||"",inn?"تحصيل":"دفعة",(inn?e.customer:e.supplier)||"",treasuryLabel(e.treasury),txMethodLabelOf(e.method),(txStatuses.find(s=>s.v===e.status)||{}).label||"",e.notes||"",inn?v:"",inn?"":v,eff?run:""]); });
+    const ws=XLSX.utils.aoa_to_sheet(aoa), wb=XLSX.utils.book_new(); wb.Workbook={Views:[{RTL:true}]};
+    XLSX.utils.book_append_sheet(wb,ws,"الحركة البنكية"); XLSX.writeFile(wb,"الحركة_البنكية_"+new Date().toISOString().slice(0,10)+".xlsx");
+  }catch(e){ toast("تعذر التصدير","err"); }
+}
+function bindBankLedger(){
+  const F=window.__bl, map={blFrom:"from",blTo:"to",blType:"type",blTr:"tr",blEff:"eff",blQ:"q"};
+  Object.keys(map).forEach(id=>{ const el=document.getElementById(id); if(!el) return; const h=()=>{ F[map[id]]=el.value; blPaint(); }; el.addEventListener(id==="blQ"?"input":"change",h); });
+  const x=document.getElementById("blXls"); if(x) x.addEventListener("click",blExport);
+  blPaint();
 }
 function txGo(page,scope){ window.__txScopeNext=scope||"all"; go(page); }
 function navItemGo(it){
@@ -4805,7 +4876,7 @@ function go(page){
   if(page==="apps"&&appsView){ const _a=APPS.find(x=>x.id===appsView), _g=appsMod&&navGroups.find(x=>x.id===appsMod); if(_a){ t[0]=(_g&&_a.groups.length>1)?_g.label:_a.label; t[1]="التطبيقات › "+_a.label+((_g&&_a.groups.length>1)?" › "+_g.label:""); } }
   if(page==="settings"){ const _st=settingsTabs.find(x=>x.id===settingsTab); if(_st){ t[0]=_st.title; t[1]=_st.crumb; } }
   if(page==="master"){ const _sc=masterScopeOf(currentTab); if(_sc){ t[0]=_sc.label; t[1]=_sc.crumb; } }
-  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="cashAll"){ t[0]="الحركة النقدية"; t[1]="التحصيلات والمدفوعات النقدية معًا بتواريخها"; } else if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="all"){ t[0]=_in?"كل تحصيلات وتسويات العملاء":"كل مدفوعات وتسويات الموردين"; t[1]=_in?"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص العملاء":"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص الموردين"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
+  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="bankAll"){ t[0]="الحركة البنكية"; t[1]="التحصيلات والمدفوعات البنكية معًا بتواريخها"; } else if(txScope==="cashAll"){ t[0]="الحركة النقدية"; t[1]="التحصيلات والمدفوعات النقدية معًا بتواريخها"; } else if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="all"){ t[0]=_in?"كل تحصيلات وتسويات العملاء":"كل مدفوعات وتسويات الموردين"; t[1]=_in?"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص العملاء":"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص الموردين"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
   try{ t[0]=snPageTitle(page,t[0]); }catch(e){}
   document.getElementById("pageTitle").textContent = t[0];
   document.getElementById("pageCrumb").textContent = t[1];
@@ -4838,7 +4909,7 @@ function go(page){
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="bankStatement"||page==="safeStatement"){ c.innerHTML=viewTreasuryAccountStatement(page); renderTreasuryAccountStatement(page); }
-  else if(page==="receipts"){ if(txScope==="cashAll"){ c.innerHTML = viewCashLedger(); bindCashLedger(); } else { c.innerHTML = viewTreasury("in"); renderTreasury("in"); } }
+  else if(page==="receipts"){ if(txScope==="bankAll"){ c.innerHTML = viewBankLedger(); bindBankLedger(); } else if(txScope==="cashAll"){ c.innerHTML = viewCashLedger(); bindCashLedger(); } else { c.innerHTML = viewTreasury("in"); renderTreasury("in"); } }
   else if(page==="customerAdjustments"){ c.innerHTML = viewAdjustments("in"); renderAdjustments("in"); }
   else if(page==="supplierAdjustments"){ c.innerHTML = viewAdjustments("out"); renderAdjustments("out"); }
   else if(page==="settlement"){ c.innerHTML = viewSettlement(); renderSettlement(); }
