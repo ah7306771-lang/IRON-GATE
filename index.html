@@ -4209,6 +4209,7 @@ const navGroups = [
   ]},
   { id:"custSys", icon:"👥", label:"نظام العملاء", items:[
     { sep:"الملفات الرئيسية" },
+    { id:"receipts", scope:"all", icon:"📋", label:"كل تحصيلات وتسويات العملاء" },
     { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" },
     { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
     { sep:"التقارير والمتابعة" },
@@ -4222,6 +4223,7 @@ const navGroups = [
   ]},
   { id:"suppSys", icon:"🏭", label:"نظام الموردين", items:[
     { sep:"الملفات الرئيسية" },
+    { id:"payments", scope:"all", icon:"📋", label:"كل مدفوعات وتسويات الموردين" },
     { id:"supplierAdjustments", icon:"⚖", label:"تسويات الموردين" },
     { sep:"التقارير والمتابعة" },
     { id:"supplierStatement", icon:"📒", label:"كشف حساب مورد" },
@@ -4799,7 +4801,7 @@ function go(page){
   if(page==="apps"&&appsView){ const _a=APPS.find(x=>x.id===appsView), _g=appsMod&&navGroups.find(x=>x.id===appsMod); if(_a){ t[0]=(_g&&_a.groups.length>1)?_g.label:_a.label; t[1]="التطبيقات › "+_a.label+((_g&&_a.groups.length>1)?" › "+_g.label:""); } }
   if(page==="settings"){ const _st=settingsTabs.find(x=>x.id===settingsTab); if(_st){ t[0]=_st.title; t[1]=_st.crumb; } }
   if(page==="master"){ const _sc=masterScopeOf(currentTab); if(_sc){ t[0]=_sc.label; t[1]=_sc.crumb; } }
-  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="cashAll"){ t[0]="الحركة النقدية"; t[1]="التحصيلات والمدفوعات النقدية معًا بتواريخها"; } else if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
+  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="cashAll"){ t[0]="الحركة النقدية"; t[1]="التحصيلات والمدفوعات النقدية معًا بتواريخها"; } else if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="all"){ t[0]=_in?"كل تحصيلات وتسويات العملاء":"كل مدفوعات وتسويات الموردين"; t[1]=_in?"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص العملاء":"نقدي وبنكي وشيكات وتسويات مدينة ودائنة — كل ما يخص الموردين"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
   try{ t[0]=snPageTitle(page,t[0]); }catch(e){}
   document.getElementById("pageTitle").textContent = t[0];
   document.getElementById("pageCrumb").textContent = t[1];
@@ -15665,7 +15667,19 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
   return "bank";
 }
 function txScopeOK(e){ if(txScope==="all") return true; if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
-function txScopeMethods(l){ return txScope==="cash"?l.filter(m=>m.v==="cash"):txScope==="bank"?l.filter(m=>m.v!=="cash"&&m.v!=="adjustment"):l; }
+// مفتاح النوع للفلتر: التسوية بتتقسم مدينة/دائنة
+function txMethodKey(e){ return e.method==="adjustment" ? "adjustment:"+(e.adjustmentKind||"debit") : e.method; }
+function txMethodLabelOf(v){
+  if(v==="adjustment:debit") return "⚖ تسوية مدينة"; if(v==="adjustment:credit") return "⚖ تسوية دائنة"; if(v==="transfer_supplier") return "تحويل لمورد";
+  return (txMethods.find(m=>m.v===v)||{}).label||v;
+}
+function txScopeMethods(l){
+  if(txScope==="cash") return l.filter(m=>m.v==="cash");
+  if(txScope==="bank") return l.filter(m=>m.v!=="cash"&&m.v!=="adjustment");
+  const out=[]; l.forEach(m=>{ if(m.v==="adjustment"){ out.push({v:"adjustment:debit",label:"تسوية مدينة",ico:"⚠️"}); out.push({v:"adjustment:credit",label:"تسوية دائنة",ico:"✨"}); } else out.push(m); });
+  if(txScope==="all") out.push({v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"});
+  return out;
+}
 function txIsChqSafe(t){ return !!t && /^chk\b|chk|شيك/i.test(String(t.code||"")+" "+String(t.name||"")); }   // خزنة الشيكات: تخص البنوك مش النقدي
 function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"&&!txIsChqSafe(t)):txScope==="bank"?l.filter(t=>t.kind==="bank"||txIsChqSafe(t)):l; }
 function txScopeStatuses(l){ return txScope==="cash"?l.filter(x=>x.v==="cash"):txScope==="bank"?l.filter(x=>x.v!=="cash"&&x.v!=="adjustment"):l; }
@@ -16031,7 +16045,7 @@ function txSortGetter(key,direction){
     case "no": return {n:true,g:e=>+e.no||0};
     case "date": return {g:e=>e.date||""};
     case "party": return {g:e=>e[pf]||""};
-    case "method": return {g:e=>(txMethods.find(m=>m.v===e.method)||{}).label||""};
+    case "method": return {g:e=>txMethodLabelOf(txMethodKey(e))||""};
     case "ref": return {g:e=>String(e.refNo||"")};
     case "amount": return {n:true,g:e=>+e.amount||0};
     case "due": return {g:e=>e.dueDate||""};
@@ -16049,7 +16063,7 @@ function txFilteredSorted(direction){
   const rows = trfVirtualRows(direction).concat(treasuryList(direction)).filter(e=>{
     if(!txScopeOK(e)) return false;
     if(e.entryKind==="transfer_view" && txFilter.dashCollected) return false;
-    if(!txMatchMulti(txFilter.method, e.method)) return false;
+    if(!(txMatchMulti(txFilter.method, txMethodKey(e)) || (e.method==="adjustment" && txMatchMulti(txFilter.method,"adjustment")))) return false;
     if(!txMatchMulti(txFilter.status, e.status)) return false;
     if(!txPostMatch(txFilter.post, e)) return false;
     if(!txMatchMulti(txFilter.treasury, e.treasury)) return false;
@@ -16089,7 +16103,7 @@ function txMarkSort(){
 }
 function txFilterSummary(direction){
   const isIn=direction==="in", out=[];
-  const labMethod=v=>(txMethods.find(m=>m.v===v)||{}).label||v;
+  const labMethod=v=>txMethodLabelOf(v);
   const labStatus=v=>(txStatuses.find(s=>s.v===v)||{}).label||v;
   const multiLabel=(arr,one,many,fn)=>{
     const a=txNormFilterArr(arr); if(!a.length) return "";
@@ -25392,12 +25406,6 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
 })();
 </script>
 
-</body></html>`;
-  if(typeof openReportPreview==="function") openReportPreview(html,title+" "+(e.no||""));
-  else{ const w=window.open("","_blank"); if(w){ w.document.open(); w.document.write(html); w.document.close(); } }
-}
-</script>
-
 <style id="chq-cycle-v1">
 /* ===== دورة ترحيل الشيكات + عرض القيد (إضافة فقط) ===== */
 .td-actions .tx-view-entry-btn{background:#eef7ff;border-color:#9cc6ef;color:#0b5394;font-weight:800}
@@ -26050,12 +26058,12 @@ async function txUnpostRun(id,direction){
     const add=(v,l)=>{ v=String(v==null?"":v); if(v==="") return; if(!map.has(v)) map.set(v,l||v); };
     treasuryList(direction).filter(txScopeOK).forEach(e=>{
       if(key==="party") add(e.entryKind==="gl"&&typeof txGlLabel==="function"?e[pf]:e[pf], e[pf]);
-      else if(key==="method") add(e.method,((txMethods.find(m=>m.v===e.method)||{}).label)||e.method);
+      else if(key==="method") add(txMethodKey(e),txMethodLabelOf(txMethodKey(e)));
       else if(key==="status") add(e.status,((txStatuses.find(s=>s.v===e.status)||{}).label)||e.status);
       else if(key==="treasury") add(e.treasury,e.treasury?treasuryLabel(e.treasury):"");
     });
     txNormFilterArr(txFilter[key]).forEach(v=>add(v,
-      key==="method"?((txMethods.find(m=>m.v===v)||{}).label):key==="status"?((txStatuses.find(s=>s.v===v)||{}).label):key==="treasury"?treasuryLabel(v):v));
+      key==="method"?txMethodLabelOf(v):key==="status"?((txStatuses.find(s=>s.v===v)||{}).label):key==="treasury"?treasuryLabel(v):v));
     return [...map].map(([v,label])=>({v,label})).sort((a,b)=>String(a.label).localeCompare(String(b.label),"ar",{numeric:true}));
   }
   window.txColFilterOpen=function(key,direction,ev){
