@@ -9453,7 +9453,17 @@ function viewMaster(){
       </tr>`; }).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد تصنيفات بعد — اضغط "+ إضافة".</p></div></td></tr>`;
   } else if(isBank || isSafe){
     header = `<tr><th>#</th><th>الكود *</th><th>الاسم *</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
-    rows = items.length ? items.map((item,i)=>`
+    // البنوك: تجميع الفروع تحت البنك الأب (الفهرس الأصلي محفوظ للتعديل/الحذف)
+    let _order=items.map((item,i)=>({item,i,g:""})); const _grp=new Map();
+    if(isBank){
+      _order=items.map((item,i)=>({item,i,g:bankParentOf(item.code)}));
+      _order.forEach(o=>{ if(o.g){ if(!_grp.has(o.g)) _grp.set(o.g,[]); _grp.get(o.g).push(o); } });
+      _order=[..._grp.values()].flat().concat(_order.filter(o=>!o.g));
+    }
+    let _lastG=null;
+    rows = items.length ? _order.map(({item,i,g})=>{ let head="";
+      if(isBank && g!==_lastG){ _lastG=g; head = g ? `<tr style="background:#fff3d1"><td colspan="6" style="font-weight:800;color:#7a5200">🏦 ${escapeHtml(g)} <span style="color:var(--text-dim);font-weight:600">— ${(_grp.get(g)||[]).length} فرع</span> <button type="button" class="btn ghost sm" style="margin-inline-start:10px" onclick="bankRenameParent(${JSON.stringify(g).replace(/"/g,"&quot;")})">✎ اسم الأب</button></td></tr>` : (_grp.size?`<tr style="background:#eef1f5"><td colspan="6" style="font-weight:800;color:#475569">بنوك بدون أب</td></tr>`:""); }
+      return head+`
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
         <td><strong style="font-family:monospace;color:var(--gold-text)">${escapeHtml(item.code||"")}</strong></td>
@@ -9467,7 +9477,7 @@ function viewMaster(){
           </div>
         </td>
       </tr>
-    `).join("") : `<tr><td colspan="6"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
+    `; }).join("") : `<tr><td colspan="6"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isTreasury){
     header = `<tr><th>#</th><th>الاسم</th><th>النوع</th><th>ملاحظات</th><th>إجراءات</th></tr>`;
     rows = items.length ? items.map((t,i)=>`
@@ -10009,6 +10019,26 @@ function treasuryFormRead(){
   };
 }
 
+// ===== البنك الأب: كل بنك (أب) ينزل منه فروع — الفرع هو سجل البنك الحالي بكوده وحسابه (الحركات مش بتتأثر) =====
+// بيتخزّن في الإعدادات (state.settings.bankParents: كود الفرع ← اسم الأب) عشان مفيش تغيير في جداول Supabase.
+function bankParentsMap(){ const s=state.settings=state.settings||{}; if(!s.bankParents||typeof s.bankParents!=="object") s.bankParents={}; return s.bankParents; }
+function bankParentOf(code){ return String((bankParentsMap()[code])||"").trim(); }
+function bankParentSet(code,name){ const m=bankParentsMap(); name=String(name||"").trim(); if(name) m[code]=name; else delete m[code]; }
+function bankParentNames(){ const set=new Set(); Object.values(bankParentsMap()).forEach(v=>{ if(v) set.add(String(v)); }); return [...set].sort((a,b)=>a.localeCompare(b,"ar")); }
+function bankParentRead(){ return (document.getElementById("bk_parent")?.value||"").trim(); }
+function bankRenameParent(oldName){
+  const nn=(prompt("اسم البنك الأب الجديد:",oldName)||"").trim(); if(!nn||nn===oldName) return;
+  const m=bankParentsMap(); Object.keys(m).forEach(k=>{ if(m[k]===oldName) m[k]=nn; });
+  saveState(); go("master"); toast("تم تعديل اسم الأب","ok");
+}
+// خيارات اختيار البنك مجمّعة تحت الأب (optgroup) — القيمة هي كود البنك/الفرع زي ما هي
+function bankOptionsGrouped(list,selected,valFn,labelFn){
+  const v=valFn||(b=>b.code), lb=labelFn||(b=>b.code+" — "+b.name);
+  const opt=b=>`<option value="${escapeAttr(v(b))}" ${String(selected)===String(v(b))?"selected":""}>${escapeHtml(lb(b))}</option>`;
+  const groups=new Map(), solo=[];
+  list.forEach(b=>{ const g=bankParentOf(b.code); if(g){ if(!groups.has(g)) groups.set(g,[]); groups.get(g).push(b); } else solo.push(b); });
+  return [...groups].map(([g,arr])=>`<optgroup label="${escapeAttr("🏦 "+g)}">${arr.map(opt).join("")}</optgroup>`).join("")+solo.map(opt).join("");
+}
 function bankFormHtml(b){
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -10017,6 +10047,10 @@ function bankFormHtml(b){
       </div>
       <div class="fld"><label>الاسم *</label>
         <input class="inp" id="bk_name" value="${escapeAttr(b.name||"")}" placeholder="بنك Credit Agricole">
+      </div>
+      <div class="fld" style="grid-column:span 2"><label>البنك الأب <span style="color:var(--text-dim);font-weight:400">(اختياري — لو ده فرع من بنك: اكتب أو اختر اسم البنك الأب)</span></label>
+        <input class="inp" id="bk_parent" list="bk_parent_dl" value="${escapeAttr(bankParentOf(b.code||""))}" placeholder="مثال: بنك مصر">
+        <datalist id="bk_parent_dl">${bankParentNames().map(n=>`<option value="${escapeAttr(n)}"></option>`).join("")}</datalist>
       </div>
       ${mdAccHtml('bk_acc',b)}
     </div>
@@ -10066,7 +10100,7 @@ function addItem(key,label){
       if(!b.code){ toast("الكود مطلوب","err"); return false; }
       if(!b.name){ toast("الاسم مطلوب","err"); return false; }
       if(state[key].some(x=>x.code===b.code)){ toast("هذا الكود موجود بالفعل","err"); return false; }
-      state[key].push(b); saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
+      state[key].push(b); bankParentSet(b.code,bankParentRead()); saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
     });
     setTimeout(()=>document.getElementById("bk_code")?.focus(),50);
     return;
@@ -10140,7 +10174,8 @@ function editItem(key,idx){
       if(!b.name){ toast("الاسم مطلوب","err"); return false; }
       if(state[key].some((x,i)=>i!==idx && x.code===b.code)){ toast("هذا الكود موجود بالفعل","err"); return false; }
       state[key][idx] = b;
-      if(originalCode && originalCode!==b.code) (state.treasuryEntries||[]).forEach(e=>{ if(e.treasury===originalCode) e.treasury=b.code; });
+      if(originalCode && originalCode!==b.code){ (state.treasuryEntries||[]).forEach(e=>{ if(e.treasury===originalCode) e.treasury=b.code; }); bankParentSet(originalCode,""); }
+      bankParentSet(b.code,bankParentRead());
       saveState(); go("master"); toast("تم التعديل","ok"); return true;
     });
     setTimeout(()=>document.getElementById("bk_code")?.focus(),50);
@@ -10232,7 +10267,7 @@ async function delItem(key,idx){
   if((isBankKey(key)||isSafeKey(key)) && treasuryUsed(v.code)){ toast(`لا يمكن حذف "${v.code}" — مستخدم في تحصيلات/مدفوعات`,"err"); return; }
   const label = (isBankKey(key)||isSafeKey(key)) ? `${v.code} — ${v.name}` : (isPartyKey(key)||isTreasuryKey(key)) ? (v.name || v) : v;
   if(!await askConfirm(`حذف "${label}" ؟`)) return;
-  state[key].splice(idx,1); saveState(); go("master");
+  state[key].splice(idx,1); if(isBankKey(key)) bankParentSet(v.code,""); saveState(); go("master");
   toast("تم الحذف","ok");
 }
 
@@ -15666,7 +15701,8 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
   if(t){ if((state.banks||[]).some(b=>String(b.code)===t)) return "bank"; if((state.safes||[]).some(x=>String(x.code)===t)) return "safe"; }
   return "bank";
 }
-function txScopeOK(e){ if(txScope==="all") return true; if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
+function txScopeOK(e){ if(txScope==="all") return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier);   // «كل تحصيلات وتسويات العملاء/الموردين»: بس اللي له عميل/مورد (من غير تسويات الحسابات والتحويلات بين الخزن)
+   if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
 // مفتاح النوع للفلتر: التسوية بتتقسم مدينة/دائنة
 function txMethodKey(e){ return e.method==="adjustment" ? "adjustment:"+(e.adjustmentKind||"debit") : e.method; }
 function txMethodLabelOf(v){
@@ -16937,7 +16973,7 @@ function openTxForm(direction, existing){
   txEditingId = existing ? existing.id : null;
   window.__txDir = isIn ? "in" : "out";
 
-  const bankOptions = (state.banks||[]).filter(b=>!chqIsSysBank(b)).map(b=>`<option value="${escapeAttr(b.code)}" ${draft.treasury===b.code?'selected':''}>${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("");
+  const bankOptions = bankOptionsGrouped((state.banks||[]).filter(b=>!chqIsSysBank(b)),draft.treasury);
   const safeOptions = (state.safes||[]).map(s=>`<option value="${escapeAttr(s.code)}" ${draft.treasury===s.code?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join("");
   // قائمة طرق التحصيل/الدفع — في التحصيلات فقط فيه "تحويل لمورد"
   const _adjNow = !existing && !!window.__adjScreenNext;
