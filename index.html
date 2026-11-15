@@ -16357,7 +16357,7 @@ function adjAddRowBtn(direction){
 function adjPostCell(e){
   if(txIsPosted(e)) return `<span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span>`;
   if(e.method==="transfer_supplier") return `<span class="tx-unposted">غير مُرحّل</span>`;
-  if(e.method!=="adjustment") return `<span class="tx-unposted" title="دفعة مرتبطة بتحويل من عميل — تُرحَّل مع التحصيل المرتبط">تُرحَّل مع تحويل العميل</span>`;
+  if(e.method!=="adjustment" || (e.direction==="out" && e.linkedTxId && e.entryKind!=="gl")) return `<span class="tx-unposted" title="دفعة مرتبطة بتحويل من عميل — تُرحَّل مع التحصيل المرتبط">تُرحَّل مع تحويل العميل</span>`;
   if(e.entryKind!=="gl") return `<span class="tx-unposted" title="تسوية على حساب الطرف فقط — محتاجة حسابات مقابلة عشان تترحّل">بدون حسابات مقابلة</span>`;
   return `<span class="tx-unposted">غير مُرحّل</span>`;
 }
@@ -17171,13 +17171,14 @@ function openTxForm(direction, existing){
           no: nextTxNo("out"), createdAt: Date.now()+1,
           date: d.date,
           supplier: targetSupplierVal,
-          method: "transfer",
+          method: d.fromAdj ? "adjustment" : "transfer",   // من شاشة تسويات العملاء: على المورد تسوية مدينة (نظام الموردين ← التسويات) مش حركة بنكية
+          adjustmentKind: d.fromAdj ? "debit" : "",
           refNo: d.refNo,
           amount: d.amount,
           dueDate: "",
           treasury: "",
           bankDrawn: "",
-          status: "transfer",
+          status: d.fromAdj ? "adjustment" : "transfer",
           notes: `تحويل تلقائي من تحصيل #${d.no} — العميل: ${d.customer||""}`,
           allocations: [],
           allocationType: "invoice_deduction",
@@ -23316,6 +23317,7 @@ function txPostPlan(e,accs){
   const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!(accs||[]).some(ch=>ch.is_active&&ch.parent_id===x.id);
   const accOf=id=>id?(accs||[]).find(x=>String(x.id)===String(id)):null;
   if(txIsPosted(e)) return {reason:"الحركة مُرحّلة بالفعل"};
+  if(e.direction==="out" && e.linkedTxId && e.method==="adjustment" && e.entryKind!=="gl") return {reason:"تسوية مرتبطة بتحويل من عميل — تُرحَّل مع التحصيل المرتبط"};
   if(e.method==="adjustment" && e.entryKind!=="gl") return {reason:"تسوية على حساب العميل/المورد فقط (بدون حسابات مقابلة) — اضغط تعديل ← ⚖ تسويات وأضف الحسابات المقابلة ثم رحّلها"};
   if(e.status==="returned"||e.status==="guarantee") return {reason:"لا يُرحَّل شيك مرتد أو شيك ضمان"};
   if(e.method==="bank" && e.status!=="collected") return {reason:"الشيك لم يُحصَّل بعد — يُرحَّل بعد التحصيل"};
