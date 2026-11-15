@@ -1771,6 +1771,7 @@ button.ad-k[onclick]{cursor:pointer}button.ad-k[onclick]:hover{transform:transla
 @media(max-width:1100px){.ad-ks{grid-template-columns:repeat(2,minmax(0,1fr))}.ad-g2{grid-template-columns:1fr}}
 /* بطاقات التطبيقات الاحترافية */
 .ap-h{margin:6px 4px 22px;display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.ap-hico{width:84px;height:84px;display:grid;place-items:center;font-size:44px;margin-top:4px}
 .ap-h h2{margin:0;font-size:34px;font-weight:900;color:#0f2a52}
 .ap-h p{margin:0;color:#7a869a;font-size:16px;font-weight:600}
 .ap-back{font:inherit;font-weight:800;padding:7px 14px;border-radius:10px;border:1px solid #D4A017;background:#fff8e1;color:#8e6715;cursor:pointer;margin-bottom:6px}
@@ -4409,6 +4410,15 @@ function bindBankLedger(){
   const x=document.getElementById("blXls"); if(x) x.addEventListener("click",blExport);
   blPaint();
 }
+/* فتح حركة تحصيل/دفعة من كشف الحساب: بنصفّر كل فلاتر الشاشة ونعرض الحركة دي بس عشان تتعدّل أو تتحذف */
+function stmtOpenTx(id){
+  const e=(state.treasuryEntries||[]).find(x=>String(x.id)===String(id));
+  if(!e){ toast("الحركة غير موجودة","err"); return; }
+  const dirIn=e.direction==="in";
+  txFilter={q:"",method:[],status:[],post:[],treasury:[],party:[dirIn?e.customer:e.supplier].filter(Boolean),from:e.date||"",to:e.date||""};
+  try{ txViewSave(dirIn?"in":"out"); }catch(_){}
+  txGo(dirIn?"receipts":"payments","all");
+}
 function txGo(page,scope){ window.__txScopeNext=scope||"all"; go(page); }
 function navItemGo(it){
   if(!it) return;
@@ -4447,7 +4457,7 @@ function viewApps(){
   }
   const a=APPS.find(x=>x.id===appsView)||APPS[0], gs=a.groups.map(gOf).filter(Boolean);
   if(!appsMod||!gOf(appsMod)){
-    return apStrip(a)+`<div class="ap-wrap"><div class="ap-h"><button class="ap-back" onclick="appsView=null;appsMod=null;go('apps')">→ التطبيقات</button><h2>${a.label}</h2><p>اختر النظام للمتابعة</p></div><div class="ap-row">`+
+    return apStrip(a)+`<div class="ap-wrap"><div class="ap-h"><button class="ap-back" onclick="appsView=null;appsMod=null;go('apps')">→ التطبيقات</button><div class="ap-hico" title="${a.label}" aria-label="${a.label}">${apIco(a.id,a.icon||"▦")}</div></div><div class="ap-row">`+
       gs.map(g=>tile(apIco(g.id,g.icon||"▦"),g.label,`appsMod='${g.id}';go('apps')`,fb(cnt(g)))).join("")+`</div></div>`;
   }
   const g=gOf(appsMod);
@@ -8432,7 +8442,7 @@ function renderPartyStatement(){
   const detBlank=det?'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td>':'';
   const partyTd=p=>multi?`<td class="ps-party">${escapeHtml(p||'—')}</td>`:'';
   const openRowsHtml=parties.map(p=>`<tr class="ps-open"><td>${escapeHtml(f.from||'—')}</td>${partyTd(p)}<td>—</td>${detBlank}<td class="ps-desc"><b>رصيد أول المدة</b></td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num ps-bal">${money(openMap.get(p)||0)}</td></tr>`).join('');
-  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
+  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}${(r.source==='treasury'&&/^treasury:/.test(r.unique||''))?` <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenTx('${escapeAttr(String(r.unique).slice(9))}')">↗ فتح الحركة</a>`:''}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
   const emptyHtml=!parties.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">اختر ${customer?'عميلًا':'موردًا'} من الفلتر لعرض كشف الحساب</td></tr>`:(!rows.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">لا توجد حركات مطابقة للفترة</td></tr>`:'');
   const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع']).concat(det?['القطر','الصنف','الكمية','الوزن الفعلي (طن)','سعر الوحدة (شامل)']:[]).concat(['البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
   el.innerHTML=`<style>
@@ -8727,7 +8737,7 @@ function treasuryStmtOperationalRows(code,kind,from,to,q,direction){
     const party=e.customer||e.supplier||'';
     const method=({cash:'نقدي',bank:'شيك بنكي',transfer:'تحويل'})[e.method]||e.method||'';
     const status=({cash:'نقدي',transfer:'تحويل',collected:'محصل',returned:'مرتد'})[e.status]||e.status||'';
-    const desc=[e.direction==='in'?'تحصيل':'مدفوعات',party,method,status,(isColl&&e.collectDate&&e.date&&e.collectDate!==e.date)?('تاريخ الشيك '+e.date):'',e.notes].filter(Boolean).join(' — ');
+    const desc=[e.direction==='in'?'تحصيل':'مدفوعات',party,method,status,(isColl&&e.collectDate&&e.date&&e.collectDate!==e.date)?('تاريخ الشيك '+e.date):'',e.notes].map(x=>String(x==null?'':x).trim()).filter((x,i,a)=>x&&a.indexOf(x)===i).join(' — ');
     const search=[e.no,e.refNo,party,desc,e.notes].join(' ').toLowerCase();if(needle&&!search.includes(needle))return;
     const returned=e.status==='returned'&&e.wasCollected;
     const incoming=(e.direction==='in');   // سطر التحصيل نفسه؛ الارتداد بيتضاف كسطر عكسي منفصل تحته
@@ -16472,6 +16482,19 @@ function adjustmentsList(direction){
     })
     .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||txEntryCmp(b,a));
 }
+// الطرف المقابل في تسوية «تحويل لمورد»: في تسويات العملاء = اسم المورد، وفي تسويات الموردين = اسم العميل المحوَّل منه
+function adjCounterParty(e,isIn){
+  try{
+    const list=state.treasuryEntries||[];
+    const partner=e.linkedTxId?list.find(x=>x.id===e.linkedTxId):list.find(x=>x.linkedTxId===e.id);
+    if(isIn){
+      const n=String(e.targetSupplier||(partner&&partner.direction==="out"?partner.supplier:"")||"").trim();
+      return n?{label:"المورد",name:n}:null;
+    }
+    const n=String((partner&&partner.direction==="in"?partner.customer:"")||"").trim();
+    return (n&&e.fromAdj)?{label:"العميل",name:n}:null;
+  }catch(_){ return null; }
+}
 function renderAdjustments(direction){
   const isIn = direction==="in";
   const rows = adjustmentsList(direction);
@@ -16498,7 +16521,10 @@ function renderAdjustments(direction){
       <td><strong>${escapeHtml(e[isIn?"customer":"supplier"]||"—")}</strong></td>
       <td>${kindBadge}</td>
       <td class="num" style="font-weight:800;color:${kind==='debit'?'#991b1b':'#166534'}">${fmt(e.amount)}</td>
-      <td>${(e.glLines||[]).length?`<span class="chip" title="${escapeAttr((e.glLines||[]).map(r=>(r.accountCode||"")+" "+(r.accountName||"")+": "+fmt(r.amount)).join(" | "))}">${(e.glLines||[]).length} حساب مقابل</span>`:(allocCount>0?`<span class="chip">${allocCount} تخصيص</span>`:'—')}</td>
+      <td>${(()=>{const cp=adjCounterParty(e,isIn), gl=(e.glLines||[]);
+        const base=gl.length?`<span class="chip" title="${escapeAttr(gl.map(r=>(r.accountCode||"")+" "+(r.accountName||"")+": "+fmt(r.amount)).join(" | "))}">${gl.length} حساب مقابل</span>`:(allocCount>0?`<span class="chip">${allocCount} تخصيص</span>`:"");
+        const chip=cp?`<div style="${base?"margin-bottom:4px":""}"><span class="chip" style="background:#d9f1f2;color:#0e5560;border:1.5px solid #80c6cc;font-weight:800;white-space:nowrap" title="تحويل ${isIn?"لمورد":"من عميل"}">🔄 ${cp.label}: ${escapeHtml(cp.name)}</span></div>`:"";
+        return (chip+base)||"—";})()}</td>
       <td style="font-size:11px;color:var(--text-dim);max-width:300px;white-space:normal;line-height:1.5">${escapeHtml(e.notes||"—")}</td>
       <td>${adjPostCell(e)}</td>
       <td>${adjActions(e,direction)}</td>
@@ -16530,7 +16556,7 @@ function adjPostCell(e){
 function adjActions(e,direction){
   const id=escapeAttr(e.id);
   if(txIsPosted(e)){
-    return `<div class="td-actions"><button class="tx-view-entry-btn" onclick="chqViewEntry('${id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${id}','${direction}')">🖨 طباعة القيد</button>${txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${id}','${direction}')" title="حذف القيد وإرجاع التسوية غير مُرحّلة">↶ إلغاء الترحيل</button>`:""}</div>`;
+    return `<div class="td-actions"><button class="tx-view-entry-btn" onclick="chqViewEntry('${id}','${direction}')">عرض القيد</button>${txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${id}','${direction}')" title="حذف القيد وإرجاع التسوية غير مُرحّلة">↶ إلغاء الترحيل</button>`:""}</div>`;
   }
   const post = ((e.entryKind==="gl"||e.method==="transfer_supplier") && txCanPost(e,direction)) ? `<button class="tx-post-btn" onclick="txPostOpen('${id}','${direction}')">ترحيل</button>` : "";
   return `<div class="td-actions">${post}<button onclick="txEdit('${id}','${direction}')">تعديل</button><button class="del" onclick="txDel('${id}','${direction}')">حذف</button></div>`;
@@ -17199,6 +17225,7 @@ function openTxForm(direction, existing){
       </div>
       <div class="fld"><label>الحالة</label>
         <select class="inp" id="tx_status">
+          <option value="">— حسب نوع السداد —</option>
           ${txStatuses.map(s=>`<option value="${s.v}" ${draft.status===s.v?'selected':''}>${s.label}</option>`).join("")}
         </select>
       </div>
@@ -18623,8 +18650,9 @@ function txBuildAllocations(kind, amount){
 }
 // إظهار/إخفاء حقول حسب النوع
 function txSetDefaultStatus(){
-  const method=document.getElementById("tx_method")?.value||"cash";
+  const method=document.getElementById("tx_method")?.value||"";
   const status=document.getElementById("tx_status"); if(!status) return;
+  if(!method){ status.value=""; status.disabled=true; status.title="الحالة تتحدد بعد اختيار نوع السداد"; return; }
   // النقدي والتحويل والتسوية حالتهم ثابتة تلقائيًا، والشيك يحتفظ بدورة حالاته المستقلة.
   if(method==="cash" || method==="transfer" || method==="transfer_supplier" || method==="adjustment"){
     status.value = method==="cash" ? "cash" : (method==="adjustment"?"adjustment":"transfer");
@@ -23141,9 +23169,10 @@ function txKindApply(){
   if(lab){ lab.childNodes[0].nodeValue="القيمة * "; const sp=lab.querySelector("span"); if(sp) sp.style.display=gl?"none":""; }
   const sel=$("tx_method");
   if(sel){
-    const okM=hasParty?["adjustment"]:(supp?["transfer_supplier"]:["cash","transfer"]);
+    const okM=hasParty?["adjustment"]:(supp?["transfer_supplier"]:(txScope==="cash"?["cash"]:(txScope==="bank"?["transfer"]:["cash","transfer"])));
     [...sel.options].forEach(o=>{ const b=gl&&o.value!==""&&!okM.includes(o.value); o.hidden=b; o.disabled=b; });
     if(gl&&sel.value&&!okM.includes(sel.value)) sel.value="";
+    if(gl&&!sel.value&&okM.length===1&&!hasParty&&!supp) sel.value=okM[0];
     if(hasParty){ sel.value="adjustment"; sel.dataset.glForced="1"; }
     else if(supp){ sel.value="transfer_supplier"; sel.dataset.glForced="1"; }
     else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment"||sel.value==="transfer_supplier") sel.value=""; }
@@ -23537,15 +23566,22 @@ async function txPostOpen(id,direction){
   let saved=""; try{ saved=localStorage.getItem(TX_POST_JOURNAL_KEY)||""; }catch(_){}
   const pref=journals.find(x=>String(x.journal_code)===saved)||journals.find(x=>/خزن|نقد|بنك|cash|bank/i.test(String(x.journal_name||"")))||journals[0];
   const f=v=>fmt(v/100), cur=(state.settings&&state.settings.currency)||"";
-  const rows=plan.lines.map(x=>`<tr><td style="text-align:right">${escapeHtml(x.k)}</td><td class="num">${x.dr?f(x.dr):"—"}</td><td class="num">${x.cr?f(x.cr):"—"}</td></tr>`).join("");
+  const accById=new Map(accs.map(a=>[String(a.id),a]));
+  const rows=plan.lines.map(x=>{ const a=accById.get(String(x.acc))||{}; return `<tr><td dir="ltr" style="text-align:center;font-weight:700;white-space:nowrap">${escapeHtml(String(a.account_code||"—"))}</td><td style="text-align:right">${escapeHtml(String(a.account_name||x.k||"—"))}</td><td style="text-align:right">${escapeHtml(String(x.desc||x.k||""))}</td><td class="num">${x.dr?f(x.dr):"—"}</td><td class="num">${x.cr?f(x.cr):"—"}</td></tr>`; }).join("");
+  const perChk=checks.find(r=>/^السنة\/الفترة المالية/.test(r[0]));
+  const badChecks=checks.filter(r=>!r[2]);
   const body=`<div class="tx-post-box">
     <div style="margin-bottom:8px;font-weight:800">${direction==="in"?"تحصيل":"دفعة"} رقم ${escapeHtml(String(e.no||""))} — ${escapeHtml(e.entryKind==="gl"?"تسويات":(e.customer||e.supplier||""))} — ${fmt(e.amount)} ${escapeHtml(cur)}</div>
-    <div class="fld"><label>اليومية</label><select class="inp" id="txpJournal">${journals.map(j=>`<option value="${escapeAttr(j.journal_code)}" ${pref&&pref.id===j.id?"selected":""}>${escapeHtml(String(j.journal_code))} — ${escapeHtml(String(j.journal_name||""))}</option>`).join("")}</select></div>
-    <div class="tbl-wrap"><table><thead><tr><th>البند</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>${checks.map(r=>`<tr><td style="text-align:right">${escapeHtml(r[0])}</td><td>${escapeHtml(r[1])}</td><td style="color:${r[2]?"var(--ok)":"var(--danger)"}">${r[2]?"✓":"⚠ "+escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table></div>
-    <div class="tbl-wrap"><table><thead><tr><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>الإجمالي</td><td class="num">${f(plan.td)}</td><td class="num">${f(plan.tc)}</td></tr></tfoot></table></div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+      <div class="fld" style="flex:1;min-width:240px;margin:0"><label>اليومية</label><select class="inp" id="txpJournal">${journals.map(j=>`<option value="${escapeAttr(j.journal_code)}" ${pref&&pref.id===j.id?"selected":""}>${escapeHtml(String(j.journal_code))} — ${escapeHtml(String(j.journal_name||""))}</option>`).join("")}</select></div>
+      <div class="fld" style="flex:1;min-width:200px;margin:0"><label>السنة / الفترة المالية</label><div class="inp" style="display:flex;align-items:center;gap:8px">${escapeHtml(String(perChk?perChk[1]:"—"))} <span style="color:var(--text-dim);font-size:12px">(${escapeHtml(d)})</span> <span style="color:${perChk&&perChk[2]?"var(--ok)":"var(--danger)"}">${perChk&&perChk[2]?"✓":"⚠"}</span></div></div>
+    </div>
+    ${badChecks.length?`<div style="margin-bottom:10px;padding:8px 12px;border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-weight:700">${badChecks.map(r=>escapeHtml(r[0])+": ⚠ "+escapeHtml(r[3]||"")).join("<br>")}</div>`:""}
+    <div class="tbl-wrap"><table><thead><tr><th style="width:150px">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:130px">مدين</th><th style="width:130px">دائن</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="3">الإجمالي</td><td class="num">${f(plan.td)}</td><td class="num">${f(plan.tc)}</td></tr></tfoot></table></div>
     <p style="margin-top:10px;font-weight:700;color:${bad?"var(--danger)":"var(--ok)"}">${bad?`في ${bad} بند محتاج تصليح قبل الترحيل.`:"كل الحسابات جاهزة. بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها."}</p></div>`;
   window._txPostCtx={id,direction,plan,journals,years,periods};
   openModal("ترحيل "+(direction==="in"?"تحصيل":"دفعة")+" رقم "+(e.no||""),body,()=>{ txPostDo(); return false; });
+  { const mdl=document.querySelector("#modalBackdrop .modal"); if(mdl){ mdl.classList.add("tx-wide"); mdl.style.width="min(1150px,96vw)"; mdl.style.maxWidth="96vw"; } }
   const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)");
   if(okb){ if(bad) okb.remove(); else okb.textContent="ترحيل الحركة"; }
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
@@ -23583,7 +23619,7 @@ async function txPostDo(){
     try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
     audit("tx_post",`ترحيل ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState(); toast("✓ تم ترحيل "+title+" بقيد رقم "+entryNo,"ok"); closeModal();
-    try{ if(await askConfirm("تم الترحيل بقيد رقم "+entryNo+" — هل تريد طباعة القيد؟")) txPrintEntry(e.id,direction); }catch(_){}
+    try{ txPrintEntry(e.id,direction); }catch(_){}
     if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(direction);
     if(typeof renderAdjustments==="function" && document.getElementById("adjView")) renderAdjustments(direction);
   }catch(err){
@@ -23595,7 +23631,7 @@ async function txPostDo(){
 function txRowActions(e,direction){
   const logBtn=(e.editLog&&e.editLog.length)?`<button onclick="txShowLog('${e.id}')">سجل (${e.editLog.length})</button>`:"";
   const prn=(e.method!=="adjustment")?`<button class="tx-prn-btn" onclick="txPrintVoucher('${e.id}','${direction}')" title="طباعة سند ${direction==="in"?"قبض":"صرف"}">🖨 سند</button>`:"";
-  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${e.id}','${direction}')">🖨 طباعة القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:(txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${e.id}','${direction}')" title="حذف القيد وإرجاع الحركة غير مُرحّلة">↶ إلغاء الترحيل</button>`:"")}${prn}${logBtn}</div>`;
+  if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqCollectOpen('${e.id}','${direction}')">${direction==="in"?"تحصيل الشيك":"صرف الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:(txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${e.id}','${direction}')" title="حذف القيد وإرجاع الحركة غير مُرحّلة">↶ إلغاء الترحيل</button>`:"")}${prn}${logBtn}</div>`;
   const scr=direction==="in"?"receipts":"payments";
   const post=((e.method!=="adjustment" || e.entryKind==="gl") && txCanPost(e,direction) && !(typeof chqCanReceipt==="function"&&chqCanReceipt(e)))?`<button class="tx-post-btn" onclick="txPostOpen('${e.id}','${direction}')">ترحيل الحركة</button>`:"";
   const un=(e.method!=="adjustment" || e.entryKind==="gl")?`<span class="tx-unposted">غير مُرحّل</span>`:"";
@@ -25995,7 +26031,6 @@ async function chqViewEntry(id,direction){
   document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)")?.remove();
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
   const mf=document.querySelector("#modalBackdrop .mfoot");
-  if(mf){ const pb=document.createElement("button"); pb.type="button"; pb.className="btn"; pb.textContent="🖨 طباعة القيد"; pb.onclick=()=>txPrintEntry(id,direction); mf.insertBefore(pb,mf.firstChild); }
 }
 
 /* ---------- إلغاء ترحيل الشيك (حذف قيوده كلها من الأصل — بدون قيود عكسية) ---------- */
