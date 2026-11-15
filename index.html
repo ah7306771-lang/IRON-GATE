@@ -16891,7 +16891,10 @@ function openTxForm(direction, existing){
   const linkedNote = draft.linkedTxId ? `<div style="background:rgba(230,179,37,.12);border:1px solid var(--gold);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--gold-text,#7a5c0b)">🔗 هذه الحركة مرتبطة بدفعة أخرى تم إنشاؤها تلقائيًا (ID: ${escapeHtml(draft.linkedTxId)}). عند التعديل أو الحذف يُنصح بمراجعة الدفعة المرتبطة.</div>` : "";
 
   // ---- نوع الحركة: تحصيل عميل / سداد مورد  ⟷  تسويات (حسابات عامة) ----
-  const showKind = (!existing && !draft.adjustmentKind) || draft.entryKind==="gl";
+  const showKind = existing
+    ? (!draft.linkedTxId && draft.method!=="transfer_supplier" && draft.method!=="bank")   // التعديل: نفس شكل التحصيل الجديد (عميل ⟷ تسويات) — إلا الشيكات والتحويل لمورد
+    : (!draft.adjustmentKind);
+  window.__txExistingAllocN = existing ? ((existing.allocations||[]).length) : 0;
   window.__txKind = (showKind && draft.entryKind==="gl") ? "gl" : "party";
   window.txGlLegacy = !!(existing && draft.entryKind==="gl" && !draft.customer && !draft.supplier && draft.method!=="adjustment");   // تسويات قديمة بدون طرف
   // تسويات: على حسابات (زي الأول) أو على عميل/مورد — الافتراضي للجديد: حسابات
@@ -16901,12 +16904,12 @@ function openTxForm(direction, existing){
   window.__txPartyGl  = (draft.entryKind==="gl") ? (draft[partyField]||"") : "";
   window.txGlDraft = (Array.isArray(draft.glLines)&&draft.glLines.length) ? draft.glLines.map(x=>({...x})) : [{accountId:"",accountCode:"",accountName:"",desc:"",amount:""}];
   const kindHtml = showKind ? `<div class="tx-kind" role="group" aria-label="نوع الحركة">
-      <button type="button" class="tx-kind-btn ${window.__txKind==='party'?'on':''}" data-kind="party" ${existing?'disabled':''} onclick="txKindChanged('party')">${isIn?'👤 تحصيل عميل':'🏭 سداد مورد'}</button>
-      <button type="button" class="tx-kind-btn ${window.__txKind==='gl'?'on':''}" data-kind="gl" ${existing?'disabled':''} onclick="txKindChanged('gl')">⚖ تسويات</button>
+      <button type="button" class="tx-kind-btn ${window.__txKind==='party'?'on':''}" data-kind="party" onclick="txKindChanged('party')">${isIn?'👤 تحصيل عميل':'🏭 سداد مورد'}</button>
+      <button type="button" class="tx-kind-btn ${window.__txKind==='gl'?'on':''}" data-kind="gl" onclick="txKindChanged('gl')">⚖ تسويات</button>
     </div>
     <div id="tx_glTargetWrap" class="tx-tgt" style="display:none">
-      <button type="button" class="tx-tgt-btn" data-target="accounts" ${existing?'disabled':''} onclick="txGlTargetChanged('accounts')">📒 تسوية على حسابات</button>
-      <button type="button" class="tx-tgt-btn" data-target="party" ${txScope!=="all"?'style="display:none"':''} ${existing?'disabled':''} onclick="txGlTargetChanged('party')">${isIn?'👤 تسوية على عميل':'🏭 تسوية على مورد'}</button>
+      <button type="button" class="tx-tgt-btn" data-target="accounts" onclick="txGlTargetChanged('accounts')">📒 تسوية على حسابات</button>
+      <button type="button" class="tx-tgt-btn" data-target="party" ${txScope!=="all"?'style="display:none"':''} onclick="txGlTargetChanged('party')">${isIn?'👤 تسوية على عميل':'🏭 تسوية على مورد'}</button>
     </div>` : "";
   const glHtml = `<div id="tx_glWrap" class="tx-gl" style="display:none">
       <div class="tx-gl-title">⚖ توزيع القيمة على الحسابات</div>
@@ -17158,7 +17161,7 @@ function openTxForm(direction, existing){
     toast(msg,"ok");
     return true;
   });
-  setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); if(window.__txKind!=="gl"){ const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
+  setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); { const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
 }
 
 
@@ -22968,6 +22971,7 @@ function txGlTargetChanged(t){
 }
 function txKindChanged(k){
   if(document.querySelector(".tx-kind-btn[disabled]")) return;
+  if(k==="gl" && window.__txKind!=="gl" && (window.__txExistingAllocN||0)>0) toast("تنبيه: هذه الحركة مُسكّنة على فواتير/أقساط — عند الحفظ كتسوية ستُلغى تسكيناتها","info");
   if(window.__txKind==="gl") txGlSync();
   txPartyStash();
   window.__txKind=k; txKindApply();
@@ -23848,6 +23852,7 @@ try{ if(document.readyState==="loading") document.addEventListener("DOMContentLo
 function txDiffLog(a,b){
   const out=[], lab={date:"التاريخ",customer:"العميل",supplier:"المورد",method:"طريقة السداد",amount:"القيمة",treasury:"الخزنة/البنك",refNo:"رقم المرجع",dueDate:"الاستحقاق",status:"الحالة",notes:"ملاحظات",adjustmentKind:"نوع التسوية",targetSupplier:"المورد المحوَّل إليه"};
   Object.keys(lab).forEach(k=>{ const x=String(a[k]==null?"":a[k]), y=String(b[k]==null?"":b[k]); if(x!==y) out.push({f:lab[k],from:x,to:y}); });
+  { const ka=a.entryKind==="gl"?"تسويات":"عميل/مورد", kb=b.entryKind==="gl"?"تسويات":"عميل/مورد"; if(ka!==kb) out.push({f:"نوع الحركة",from:ka,to:kb}); }
   const g=r=>(r.glLines||[]).map(l=>`${l.accountCode||l.accountName||""}:${l.amount}`).join("، ");
   if(g(a)!==g(b)) out.push({f:"حسابات التسويات",from:g(a),to:g(b)});
   return out;
@@ -27574,6 +27579,48 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
  html body:not(#_) .topbar .user .tb-theme{order:3}
  html body:not(#_) .topbar .user .tb-user-btn{order:4}
  html body:not(#_) .topbar .user .tb-warn{order:5}
+}
+</style>
+
+<style id="ig-header-pro">
+/* ===== الهيدر (شريط التنقل + شريط الأدوات) — تصميم احترافي موحّد ===== */
+@media(min-width:901px){
+ /* --- الشريط الداكن العلوي: مسار الصفحة --- */
+ html body:not(#_) .ap-bar{height:40px;padding:0 18px!important;gap:4px!important;background:#0b1d3a!important;border-bottom:1px solid rgba(212,160,23,.55)!important}
+ html body:not(#_) .ap-bar button,html body:not(#_) .ap-bar .ap-here{font-size:12.5px!important;font-weight:600!important;padding:5px 11px!important;border-radius:8px!important;color:#c3cee5!important;background:transparent!important;line-height:1.2}
+ html body:not(#_) .ap-bar>button:hover{background:rgba(255,255,255,.09)!important;color:#fff!important}
+ html body:not(#_) .ap-bar .ap-apps{margin:0 0 0 6px!important;padding:5px 13px!important;background:rgba(244,197,66,.14)!important;color:#F4C542!important;border:1px solid rgba(244,197,66,.4)!important;font-weight:800!important}
+ html body:not(#_) .ap-bar .ap-apps:hover{background:rgba(244,197,66,.26)!important}
+ html body:not(#_) .ap-bar .ap-cur{color:#dfe6f5!important}
+ html body:not(#_) .ap-bar .ap-here{color:#fff!important;font-weight:800!important;background:rgba(255,255,255,.08)!important}
+ html body:not(#_) .ap-bar button[onclick*="logout"]{color:#ff9d93!important}
+ /* --- شريط الأدوات --- */
+ html body:not(#_) .topbar{min-height:58px!important;padding:8px 20px!important;gap:10px!important;background:var(--ig-header-bg,#fff)!important;border-bottom:1px solid #e4e9f1!important;box-shadow:0 4px 14px rgba(15,42,82,.05)!important}
+ /* القوائم كتبويبات نظيفة */
+ html body:not(#_) .topbar .ap-menus{background:transparent!important;border:0!important;padding:0!important;gap:4px!important}
+ html body:not(#_) .topbar .ap-menus .ap-m>button{height:38px!important;padding:0 14px!important;border-radius:10px!important;font-size:14.5px!important;font-weight:800!important;color:#1d2f4f!important;background:transparent!important;box-shadow:none!important}
+ html body:not(#_) .topbar .ap-menus .ap-m:hover>button,html body:not(#_) .topbar .ap-menus .ap-m:focus-within>button{background:#eef2f9!important;color:#0f2a52!important;box-shadow:none!important}
+ html body:not(#_) .topbar .ap-menus .ap-cur-m:not(:hover):not(:focus-within)>button{background:#fff3d1!important;color:#7a5200!important;box-shadow:none!important}
+ html body:not(#_) .topbar .tb-back{border:1px solid #dfe5ee!important;background:#fff!important;color:#1d2f4f!important}
+ /* الأدوات: شكل واحد */
+ html body:not(#_) .topbar .tb-cust,html body:not(#_) .topbar .ig-top-exit,html body:not(#_) .topbar .tb-user-btn{background:#fff!important;border:1px solid #dfe5ee!important;color:#1d2f4f!important;box-shadow:none!important}
+ html body:not(#_) .topbar .tb-cust:hover,html body:not(#_) .topbar .ig-top-exit:hover,html body:not(#_) .topbar .tb-user-btn:hover{border-color:#D4A017!important;background:#fffaf0!important}
+ html body:not(#_) .topbar .ig-top-exit{width:36px;padding:0!important}
+ html body:not(#_) .topbar .ig-top-exit .ig-exit-long,html body:not(#_) .topbar .ig-top-exit .ig-exit-short{display:none!important}
+ html body:not(#_) .topbar .ig-top-exit [aria-hidden]{font-size:16px}
+ /* حالة الحفظ: خفيفة بدون إطار */
+ html body:not(#_) .topbar .ig-sync{background:transparent!important;border:0!important;padding:0 6px!important;font-size:12px!important;font-weight:700!important;color:#1b7a46!important}
+ html body:not(#_) .topbar .ig-sync:not(.saved){color:#a56a00!important}
+ /* الشركة: بدل الكبسولة الذهبية الصارخة */
+ html body:not(#_) .topbar .ig-co-chip{background:#fff8e6!important;border:1px solid #ecd9a3!important;color:#6b4a06!important;border-radius:10px!important;padding:0 12px!important;font-size:12.5px!important;font-weight:800!important}
+ /* الاتصال: نقطة فقط (النص بيظهر لو انقطع) */
+ html body:not(#_) .topbar .ig-net{width:36px;padding:0!important;background:transparent!important;border-color:transparent!important}
+ html body:not(#_) .topbar .ig-net.on b{display:none}
+ html body:not(#_) .topbar .ig-net.off{width:auto;padding:0 12px!important}
+ /* الثيم والمستخدم */
+ html body:not(#_) .topbar .tb-theme{background:#fff!important;border:1px solid #dfe5ee!important;color:#1d2f4f!important}
+ html body:not(#_) .topbar .tb-theme:hover{border-color:#D4A017!important;background:#fffaf0!important}
+ html body:not(#_) .topbar .user{border-inline-start:1px solid #e1e6ef!important}
 }
 </style>
 </body></html>`);
