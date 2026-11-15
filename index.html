@@ -4162,6 +4162,7 @@ const navGroups = [
     { id:"salesInvoices", icon:"🧾", label:"فواتير المبيعات" },
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
     { id:"supplyBulkPost", icon:"📥", label:"ترحيل بيانات التوريد" },
+    { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" },
     { sep:"التقارير والمتابعة" },
     { id:"salesReport", icon:"📊", label:"تقرير المبيعات" },
     { id:"managementReports", icon:"📈", label:"تقارير الإدارة والرقابة" },
@@ -4170,7 +4171,6 @@ const navGroups = [
     { id:"overdueSummary", icon:"📉", label:"إجمالي المتأخرات" },
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
     { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" },
-    { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" },
     { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
     { sep:"البيانات الأساسية للمبيعات" },
     { id:"master", tab:"customers", icon:"♙", label:"العملاء" },
@@ -16245,6 +16245,7 @@ function txClearDash(direction){ txFilter.dashCollected=false; try{ txViewSave(d
 function newAdjustment(direction, kind){
   if(!guardAct(direction==="in"?"customerAdjustments":"supplierAdjustments","add")) return;
   window.__forceAdjustmentNext = kind || "debit";
+  if(direction==="in") window.__adjScreenNext = true;   // شاشة تسويات العملاء: نموذج التسوية الكامل (حسابات / تحويل لمورد)
   openTxForm(direction, null);
 }
 function viewAdjustments(direction){
@@ -16885,20 +16886,22 @@ function openTxForm(direction, existing){
   const bankOptions = (state.banks||[]).filter(b=>!chqIsSysBank(b)).map(b=>`<option value="${escapeAttr(b.code)}" ${draft.treasury===b.code?'selected':''}>${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("");
   const safeOptions = (state.safes||[]).map(s=>`<option value="${escapeAttr(s.code)}" ${draft.treasury===s.code?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join("");
   // قائمة طرق التحصيل/الدفع — في التحصيلات فقط فيه "تحويل لمورد"
-  const methodsForDir = txScopeMethods(isIn ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods);
+  const methodsForDir = (isIn ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods);   // القائمة كاملة: حدود الخزينة/البنك بتتطبق في txKindApply بحسب نوع الحركة (التسوية على عميل لازم تظهر "تسوية غير نقدية")
   // قائمة الموردين لحقل "تحويل لمورد"
   const supplierOptionsHtml = (partyNames(state.suppliers)||[]).map(n=>`<option value="${escapeAttr(n)}" ${draft.targetSupplier===n?'selected':''}>${escapeHtml(n)}</option>`).join("");
   const linkedNote = draft.linkedTxId ? `<div style="background:rgba(230,179,37,.12);border:1px solid var(--gold);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--gold-text,#7a5c0b)">🔗 هذه الحركة مرتبطة بدفعة أخرى تم إنشاؤها تلقائيًا (ID: ${escapeHtml(draft.linkedTxId)}). عند التعديل أو الحذف يُنصح بمراجعة الدفعة المرتبطة.</div>` : "";
 
   // ---- نوع الحركة: تحصيل عميل / سداد مورد  ⟷  تسويات (حسابات عامة) ----
+  const adjScreen = !existing && isIn && !!window.__adjScreenNext; window.__adjScreenNext = false;
   const showKind = existing
     ? (!draft.linkedTxId && draft.method!=="transfer_supplier" && draft.method!=="bank")   // التعديل: نفس شكل التحصيل الجديد (عميل ⟷ تسويات) — إلا الشيكات والتحويل لمورد
-    : (!draft.adjustmentKind);
+    : (!draft.adjustmentKind || adjScreen);
   window.__txExistingAllocN = existing ? ((existing.allocations||[]).length) : 0;
-  window.__txKind = (showKind && draft.entryKind==="gl") ? "gl" : "party";
+  window.__txKind = (showKind && (draft.entryKind==="gl" || adjScreen)) ? "gl" : "party";
   window.txGlLegacy = !!(existing && draft.entryKind==="gl" && !draft.customer && !draft.supplier && draft.method!=="adjustment");   // تسويات قديمة بدون طرف
   // تسويات: على حسابات (زي الأول) أو على عميل/مورد — الافتراضي للجديد: حسابات
-  window.__txGlTarget = (existing && draft.entryKind==="gl" && !window.txGlLegacy) ? "party" : "accounts";
+  window.__txGlTarget = (adjScreen || (existing && draft.entryKind==="gl" && !window.txGlLegacy)) ? "party" : "accounts";
+  window.__txGlSupp = false; window.__txSuppActive = false;   // تسوية على عميل: الطرف المقابل = حسابات (الافتراضي) أو تحويل لمورد
   // اختيار المورد/العميل مستقل: واحد لسداد المورد/تحصيل العميل وواحد للتسويات
   window.__txPartyPay = (draft.entryKind==="gl") ? "" : (draft[partyField]||"");
   window.__txPartyGl  = (draft.entryKind==="gl") ? (draft[partyField]||"") : "";
@@ -16908,9 +16911,13 @@ function openTxForm(direction, existing){
       <button type="button" class="tx-kind-btn ${window.__txKind==='gl'?'on':''}" data-kind="gl" onclick="txKindChanged('gl')">⚖ تسويات</button>
     </div>
     <div id="tx_glTargetWrap" class="tx-tgt" style="display:none">
-      <button type="button" class="tx-tgt-btn" data-target="accounts" onclick="txGlTargetChanged('accounts')">📒 تسوية على حسابات</button>
+      <button type="button" class="tx-tgt-btn" data-target="accounts" onclick="txGlTargetChanged('accounts')">${txScope!=="all"?(isIn?"📒 إيراد على حسابات":"📒 مصروف على حسابات"):"📒 تسوية على حسابات"}</button>
       <button type="button" class="tx-tgt-btn" data-target="party" ${txScope!=="all"?'style="display:none"':''} onclick="txGlTargetChanged('party')">${isIn?'👤 تسوية على عميل':'🏭 تسوية على مورد'}</button>
-    </div>` : "";
+    </div>
+    ${(isIn&&!existing)?`<div id="tx_glCounterWrap" class="tx-tgt" style="display:none;margin-top:-6px">
+      <button type="button" class="tx-cnt-btn on" data-counter="accounts" onclick="txGlCounterChanged('accounts')">📒 حسابات</button>
+      <button type="button" class="tx-cnt-btn" data-counter="supplier" onclick="txGlCounterChanged('supplier')">🔄 تحويل لمورد</button>
+    </div>`:""}` : "";
   const glHtml = `<div id="tx_glWrap" class="tx-gl" style="display:none">
       <div class="tx-gl-title">⚖ توزيع القيمة على الحسابات</div>
       <div class="tx-gl-hint" id="txGlHint">${isIn?'مقبوضات تسويات: <b>الخزنة / البنك مدين</b> ← والحسابات أدناه <b>دائنة</b>':'مدفوعات تسويات: <b>الحسابات أدناه مدينة</b> ← و<b>الخزنة / البنك دائن</b>'} — لازم إجمالي الحسابات يساوي <b>القيمة</b> المكتوبة فوق، وإلا القيد غير موزون ولن يتم الحفظ.</div>
@@ -16919,7 +16926,7 @@ function openTxForm(direction, existing){
       <div class="tx-gl-bar"><button type="button" class="btn ghost sm" onclick="txGlAdd()">+ إضافة حساب</button>
       <div class="tx-gl-sum" id="txGlSum"><span>القيمة <b id="txGlVal">0.00</b></span><span>إجمالي الحسابات <b id="txGlTotal2">0.00</b></span><span>الفرق <b id="txGlDiff">0.00</b></span><span class="tx-gl-badge" id="txGlBadge">—</span></div></div>
     </div>`;
-  openModal(`${existing?'تعديل':'إضافة'} ${isIn?'تحصيل':'دفعة'}${existing?' رقم '+existing.no:''}`, `
+  openModal(adjScreen ? 'إضافة تسوية عميل' : `${existing?'تعديل':'إضافة'} ${isIn?'تحصيل':'دفعة'}${existing?' رقم '+existing.no:''}`, `
     ${linkedNote}${kindHtml}
     <div class="tx-head-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding-bottom:8px;border-bottom:1px solid var(--line)">
       <div class="fld" style="margin-bottom:0"><label style="font-size:11px">م</label>
@@ -17032,7 +17039,7 @@ function openTxForm(direction, existing){
         : document.getElementById("tx_bank").value);
     const targetSupplierVal = isIn && isTransferSupplier ? (document.getElementById("tx_supplierTarget")?.value||"").trim() : "";
     const adjustmentKind = isAdj ? (document.getElementById("tx_adjustmentKind")?.value||"") : "";
-    const isGl = window.__txKind==="gl";
+    const isGl = window.__txKind==="gl" && !window.__txSuppActive;
     let glLines = [];
     if(isGl){ txGlSync(); glLines = (window.txGlDraft||[]).filter(r=>r.accountId||(+r.amount>0)||String(r.desc||"").trim()).map(r=>({accountId:r.accountId,accountCode:r.accountCode,accountName:r.accountName,desc:String(r.desc||"").trim(),amount:Math.round((+r.amount||0)*100)/100})); }
     const glTotal = Math.round(glLines.reduce((a,r)=>a+(+r.amount||0),0)*100)/100;
@@ -17156,12 +17163,12 @@ function openTxForm(direction, existing){
     if(document.getElementById("adjView")) renderAdjustments(direction);
     else renderTreasury(direction);
     const msg = isAdj
-      ? "تم الحفظ بنجاح"
+      ? ("تم الحفظ بنجاح"+(txScope!=="all"&&document.getElementById("adjView")==null?" — التسوية بتظهر في شاشة "+(isIn?"تسويات العملاء":"تسويات الموردين"):""))
       : ((!existing && isTransferSupplier) ? `✓ تم الحفظ بنجاح · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"✓ تم الحفظ بنجاح — تم تعديل السجل":"✓ تم الحفظ بنجاح — تمت الإضافة"));
     toast(msg,"ok");
     return true;
   });
-  setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); { const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
+  setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); if(adjScreen){ const _k=document.querySelector("#modalBackdrop .tx-kind"), _t=document.getElementById("tx_glTargetWrap"); if(_k) _k.style.display="none"; if(_t) _t.style.display="none"; } { const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
 }
 
 
@@ -22846,6 +22853,8 @@ body.page-shipments #content:has(#paySchedBox) #paySchedBox th{background:var(--
 .tx-tgt-btn{flex:1;padding:8px 8px;border:2px solid var(--line,#d8dee6);border-radius:10px;background:#fff;color:#334155;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
 .tx-tgt-btn.on{border-color:#c99724;background:#fff7df;color:#7a5c0b}
 .tx-tgt-btn[disabled]{opacity:.65;cursor:default}
+.tx-cnt-btn{flex:1;padding:7px 8px;border:2px solid var(--line,#d8dee6);border-radius:10px;background:#fff;color:#334155;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+.tx-cnt-btn.on{border-color:#2e75b6;background:#eaf2fb;color:#1f5a91}
 .tx-gl{margin-top:12px}
 .tx-gl-hint{font-size:12px;color:#475569;background:#f1f5f9;border:1px solid #dbe3ee;border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.7}
 .tx-gl .tbl-wrap{overflow:auto;border:1px solid #8a94a3;border-radius:8px}
@@ -22907,13 +22916,16 @@ function txKindApply(){
   document.querySelectorAll(".tx-kind-btn").forEach(b=>b.classList.toggle("on",b.dataset.kind===(gl?"gl":"party")));
   const show=(id,on)=>{ const e=$(id); if(e) e.style.display=on?"":"none"; };
   const accounts = gl && window.__txGlTarget!=="party";
+  const supp = gl && !accounts && window.__txDir==="in" && !!window.__txGlSupp;   // تسوية على عميل ← تحويل لمورد
+  window.__txSuppActive = supp;
   window.txGlLegacy = accounts;   // تسوية على حسابات = بدون طرف، نقدي/بنكي
   show("tx_glTargetWrap",gl);
   document.querySelectorAll(".tx-tgt-btn").forEach(b=>b.classList.toggle("on",b.dataset.target===(accounts?"accounts":"party")));
-  show("tx_partyWrap",!accounts); show("tx_glWrap",gl); show("tx_allocBlock",!gl);
+  show("tx_partyWrap",!accounts); show("tx_glWrap",gl&&!supp); show("tx_allocBlock",!gl);
+  show("tx_glCounterWrap",gl&&!accounts); document.querySelectorAll(".tx-cnt-btn").forEach(b=>b.classList.toggle("on",b.dataset.counter===(supp?"supplier":"accounts")));
   if(accounts){ const ps=$("tx_party"); if(ps&&ps.value){ ps.value=""; } const si=$("tx_party_search"); if(si) si.value=""; }
   const isInDir=window.__txDir==="in";
-  const hasParty=gl&&!accounts;
+  const hasParty=gl&&!accounts&&!supp;
   { const pl=document.querySelector("#tx_partyWrap label"); if(pl){ if(pl.dataset.orig===undefined) pl.dataset.orig=pl.innerHTML;
       pl.innerHTML = gl ? (isInDir?"العميل":"المورد")+(window.txGlLegacy?"":" *")+' <span style="color:var(--text-dim);font-weight:400">('+(window.txGlLegacy?"اختياري":"تسوية غير نقدية "+((($("tx_adjustmentKind")||{}).value||"credit")==="debit"?"مدينة":"دائنة")+" على حسابه")+')</span>' : pl.dataset.orig; } }
   const amt=$("tx_amount"); if(amt){ amt.readOnly=false; amt.style.opacity=""; }
@@ -22922,13 +22934,14 @@ function txKindApply(){
   if(lab){ lab.childNodes[0].nodeValue="القيمة * "; const sp=lab.querySelector("span"); if(sp) sp.style.display=gl?"none":""; }
   const sel=$("tx_method");
   if(sel){
-    const okM=hasParty?["adjustment"]:["cash","transfer"];
+    const okM=hasParty?["adjustment"]:(supp?["transfer_supplier"]:["cash","transfer"]);
     [...sel.options].forEach(o=>{ const b=gl&&o.value!==""&&!okM.includes(o.value); o.hidden=b; o.disabled=b; });
     if(gl&&sel.value&&!okM.includes(sel.value)) sel.value="";
     if(hasParty){ sel.value="adjustment"; sel.dataset.glForced="1"; }
-    else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment") sel.value=""; }
+    else if(supp){ sel.value="transfer_supplier"; sel.dataset.glForced="1"; }
+    else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment"||sel.value==="transfer_supplier") sel.value=""; }
     // سداد المورد وتحصيل العميل: نخفي "تسوية" من أنواع الدفع/التحصيل — التسويات من تاب التسويات (إلا لو الحركة نفسها تسوية)
-    if(!gl){ [...sel.options].forEach(o=>{ if(o.value==="adjustment"){ const b=sel.value!=="adjustment"; o.hidden=b; o.disabled=b; } }); }
+    if(!gl){ [...sel.options].forEach(o=>{ if(!o.value) return; if(o.value==="adjustment"){ const b=sel.value!=="adjustment"; o.hidden=b; o.disabled=b; } else { const okS=txScope==="cash"?o.value==="cash":(txScope==="bank"?o.value!=="cash":true); const b=!okS&&sel.value!==o.value; o.hidden=b; o.disabled=b; } }); }
   }
   if(gl){ txGlRender(); txGlTotal(); if(typeof mdAccEnsure==="function") mdAccEnsure(); }
   if(typeof txToggleFields==="function") txToggleFields();
@@ -22968,6 +22981,11 @@ function txGlTargetChanged(t){
   txPartyStash();
   window.__txGlTarget=t; txKindApply();
   txPartyRestore();
+}
+function txGlCounterChanged(c){
+  if(window.__txKind==="gl") txGlSync();
+  window.__txGlSupp = (c==="supplier");
+  txKindApply();
 }
 function txKindChanged(k){
   if(document.querySelector(".tx-kind-btn[disabled]")) return;
