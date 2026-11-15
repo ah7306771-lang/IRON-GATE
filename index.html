@@ -4259,7 +4259,7 @@ let appsView=null, appsMod=null, _apItems=[];
 window.__cl = window.__cl || {from:"",to:"",q:"",type:"all",tr:""};
 function clRows(){
   const F=window.__cl, q=String(F.q||"").trim().toLowerCase();
-  const isCash=e=>e.entryKind!=="transfer_view" && e.method!=="adjustment" && (e.method==="cash" || txEntryKind(e)==="safe");
+  const isCash=e=>e.entryKind!=="transfer_view" && e.method==="cash";
   const all=(state.treasuryEntries||[]).filter(isCash);
   const rows=all.filter(e=>{
     if(F.type==="in"&&e.direction!=="in") return false;
@@ -15644,7 +15644,7 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
   if(t){ if((state.banks||[]).some(b=>String(b.code)===t)) return "bank"; if((state.safes||[]).some(x=>String(x.code)===t)) return "safe"; }
   return "bank";
 }
-function txScopeOK(e){ if(txScope==="all") return true; if(e.method==="adjustment") return false; return txScope==="cash"?txEntryKind(e)==="safe":txEntryKind(e)==="bank"; }   // تسويات العملاء/الموردين ليها شاشاتها
+function txScopeOK(e){ if(txScope==="all") return true; if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
 function txScopeMethods(l){ return txScope==="cash"?l.filter(m=>m.v==="cash"):txScope==="bank"?l.filter(m=>m.v!=="cash"&&m.v!=="adjustment"):l; }
 function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"):txScope==="bank"?l.filter(t=>t.kind==="bank"):l; }
 let txFilter = { q:"", method:[], status:[], post:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
@@ -19511,7 +19511,8 @@ async function openMfaSetup(){
   }
   // ---------- عرض الأعمدة ----------
   function applyWidths(t){
-    const c=C(t), ord=ordOf(t), H=hidOf(t);
+    const c=C(t), ord=ordOf(t), H=new Set([...hidOf(t)]);
+    t._rs.ths.forEach((th,j)=>{ try{ if(getComputedStyle(th).display==="none") H.add(j); }catch(e){} });   // أعمدة مخفية بـ CSS (زي نطاق النقدي) متتحسبش في العرض
     let cg=t.querySelector(":scope>colgroup.rs-cg");
     if(!c.w){ if(cg) cg.remove(); t.classList.remove("rs-fixed"); t.style.width=""; return; }
     if(cg) cg.remove();
@@ -19520,7 +19521,7 @@ async function openMfaSetup(){
     t.insertBefore(cg,t.firstChild); t.style.width=sum+"px"; t.classList.add("rs-fixed");
   }
   function liveWidth(t,j,w){
-    const c=C(t), vis=ordOf(t).filter(x=>!hidOf(t).has(x)), cg=t.querySelector(":scope>colgroup.rs-cg"); if(!cg) return;
+    const c=C(t), vis=ordOf(t).filter(x=>!hidOf(t).has(x)&&!(function(){ try{ return getComputedStyle(t._rs.ths[x]).display==="none"; }catch(e){ return false; } })()), cg=t.querySelector(":scope>colgroup.rs-cg"); if(!cg) return;
     const p=vis.indexOf(j); if(p>=0) cg.children[p].style.width=w+"px";
     t.style.width=vis.reduce((a,x)=>a+(x===j?w:(c.w[x]||120)),0)+"px";
   }
@@ -19621,7 +19622,7 @@ async function openMfaSetup(){
     const legacyKey=location.hash+"|"+legacySig;
     const pg=(typeof currentPage!=="undefined"&&currentPage)?currentPage:"";
     // مفتاح ثابت: اسم الجدول لو متحدد، وإلا الشاشة + عدد الأعمدة (مش نص العناوين اللي ممكن يتغير)
-    const k=t.dataset.rsKey?"ironGateTable:"+t.dataset.rsKey+"|"+ths.length:(pg&&t.closest("#content")?"ironGateTable:pg:"+pg+"|"+ths.length+"|"+sig:legacyKey);
+    const k=t.dataset.rsKey?"ironGateTable:"+t.dataset.rsKey+(t.dataset.scope?"@"+t.dataset.scope:"")+"|"+ths.length:(pg&&t.closest("#content")?"ironGateTable:pg:"+pg+"|"+ths.length+"|"+sig:legacyKey);
     // ترحيل إعدادات الأعمدة القديمة بدل فقدان ترتيب المستخدم.
     if(k!==legacyKey&&!cfg[k]){
       const prev="ironGateTable:"+t.dataset.rsKey+"|"+sig;
@@ -27540,6 +27541,37 @@ html body .layout:not(.collapsed) aside nav button.navbtn .nb{flex:none;position
 html body .layout:not(.collapsed) aside .navsub .nav-sep{display:flex;align-items:center;gap:8px;margin:10px 2px 4px 2px!important;padding:0 8px 0 0!important;border-radius:0!important;background:transparent!important;font-size:10.5px!important;font-weight:800!important;letter-spacing:.3px;color:#D4A017!important;white-space:nowrap}
 html body .layout:not(.collapsed) aside .navsub .nav-sep::after{display:block!important;content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(212,160,23,.45),transparent)}
 html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:4px!important}
+</style>
+
+<style id="ig-topbar-final">
+/* ===== الشريط العلوي: يمين = الصفحة والعنوان، شمال = الأدوات ثم هوية الشركة والمستخدم ===== */
+@media(min-width:901px){
+ html body:not(#_) .topbar{display:flex!important;align-items:center!important;flex-wrap:nowrap!important;gap:10px!important;min-height:60px!important;padding:8px 22px!important}
+ html body:not(#_) .topbar>*{flex:0 0 auto;min-width:0}
+ /* الجهة اليمنى */
+ html body:not(#_) .topbar .tb-back{width:36px;height:36px;border-radius:10px}
+ html body:not(#_) .topbar h2{font-size:18px!important;font-weight:900!important;white-space:nowrap;margin:0!important}
+ html body:not(#_) .topbar .crumb{display:inline-flex;align-items:center;height:26px;padding:0 12px!important;margin:0 4px!important;border:1px solid color-mix(in srgb,var(--ig-header-text,#0f2a52) 18%,transparent)!important;border-radius:999px;background:color-mix(in srgb,var(--ig-header-text,#0f2a52) 5%,transparent);font-size:11.5px!important;opacity:.85!important}
+ html body:not(#_) .topbar .crumb:empty{display:none}
+ html body:not(#_) .topbar .spacer{flex:1 1 auto!important;display:block!important}
+ /* الجهة اليسرى: ترتيب الأدوات */
+ html body:not(#_) .topbar .tb-new{order:1}
+ html body:not(#_) .topbar .tb-cust{order:2}
+ html body:not(#_) .topbar .ig-top-exit{order:3}
+ html body:not(#_) .topbar .ig-sync{order:4}
+ html body:not(#_) .topbar .user{order:5;display:flex!important;align-items:center!important;flex-wrap:nowrap!important;gap:8px!important;margin-inline-start:6px;padding-inline-start:16px;border-inline-start:1px solid color-mix(in srgb,var(--ig-header-text,#0f2a52) 22%,transparent)}
+ /* توحيد الأحجام: كل العناصر ارتفاع 36 */
+ html body:not(#_) .topbar .tb-new,html body:not(#_) .topbar .tb-cust,html body:not(#_) .topbar .ig-top-exit,html body:not(#_) .topbar .ig-sync,html body:not(#_) .topbar .ig-co-chip,html body:not(#_) .topbar .ig-net,html body:not(#_) .topbar .tb-user-btn,html body:not(#_) .topbar .tb-theme{height:36px!important;min-height:0!important;box-sizing:border-box!important;display:inline-flex!important;align-items:center;justify-content:center;font-size:12.5px!important;font-weight:800;line-height:1;white-space:nowrap}
+ html body:not(#_) .topbar .tb-cust{padding:0 14px!important;border-radius:10px!important;gap:7px;border:1px solid rgba(212,160,23,.6)!important;background:#fff8e8!important;color:#78540a!important}
+ html body:not(#_) .topbar .tb-cust:hover{background:#ffefc7!important}
+ html body:not(#_) .topbar .tb-new{padding:0 16px!important;border-radius:10px!important}
+ /* داخل منطقة المستخدم: الشركة ← الاتصال ← الثيم ← الحساب */
+ html body:not(#_) .topbar .user .ig-co-chip{order:1;padding:0 14px!important;gap:7px}
+ html body:not(#_) .topbar .user .ig-net{order:2;padding:0 12px!important}
+ html body:not(#_) .topbar .user .tb-theme{order:3}
+ html body:not(#_) .topbar .user .tb-user-btn{order:4}
+ html body:not(#_) .topbar .user .tb-warn{order:5}
+}
 </style>
 </body></html>`);
     w.document.close();w.focus();setTimeout(()=>w.print(),300);
