@@ -4275,7 +4275,7 @@ function clRows(){
 }
 function viewCashLedger(){
   const F=window.__cl;
-  const safes=(state.safes||[]).map(x=>`<option value="${escapeAttr(String(x.code))}"${String(F.tr)===String(x.code)?" selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
+  const safes=(state.safes||[]).filter(x=>!txIsChqSafe(x)).map(x=>`<option value="${escapeAttr(String(x.code))}"${String(F.tr)===String(x.code)?" selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
   return `<div class="page-head"><h2>💵 الحركة النقدية</h2><span class="chip gold" id="clCount"></span><span class="spacer"></span></div>
   <div class="card"><div class="body">
     <div class="fgrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px">
@@ -15646,7 +15646,10 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
 }
 function txScopeOK(e){ if(txScope==="all") return true; if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
 function txScopeMethods(l){ return txScope==="cash"?l.filter(m=>m.v==="cash"):txScope==="bank"?l.filter(m=>m.v!=="cash"&&m.v!=="adjustment"):l; }
-function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"):txScope==="bank"?l.filter(t=>t.kind==="bank"):l; }
+function txIsChqSafe(t){ return !!t && /^chk\b|chk|شيك/i.test(String(t.code||"")+" "+String(t.name||"")); }   // خزنة الشيكات: تخص البنوك مش النقدي
+function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"&&!txIsChqSafe(t)):txScope==="bank"?l.filter(t=>t.kind==="bank"||txIsChqSafe(t)):l; }
+function txScopeStatuses(l){ return txScope==="cash"?l.filter(x=>x.v==="cash"):txScope==="bank"?l.filter(x=>x.v!=="cash"&&x.v!=="adjustment"):l; }
+function txScopePostOpts(l){ return txScope==="cash"?l.filter(x=>!/^chq_/.test(x.v)):l; }
 let txFilter = { q:"", method:[], status:[], post:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
 // توحيد قيمة الفلتر إلى مصفوفة — للتوافق مع الحفظ القديم (نصّي)
 function txNormFilterArr(v){
@@ -15952,8 +15955,8 @@ function viewTreasury(direction){
     <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
     <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
     ${txMsBuild("method","كل الأنواع", txScopeMethods(txMethods).map(m=>({v:m.v,label:m.label,ico:m.ico})), direction)}
-    ${txMsBuild("status","كل الحالات", txStatuses.map(s=>({v:s.v,label:s.label})), direction)}
-    ${txMsBuild("post","كل حالات الترحيل", txPostOptions(direction), direction)}
+    ${txMsBuild("status","كل الحالات", txScopeStatuses(txStatuses).map(s=>({v:s.v,label:s.label})), direction)}
+    ${txMsBuild("post","كل حالات الترحيل", txScopePostOpts(txPostOptions(direction)), direction)}
     ${txMsBuild("party", "كل "+(isIn?'العملاء':'الموردين'), partyList.map(n=>({v:n,label:n})), direction)}
     ${txMsBuild("treasury",txScope==="cash"?"كل الخزن":txScope==="bank"?"كل البنوك":"كل الخزائن/البنوك", txScopeTreasuries(treasuryAll()).filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t))).map(t=>({v:t.code,label:`${t.code} — ${t.name}`,ico:t.kind==="bank"?"🏦":"🗄"})), direction)}
     <input class="inp" type="date" title="من تاريخ" value="${escapeAttr(txFilter.from||'')}" onchange="txFilter.from=this.value;renderTreasury('${direction}')">
