@@ -11960,6 +11960,17 @@ function policyPaySchedule(t){
   rows=paymentScheduleRowsWithOverrides(no,rows);
   return {rows,total,source};
 }
+// الأيام في جدول الاستحقاقات: عدد الأيام من تاريخ الفاتورة (آخر بوليصة على الأمر) لحد تاريخ الاستحقاق
+function payBaseDate(){
+  const no=String(draft.saleOrderNo||"").trim();
+  const ds=orderDocs(no, editingId).map(x=>x.date||"").concat([draft.date||""]).filter(Boolean).sort();
+  return ds.length?String(ds[ds.length-1]).slice(0,10):"";
+}
+function payDaysBetween(base,due){
+  const a=String(base||"").match(/^(\d{4})-(\d{2})-(\d{2})/), b=String(due||"").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!a||!b) return "";
+  return Math.round((Date.UTC(+b[1],+b[2]-1,+b[3])-Date.UTC(+a[1],+a[2]-1,+a[3]))/86400000);
+}
 function setPayScheduleField(id,field,value){
   if(viewOnly) return;
   const t=draftTotals(), r=policyPaySchedule(t), rows=r.rows.map(x=>({...x}));
@@ -11967,6 +11978,7 @@ function setPayScheduleField(id,field,value){
   if(field==="amount") row.amount=value===""?"":Math.max(0,Number(String(value).replace(/,/g,""))||0);
   else if(field==="pct"){ const b0=+r.total||rows.reduce((a,x)=>a+(+x.amount||0),0); row.amount=value===""?0:r2(b0*Math.min(100,Math.max(0,Number(value)||0))/100); }
   else if(field==="due") row.due=String(value||"");
+  else if(field==="days"){ const bd=payBaseDate(); if(value===""||!bd) return; row.due=supPaymentDateAdd(bd,Math.max(0,parseInt(value,10)||0)); }
   draft.paySchedule={orderNo:String(draft.saleOrderNo||""),total:r.total,rows};
   draft.payScheduleReset=false; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo="";
   dirty=true;
@@ -11975,6 +11987,8 @@ function setPayScheduleField(id,field,value){
   rows.forEach(x=>{
     const e=document.getElementById("payPct_"+x.id); if(e&&e!==document.activeElement) e.value=base>0?r2((+x.amount||0)/base*100):0;
     const a=document.getElementById("payAmt_"+x.id); if(a&&a!==document.activeElement) a.value=fmt(+x.amount||0,2);
+    const dd=document.getElementById("payDue_"+x.id); if(dd&&dd!==document.activeElement) dd.value=x.due||"";
+    const dy=document.getElementById("payDays_"+x.id); if(dy&&dy!==document.activeElement){ const n=payDaysBetween(payBaseDate(),x.due); dy.value=n===""?"":n; }
   });
   payApplyNote(rows);
   const fp=document.getElementById("paySumPct"), fa=document.getElementById("paySumAmt");
@@ -12005,14 +12019,14 @@ function renderPolicyPaySchedule(t){
   if(tag) tag.textContent=r.rows.length?r.source:"";
   if(!r.rows.length){ box.innerHTML=`<p style="color:var(--text-dim);font-size:13px">${draft.saleOrderNo?"لا توجد شروط سداد مسجلة لأمر البيع المختار.":"لا يوجد أمر بيع مرتبط؛ جدول الاستحقاقات اختياري ويمكن استكماله لاحقًا."}</p>`; return; }
   const base=+r.total||r.rows.reduce((a,x)=>a+(+x.amount||0),0), sum=r.rows.reduce((a,x)=>a+(+x.amount||0),0), diff=r2(sum-base);
-  const pct=v=>base>0?fmt(v/base*100,2)+"%":"—", ro=viewOnly?"disabled":"";
+  const pct=v=>base>0?fmt(v/base*100,2)+"%":"—", ro=viewOnly?"disabled":"", baseD=payBaseDate();
   box.innerHTML=`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:6px 0 8px">
-    <div style="font-size:12px;color:var(--text-dim)">يتحدّث الجدول تلقائيًا. ويمكنك تعديل قيمة أي دفعة أو تاريخها يدويًا (يُعاد الحساب عند تغيير التاريخ أو الأصناف أو الشروط).</div>
+    <div style="font-size:12px;color:var(--text-dim)">يتحدّث الجدول تلقائيًا. ويمكنك تعديل قيمة أي دفعة أو عدد أيامها أو تاريخها يدويًا — لو غيّرت الأيام يتحدّث التاريخ لوحده (الأيام محسوبة من تاريخ الفاتورة). يُعاد الحساب عند تغيير التاريخ أو الأصناف أو الشروط.</div>
     ${!viewOnly?`<button type="button" class="btn ghost sm" onclick="clearPayScheduleEdits()">↺ تجاهل التعديل اليدوي</button>`:""}
   </div>
-  <div class="tbl-wrap"><table class="pay-sched-tbl" style="white-space:nowrap;min-width:640px"><thead><tr><th>#</th><th>نوع السداد</th><th>النسبة من الإجمالي</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${
-    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.label)}</b></td><td class="num"><span style="display:inline-flex;align-items:center;gap:4px"><input id="payPct_${escapeAttr(x.id)}" class="inp num" type="number" min="0" max="100" step="0.01" style="width:96px;min-width:96px" ${ro} value="${base>0?r2((+x.amount||0)/base*100):0}" oninput="setPayScheduleField('${escapeAttr(x.id)}','pct',this.value)" aria-label="نسبة ${escapeAttr(x.label)}">%</span></td><td><input id="payAmt_${escapeAttr(x.id)}" class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" style="min-width:145px" ${ro} value="${fnv(x.amount??0,2)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','amount',this.value)" aria-label="قيمة ${escapeAttr(x.label)}"></td><td><input class="inp" style="min-width:155px" type="date" ${ro} value="${escapeAttr(x.due||"")}" oninput="setPayScheduleField('${escapeAttr(x.id)}','due',this.value)" aria-label="تاريخ ${escapeAttr(x.label)}"></td></tr>`).join("")
-  }</tbody><tfoot><tr><td colspan="2">إجمالي الجدول</td><td class="num" id="paySumPct">${pct(sum)}</td><td class="num" id="paySumAmt">${fmt(sum)}</td><td></td></tr></tfoot></table></div>
+  <div class="tbl-wrap"><table class="pay-sched-tbl" style="white-space:nowrap;min-width:640px"><thead><tr><th>#</th><th>نوع السداد</th><th>النسبة من الإجمالي</th><th>القيمة</th><th>الأيام</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>${
+    r.rows.map((x,i)=>`<tr><td>${i+1}</td><td><b>${escapeHtml(x.label)}</b></td><td class="num"><span style="display:inline-flex;align-items:center;gap:4px"><input id="payPct_${escapeAttr(x.id)}" class="inp num" type="number" min="0" max="100" step="0.01" style="width:96px;min-width:96px" ${ro} value="${base>0?r2((+x.amount||0)/base*100):0}" oninput="setPayScheduleField('${escapeAttr(x.id)}','pct',this.value)" aria-label="نسبة ${escapeAttr(x.label)}">%</span></td><td><input id="payAmt_${escapeAttr(x.id)}" class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" style="min-width:145px" ${ro} value="${fnv(x.amount??0,2)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','amount',this.value)" aria-label="قيمة ${escapeAttr(x.label)}"></td><td><span style="display:inline-flex;align-items:center;gap:4px"><input id="payDays_${escapeAttr(x.id)}" class="inp num" type="number" min="0" step="1" style="width:84px;min-width:84px;font-weight:800;text-align:center" ${ro} value="${payDaysBetween(baseD,x.due)}" oninput="setPayScheduleField('${escapeAttr(x.id)}','days',this.value)" aria-label="أيام ${escapeAttr(x.label)}" title="عدد الأيام من تاريخ الفاتورة ${escapeAttr(baseD)}"><small style="color:var(--text-dim)">يوم</small></span></td><td><input id="payDue_${escapeAttr(x.id)}" class="inp" style="min-width:155px" type="date" ${ro} value="${escapeAttr(x.due||"")}" oninput="setPayScheduleField('${escapeAttr(x.id)}','due',this.value)" aria-label="تاريخ ${escapeAttr(x.label)}"></td></tr>`).join("")
+  }</tbody><tfoot><tr><td colspan="2">إجمالي الجدول</td><td class="num" id="paySumPct">${pct(sum)}</td><td class="num" id="paySumAmt">${fmt(sum)}</td><td></td><td></td></tr></tfoot></table></div>
   <div id="paySchedSummary" style="margin-top:10px;padding:11px 13px;border:1px solid ${Math.abs(diff)>0.01?'#e6a4a4':'var(--line)'};border-radius:9px;background:${Math.abs(diff)>0.01?'#fff5f5':'var(--bg-3)'};font-size:12px">إجمالي الجدول: <b>${fmt(sum)}</b> — إجمالي الفواتير/الخطة: <b>${fmt(base)}</b> — الفرق: <b style="color:${Math.abs(diff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(diff)}</b>${Math.abs(diff)>0.01?'<div style="color:var(--danger);margin-top:4px">تنبيه: يوجد فرق بين جدول الاستحقاقات وإجمالي الفواتير. عدّل النقدي أو الأقساط حتى تصل للتوزيع المطلوب.</div>':'<div style="color:var(--ok);margin-top:4px">إجمالي جدول السداد مطابق للإجمالي.</div>'}</div>`;
 }
 function applyTermsLock(){
