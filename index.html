@@ -4171,6 +4171,7 @@ const navGroups = [
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
     { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" },
     { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" },
+    { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
     { sep:"البيانات الأساسية للمبيعات" },
     { id:"master", tab:"customers", icon:"♙", label:"العملاء" },
     { id:"master", tab:"customerClasses", icon:"🏷", label:"تصنيف العملاء" },
@@ -4192,11 +4193,9 @@ const navGroups = [
     { id:"settings", tab:"purchase", icon:"⚙", label:"إعدادات المشتريات" }
   ]},
   { id:"treasury", icon:"💰", label:"نظام الخزينة", items:[
-    { id:"receipts", scope:"cash", icon:"💵", label:"تحصيل نقدي" },
-    { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
-    { id:"payments", scope:"cash", icon:"💸", label:"مدفوع نقدي" },
-    { id:"receipts", scope:"all", icon:"↓", label:"التحصيلات (مجمعة)" },
-    { id:"payments", scope:"all", icon:"↑", label:"المدفوعات (مجمعة)" },
+    { id:"receipts", scope:"cashAll", icon:"💵", label:"تحصيل نقدي" },
+    { id:"receipts", scope:"cash", icon:"↓", label:"التحصيلات (مجمعة)" },
+    { id:"payments", scope:"cash", icon:"↑", label:"المدفوعات (مجمعة)" },
     { id:"treasuryTransfer", icon:"🔁", label:"تحويل بين الخزن والبنوك" },
     { id:"treasuryBulkPost", icon:"📥", label:"ترحيل التحصيلات والمدفوعات" },
     { id:"safeStatement", icon:"📒", label:"كشف حساب خزينة" },
@@ -4255,6 +4254,57 @@ const APPS=[
 ];
 var txScope="all";   // نطاق شاشة التحصيلات/المدفوعات: all | cash (الخزينة) | bank (البنوك)
 let appsView=null, appsMod=null, _apItems=[];
+
+// ---------- الحركة النقدية: التحصيلات والمدفوعات النقدية مع بعض بتواريخها ----------
+window.__cl = window.__cl || {from:"",to:"",q:"",type:"all",tr:""};
+function clRows(){
+  const F=window.__cl, q=String(F.q||"").trim().toLowerCase();
+  const isCash=e=>e.entryKind!=="transfer_view" && e.method!=="adjustment" && (e.method==="cash" || txEntryKind(e)==="safe");
+  const all=(state.treasuryEntries||[]).filter(isCash);
+  const rows=all.filter(e=>{
+    if(F.type==="in"&&e.direction!=="in") return false;
+    if(F.type==="out"&&e.direction!=="out") return false;
+    if(F.from&&String(e.date||"")<F.from) return false;
+    if(F.to&&String(e.date||"")>F.to) return false;
+    if(F.tr&&String(e.treasury||"")!==F.tr) return false;
+    if(q){ const hay=[e.customer,e.supplier,e.notes,e.refNo,e.no,e.treasury].join(" ").toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  });
+  rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||txEntryCmp(a,b));
+  return rows;
+}
+function viewCashLedger(){
+  const F=window.__cl;
+  const safes=(state.safes||[]).map(x=>`<option value="${escapeAttr(String(x.code))}"${String(F.tr)===String(x.code)?" selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
+  return `<div class="page-head"><h2>💵 الحركة النقدية</h2><span class="chip gold" id="clCount"></span><span class="spacer"></span></div>
+  <div class="card"><div class="body">
+    <div class="fgrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px">
+      <label>من تاريخ<input class="inp" type="date" id="clFrom" value="${escapeAttr(F.from)}"></label>
+      <label>إلى تاريخ<input class="inp" type="date" id="clTo" value="${escapeAttr(F.to)}"></label>
+      <label>النوع<select class="inp" id="clType"><option value="all"${F.type==="all"?" selected":""}>تحصيلات ومدفوعات</option><option value="in"${F.type==="in"?" selected":""}>تحصيلات فقط</option><option value="out"${F.type==="out"?" selected":""}>مدفوعات فقط</option></select></label>
+      <label>الخزينة<select class="inp" id="clTr"><option value="">كل الخزن</option>${safes}</select></label>
+      <label>بحث<input class="inp" id="clQ" placeholder="عميل / مورد / ملاحظات" value="${escapeAttr(F.q)}"></label>
+    </div>
+    <div id="clKpi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>
+    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>الخزينة</th><th>البيان</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody id="clBody"></tbody><tfoot id="clFoot"></tfoot></table></div>
+  </div></div>`;
+}
+function clPaint(){
+  const rows=clRows(); let run=0,ti=0,to=0;
+  const body=rows.map((e,i)=>{
+    const inn=e.direction==="in", v=+e.amount||0; run+=inn?v:-v; if(inn)ti+=v; else to+=v;
+    return `<tr><td>${i+1}</td><td dir="ltr">${escapeHtml(String(e.date||"—"))}</td><td><span class="chip ${inn?"ok":"warn"}">${inn?"تحصيل":"دفعة"}</span></td><td>${escapeHtml((inn?e.customer:e.supplier)||"—")}</td><td>${escapeHtml(treasuryLabel(e.treasury))}</td><td>${escapeHtml(e.notes||"—")}</td><td style="color:var(--ok)">${inn?fmt(v):"—"}</td><td style="color:var(--danger)">${inn?"—":fmt(v)}</td><td><b style="color:${run<0?"var(--danger)":"inherit"}">${fmt(run)}</b></td></tr>`;
+  }).join("")||'<tr><td colspan="9" style="text-align:center;padding:16px">لا توجد حركات نقدية بهذه الفلاتر</td></tr>';
+  const b=document.getElementById("clBody"); if(b) b.innerHTML=body;
+  const f=document.getElementById("clFoot"); if(f) f.innerHTML=`<tr style="font-weight:800"><td colspan="6">الإجمالي</td><td style="color:var(--ok)">${fmt(ti)}</td><td style="color:var(--danger)">${fmt(to)}</td><td>${fmt(ti-to)}</td></tr>`;
+  const c=document.getElementById("clCount"); if(c) c.textContent=rows.length+" حركة";
+  const k=document.getElementById("clKpi"); if(k){ const card=(l,v,col)=>`<div class="custody-kpi" style="min-width:150px"><small>${l}</small><b style="color:${col}">${fmt(v)}</b></div>`; k.innerHTML=card("إجمالي التحصيلات النقدية",ti,"var(--ok)")+card("إجمالي المدفوعات النقدية",to,"var(--danger)")+card("صافي النقدية",ti-to,"inherit"); }
+}
+function bindCashLedger(){
+  const F=window.__cl, map={clFrom:"from",clTo:"to",clType:"type",clTr:"tr",clQ:"q"};
+  Object.keys(map).forEach(id=>{ const el=document.getElementById(id); if(!el) return; const h=()=>{ F[map[id]]=el.value; clPaint(); }; el.addEventListener(id==="clQ"?"input":"change",h); });
+  clPaint();
+}
 function txGo(page,scope){ window.__txScopeNext=scope||"all"; go(page); }
 function navItemGo(it){
   if(!it) return;
@@ -4302,7 +4352,7 @@ function viewApps(){
 function apWm(){ try{ const w=document.querySelector(".ap-wrap"),l=document.getElementById("igSidebarLogo"); if(w&&l) w.style.setProperty("--wm","url("+l.src+")"); }catch(e){} }
 let _apBarItems=[];
 function apCat(it,secT){
-  if(it.tab==="sysInd") return "مؤشرات النظام";
+  if(it.tab==="sysInd"||it.id==="treasuryBulkPost") return "مؤشرات النظام";
   if(it.id==="gl"&&it.tab==="indicators") return "مؤشرات النظام";
   if(it.id==="gl"&&it.tab==="dashboard") return "الملفات الرئيسية";
   if(it.id==="gl"&&/^rpt_/.test(it.tab||"")) return "التقارير";
@@ -4731,7 +4781,7 @@ function go(page){
   if(page==="apps"&&appsView){ const _a=APPS.find(x=>x.id===appsView), _g=appsMod&&navGroups.find(x=>x.id===appsMod); if(_a){ t[0]=(_g&&_a.groups.length>1)?_g.label:_a.label; t[1]="التطبيقات › "+_a.label+((_g&&_a.groups.length>1)?" › "+_g.label:""); } }
   if(page==="settings"){ const _st=settingsTabs.find(x=>x.id===settingsTab); if(_st){ t[0]=_st.title; t[1]=_st.crumb; } }
   if(page==="master"){ const _sc=masterScopeOf(currentTab); if(_sc){ t[0]=_sc.label; t[1]=_sc.crumb; } }
-  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
+  if(page==="receipts"||page==="payments"){ const _in=page==="receipts"; if(txScope==="cashAll"){ t[0]="الحركة النقدية"; t[1]="التحصيلات والمدفوعات النقدية معًا بتواريخها"; } else if(txScope==="cash"){ t[0]=_in?"تحصيل نقدي":"مدفوع نقدي"; t[1]=_in?"تحصيل نقدي من العملاء — يُسجَّل على الخزن":"دفعات نقدية للموردين — تُصرف من الخزن"; } else if(txScope==="bank"){ t[0]=_in?"تحصيل بنكي":"مدفوع بنكي"; t[1]=_in?"شيكات وتحويلات بنكية وتسويات من العملاء — تُسجَّل على البنوك":"شيكات وتحويلات بنكية وتسويات للموردين — تُسجَّل على البنوك"; } }
   try{ t[0]=snPageTitle(page,t[0]); }catch(e){}
   document.getElementById("pageTitle").textContent = t[0];
   document.getElementById("pageCrumb").textContent = t[1];
@@ -4763,7 +4813,7 @@ function go(page){
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="bankStatement"||page==="safeStatement"){ c.innerHTML=viewTreasuryAccountStatement(page); renderTreasuryAccountStatement(page); }
-  else if(page==="receipts"){ c.innerHTML = viewTreasury("in"); renderTreasury("in"); }
+  else if(page==="receipts"){ if(txScope==="cashAll"){ c.innerHTML = viewCashLedger(); bindCashLedger(); } else { c.innerHTML = viewTreasury("in"); renderTreasury("in"); } }
   else if(page==="customerAdjustments"){ c.innerHTML = viewAdjustments("in"); renderAdjustments("in"); }
   else if(page==="supplierAdjustments"){ c.innerHTML = viewAdjustments("out"); renderAdjustments("out"); }
   else if(page==="settlement"){ c.innerHTML = viewSettlement(); renderSettlement(); }
@@ -7563,7 +7613,7 @@ function viewDashboard(){
       <div class="dxa-h"><h2>محتاج انتباهك النهاردة</h2>${attn.length?`<span class="dxa-badge${_attnUrgent?' hot':''}">${attn.length}</span>`:""}${(canMoney&&_collToday>0)?`<button type="button" class="dxa-done" onclick="dxPulseGoto('receipts',{today:true})">💰 اتحصّل النهاردة: <b>${_fmt(_collToday)}</b></button>`:""}</div>
       ${attn.length?`<div class="dxa-g">${attn.join("")}</div>`:`<div class="dxa-ok"><span>✅</span><b>كله تمام</b> — مفيش حاجة عاجلة محتاجة متابعة النهاردة</div>`}
     </section>`;
-  const quickHtml=dxQuickHtml();
+  const quickHtml="";
   const scopeNote=_mine?`<div class="dx-note" style="margin-bottom:12px">👤 الأرقام هنا تخص مبيعاتك وتحصيلاتك أنت فقط (الأوامر والسندات اللي سجّلتها باسمك).</div>`:"";
   return `
   <section class="dx" dir="rtl">
@@ -7620,7 +7670,6 @@ function viewDashboard(){
       <div class="dx-card-h"><div><h3>عهد لم تتم تسويتها</h3><small>${custodyCache.loaded?`${custodyOpenRows.length} عهدة برصيد غير صفري`:"بيانات العهد لم تُحمّل بعد"}</small></div><button class="dx-link" onclick="${custodyCache.loaded?"go('custodyReport')":"dxLoadCustodyAlerts()"}">${custodyCache.loaded?"عرض تقرير العهد ←":"تحميل البيانات ↻"}</button></div>
       ${!custodyCache.loaded?`<div class="dx-empty">اضغط «تحميل البيانات» لعرض العهد التي ما زالت لها أرصدة.</div>`:custodyAlertRows?`<table class="dx-tbl"><thead><tr><th>صاحب العهدة / الكود</th><th>الرصيد (${cur})</th><th>المتابعة</th></tr></thead><tbody>${custodyAlertRows}</tbody></table>${custodyOpenRows.length>6?`<div class="dx-empty" style="padding:10px">و ${custodyOpenRows.length-6} عهدة أخرى — اضغط «عرض تقرير العهد»</div>`:""}`:`<div class="dx-empty ok">✓ لا توجد أرصدة عهد معلقة</div>`}
     </div>`:""}
-    ${dxQuickMore()}
   </section>`;
 }
 
@@ -27450,7 +27499,49 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     if(!faCan('print'))return toast('لا تملك صلاحية الطباعة','err');
     const t=document.querySelector('#faRepTbl table');if(!t)return;
     const w=window.open('','_blank');if(!w)return toast('اسمح بالنوافذ المنبثقة للطباعة','err');
-    w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>تقارير الأصول الثابتة</title><style>body{font-family:Tahoma,Arial;padding:16px}h3{text-align:center}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #999;padding:4px 6px;white-space:nowrap}th{background:#eee}td.n{text-align:left;direction:ltr}tfoot td{font-weight:bold;background:#f5f5f5}</style></head><body><h3>تقارير الأصول الثابتة — إهلاك ${esc(R.from)} إلى ${esc(R.to)}</h3>${t.outerHTML}</body></html>`);
+    w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>تقارير الأصول الثابتة</title><style>body{font-family:Tahoma,Arial;padding:16px}h3{text-align:center}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #999;padding:4px 6px;white-space:nowrap}th{background:#eee}td.n{text-align:left;direction:ltr}tfoot td{font-weight:bold;background:#f5f5f5}</style></head><body><h3>تقارير الأصول الثابتة — إهلاك ${esc(R.from)} إلى ${esc(R.to)}</h3>${t.outerHTML}
+<style id="ig-sidebar-final">
+/* ===== القائمة الجانبية — تنسيق نهائي موحّد (يغلب كل ما قبله) ===== */
+html body .layout:not(.collapsed) aside nav{padding:10px 10px 16px!important;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:rgba(212,160,23,.4) transparent}
+html body .layout:not(.collapsed) aside nav::-webkit-scrollbar{width:6px}
+html body .layout:not(.collapsed) aside nav::-webkit-scrollbar-thumb{background:rgba(212,160,23,.35);border-radius:6px}
+html body .layout:not(.collapsed) aside .ng-wrap{margin:0 0 4px!important;border-radius:12px;transition:background .15s}
+html body .layout:not(.collapsed) aside .ng-wrap:has(button.navgroup.open){background:rgba(255,255,255,.04);box-shadow:inset 0 0 0 1px rgba(212,160,23,.18);padding-bottom:6px}
+
+/* رأس المجموعة */
+html body .layout:not(.collapsed) aside nav button.navgroup{display:flex!important;align-items:center!important;gap:10px!important;width:100%!important;min-height:42px!important;padding:6px 10px!important;margin:0!important;border-radius:12px!important;border:0!important;background:transparent!important;box-shadow:none!important;font-size:13.5px!important;font-weight:700!important;color:#e6ecf8!important;text-align:right!important}
+html body .layout:not(.collapsed) aside nav button.navgroup:hover{background:rgba(255,255,255,.07)!important;color:#fff!important}
+html body .layout:not(.collapsed) aside nav button.navgroup.open{background:transparent!important;color:#F4C542!important}
+html body .layout:not(.collapsed) aside nav button.navgroup.active{color:#F4C542!important}
+html body .layout:not(.collapsed) aside nav button.navgroup .ng-icon{width:30px!important;height:30px!important;flex:none!important;display:flex!important;align-items:center;justify-content:center;font-size:15px!important;border-radius:9px!important;background:rgba(212,160,23,.12)!important;border:1px solid rgba(212,160,23,.28)!important;box-shadow:none!important;color:#e9d28a!important;opacity:1!important}
+html body .layout:not(.collapsed) aside nav button.navgroup.open .ng-icon,
+html body .layout:not(.collapsed) aside nav button.navgroup.active .ng-icon{background:linear-gradient(135deg,#F4C542,#B8891A)!important;border-color:transparent!important;color:#0a1a35!important;box-shadow:0 3px 9px rgba(212,160,23,.35)!important}
+html body .layout:not(.collapsed) aside nav button.navgroup .ng-label{flex:1 1 auto!important;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right!important}
+html body .layout:not(.collapsed) aside nav button.navgroup .ng-chev{flex:none;font-size:10px!important;opacity:.55;margin-inline-start:2px}
+html body .layout:not(.collapsed) aside nav button.navgroup.open .ng-chev{opacity:1;color:#F4C542}
+html body .layout:not(.collapsed) aside nav button.navgroup::before{display:none!important}
+html body .layout:not(.collapsed) aside nav button.navgroup .nb{flex:none;position:static!important;min-width:19px;height:19px;padding:0 5px;border-radius:10px;font-size:10.5px;line-height:19px;text-align:center}
+
+/* القائمة الفرعية */
+html body .layout:not(.collapsed) aside .navsub{display:flex;flex-direction:column;gap:1px;margin:2px 14px 0 8px!important;padding:2px 0 2px 0!important;border:0!important;border-right:2px solid rgba(212,160,23,.35)!important;border-radius:0!important;background:transparent!important}
+html body .layout:not(.collapsed) aside nav button.navbtn,
+html body .layout:not(.collapsed) aside nav button.navbtn.navbtn-sub:not(.active){display:flex!important;align-items:center!important;gap:9px!important;width:100%!important;min-height:34px!important;margin:0!important;padding:6px 12px 6px 10px!important;border:0!important;border-radius:8px!important;background:transparent!important;box-shadow:none!important;font-size:12.5px!important;font-weight:600!important;color:#cdd7ec!important;text-align:right!important}
+html body .layout:not(.collapsed) aside nav button.navbtn:hover,
+html body .layout:not(.collapsed) aside nav button.navbtn.navbtn-sub:not(.active):hover{background:rgba(255,255,255,.08)!important;color:#fff!important;padding:6px 12px 6px 10px!important}
+html body .layout:not(.collapsed) aside nav button.navbtn.active{background:rgba(212,160,23,.2)!important;color:#F4C542!important;font-weight:800!important;box-shadow:inset -3px 0 0 #F4C542!important;padding:6px 12px 6px 10px!important}
+html body .layout:not(.collapsed) aside nav button.navbtn .ic,
+html body .layout:not(.collapsed) aside nav button.navbtn.navbtn-sub .ic{flex:none!important;width:20px!important;text-align:center!important;font-size:13px!important;opacity:.8!important;color:inherit!important}
+html body .layout:not(.collapsed) aside nav button.navbtn.active .ic{opacity:1!important}
+html body .layout:not(.collapsed) aside nav button.navbtn .nl{flex:1 1 auto!important;min-width:0!important;white-space:normal!important;overflow:visible!important;line-height:1.35;text-align:right!important}
+html body .layout:not(.collapsed) aside nav button.navbtn::before{display:none!important}
+html body .layout:not(.collapsed) aside nav button.navbtn .nb{flex:none;position:static!important}
+
+/* عناوين الأقسام داخل القائمة الفرعية */
+html body .layout:not(.collapsed) aside .navsub .nav-sep{display:flex;align-items:center;gap:8px;margin:10px 2px 4px 2px!important;padding:0 8px 0 0!important;border-radius:0!important;background:transparent!important;font-size:10.5px!important;font-weight:800!important;letter-spacing:.3px;color:#D4A017!important;white-space:nowrap}
+html body .layout:not(.collapsed) aside .navsub .nav-sep::after{display:block!important;content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(212,160,23,.45),transparent)}
+html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:4px!important}
+</style>
+</body></html>`);
     w.document.close();w.focus();setTimeout(()=>w.print(),300);
   };
   Object.assign(window.FA_ACT=window.FA_ACT||{},{faRepCsv:'print',faRepPrint:'print'});
@@ -27528,6 +27619,13 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
   html body:not(#_) .topbar .ap-menus{gap:4px;padding:4px;border-radius:12px;background:color-mix(in srgb,var(--ig-header-text,#0f2a52) 5%,transparent);border:1px solid color-mix(in srgb,var(--ig-header-text,#0f2a52) 10%,transparent)}
   html body:not(#_) .topbar .ap-menus .ap-m>button{height:38px;padding:0 16px!important;border-radius:10px;font-size:16px!important;font-weight:800;color:var(--ig-header-text,#0f2a52)!important;background:transparent!important;border:0!important;gap:8px;line-height:1}
   html body:not(#_) .topbar .ap-menus .ap-dd button{font-size:15px!important;font-weight:700}
+
+/* القائمة العلوية: سطر واحد */
+html body:not(#_) .topbar .ap-menus{flex-wrap:nowrap;flex:0 1 auto;min-width:0;gap:2px;padding:3px}
+html body:not(#_) .topbar .ap-menus .ap-m{flex:0 0 auto}
+html body:not(#_) .topbar .ap-menus .ap-m>button{white-space:nowrap;height:34px;padding:0 11px!important;font-size:14px!important;gap:6px}
+html body:not(#_) .topbar .ap-menus .ap-lb{white-space:nowrap;line-height:1}
+html body:not(#_) .topbar .ap-menus .ap-dd button{white-space:normal}
   .ap-menus .ap-cv{width:6px;height:6px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg) translateY(-2px);opacity:.55;transition:transform .18s,opacity .18s;flex:none}
   html body:not(#_) .topbar .ap-menus .ap-m:hover>button,html body:not(#_) .topbar .ap-menus .ap-m:focus-within>button{background:#0f2a52!important;color:#F4C542!important;box-shadow:0 3px 10px rgba(15,42,82,.25),inset 0 0 0 1px rgba(244,197,66,.55)}
   .ap-menus .ap-m:hover .ap-cv,.ap-menus .ap-m:focus-within .ap-cv{transform:rotate(225deg) translateY(-2px);opacity:1}
@@ -27620,6 +27718,24 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
 .dxa-ok{display:flex;align-items:center;gap:10px;padding:14px 16px;border-radius:14px;background:#eaf8f0;border:1px solid #bfe6cf;color:#1d6b43;font-size:14px}
 @media(max-width:640px){.dxa-g{gap:8px}.dxa-c{padding:9px 11px;gap:10px}.dxa-ic{width:34px;height:34px;font-size:17px;border-radius:10px}.dxa-n{font-size:19px}.dxa-t{font-size:13px}.dxa-s{font-size:11.5px}.dxa-h h2{font-size:16px}}
 @media(prefers-reduced-motion:reduce){.dxa-c,.dxa-go{transition:none}}
+
+/* ===== محتاج انتباهك — نسخة مدمجة ===== */
+.dxa{margin:0 0 10px}
+.dxa-h{gap:8px;margin:0 2px 6px}
+.dxa-h h2{font-size:13px;font-weight:800;color:var(--dx-mut,#6b7a90)}
+.dxa-badge{min-width:18px;height:18px;padding:0 6px;font-size:10.5px}
+.dxa-done{padding:3px 10px;font-size:11px}
+.dxa-g{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:7px}
+.dxa-c{gap:8px;padding:7px 10px;border-radius:10px;border-inline-start-width:3px;box-shadow:none}
+.dxa-c:hover,.dxa-c:focus-visible{transform:none;box-shadow:0 3px 10px rgba(15,42,82,.09)}
+.dxa-ic{width:28px;height:28px;border-radius:8px;font-size:14px}
+.dxa-b{display:grid;grid-template-columns:auto 1fr;column-gap:7px;align-items:baseline}
+.dxa-n{font-size:16px;grid-row:1}
+.dxa-t{font-size:12px;grid-row:1}
+.dxa-s{grid-column:1/-1;font-size:10.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dxa-go{font-size:16px}
+.dxa-ok{padding:8px 12px;font-size:12px;border-radius:10px}
+@media(max-width:640px){.dxa-g{grid-template-columns:1fr 1fr}.dxa-c{padding:6px 8px;gap:6px}.dxa-ic{display:none}.dxa-go{display:none}.dxa-n{font-size:15px}.dxa-t{font-size:11.5px}.dxa-s{font-size:10px}}
 </style>
 <style id="ig-skel-more">
 .ig-skel .t{height:26px;width:min(240px,60%)}
