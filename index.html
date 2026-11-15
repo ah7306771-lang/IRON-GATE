@@ -16286,6 +16286,8 @@ function viewAdjustments(direction){
   <div class="kpis compact" id="adjKpis"></div>
   <div id="adjView"></div>`;
 }
+// نوع التسوية الفعلي: التسوية العادية بنوعها، أما التحويل لمورد (من شاشة تسويات العملاء) فدائنة للعميل ومدينة للمورد
+function adjKindOf(e){ return e.method==="adjustment" ? (e.adjustmentKind||"debit") : (e.direction==="in"?"credit":"debit"); }
 function adjustmentsList(direction){
   const isIn = direction==="in";
   const q = String(document.getElementById("adjQ")?.value||"").trim().toLowerCase();
@@ -16293,8 +16295,8 @@ function adjustmentsList(direction){
   const from = document.getElementById("adjFrom")?.value||"";
   const to = document.getElementById("adjTo")?.value||"";
   return (state.treasuryEntries||[])
-    .filter(e=>e.direction===direction && e.method==="adjustment")
-    .filter(e=>!kindF || e.adjustmentKind===kindF)
+    .filter(e=>e.direction===direction && (e.method==="adjustment" || (e.fromAdj && (e.method==="transfer_supplier"||e.linkedTxId))))
+    .filter(e=>!kindF || adjKindOf(e)===kindF)
     .filter(e=>!from || (e.date||"")>=from)
     .filter(e=>!to || (e.date||"")<=to)
     .filter(e=>{
@@ -16308,8 +16310,8 @@ function renderAdjustments(direction){
   const isIn = direction==="in";
   const rows = adjustmentsList(direction);
   const cur = state.settings.currency||"ج.م";
-  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
-  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const debitTotal = rows.filter(e=>adjKindOf(e)==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>adjKindOf(e)==="credit").reduce((s,e)=>s+(+e.amount||0),0);
   const net = debitTotal - creditTotal;
   const kpi=(l,v,s,c)=>`<div class="kpi"${c?` style="border-right:4px solid ${c}"`:""}><div class="lbl">${l}</div><div class="val small">${v}</div><div class="sub">${s||""}</div></div>`;
   document.getElementById("adjKpis").innerHTML =
@@ -16319,7 +16321,7 @@ function renderAdjustments(direction){
     kpi("صافي الأثر", `<span style="color:${net>=0?'#dc2626':'#16a34a'}">${fmt(Math.abs(net))}</span>`, (net>=0?(isIn?"يزيد مستحق العملاء":"يقل مستحق الموردين"):(isIn?"يقل مستحق العملاء":"يزيد مستحق الموردين"))+" · "+cur, net>=0?"#dc2626":"#16a34a");
 
   const body = rows.map((e,i)=>{
-    const kind=e.adjustmentKind||"debit";
+    const kind=adjKindOf(e);
     const kindBadge = kind==="debit"
       ? `<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:800">⚠️ مدينة</span>`
       : `<span class="chip" style="background:#dcfce7;color:#166534;font-weight:800">✨ دائنة</span>`;
@@ -16354,6 +16356,8 @@ function adjAddRowBtn(direction){
 }
 function adjPostCell(e){
   if(txIsPosted(e)) return `<span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span>`;
+  if(e.method==="transfer_supplier") return `<span class="tx-unposted">غير مُرحّل</span>`;
+  if(e.method!=="adjustment") return `<span class="tx-unposted" title="دفعة مرتبطة بتحويل من عميل — تُرحَّل مع التحصيل المرتبط">تُرحَّل مع تحويل العميل</span>`;
   if(e.entryKind!=="gl") return `<span class="tx-unposted" title="تسوية على حساب الطرف فقط — محتاجة حسابات مقابلة عشان تترحّل">بدون حسابات مقابلة</span>`;
   return `<span class="tx-unposted">غير مُرحّل</span>`;
 }
@@ -16362,7 +16366,7 @@ function adjActions(e,direction){
   if(txIsPosted(e)){
     return `<div class="td-actions"><button class="tx-view-entry-btn" onclick="chqViewEntry('${id}','${direction}')">عرض القيد</button><button class="tx-view-entry-btn" onclick="txPrintEntry('${id}','${direction}')">🖨 طباعة القيد</button>${txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${id}','${direction}')" title="حذف القيد وإرجاع التسوية غير مُرحّلة">↶ إلغاء الترحيل</button>`:""}</div>`;
   }
-  const post = (e.entryKind==="gl" && txCanPost(e,direction)) ? `<button class="tx-post-btn" onclick="txPostOpen('${id}','${direction}')">ترحيل</button>` : "";
+  const post = ((e.entryKind==="gl"||e.method==="transfer_supplier") && txCanPost(e,direction)) ? `<button class="tx-post-btn" onclick="txPostOpen('${id}','${direction}')">ترحيل</button>` : "";
   return `<div class="td-actions">${post}<button onclick="txEdit('${id}','${direction}')">تعديل</button><button class="del" onclick="txDel('${id}','${direction}')">حذف</button></div>`;
 }
 function guardAct(scr,act){
@@ -16376,10 +16380,10 @@ function adjustmentsExport(direction){
   const rows = adjustmentsList(direction); if(!rows.length){ toast("لا توجد تسويات للتصدير","err"); return; }
   const isIn = direction==="in";
   const cur = state.settings.currency||"ج.م";
-  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
-  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const debitTotal = rows.filter(e=>adjKindOf(e)==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>adjKindOf(e)==="credit").reduce((s,e)=>s+(+e.amount||0),0);
   const body = rows.map((e,i)=>{
-    const kind=e.adjustmentKind||"debit";
+    const kind=adjKindOf(e);
     const bg = kind==="debit"?"#fef2f2":"#f0fdf4";
     const col = kind==="debit"?"#991b1b":"#166534";
     const kindLabel = kind==="debit"?"⚠️ مدينة":"✨ دائنة";
@@ -16427,10 +16431,10 @@ function adjustmentsPrint(direction){
   // Reuse export HTML
   const isIn = direction==="in";
   const cur = state.settings.currency||"ج.م";
-  const debitTotal = rows.filter(e=>e.adjustmentKind==="debit").reduce((s,e)=>s+(+e.amount||0),0);
-  const creditTotal = rows.filter(e=>e.adjustmentKind==="credit").reduce((s,e)=>s+(+e.amount||0),0);
+  const debitTotal = rows.filter(e=>adjKindOf(e)==="debit").reduce((s,e)=>s+(+e.amount||0),0);
+  const creditTotal = rows.filter(e=>adjKindOf(e)==="credit").reduce((s,e)=>s+(+e.amount||0),0);
   const body = rows.map((e,i)=>{
-    const kind=e.adjustmentKind||"debit";
+    const kind=adjKindOf(e);
     const bg = kind==="debit"?"#fef2f2":"#f0fdf4";
     const col = kind==="debit"?"#991b1b":"#166534";
     const kindLabel = kind==="debit"?"⚠️ مدينة":"✨ دائنة";
@@ -17093,6 +17097,7 @@ function openTxForm(direction, existing){
       wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned")),
       targetSupplier: targetSupplierVal,
       adjustmentKind: adjustmentKind,
+      fromAdj: !!(adjScreen || (existing && existing.fromAdj)),   // اتعملت من شاشة التسويات (عشان تظهر فيها حتى لو تحويل لمورد)
       entryKind: isGl ? "gl" : "party",
       glLines: isGl ? glLines : [],
       chq2: method==="bank" ? (existing ? !!existing.chq2 : true) : undefined
@@ -17177,6 +17182,7 @@ function openTxForm(direction, existing){
           allocations: [],
           allocationType: "invoice_deduction",
           targetSupplier: "",
+          fromAdj: !!d.fromAdj,
           linkedTxId: d.id
         };
         state.treasuryEntries.push(payment);
@@ -23299,7 +23305,7 @@ function txIsPosted(e){ return !!(e && e.postedEntryId); }
 function txCanPost(e,direction){
   const dir=direction||(e&&e.direction), scr=dir==="in"?"receipts":"payments";
   if(can(scr,"post")) return true;
-  return !!(e && e.method==="adjustment" && can(dir==="in"?"customerAdjustments":"supplierAdjustments","post"));
+  return !!(e && (e.method==="adjustment"||e.fromAdj) && can(dir==="in"?"customerAdjustments":"supplierAdjustments","post"));
 }
 function txPostTreasuryAcc(e){
   return e.method==="cash" ? (state.safes||[]).find(s=>s.code===e.treasury) : (state.banks||[]).find(b=>b.code===e.treasury);
