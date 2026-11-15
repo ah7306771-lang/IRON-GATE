@@ -3216,10 +3216,11 @@ async function loadDocs(){
   let shipmentError=null, salesError=null, cs=[];
   // حمّل بيانات التوريد مستقلة تمامًا عن أوامر البيع والعدادات.
   try{
-    const [hs,his]=await Promise.all([
+    const [hs0,his]=await Promise.all([
       fetchAllRows("shipments",["id"]),
       fetchAllRows("shipment_items",["shipment_id","line_no"])
     ]);
+    const hs=hs0.filter(h=>!h.deleted_at);   // المحذوف حذف مرن (deleted_at) — لا يرجع حتى لو الـRLS مش مخفيه
     const shipMetaRows=await fetchAllRows("app_counters",["name"]).catch(()=>[]);
     docMeta=new Set(shipMetaRows.filter(r=>String(r.name).startsWith("migrated:")).map(r=>String(r.name).slice(9)));
     if(hs.length || docMeta.has("ship")){
@@ -3248,10 +3249,11 @@ async function loadDocs(){
 
   // أوامر البيع اختيارية بالنسبة لعرض بيانات التوريد؛ فشلها لا يعطّل شاشة التوريد.
   try{
-    const [ss,sis]=await Promise.all([
+    const [ss0,sis]=await Promise.all([
       fetchAllRows("sale_orders",["id"]),
       fetchAllRows("sale_order_items",["sale_order_id","line_no"])
     ]);
+    const ss=ss0.filter(h=>!h.deleted_at);
     if(ss.length){
       const li=groupBy(sis,"sale_order_id");
       const serverSaleOrders=ss.map(h=>{
@@ -3316,12 +3318,18 @@ async function syncDocs(){
       window.igSyncStep=cfg.t+" (حذف مرن)";
       const ids=d.del.slice(i,i+100);
       // Soft delete: نضع deleted_at بدل الحذف النهائي (الـRLS هيخفي من القراءات)
-      let r=await sb.from(cfg.t).update({deleted_at:new Date().toISOString(),deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids);
+      let r=await sb.from(cfg.t).update({deleted_at:new Date().toISOString(),deleted_by:(currentUser&&currentUser.name)||"system",deleted_reason:"محذوف من التطبيق"}).in("id",ids).select("id");
       // Fallback: لو عمود deleted_at مش موجود (migration ما اشتغلتش)، حذف نهائي
       if(r.error && /deleted_at/.test(String(r.error.message||""))){
-        r=await sb.from(cfg.t).delete().in("id",ids);
+        r=await sb.from(cfg.t).delete().in("id",ids).select("id");
       }
       if(r.error) throw r.error;
+      // تحقق فعلي: لو السيرفر تجاهل التحديث بدون خطأ (صلاحيات RLS) نجرّب الحذف النهائي، ولو برضه ما اتحذفش نوقف بخطأ واضح بدل ما السجل يرجع بعد إعادة الفتح
+      const _ok=new Set((r.data||[]).map(x=>String(x.id))), _rest=ids.filter(x=>!_ok.has(String(x)));
+      if(_rest.length){
+        const r2=await sb.from(cfg.t).delete().in("id",_rest).select("id"); if(r2.error) throw r2.error;
+        if((r2.data||[]).length<_rest.length) throw new Error("السيرفر لم يحذف "+(_rest.length-(r2.data||[]).length)+" سجل من "+cfg.t+" (صلاحيات قاعدة البيانات) — الحذف محفوظ على جهازك فقط");
+      }
     }
     if(!docMeta.has(g)){
       const r=await sb.from("app_counters").upsert({ name:"migrated:"+g, value:1 },{ onConflict:"name" }); if(r.error) throw r.error;
@@ -16918,7 +16926,9 @@ function openTxForm(direction, existing){
   const bankOptions = (state.banks||[]).filter(b=>!chqIsSysBank(b)).map(b=>`<option value="${escapeAttr(b.code)}" ${draft.treasury===b.code?'selected':''}>${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("");
   const safeOptions = (state.safes||[]).map(s=>`<option value="${escapeAttr(s.code)}" ${draft.treasury===s.code?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join("");
   // قائمة طرق التحصيل/الدفع — في التحصيلات فقط فيه "تحويل لمورد"
-  const methodsForDir = (isIn ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods);   // القائمة كاملة: حدود الخزينة/البنك بتتطبق في txKindApply بحسب نوع الحركة (التسوية على عميل لازم تظهر "تسوية غير نقدية")
+  const _adjNow = !existing && !!window.__adjScreenNext;
+  const _keepTS = _adjNow || txScope!=="bank" || !!(existing && existing.method==="transfer_supplier");   // شاشة التحصيلات البنكية: مفيش «تحويل لمورد» في نوع التحصيل
+  const methodsForDir = (isIn && _keepTS ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods);   // القائمة كاملة: حدود الخزينة/البنك بتتطبق في txKindApply بحسب نوع الحركة (التسوية على عميل لازم تظهر "تسوية غير نقدية")
   // قائمة الموردين لحقل "تحويل لمورد"
   const supplierOptionsHtml = (partyNames(state.suppliers)||[]).map(n=>`<option value="${escapeAttr(n)}" ${draft.targetSupplier===n?'selected':''}>${escapeHtml(n)}</option>`).join("");
   const linkedNote = draft.linkedTxId ? `<div style="background:rgba(230,179,37,.12);border:1px solid var(--gold);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--gold-text,#7a5c0b)">🔗 هذه الحركة مرتبطة بدفعة أخرى تم إنشاؤها تلقائيًا (ID: ${escapeHtml(draft.linkedTxId)}). عند التعديل أو الحذف يُنصح بمراجعة الدفعة المرتبطة.</div>` : "";
