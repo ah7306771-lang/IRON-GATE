@@ -3781,6 +3781,7 @@ function canView(page){
   // دفتر الشيكات قراءة مشتقة من التحصيلات؛ يستخدم نفس صلاحية مشاهدة التحصيلات حتى للمستخدمين الحاليين.
   if(page==="chequeRegister") return can("receipts","view");
   if(page==="overdueSummary") return can("salesInstallments","view");
+  if(page==="partiesDashboard") return can("clientTB","view")||can("supplierTB","view");
   if(!SCREENS.some(s=>s.id===page)) return isAdmin();   // شاشات "قريبًا" للأدمن بس
   return can(page,"view");
 }
@@ -4213,6 +4214,7 @@ const navGroups = [
     { id:"customerAdjustments", icon:"⚖", label:"تسويات العملاء" },
     { id:"settlement", icon:"⚖", label:"تسوية فواتير العملاء" },
     { sep:"التقارير والمتابعة" },
+    { id:"partiesDashboard", icon:"📊", label:"لوحة أرصدة العملاء والموردين" },
     { id:"clientStatement", icon:"📒", label:"كشف حساب عميل" },
     { id:"clientTB", icon:"⚖", label:"ميزان مراجعة العملاء" },
     { id:"salesInstallments", icon:"💳", label:"الأقساط", badge:"late" },
@@ -4226,6 +4228,7 @@ const navGroups = [
     { id:"payments", scope:"all", icon:"📋", label:"كل مدفوعات وتسويات الموردين" },
     { id:"supplierAdjustments", icon:"⚖", label:"تسويات الموردين" },
     { sep:"التقارير والمتابعة" },
+    { id:"partiesDashboard", icon:"📊", label:"لوحة أرصدة العملاء والموردين" },
     { id:"supplierStatement", icon:"📒", label:"كشف حساب مورد" },
     { id:"supplierTB", icon:"⚖", label:"ميزان مراجعة الموردين" },
     { sep:"البيانات الأساسية للموردين" },
@@ -4777,6 +4780,7 @@ function go(page){
     orderReport:["تقرير أوامر البيع التفصيلي","كل أمر بيع وتحته بوالصه وشروط السداد والأقساط والمسدد والمتبقي"],
     salesInstallments:["الأقساط","متابعة أقساط العملاء من بيانات التوريد والتحصيلات"],
     overdueSummary:["إجمالي المتأخرات","إجمالي المبالغ المستحقة والمتأخرة لكل عميل"],
+    partiesDashboard:["لوحة أرصدة العملاء والموردين","الأرصدة والمتأخرات وأعمار الديون"],
     clientStatement:["كشف حساب عميل","حركة العميل والرصيد الافتتاحي والرصيد الجاري"],
     purchaseReport:["تقرير المشتريات","تقرير تفصيلي للمشتريات مع فلاتر وتصدير PDF وExcel"],
     supplierStatement:["كشف حساب مورد","حركة المورد والرصيد الافتتاحي والرصيد الجاري"],
@@ -4828,6 +4832,7 @@ function go(page){
   else if(page==="orderReport"){ c.innerHTML = viewOrderReport(); renderOrderReport(); }
   else if(page==="salesInstallments"){ c.innerHTML = viewSalesInstallments(); renderSalesInstallments(); }
   else if(page==="overdueSummary"){ c.innerHTML=viewOverdueSummary(); renderOverdueSummary(); }
+  else if(page==="partiesDashboard"){ c.innerHTML=viewPartiesDashboard(); renderPartiesDashboard(); }
   else if(page==="salesReport"||page==="purchaseReport"){ c.innerHTML = viewTradeReport(page); renderTradeReport(); }
   else if(page==="managementReports"){ c.innerHTML=viewManagementReports(); renderManagementReports(); }
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
@@ -28041,5 +28046,303 @@ html body:not(#_) .topbar .ap-menus .ap-dd button{white-space:normal}
   try{if(window.ExcelJS&&!ExcelJS.__ig){var g=Object.getOwnPropertyDescriptor(ExcelJS.Workbook.prototype,"xlsx");if(g&&g.get){Object.defineProperty(ExcelJS.Workbook.prototype,"xlsx",{get:function(){var x=g.get.call(this);if(!x.__ig){var wb=this,wr=x.writeBuffer;x.writeBuffer=function(){try{wb.eachSheet(function(ws){ws.eachRow(function(r){r.eachCell(function(c){if(typeof c.value==="string"){var nv=rep(c.value);if(nv!==c.value)c.value=nv;}});});});}catch(e){}return wr.apply(x,arguments);};x.__ig=1;}return x;},configurable:true});}ExcelJS.__ig=1;}}catch(e){}
  },500);
 })();
+</script>
+<script id="partiesDashboardModule">
+/* ===== لوحة أرصدة العملاء والموردين — الأرصدة والمتأخرات وأعمار الديون =====
+   بتعتمد على نفس مصادر ميزان المراجعة وكشف الحساب (tbMovements + أرصدة أول المدة)
+   وعلى محرك الأقساط (salesInstallmentBaseRows) للمتأخرات. قراءة فقط — مفيش أي تعديل على البيانات. */
+(function(){
+"use strict";
+var BK=[
+  {l:"0 – 30 يوم",c:"#1f7a4c"},
+  {l:"31 – 60 يوم",c:"#D4A017"},
+  {l:"61 – 90 يوم",c:"#d9822b"},
+  {l:"91 – 120 يوم",c:"#c0392b"},
+  {l:"أكثر من 120 يوم",c:"#7b1d14"}
+];
+var KIND={clients:"clientTB",suppliers:"supplierTB"};
+var PS=window.__pdState={tab:null,q:"",sort:"bal",old:false};
+var DATA={};
+
+function esc(s){return escapeHtml(s);}
+function rr(n){return Math.round((+n||0)*100)/100;}
+function fm(n,d){return (+n||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});}
+function cur(){return (state.settings&&state.settings.currency)||"ج.م";}
+function allowed(t){try{return !!canView(KIND[t]);}catch(e){return false;}}
+function bucketOf(d){return d<=30?0:d<=60?1:d<=90?2:d<=120?3:4;}
+function daysSince(d){
+  if(!d) return null;
+  var x=new Date(String(d).slice(0,10)+"T00:00:00"); if(isNaN(x.getTime())) return null;
+  var t=new Date(); t.setHours(0,0,0,0);
+  return Math.max(0,Math.floor((t-x)/86400000));
+}
+
+/* ---------- الحساب ---------- */
+function compute(tab){
+  var kind=KIND[tab], customer=(tab==="clients");
+  var op=tbOpeningMap(kind), names=tbAllNames(kind), mv=tbMovements(kind);
+  var by=new Map();
+  names.forEach(function(n){by.set(n,{name:n,m:[]});});
+  mv.forEach(function(m){var g=by.get(m.party); if(!g){g={name:m.party,m:[]};by.set(m.party,g);} g.m.push(m);});
+  Object.keys(op).forEach(function(n){if(!by.has(n)&&Math.abs(+op[n]||0)>=0.005) by.set(n,{name:n,m:[]});});
+
+  // متأخرات الأقساط (للعملاء فقط)
+  var od=new Map(), near=0;
+  if(customer){
+    try{
+      salesInstallmentBaseRows().forEach(function(r){
+        if(!(r.remaining>0.004)) return;
+        if(r.status==="متأخر"){
+          var o=od.get(r.customer)||{amt:0,n:0,days:0};
+          o.amt+=r.remaining; o.n++; o.days=Math.max(o.days,r.days||0); od.set(r.customer,o);
+        } else if(r.near) near+=r.remaining;
+      });
+    }catch(e){}
+  }
+
+  var rows=[], tot={b:[0,0,0,0,0],debt:0,adv:0,nDeb:0,nAdv:0};
+  by.forEach(function(g){
+    var b=[0,0,0,0,0], adv=0, opening=+op[g.name]||0, q=[], last="";
+    if(opening>0.005) q.push({d:null,a:opening}); else if(opening<-0.005) adv=-opening;
+    g.m.slice().sort(function(x,y){return String(x.date).localeCompare(String(y.date));}).forEach(function(m){
+      if(m.date&&m.date>last) last=m.date;
+      var nat=customer?(m.debit-m.credit):(m.credit-m.debit);
+      if(Math.abs(nat)<0.005) return;
+      if(nat>0){
+        var a=nat, u=Math.min(adv,a); adv-=u; a-=u;
+        if(a>0.005) q.push({d:m.date,a:a});
+      } else {
+        var s=-nat;
+        while(s>0.005&&q.length){var f=q[0], u2=Math.min(f.a,s); f.a-=u2; s-=u2; if(f.a<=0.005) q.shift();}
+        if(s>0.005) adv+=s;
+      }
+    });
+    var oldest=null, hasOpen=false;
+    q.forEach(function(c){
+      if(c.a<=0.005) return;
+      if(c.d===null){b[4]+=c.a; hasOpen=true; return;}
+      var dd=daysSince(c.d); if(dd===null) dd=0;
+      b[bucketOf(dd)]+=c.a; if(oldest===null||dd>oldest) oldest=dd;
+    });
+    b=b.map(rr); adv=rr(adv);
+    var debt=rr(b.reduce(function(a,x){return a+x;},0));
+    if(debt<0.005&&adv<0.005) return;
+    var o=od.get(g.name)||{amt:0,n:0,days:0};
+    rows.push({name:g.name,b:b,debt:debt,adv:adv,bal:rr(debt-adv),oldest:oldest,hasOpen:hasOpen,last:last,od:rr(o.amt),odN:o.n,odDays:o.days});
+    for(var i=0;i<5;i++) tot.b[i]+=b[i];
+    tot.debt+=debt; tot.adv+=adv; if(debt>=0.005) tot.nDeb++; if(adv>=0.005) tot.nAdv++;
+  });
+  tot.b=tot.b.map(rr); tot.debt=rr(tot.debt); tot.adv=rr(tot.adv);
+
+  var ch={amt:0,n:0};
+  (state.treasuryEntries||[]).forEach(function(e){
+    if(e.method!=="bank"||e.direction!==(customer?"in":"out")) return;
+    if(["collected","returned","guarantee"].indexOf(e.status)>=0) return;
+    if(!(customer?e.customer:e.supplier)) return;
+    ch.amt+=+e.amount||0; ch.n++;
+  });
+  ch.amt=rr(ch.amt);
+
+  var odAmt=0, odN=0; od.forEach(function(o){odAmt+=o.amt; odN+=o.n;});
+  return {rows:rows,tot:tot,ch:ch,od:{amt:rr(odAmt),n:odN,cust:od.size},near:rr(near)};
+}
+
+/* ---------- CSS ---------- */
+function injectCss(){
+  if(document.getElementById("pdCss")) return;
+  var s=document.createElement("style"); s.id="pdCss";
+  s.textContent=
+".pd{direction:rtl}"+
+".pd-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:14px}"+
+".pd-head h2{margin:0;font-size:20px;font-weight:800}"+
+".pd-head small{display:block;color:var(--text-dim);font-size:12px;margin-top:2px}"+
+".pd-sp{flex:1}"+
+".pd-tabs{display:inline-flex;background:var(--bg-3);border:1px solid var(--line);border-radius:12px;padding:4px;gap:4px}"+
+".pd-tab{border:0;background:transparent;padding:8px 18px;border-radius:9px;font-weight:700;font-size:14px;color:var(--text-dim)}"+
+".pd-tab.on{background:linear-gradient(135deg,#F4C542,#C48F10);color:#1a1405;box-shadow:0 2px 8px rgba(212,160,23,.35)}"+
+".pd-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:14px}"+
+".pd-kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;position:relative;overflow:hidden}"+
+".pd-kpi::before{content:'';position:absolute;inset-block:0;inset-inline-start:0;width:4px;background:var(--kc,#D4A017)}"+
+".pd-kpi .t{font-size:12px;color:var(--text-dim);font-weight:700}"+
+".pd-kpi .v{font-size:22px;font-weight:800;margin:4px 0 2px;color:var(--kc,var(--text));font-variant-numeric:tabular-nums}"+
+".pd-kpi .v em{font-style:normal;font-size:12px;font-weight:600;color:var(--text-dim);margin-inline-start:4px}"+
+".pd-kpi .s{font-size:11.5px;color:var(--text-dim)}"+
+".pd-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}"+
+"@media(max-width:900px){.pd-grid{grid-template-columns:1fr}}"+
+".pd-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}"+
+".pd-card h3{margin:0 0 2px;font-size:15px;font-weight:800}"+
+".pd-card .sub{font-size:11.5px;color:var(--text-dim);margin-bottom:12px}"+
+".pd-stack{display:flex;height:26px;border-radius:8px;overflow:hidden;background:var(--bg-3);margin:6px 0 12px}"+
+".pd-stack i{display:block;height:100%;min-width:0}"+
+".pd-tbl{width:100%;border-collapse:collapse;font-size:13px}"+
+".pd-tbl th{background:var(--bg-3);color:var(--gold-text);font-weight:800;padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;font-size:12px}"+
+".pd-tbl td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}"+
+".pd-tbl td.n,.pd-tbl th.n{text-align:left;font-variant-numeric:tabular-nums;direction:ltr}"+
+".pd-tbl td.z{color:#b5ad99}"+
+".pd-tbl tr.tot td{background:var(--sidebar-bg);font-weight:800}"+
+".pd-tbl tbody tr.cl{cursor:pointer}"+
+".pd-tbl tbody tr.cl:hover td{background:var(--bg-3)}"+
+".pd-dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-inline-end:7px;vertical-align:middle}"+
+".pd-top{display:flex;flex-direction:column;gap:9px}"+
+".pd-top .r{display:grid;grid-template-columns:minmax(90px,150px) 1fr auto;align-items:center;gap:10px;cursor:pointer}"+
+".pd-top .nm{font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"+
+".pd-top .bar{height:16px;background:var(--bg-3);border-radius:6px;overflow:hidden;display:flex}"+
+".pd-top .bar i{height:100%}"+
+".pd-top .am{font-size:12px;font-variant-numeric:tabular-nums;direction:ltr;color:var(--text-dim);min-width:86px;text-align:left}"+
+".pd-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}"+
+".pd-tools input,.pd-tools select{padding:8px 12px;border:1px solid var(--line-2);border-radius:9px;background:#fff;min-width:150px}"+
+".pd-tools label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600}"+
+".pd-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}"+
+".pd-chip{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:700}"+
+".pd-chip.r{background:#fbe3df;color:#8f2418}.pd-chip.y{background:#fbf0cf;color:#7a5c0b}.pd-chip.g{background:#dcf1e5;color:#175c3a}"+
+".pd-note{font-size:11.5px;color:var(--text-dim);margin-top:10px;line-height:1.7}"+
+".pd-empty{padding:28px;text-align:center;color:var(--text-dim)}"+
+"@media print{.pd-noprint{display:none!important}.pd-card,.pd-kpi{break-inside:avoid}}";
+  document.head.appendChild(s);
+}
+
+/* ---------- العرض ---------- */
+window.viewPartiesDashboard=function(){
+  injectCss();
+  var tabs=["clients","suppliers"].filter(allowed);
+  if(!tabs.length) return '<div class="pd-card pd-empty">لا تملك صلاحية عرض أرصدة العملاء أو الموردين</div>';
+  if(!PS.tab||tabs.indexOf(PS.tab)<0) PS.tab=tabs[0];
+  var tb=tabs.map(function(t){
+    return '<button type="button" class="pd-tab'+(PS.tab===t?' on':'')+'" onclick="pdTab(\''+t+'\')">'+(t==="clients"?"👥 العملاء":"🏭 الموردين")+'</button>';
+  }).join("");
+  return '<div class="pd" dir="rtl"><div class="pd-head"><div><h2>📊 لوحة أرصدة العملاء والموردين</h2>'+
+    '<small>الأرصدة والمتأخرات وأعمار الديون — محسوبة لحد النهاردة من نفس حركات كشف الحساب وميزان المراجعة</small></div>'+
+    '<div class="pd-sp"></div><div class="pd-tabs pd-noprint">'+tb+'</div>'+
+    '<button type="button" class="btn ghost pd-noprint" onclick="pdRefresh()">🔄 تحديث</button>'+
+    '<button type="button" class="btn ghost pd-noprint" onclick="pdExport()">⬇ Excel</button>'+
+    '<button type="button" class="btn ghost pd-noprint" onclick="window.print()">🖨 طباعة</button></div>'+
+    '<div id="pdBody"></div></div>';
+};
+
+function kpi(color,t,v,s){
+  return '<div class="pd-kpi" style="--kc:'+color+'"><div class="t">'+t+'</div><div class="v">'+v+'<em>'+esc(cur())+'</em></div><div class="s">'+s+'</div></div>';
+}
+function pct(a,b){return b>0?Math.round(a/b*1000)/10:0;}
+
+window.renderPartiesDashboard=function(){
+  if(currentPage!=="partiesDashboard") return;
+  var el=document.getElementById("pdBody"); if(!el) return;
+  var tab=PS.tab; if(!tab) return;
+  var d;
+  try{ d=DATA[tab]=compute(tab); }catch(e){ console.error(e); el.innerHTML='<div class="pd-card pd-empty">تعذر حساب الأرصدة — '+esc(e.message||e)+'</div>'; return; }
+  var cl=(tab==="clients"), t=d.tot;
+  var sup60=t.b[2]+t.b[3]+t.b[4], old90=t.b[3]+t.b[4];
+  var k=[];
+  k.push(kpi("#B8891A",cl?"إجمالي مديونية العملاء":"إجمالي المستحق للموردين",fm(t.debt,0),(cl?t.nDeb+" عميل مدين":t.nDeb+" مورد دائن")));
+  if(cl) k.push(kpi("#c0392b","متأخرات الأقساط (عدّى ميعادها)",fm(d.od.amt,0),d.od.n+" قسط · "+d.od.cust+" عميل"+(d.near>0?" · قادم 7 أيام: "+fm(d.near,0):"")));
+  else   k.push(kpi("#c0392b","مستحقات أقدم من 60 يوم",fm(sup60,0),pct(sup60,t.debt)+"% من إجمالي المستحق"));
+  k.push(kpi("#7b1d14","ديون أقدم من 90 يوم",fm(old90,0),pct(old90,t.debt)+"% من الإجمالي"));
+  k.push(kpi("#1f7a4c",cl?"شيكات تحت التحصيل":"شيكات صادرة لم تُصرف",fm(d.ch.amt,0),d.ch.n+" شيك"));
+  k.push(kpi("#2b6cb0",cl?"أرصدة دائنة (دفعات مقدمة)":"أرصدة مدينة (دفعات مقدمة)",fm(t.adv,0),t.nAdv+(cl?" عميل":" مورد")));
+
+  // أعمار الديون
+  var seg=BK.map(function(b,i){var w=pct(t.b[i],t.debt);return w>0?'<i title="'+b.l+'" style="width:'+w+'%;background:'+b.c+'"></i>':'';}).join("");
+  var arows=BK.map(function(b,i){
+    var n=d.rows.filter(function(r){return r.b[i]>0.005;}).length;
+    return '<tr><td><span class="pd-dot" style="background:'+b.c+'"></span>'+b.l+'</td><td class="n">'+fm(t.b[i],2)+'</td><td class="n">'+pct(t.b[i],t.debt)+'%</td><td class="n">'+n+'</td></tr>';
+  }).join("");
+  var aging='<div class="pd-card"><h3>⏳ أعمار الديون</h3><div class="sub">الدفعات بتتسدّد من الأقدم للأحدث (FIFO)، والعمر محسوب من تاريخ الحركة. أرصدة أول المدة داخلة في «أكثر من 120 يوم».</div>'+
+    '<div class="pd-stack">'+(seg||'')+'</div>'+
+    '<table class="pd-tbl"><thead><tr><th>الفئة</th><th class="n">المبلغ</th><th class="n">النسبة</th><th class="n">عدد '+(cl?"العملاء":"الموردين")+'</th></tr></thead><tbody>'+arows+
+    '<tr class="tot"><td>الإجمالي</td><td class="n">'+fm(t.debt,2)+'</td><td class="n">100%</td><td class="n">'+t.nDeb+'</td></tr></tbody></table></div>';
+
+  // أكبر 10
+  var top=d.rows.filter(function(r){return r.debt>0.005;}).sort(function(a,b){return b.debt-a.debt;}).slice(0,10);
+  var mx=top.length?top[0].debt:1, top5=top.slice(0,5).reduce(function(a,r){return a+r.debt;},0);
+  var topHtml=top.length?top.map(function(r){
+    var bar=r.b.map(function(v,i){return v>0.005?'<i title="'+BK[i].l+': '+fm(v,2)+'" style="width:'+(v/mx*100)+'%;background:'+BK[i].c+'"></i>':'';}).join("");
+    return '<div class="r" data-name="'+esc(r.name)+'" onclick="pdOpen(this)" title="فتح كشف الحساب"><div class="nm">'+esc(r.name)+'</div><div class="bar">'+bar+'</div><div class="am">'+fm(r.debt,0)+'</div></div>';
+  }).join(""):'<div class="pd-empty">لا توجد أرصدة</div>';
+  var topCard='<div class="pd-card"><h3>🏆 أكبر 10 '+(cl?"عملاء مديونية":"موردين مستحقات")+'</h3><div class="sub">أكبر 5 = '+pct(top5,t.debt)+'% من الإجمالي — الألوان توضح عمر الدين</div><div class="pd-top">'+topHtml+'</div></div>';
+
+  // جدول التفاصيل
+  var tools='<div class="pd-card"><h3>📋 تفاصيل '+(cl?"العملاء":"الموردين")+'</h3><div class="sub">اضغط على أي صف لفتح كشف الحساب</div>'+
+    '<div class="pd-tools pd-noprint"><input id="pdQ" type="search" placeholder="بحث بالاسم…" value="'+esc(PS.q)+'" oninput="pdSearch(this.value)">'+
+    '<select onchange="pdSort(this.value)">'+
+      '<option value="bal"'+(PS.sort==="bal"?" selected":"")+'>ترتيب: الأكبر رصيدًا</option>'+
+      '<option value="old"'+(PS.sort==="old"?" selected":"")+'>ترتيب: الأقدم مديونية</option>'+
+      (cl?'<option value="od"'+(PS.sort==="od"?" selected":"")+'>ترتيب: الأكبر متأخرات</option>':'')+
+      '<option value="name"'+(PS.sort==="name"?" selected":"")+'>ترتيب: الاسم</option></select>'+
+    '<label><input type="checkbox" onchange="pdOld(this.checked)"'+(PS.old?" checked":"")+'> المتأخر أكتر من 60 يوم بس</label></div>'+
+    '<div class="pd-wrap" id="pdRows"></div>'+
+    '<div class="pd-note">المتأخرات بتتحسب من أقساط أوامر البيع اللي عدّى ميعادها وما اتسددتش'+(cl?'':' (مش متاحة للموردين لأن مفيش جدول أقساط محفوظ ليهم)')+'. الرصيد = مدين − دائن حسب كشف الحساب، والأرصدة الدائنة بتظهر في كارت مستقل ومش بتتخصم من أعمار الديون لأي طرف تاني.</div></div>';
+
+  el.innerHTML='<div class="pd-kpis">'+k.join("")+'</div><div class="pd-grid">'+aging+topCard+'</div>'+tools;
+  pdRows();
+};
+
+function filtered(){
+  var d=DATA[PS.tab]; if(!d) return [];
+  var q=PS.q.trim().toLowerCase();
+  var r=d.rows.filter(function(x){
+    if(q&&x.name.toLowerCase().indexOf(q)<0) return false;
+    if(PS.old&&(x.b[2]+x.b[3]+x.b[4])<0.005) return false;
+    return true;
+  });
+  var s=PS.sort;
+  r.sort(function(a,b){
+    if(s==="name") return a.name.localeCompare(b.name,"ar");
+    if(s==="old") return ((b.hasOpen?9999:(b.oldest||0))-(a.hasOpen?9999:(a.oldest||0)))||(b.debt-a.debt);
+    if(s==="od") return (b.od-a.od)||(b.debt-a.debt);
+    return b.bal-a.bal;
+  });
+  return r;
+}
+function cell(v){return Math.abs(v)<0.005?'<td class="n z">—</td>':'<td class="n">'+fm(v,2)+'</td>';}
+
+window.pdRows=function(){
+  var box=document.getElementById("pdRows"); if(!box) return;
+  var cl=PS.tab==="clients", rows=filtered();
+  if(!rows.length){box.innerHTML='<div class="pd-empty">لا توجد نتائج مطابقة</div>';return;}
+  var s=[0,0,0,0,0], bal=0, od=0;
+  rows.forEach(function(r){r.b.forEach(function(v,i){s[i]+=v;}); bal+=r.bal; od+=r.od;});
+  var head='<th>#</th><th>'+(cl?"العميل":"المورد")+'</th><th class="n">الرصيد</th>'+BK.map(function(b){return '<th class="n"><span class="pd-dot" style="background:'+b.c+'"></span>'+b.l+'</th>';}).join("")+(cl?'<th class="n">متأخرات الأقساط</th>':'')+'<th>أقدم دين</th><th>آخر حركة</th>';
+  var body=rows.map(function(r,i){
+    var age=r.hasOpen?'<span class="pd-chip r">أول المدة</span>':(r.oldest===null?'—':'<span class="pd-chip '+(r.oldest>90?'r':r.oldest>60?'y':'g')+'">'+r.oldest+' يوم</span>');
+    return '<tr class="cl" data-name="'+esc(r.name)+'" onclick="pdOpen(this)"><td>'+(i+1)+'</td><td><b>'+esc(r.name)+'</b></td>'+
+      '<td class="n"><b'+(r.bal<0?' style="color:#2b6cb0"':'')+'>'+fm(r.bal,2)+'</b></td>'+r.b.map(cell).join("")+
+      (cl?(r.od>0.005?'<td class="n" style="color:#c0392b;font-weight:700">'+fm(r.od,2)+'</td>':'<td class="n z">—</td>'):'')+
+      '<td>'+age+'</td><td>'+esc(r.last||"—")+'</td></tr>';
+  }).join("");
+  var foot='<tr class="tot"><td></td><td>الإجمالي ('+rows.length+')</td><td class="n">'+fm(bal,2)+'</td>'+s.map(function(v){return '<td class="n">'+fm(v,2)+'</td>';}).join("")+(cl?'<td class="n">'+fm(od,2)+'</td>':'')+'<td></td><td></td></tr>';
+  box.innerHTML='<table class="pd-tbl"><thead><tr>'+head+'</tr></thead><tbody>'+foot+body+'</tbody></table>';
+};
+
+/* ---------- أحداث ---------- */
+window.pdTab=function(t){PS.tab=t;PS.q="";go("partiesDashboard");};
+window.pdRefresh=function(){go("partiesDashboard");};
+window.pdSearch=function(v){PS.q=v||"";pdRows();};
+window.pdSort=function(v){PS.sort=v;pdRows();};
+window.pdOld=function(v){PS.old=!!v;pdRows();};
+window.pdOpen=function(el){
+  var n=el&&el.dataset?el.dataset.name:""; if(!n) return;
+  try{ tbOpenStatement(KIND[PS.tab],n); }catch(e){ toast("تعذر فتح كشف الحساب","err"); }
+};
+window.pdExport=function(){
+  try{
+    var cl=PS.tab==="clients", rows=filtered();
+    var h=[cl?"العميل":"المورد","الرصيد"].concat(BK.map(function(b){return b.l;}));
+    if(cl) h.push("متأخرات الأقساط");
+    h.push("أقدم دين (يوم)","آخر حركة");
+    var aoa=[h];
+    rows.forEach(function(r){
+      var a=[r.name,r.bal].concat(r.b); if(cl) a.push(r.od);
+      a.push(r.hasOpen?"أول المدة":(r.oldest===null?"":r.oldest), r.last||""); aoa.push(a);
+    });
+    var ws=XLSX.utils.aoa_to_sheet(aoa), wb=XLSX.utils.book_new();
+    ws["!cols"]=h.map(function(_,i){return {wch:i===0?30:16};});
+    wb.Workbook={Views:[{RTL:true}]};
+    XLSX.utils.book_append_sheet(wb,ws,cl?"أرصدة العملاء":"أرصدة الموردين");
+    XLSX.writeFile(wb,(cl?"أعمار_ديون_العملاء_":"أعمار_ديون_الموردين_")+new Date().toISOString().slice(0,10)+".xlsx");
+  }catch(e){ toast("تعذر التصدير","err"); }
+};
+window.__pdCompute=compute; // للاختبار
+})();
+
 </script>
 
