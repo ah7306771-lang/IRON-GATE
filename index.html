@@ -25170,21 +25170,36 @@ window.bkBulk = window.bkBulk || { kind:"all", from:"", to:"", busy:false, prog:
 function bkBulkAllowed(){ const a=[]; if(can("receipts","post")) a.push("in"); if(can("payments","post")) a.push("out"); if(can("treasuryTransfer","post")) a.push("trf"); return a; }
 function bkBulkKinds(){ const B=window.bkBulk, ok=bkBulkAllowed(); return ok.filter(k=>B.kind==="all"||B.kind===k); }
 function bkBulkKey(it){ return it.t+":"+it.e.id; }
+/* فلتر طريقة السداد / حالة الشيك */
+function bkBulkMethodOK(e,M){
+  if(!M||M==="all") return true;
+  if(M==="transfer") return e.method==="transfer";
+  if(e.method!=="bank") return false;
+  if(M==="bank") return true;
+  if(M==="receivable") return e.status==="receivable";
+  if(M==="pending") return e.status==="pending"||e.status==="deposited";
+  if(M==="collected") return e.status==="collected";
+  return true;
+}
 function bkBulkList(){
   const B=window.bkBulk, kinds=bkBulkKinds(), out=[];
   const inRange=d=>(!B.from||(d&&d>=B.from))&&(!B.to||(d&&d<=B.to));
+  const M=B.method||"all";
   (state.treasuryEntries||[]).forEach(e=>{
     if(e.entryKind==="transfer_view"||e.method==="cash"||e.method==="adjustment") return;
     if(!kinds.includes(e.direction)||!inRange(e.date)) return;
+    if(!bkBulkMethodOK(e,M)) return;
     out.push({t:e.direction,e});
   });
-  if(kinds.includes("trf")) trfList().forEach(t=>{ if(t.fromKind==="bank"&&inRange(t.date)) out.push({t:"trf",e:t}); });
+  if(kinds.includes("trf")&&M==="all") trfList().forEach(t=>{ if(t.fromKind==="bank"&&inRange(t.date)) out.push({t:"trf",e:t}); });
   const rank={in:0,out:1,trf:2};
   return out.sort((a,b)=>String(a.e.date||"").localeCompare(String(b.e.date||""))||(rank[a.t]-rank[b.t])||((+a.e.no||0)-(+b.e.no||0)));
 }
 function bkBulkState(it){
   if(it.t==="trf"){ if(trfIsPosted(it.e)) return {k:"posted"}; const p=trfPlan(it.e,[]); return p.reason?{k:"na",reason:p.reason}:{k:"ready"}; }
-  return txBulkState(it.e);
+  const s=txBulkState(it.e);
+  if(s.k==="na"&&typeof chqCanReceipt==="function"&&chqCanReceipt(it.e)&&!chqHasKind(it.e,"receipt")) return {k:"ready",stage:"receipt"};   // أوراق قبض/شيك لسه ما اتحصّلش: يترحّل استلامه
+  return s;
 }
 function bkBulkRef(it){ return it.t==="trf"?("تحويل رقم "+(it.e.no||"")+(it.e.date?" — "+it.e.date:"")):txBulkRef(it.e); }
 function bkBulkTodo(){
@@ -25202,6 +25217,7 @@ function viewBkBulk(){
   const jInfo=`<div style="margin-top:10px;font-size:12.5px;color:var(--text-dim)">يومية التحصيلات: <b>${escapeHtml(String(st.txJournalIn||"غير محددة"))}</b> — يومية المدفوعات: <b>${escapeHtml(String(st.txJournalOut||"غير محددة"))}</b> <span>(من مؤشرات النظام)</span> — التحويلات: <b>اليومية المستخدمة آخر مرة أو يومية بنك/خزنة</b></div>`;
   return `<div class="card" style="padding:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
     <label>النوع <select class="inp" onchange="bkBulk.kind=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()">${opts.map(o=>`<option value="${o[0]}" ${B.kind===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
+    <label>طريقة السداد <select class="inp" onchange="bkBulk.method=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()">${[["all","الكل"],["transfer","🔁 تحويل بنكي"],["bank","🧾 شيك بنكي (كل الحالات)"],["receivable","أوراق قبض (ترحيل الاستلام)"],["pending","شيكات تحت التحصيل"],["collected","محصل شيك"]].map(o=>`<option value="${o[0]}" ${(B.method||"all")===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
     <label>من تاريخ <input class="inp" type="date" value="${escapeAttr(B.from)}" onchange="bkBulk.from=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()"></label>
     <label>إلى تاريخ <input class="inp" type="date" value="${escapeAttr(B.to)}" onchange="bkBulk.to=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()"></label>
     <button id="bkCheck" type="button" class="btn ghost" onclick="bkBulkPrecheck()" title="يفحص ربط الحسابات والسنة المالية واليومية لكل حركة جاهزة — من غير ما يرحّل أي حاجة">🔍 فحص قبل الترحيل</button>
@@ -25219,7 +25235,7 @@ function renderBkBulk(){
   const cb=document.getElementById("bkCheck"); if(cb){ cb.style.display=kinds.length?"":"none"; cb.disabled=!!B.busy||!cnt.ready; cb.textContent=B.busy==="check"?"جارٍ الفحص…":(nSel?"🔍 فحص المحدد ("+nSel+")":"🔍 فحص قبل الترحيل"); }
   const card=(l,v,c)=>`<div class="card" style="padding:10px 16px;min-width:150px"><div style="font-size:12px;color:var(--text-dim)">${l}</div><div style="font-size:20px;font-weight:800;color:${c}">${v}</div></div>`;
   const sum=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("جاهزة للترحيل",cnt.ready,"var(--gold-text)")}${card("مُرحّلة قبل كده",cnt.posted,"var(--ok)")}${card("غير قابلة للترحيل",cnt.na,"var(--text-dim)")}${nSel?card("محددة للترحيل",nSel,"var(--gold-text)"):""}</div>`;
-  const res=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("اترحّل تحصيلات",r.inN,"var(--ok)")}${card("اترحّل مدفوعات",r.outN,"var(--ok)")}${card("اترحّل تحويلات",r.trfN,"var(--ok)")}${card("حركات فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)")}${card("اتخطّت",r.skip,"var(--text-dim)")}</div>`:"";
+  const res=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${card("اترحّل تحصيلات",r.inN,"var(--ok)")}${card("اترحّل مدفوعات",r.outN,"var(--ok)")}${card("اترحّل تحويلات",r.trfN,"var(--ok)")}${card("اترحّل أوراق قبض (استلام)",r.rcN||0,"var(--ok)")}${card("حركات فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)")}${card("اتخطّت",r.skip,"var(--text-dim)")}</div>`:"";
   const errTbl=(arr,title)=>`<div class="card" style="padding:12px;margin-top:6px"><strong style="color:var(--danger)">${title} (${arr.length})</strong><div class="tbl-wrap" style="margin-top:8px"><table style="width:100%"><thead><tr><th>الحركة</th><th>السبب</th></tr></thead><tbody>${arr.map(x=>`<tr><td>${escapeHtml(x.ref)}</td><td style="color:var(--danger)">${escapeHtml(x.msg)}</td></tr>`).join("")}</tbody></table></div></div>`;
   const err=r&&r.errors.length?errTbl(r.errors,"تقرير الأخطاء"):"";
   const preSum=P?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 0">${card("اتفحصت",P.checked,"var(--text-dim)")}${card("سليمة وجاهزة",P.okN,"var(--ok)")}${card("فيها أخطاء",P.badN,P.badN?"var(--danger)":"var(--ok)")}</div><div class="muted" style="font-size:12px;margin:4px 0 8px">نتيجة «فحص قبل الترحيل» — قراءة فقط، ما اترحّل ولا اتغيّر أي شيء.${P.badN?"":" كل الحركات الجاهزة سليمة."}</div>`:"";
@@ -25228,7 +25244,7 @@ function renderBkBulk(){
   const rows=sts.slice(0,MAX).map((x,i)=>{ const it=x.it,e=it.e,key=bkBulkKey(it);
     const stc=x.s.k==="posted"?`<span class="chip ok">مُرحّل ✓ ${escapeHtml(String(e.postedEntryNo||""))}</span>`:x.s.k==="ready"?(P&&P.ids[key]?(P.ids[key].length?`<span class="chip" style="background:#fee2e2;color:var(--danger)" title="${escapeAttr(P.ids[key].join(" | "))}">جاهز لكن فيه خطأ ⚠</span>`:`<span class="chip ok">جاهز ✓ اتفحص</span>`):`<span class="chip gold">جاهز</span>`):`<span class="muted" title="${escapeAttr(x.s.reason||"")}">غير قابل — ${escapeHtml(x.s.reason||"")}</span>`;
     const party=it.t==="trf"?(trfAccLabel(e.fromKind,e.from).slice(3)+" ← "+trfAccLabel(e.toKind,e.to).slice(3)):(it.t==="in"?e.customer:e.supplier)||"—";
-    const how=it.t==="trf"?"🔁 تحويل":(typeof txBulkMoveStatus==="function"?txBulkMoveStatus(e):"");
+    const how=(it.t==="trf"?"🔁 تحويل":(typeof txBulkMoveStatus==="function"?txBulkMoveStatus(e):""))+(x.s.stage==="receipt"?' <small class="muted">· ترحيل استلام</small>':"");
     return `<tr><td style="text-align:center;width:34px"><input type="checkbox" ${x.s.k==="ready"?"":"disabled"} ${B.sel[key]?"checked":""} ${B.busy?"disabled":""} onchange="bkBulkToggle('${escapeAttr(key)}',this.checked)"></td><td class="num">${i+1}</td><td>${escapeHtml(e.date||"—")}</td><td>${TL[it.t]}</td><td class="num">${escapeHtml(String(e.no||""))}</td><td>${escapeHtml(party)}</td><td>${how}</td><td class="num">${fmt(e.amount)}</td><td>${stc}</td></tr>`; }).join("")||`<tr><td colspan="9" style="text-align:center;padding:16px">لا توجد حركات بنكية في النطاق</td></tr>`;
   box.innerHTML=sum+preSum+preErr+res+err+`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="text-align:center;width:34px"><input type="checkbox" id="bkAll" title="تحديد كل الحركات الجاهزة" ${cnt.ready&&nSel===cnt.ready?"checked":""} ${B.busy||!cnt.ready?"disabled":""} onchange="bkBulkToggleAll(this.checked)"></th><th>#</th><th>التاريخ</th><th>النوع</th><th>رقم</th><th>الجهة / من ← إلى</th><th>الطريقة</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>${sts.length>MAX?`<div class="muted" style="padding:8px;text-align:center">معروض أول ${MAX} حركة من ${sts.length} — الترحيل بيشمل كل الحركات الجاهزة في النطاق.</div>`:""}</div>`;
   { const ta=document.getElementById("bkAll"); if(ta) ta.indeterminate=nSel>0&&nSel<cnt.ready; }
@@ -25266,6 +25282,40 @@ async function bkTrfPostCore(t,plan,j,years,periods){
   try{ audit("trf_post",`ترحيل جماعي تحويل رقم ${t.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(t.amount)}`); }catch(_){}
   saveState(); return entryNo;
 }
+/* ترحيل «استلام» شيك/أوراق قبض — نفس منطق chqCollectDo (مرحلة receipt) بدون نوافذ */
+async function bkChqReceiptCore(e,direction,plan,j,years,periods){
+  const title=direction==="in"?"تحصيل":"دفعة", who=direction==="in"?e.customer:e.supplier, maxByPrefix={}, drafts=[];
+  const rollback=async(arr)=>{ for(const d of arr){ try{ await sb.from("gl_entry_lines").delete().eq("entry_id",d.id); await sb.from("gl_entries").delete().eq("id",d.id).eq("status","draft"); }catch(_){} } };
+  try{
+    for(const x of plan.entries){
+      const y=years.find(v=>v.start_date<=x.date&&v.end_date>=x.date); if(!y) throw new Error("لا توجد سنة مالية مفتوحة تغطي "+x.date);
+      const per=periods.find(v=>v.fiscal_year_id===y.id&&v.start_date<=x.date&&v.end_date>=x.date); if(!per) throw new Error("لا توجد فترة مفتوحة تغطي "+x.date);
+      const prefix=String(parseInt(x.date.slice(5,7),10));
+      if(maxByPrefix[prefix]===undefined){
+        const ne=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"%"); if(ne.error) throw ne.error;
+        const seqs=(ne.data||[]).map(r=>String(r.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
+        maxByPrefix[prefix]=seqs.length?Math.max(...seqs):0;
+      }
+      maxByPrefix[prefix]++; const entryNo=prefix+String(maxByPrefix[prefix]).padStart(4,"0");
+      const en=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:y.id,period_id:per.id,entry_date:x.date,document_date:x.date,description:`قيد ${x.title} — ${title} رقم ${e.no||""} — ${who||""} — [مستند: ${plan.ref}]`,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:x.td/100,total_credit:x.tc/100});
+      drafts.push({kind:x.kind,id:en.id,no:entryNo});
+      const lr=await sb.from("gl_entry_lines").insert(x.lines.map((l,i)=>({entry_id:en.id,line_no:i+1,account_id:l.acc,description:l.desc,debit:l.dr/100,credit:l.cr/100}))); if(lr.error) throw lr.error;
+    }
+  }catch(err){ await rollback(drafts); throw err; }
+  const done=[]; let failed=null;
+  for(const d of drafts){ const pr=await sb.rpc("gl_post_entry_authorized",{p_entry_id:d.id}); if(pr.error){ failed=pr.error; break; } done.push(d); }
+  const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
+  if(done.length){
+    e.chequeEntries=(e.chequeEntries||[]).concat(done);
+    e.postedEntryId=done[done.length-1].id; e.postedEntryNo=e.chequeEntries.map(d=>d.no).join(" · ");
+    e.postedAt=now; e.postedBy=by; e.postedJournal=String(j.journal_code); e.chq2=true; e.chqMode=plan.full?"full":"direct";
+    for(const d of done){ try{ await sb.from("gl_posting_sources").insert({entry_id:d.id,source_system:"التحصيلات والمدفوعات",source_ref:plan.ref}); }catch(_){} }
+    try{ audit("chq_collect",`ترحيل جماعي ${direction==="in"?"استلام":"إصدار"} شيك ${title} رقم ${e.no} بقيود ${e.postedEntryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`); }catch(_){}
+    saveState();
+  }
+  if(failed){ await rollback(drafts.slice(done.length)); throw new Error("تم ترحيل "+done.length+" من "+drafts.length+" قيود ثم حدث خطأ: "+String(failed.message||failed)); }
+  return e.postedEntryNo;
+}
 async function bkBulkPrecheck(){
   const B=window.bkBulk; if(B.busy) return;
   const kinds=bkBulkKinds(); if(!kinds.length) return toast("لا تملك صلاحية الترحيل","err");
@@ -25279,6 +25329,17 @@ async function bkBulkPrecheck(){
     for(const it of todo){
       n++; const pe=document.getElementById("bkProg"); if(pe) pe.textContent="فحص "+n+" / "+todo.length;
       const e=it.e, ref=bkBulkRef(it), key=bkBulkKey(it), msgs=[];
+      if(it.t!=="trf"&&bkBulkState(it).stage==="receipt"){
+        P.checked++; const cp=chqPlan(e,accs,{bank:"",date:"",stage:"receipt"});
+        if(cp.err) msgs.push(String(cp.err.msg).replace(/\n/g," "));
+        else{ cp.checks.filter(r=>!r[2]).forEach(r=>msgs.push(r[0]+": "+r[3])); if(cp.entries.some(x=>!x.td||x.td!==x.tc)) msgs.push("القيد غير متوازن أو بدون مبلغ"); }
+        if(!jc[it.t]) msgs.push("يومية "+(it.t==="in"?"التحصيلات":"المدفوعات")+" غير محددة في مؤشرات النظام");
+        else if(!journals.find(x=>String(x.journal_code)===String(jc[it.t]))) msgs.push("يومية "+jc[it.t]+" غير موجودة أو غير نشطة");
+        const dt=e.date||glDate(), yr0=years.find(v=>v.start_date<=dt&&v.end_date>=dt);
+        if(!yr0) msgs.push("لا توجد سنة مالية مفتوحة تغطي "+dt); else if(!periods.find(v=>v.fiscal_year_id===yr0.id&&v.start_date<=dt&&v.end_date>=dt)) msgs.push("لا توجد فترة مفتوحة تغطي "+dt);
+        P.ids[key]=msgs; if(msgs.length){ P.badN++; msgs.forEach(m=>P.errors.push({ref,msg:m})); } else P.okN++;
+        continue;
+      }
       const plan=it.t==="trf"?trfPlan(e,accs):txPostPlan(e,accs); if(plan.reason) continue;
       P.checked++;
       if(it.t==="trf"){ if(!tj) msgs.push("لا توجد يومية نشطة للتحويلات"); }
@@ -25305,10 +25366,11 @@ async function bkBulkRun(){
   const need=["in","out"].filter(k=>todo.some(it=>it.t===k)&&!jc[k]);
   if(need.length) return toast("حدّد "+need.map(k=>k==="in"?"يومية التحصيلات":"يومية المدفوعات").join(" و ")+" من مؤشرات النظام أولًا","err");
   const nIn=todo.filter(it=>it.t==="in").length, nOut=todo.filter(it=>it.t==="out").length, nTr=todo.filter(it=>it.t==="trf").length;
-  const okc=await askConfirm(`ترحيل ${todo.length} حركة${Object.keys(B.sel||{}).length?" محددة":""} (تحصيلات ${nIn} / مدفوعات ${nOut} / تحويلات ${nTr}) من ${B.from||"…"} إلى ${B.to||"…"}؟\n\nقيد مستقل لكل حركة بالترتيب (التاريخ ثم رقم الحركة). بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها.\nالمُرحّل قبل كده بيتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل مجمع للبنوك"});
+  const nRc=todo.filter(it=>it.t!=="trf"&&bkBulkState(it).stage==="receipt").length;
+  const okc=await askConfirm(`ترحيل ${todo.length} حركة${Object.keys(B.sel||{}).length?" محددة":""} (تحصيلات ${nIn} / مدفوعات ${nOut} / تحويلات ${nTr})${nRc?" — منها "+nRc+" أوراق قبض/شيكات بترحيل الاستلام":""} من ${B.from||"…"} إلى ${B.to||"…"}؟\n\nقيد مستقل لكل حركة بالترتيب (التاريخ ثم رقم الحركة). بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها.\nالمُرحّل قبل كده بيتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل مجمع للبنوك",ok:"ترحيل",danger:false});
   if(!okc) return;
   B.busy=true; B.res=null; renderBkBulk();
-  const res={inN:0,outN:0,trfN:0,err:0,skip:0,errors:[]};
+  const res={inN:0,outN:0,trfN:0,rcN:0,err:0,skip:0,errors:[]};
   try{
     const {accs,journals,years,periods}=await bkBulkLoadGL();
     const jr={in:journals.find(x=>String(x.journal_code)===String(jc.in)),out:journals.find(x=>String(x.journal_code)===String(jc.out)),trf:bkBulkTrfJournal(journals)};
@@ -25327,6 +25389,14 @@ async function bkBulkRun(){
       }
       const e=(state.treasuryEntries||[]).find(x=>x.id===it0.e.id); if(!e||txIsPosted(e)){ res.skip++; continue; }
       if(!jn){ res.err++; res.errors.push({ref,msg:"يومية "+jc[it0.t]+" غير موجودة أو غير نشطة"}); continue; }
+      if(bkBulkState(it0).stage==="receipt"){
+        const cp=chqPlan(e,accs,{bank:"",date:"",stage:"receipt"});
+        if(cp.err){ res.err++; res.errors.push({ref,msg:cp.err.title+": "+String(cp.err.msg).replace(/\n/g," ")}); continue; }
+        const cbad=cp.checks.filter(r=>!r[2]);
+        if(cbad.length||cp.entries.some(x=>!x.td||x.td!==x.tc||x.lines.some(l=>!l.acc))){ res.err++; (cbad.length?cbad:[["القيد","",false,"القيد غير متوازن أو حساب غير مربوط"]]).forEach(r=>res.errors.push({ref,msg:r[0]+": "+r[3]})); continue; }
+        try{ await bkChqReceiptCore(e,it0.t,cp,jn,years,periods); res.rcN++; }catch(err){ res.err++; res.errors.push({ref,msg:(err&&err.message)||String(err)}); }
+        continue;
+      }
       const plan=txPostPlan(e,accs); if(plan.reason){ res.skip++; continue; }
       const bad=plan.checks.filter(r=>!r[2]);
       if(bad.length||plan.lines.some(l=>!l.acc)){ res.err++; (bad.length?bad:[["حساب غير مربوط","",false,"يوجد حساب غير مربوط بأحد بنود القيد"]]).forEach(r=>res.errors.push({ref,msg:r[0]+": "+r[3]})); continue; }
@@ -25335,7 +25405,7 @@ async function bkBulkRun(){
     }
   }catch(err){ toast("تعذر الترحيل المجمع: "+((err&&err.message)||err),"err"); }
   B.busy=false; B.res=res; B.pre=null; B.sel={}; renderBkBulk();
-  toast(`انتهى الترحيل — تحصيلات ${res.inN} / مدفوعات ${res.outN} / تحويلات ${res.trfN} / أخطاء ${res.err}`,res.err?"err":"ok");
+  toast(`انتهى الترحيل — تحصيلات ${res.inN} / مدفوعات ${res.outN} / تحويلات ${res.trfN} / أوراق قبض ${res.rcN} / أخطاء ${res.err}`,res.err?"err":"ok");
 }
 /* فحص قبل الترحيل: نفس شروط txBulkRun + txPostCore بالظبط، بس قراءة فقط (مفيش insert/update/rpc/saveState) */
 async function txBulkPrecheck(){
@@ -28611,7 +28681,8 @@ html body:not(#_) #content .tx-page table td{height:auto!important}
     if(typeof currentUser!=="undefined"&&currentUser){
       const co=(typeof CUR_CO!=="undefined"&&typeof coName==="function")?(CUR_CO==="*"?"مجمّع (قراءة فقط)":CUR_CO+" — "+coName(CUR_CO)):"";
       const ok=window.igNetOk!==false&&navigator.onLine;
-      t=BASE+(co?"  |  "+co:"")+"  |  "+(ok?"🟢 متصل":"🔴 غير متصل");
+      const I=x=>"\u2068"+x+"\u2069", SEP="   |   ";
+      t=I(BASE)+(co?SEP+I(co):"")+SEP+I(ok?"🟢 متصل":"🔴 غير متصل");
     }
     if(document.title!==t) document.title=t;
   }catch(e){} }
@@ -29321,14 +29392,10 @@ document.addEventListener("click",function(e){ try{ var b=e.target.closest&&e.ta
 }
 </style>
 <style id="igStatusTop">
-/* الشركة + حالة الاتصال: في الشريط الداكن العلوي فقط (الشاشات الكبيرة) */
+/* الشركة وحالة الاتصال بتظهر في عنوان النافذة بس (الشاشات الكبيرة) */
 @media(min-width:901px){
  html body:not(#_) #app main .topbar .user .ig-co-chip,
- html body:not(#_) #app main .topbar .user .ig-net{display:none!important}
- html body:not(#_) .ap-bar .ap-status{display:inline-flex!important;align-items:center;gap:8px}
- html body:not(#_) .ap-bar .ap-status .ig-co-chip{height:26px;padding:0 12px;font-size:12px;font-weight:800;border-radius:999px;background:#e6b325;border:1px solid #c79a2b;color:#2b1d00;display:inline-flex;align-items:center}
- html body:not(#_) .ap-bar .ap-status .ig-net{height:26px;padding:0 12px;font-size:12px;font-weight:800;border-radius:999px;display:inline-flex;align-items:center;gap:7px;flex-direction:row-reverse;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.28);color:#e8eefb}
- html body:not(#_) .ap-bar .ap-status .ig-net b{display:inline}
- html body:not(#_) .ap-bar .ap-status .ig-net.off{background:rgba(239,68,68,.2);border-color:#ef4444;color:#fecaca}
+ html body:not(#_) #app main .topbar .user .ig-net,
+ html body:not(#_) .ap-bar .ap-status{display:none!important}
 }
 </style>
