@@ -25171,27 +25171,35 @@ function bkBulkAllowed(){ const a=[]; if(can("receipts","post")) a.push("in"); i
 function bkBulkKinds(){ const B=window.bkBulk, ok=bkBulkAllowed(); return ok.filter(k=>B.kind==="all"||B.kind===k); }
 function bkBulkKey(it){ return it.t+":"+it.e.id; }
 /* فلتر طريقة السداد / حالة الشيك */
-function bkBulkMethodOK(e,M){
-  if(!M||M==="all") return true;
-  if(M==="transfer") return e.method==="transfer";
+const BK_METHODS=[["transfer","🔁 تحويل بنكي"],["bank","🧾 شيك بنكي (كل الحالات)"],["receivable","أوراق قبض (ترحيل الاستلام)"],["pending","شيكات تحت التحصيل"],["collected","محصل شيك"],["trf","↔ تحويل بين الحسابات"]];
+function bkMethods(){ const B=window.bkBulk; if(!Array.isArray(B.methods)) B.methods=(B.method&&B.method!=="all")?[B.method]:[]; return B.methods; }
+function bkMethodLabel(){ const m=bkMethods(); if(!m.length) return "الكل"; if(m.length===1) return (BK_METHODS.find(x=>x[0]===m[0])||[0,m[0]])[1]; return m.length+" طرق مختارة"; }
+function bkMethodToggle(v,on){ const B=window.bkBulk, m=bkMethods(), i=m.indexOf(v); if(on&&i<0) m.push(v); if(!on&&i>=0) m.splice(i,1); B.pre=null; B.sel={}; const s=document.getElementById("bkMethSum"); if(s) s.textContent=bkMethodLabel(); renderBkBulk(); }
+function bkMethodClear(){ const B=window.bkBulk; B.methods=[]; B.pre=null; B.sel={}; document.querySelectorAll(".bkMethCb").forEach(c=>c.checked=false); const s=document.getElementById("bkMethSum"); if(s) s.textContent=bkMethodLabel(); renderBkBulk(); }
+function bkBulkMethodOne(e,m){
+  if(m==="transfer") return e.method==="transfer";
   if(e.method!=="bank") return false;
-  if(M==="bank") return true;
-  if(M==="receivable") return e.status==="receivable";
-  if(M==="pending") return e.status==="pending"||e.status==="deposited";
-  if(M==="collected") return e.status==="collected";
-  return true;
+  if(m==="bank") return true;
+  if(m==="receivable") return e.status==="receivable";
+  if(m==="pending") return e.status==="pending"||e.status==="deposited";
+  if(m==="collected") return e.status==="collected";
+  return false;
+}
+function bkBulkMethodOK(e,M){
+  if(!M||!M.length) return true;
+  return M.filter(x=>x!=="trf").some(m=>bkBulkMethodOne(e,m));
 }
 function bkBulkList(){
   const B=window.bkBulk, kinds=bkBulkKinds(), out=[];
   const inRange=d=>(!B.from||(d&&d>=B.from))&&(!B.to||(d&&d<=B.to));
-  const M=B.method||"all";
+  const M=bkMethods();
   (state.treasuryEntries||[]).forEach(e=>{
     if(e.entryKind==="transfer_view"||e.method==="cash"||e.method==="adjustment") return;
     if(!kinds.includes(e.direction)||!inRange(e.date)) return;
     if(!bkBulkMethodOK(e,M)) return;
     out.push({t:e.direction,e});
   });
-  if(kinds.includes("trf")&&M==="all") trfList().forEach(t=>{ if(t.fromKind==="bank"&&inRange(t.date)) out.push({t:"trf",e:t}); });
+  if(kinds.includes("trf")&&(!M.length||M.includes("trf"))) trfList().forEach(t=>{ if(t.fromKind==="bank"&&inRange(t.date)) out.push({t:"trf",e:t}); });
   const rank={in:0,out:1,trf:2};
   return out.sort((a,b)=>String(a.e.date||"").localeCompare(String(b.e.date||""))||(rank[a.t]-rank[b.t])||((+a.e.no||0)-(+b.e.no||0)));
 }
@@ -25217,7 +25225,8 @@ function viewBkBulk(){
   const jInfo=`<div style="margin-top:10px;font-size:12.5px;color:var(--text-dim)">يومية التحصيلات: <b>${escapeHtml(String(st.txJournalIn||"غير محددة"))}</b> — يومية المدفوعات: <b>${escapeHtml(String(st.txJournalOut||"غير محددة"))}</b> <span>(من مؤشرات النظام)</span> — التحويلات: <b>اليومية المستخدمة آخر مرة أو يومية بنك/خزنة</b></div>`;
   return `<div class="card" style="padding:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
     <label>النوع <select class="inp" onchange="bkBulk.kind=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()">${opts.map(o=>`<option value="${o[0]}" ${B.kind===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
-    <label>طريقة السداد <select class="inp" onchange="bkBulk.method=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()">${[["all","الكل"],["transfer","🔁 تحويل بنكي"],["bank","🧾 شيك بنكي (كل الحالات)"],["receivable","أوراق قبض (ترحيل الاستلام)"],["pending","شيكات تحت التحصيل"],["collected","محصل شيك"]].map(o=>`<option value="${o[0]}" ${(B.method||"all")===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
+    <label>طريقة السداد <details style="position:relative"><summary class="inp" style="cursor:pointer;min-width:190px;list-style:none"><span id="bkMethSum">${escapeHtml(bkMethodLabel())}</span> ▾</summary><div class="card" style="position:absolute;z-index:30;padding:8px 12px;min-width:240px;margin-top:4px">${BK_METHODS.map(o=>`<label style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer"><input type="checkbox" class="bkMethCb" ${bkMethods().includes(o[0])?"checked":""} onchange="bkMethodToggle('${o[0]}',this.checked)"> ${o[1]}</label>`).join("")}<button type="button" class="btn ghost sm" style="margin-top:6px" onclick="bkMethodClear()">مسح الاختيار (الكل)</button></div></details></label>
+    <label>حالة الترحيل <select class="inp" onchange="bkBulk.post=this.value;renderBkBulk()">${[["all","الكل (مرحّل وغير مرحّل)"],["no","غير مرحّل فقط"],["yes","مرحّل فقط"]].map(o=>`<option value="${o[0]}" ${(B.post||"all")===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
     <label>من تاريخ <input class="inp" type="date" value="${escapeAttr(B.from)}" onchange="bkBulk.from=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()"></label>
     <label>إلى تاريخ <input class="inp" type="date" value="${escapeAttr(B.to)}" onchange="bkBulk.to=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()"></label>
     <button id="bkCheck" type="button" class="btn ghost" onclick="bkBulkPrecheck()" title="يفحص ربط الحسابات والسنة المالية واليومية لكل حركة جاهزة — من غير ما يرحّل أي حاجة">🔍 فحص قبل الترحيل</button>
@@ -25241,12 +25250,13 @@ function renderBkBulk(){
   const preSum=P?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 0">${card("اتفحصت",P.checked,"var(--text-dim)")}${card("سليمة وجاهزة",P.okN,"var(--ok)")}${card("فيها أخطاء",P.badN,P.badN?"var(--danger)":"var(--ok)")}</div><div class="muted" style="font-size:12px;margin:4px 0 8px">نتيجة «فحص قبل الترحيل» — قراءة فقط، ما اترحّل ولا اتغيّر أي شيء.${P.badN?"":" كل الحركات الجاهزة سليمة."}</div>`:"";
   const preErr=P&&P.errors.length?errTbl(P.errors,"أخطاء الفحص — صلّحها قبل الترحيل"):"";
   const TL={in:"تحصيل",out:"دفعة",trf:"تحويل من البنك"}, MAX=1000;
-  const rows=sts.slice(0,MAX).map((x,i)=>{ const it=x.it,e=it.e,key=bkBulkKey(it);
+  const PF=B.post||"all", vw=sts.filter(x=>PF==="all"||(PF==="yes"?x.s.k==="posted":x.s.k!=="posted"));
+  const rows=vw.slice(0,MAX).map((x,i)=>{ const it=x.it,e=it.e,key=bkBulkKey(it);
     const stc=x.s.k==="posted"?`<span class="chip ok">مُرحّل ✓ ${escapeHtml(String(e.postedEntryNo||""))}</span>`:x.s.k==="ready"?(P&&P.ids[key]?(P.ids[key].length?`<span class="chip" style="background:#fee2e2;color:var(--danger)" title="${escapeAttr(P.ids[key].join(" | "))}">جاهز لكن فيه خطأ ⚠</span>`:`<span class="chip ok">جاهز ✓ اتفحص</span>`):`<span class="chip gold">جاهز</span>`):`<span class="muted" title="${escapeAttr(x.s.reason||"")}">غير قابل — ${escapeHtml(x.s.reason||"")}</span>`;
     const party=it.t==="trf"?(trfAccLabel(e.fromKind,e.from).slice(3)+" ← "+trfAccLabel(e.toKind,e.to).slice(3)):(it.t==="in"?e.customer:e.supplier)||"—";
     const how=(it.t==="trf"?"🔁 تحويل":(typeof txBulkMoveStatus==="function"?txBulkMoveStatus(e):""))+(x.s.stage==="receipt"?' <small class="muted">· ترحيل استلام</small>':"");
     return `<tr><td style="text-align:center;width:34px"><input type="checkbox" ${x.s.k==="ready"?"":"disabled"} ${B.sel[key]?"checked":""} ${B.busy?"disabled":""} onchange="bkBulkToggle('${escapeAttr(key)}',this.checked)"></td><td class="num">${i+1}</td><td>${escapeHtml(e.date||"—")}</td><td>${TL[it.t]}</td><td class="num">${escapeHtml(String(e.no||""))}</td><td>${escapeHtml(party)}</td><td>${how}</td><td class="num">${fmt(e.amount)}</td><td>${stc}</td></tr>`; }).join("")||`<tr><td colspan="9" style="text-align:center;padding:16px">لا توجد حركات بنكية في النطاق</td></tr>`;
-  box.innerHTML=sum+preSum+preErr+res+err+`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="text-align:center;width:34px"><input type="checkbox" id="bkAll" title="تحديد كل الحركات الجاهزة" ${cnt.ready&&nSel===cnt.ready?"checked":""} ${B.busy||!cnt.ready?"disabled":""} onchange="bkBulkToggleAll(this.checked)"></th><th>#</th><th>التاريخ</th><th>النوع</th><th>رقم</th><th>الجهة / من ← إلى</th><th>الطريقة</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>${sts.length>MAX?`<div class="muted" style="padding:8px;text-align:center">معروض أول ${MAX} حركة من ${sts.length} — الترحيل بيشمل كل الحركات الجاهزة في النطاق.</div>`:""}</div>`;
+  box.innerHTML=sum+preSum+preErr+res+err+`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="text-align:center;width:34px"><input type="checkbox" id="bkAll" title="تحديد كل الحركات الجاهزة" ${cnt.ready&&nSel===cnt.ready?"checked":""} ${B.busy||!cnt.ready?"disabled":""} onchange="bkBulkToggleAll(this.checked)"></th><th>#</th><th>التاريخ</th><th>النوع</th><th>رقم</th><th>الجهة / من ← إلى</th><th>الطريقة</th><th>القيمة</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>${vw.length>MAX?`<div class="muted" style="padding:8px;text-align:center">معروض أول ${MAX} حركة من ${vw.length} — الترحيل بيشمل كل الحركات الجاهزة في النطاق.</div>`:""}</div>`;
   { const ta=document.getElementById("bkAll"); if(ta) ta.indeterminate=nSel>0&&nSel<cnt.ready; }
 }
 async function bkBulkLoadGL(){
