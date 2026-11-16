@@ -4347,14 +4347,20 @@ function bindCashLedger(){
   clPaint();
 }
 // ---------- الحركة البنكية: التحصيلات والمدفوعات البنكية مع بعض بتواريخها (نظير «الحركة النقدية» للخزينة) ----------
-window.__bl = window.__bl || {from:"",to:"",q:"",type:"all",tr:"",eff:"all"};
+window.__bl = window.__bl || {from:"",to:"",q:"",type:"all",tr:"",eff:"all",st:"all",party:""};
+if(window.__bl.st===undefined) window.__bl.st="all"; if(window.__bl.party===undefined) window.__bl.party="";
 // الحركة بتأثر على رصيد البنك فعليًا: التحويل البنكي دايمًا، والشيك بس لما يتحصّل/يتصرف (collected)
 function blEffective(e){ if(e.method==="bank") return e.status==="collected"; return true; }
-function blRows(){
-  const F=window.__bl, q=String(F.q||"").trim().toLowerCase();
+function blBase(){
   const okIn=(()=>{try{return canView("receipts");}catch(x){return true;}})(), okOut=(()=>{try{return canView("payments");}catch(x){return true;}})();
   const isBank=e=>e.entryKind!=="transfer_view" && e.method!=="cash" && e.method!=="adjustment" && (e.direction==="in"?okIn:okOut);
-  const rows=(state.treasuryEntries||[]).filter(isBank).filter(e=>{
+  return (state.treasuryEntries||[]).filter(isBank);
+}
+function blRows(){
+  const F=window.__bl, q=String(F.q||"").trim().toLowerCase(), pq=String(F.party||"").trim().toLowerCase();
+  const rows=blBase().filter(e=>{
+    if(F.st&&F.st!=="all"&&String(e.status||"")!==F.st) return false;
+    if(pq&&String((e.direction==="in"?e.customer:e.supplier)||"").toLowerCase().indexOf(pq)<0) return false;
     if(F.type==="in"&&e.direction!=="in") return false;
     if(F.type==="out"&&e.direction!=="out") return false;
     if(F.from&&String(e.date||"")<F.from) return false;
@@ -4372,7 +4378,30 @@ function viewBankLedger(){
   const F=window.__bl;
   const banks=treasuryAll().filter(t=>t.kind==="bank"||txIsChqSafe(t)).filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t)))
     .map(x=>`<option value="${escapeAttr(String(x.code))}"${String(F.tr)===String(x.code)?" selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
-  return `<div class="page-head"><h2>🏦 الحركة البنكية</h2><span class="chip gold" id="blCount"></span><span class="spacer"></span><button class="btn ghost sm" type="button" id="blXls">⬇ Excel</button><button class="btn ghost sm" type="button" onclick="window.print()">🖨 طباعة</button></div>
+  const _base=blBase();
+  const parties=[...new Set(_base.map(e=>(e.direction==="in"?e.customer:e.supplier)||"").filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"ar"));
+  const stSeen=new Set(_base.map(e=>e.status).filter(Boolean));
+  const stOpts=txStatuses.filter(s=>stSeen.has(s.v)).map(s=>`<option value="${escapeAttr(s.v)}"${F.st===s.v?" selected":""}>${escapeHtml(s.label)}</option>`).join("");
+  return `<style>
+    #blTable{border-collapse:separate;border-spacing:0;font-size:12.5px;width:100%}
+    #blTable th,#blTable td{border-left:1px solid var(--line);border-bottom:1px solid var(--line);padding:7px 9px;vertical-align:middle;line-height:1.5}
+    #blTable th:last-child,#blTable td:last-child{border-left:none}
+    #blTable thead th{background:var(--bg-3);border-bottom:2px solid var(--gold);font-size:11.5px;font-weight:800;text-align:center;white-space:nowrap;vertical-align:top}
+    #blTable tbody tr:nth-child(even){background:rgba(0,0,0,.025)}
+    #blTable tbody tr:hover{background:var(--gold-soft)}
+    #blTable td{text-align:center;font-size:12.5px;font-variant-numeric:tabular-nums}
+    #blTable td:nth-child(4),#blTable td:nth-child(8){text-align:right}
+    #blTable td:nth-child(2){white-space:nowrap}
+    #blTable td:nth-child(n+9){white-space:nowrap;font-weight:700}
+    #blTable tfoot td{background:var(--bg-3);border-top:2px solid var(--gold);font-weight:800}
+    #blTable .mth{font-size:10.5px;font-weight:700;padding:1px 8px;border-width:1px;gap:3px;line-height:1.5}
+    #blTable .chip{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
+    #blTable .bl-fth{min-width:130px}
+    #blTable .bl-fth>div{margin-bottom:4px}
+    #blTable .bl-fi{width:100%;box-sizing:border-box;font:inherit;font-size:11px;font-weight:600;padding:3px 6px;border:1px solid var(--line-2);border-radius:6px;background:var(--card);color:var(--text)}
+    #blTable .bl-fi:focus{outline:none;border-color:var(--gold)}
+  </style>
+  <div class="page-head"><h2>🏦 الحركة البنكية</h2><span class="chip gold" id="blCount"></span><span class="spacer"></span><button class="btn ghost sm" type="button" id="blXls">⬇ Excel</button><button class="btn ghost sm" type="button" onclick="window.print()">🖨 طباعة</button></div>
   <div class="card"><div class="body">
     <div class="fgrid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px">
       <label>من تاريخ<input class="inp" type="date" id="blFrom" value="${escapeAttr(F.from)}"></label>
@@ -4380,10 +4409,11 @@ function viewBankLedger(){
       <label>النوع<select class="inp" id="blType"><option value="all"${F.type==="all"?" selected":""}>تحصيلات ومدفوعات</option><option value="in"${F.type==="in"?" selected":""}>تحصيلات فقط</option><option value="out"${F.type==="out"?" selected":""}>مدفوعات فقط</option></select></label>
       <label>البنك<select class="inp" id="blTr"><option value="">كل البنوك</option>${banks}</select></label>
       <label>التأثير على البنك<select class="inp" id="blEff"><option value="all"${F.eff==="all"?" selected":""}>الكل</option><option value="eff"${F.eff==="eff"?" selected":""}>فعلي (تحويل / شيك محصَّل)</option><option value="pend"${F.eff==="pend"?" selected":""}>معلّق (شيك لم يُحصَّل)</option></select></label>
+      <label>الحالة<select class="inp" id="blSt"><option value="all">كل الحالات</option>${stOpts}</select></label>
       <label>بحث<input class="inp" id="blQ" placeholder="عميل / مورد / ملاحظات / مرجع" value="${escapeAttr(F.q)}"></label>
     </div>
     <div id="blKpi" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px"></div>
-    <div class="tbl-wrap"><table><thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th>الطرف</th><th>البنك</th><th>طريقة السداد</th><th>الحالة</th><th>البيان</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody id="blBody"></tbody><tfoot id="blFoot"></tfoot></table></div>
+    <div class="tbl-wrap"><table id="blTable"><thead><tr><th>#</th><th>التاريخ</th><th>النوع</th><th class="bl-fth" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()"><div>الطرف</div><input class="bl-fi" id="blParty" list="blPartyList" placeholder="كل الأطراف" autocomplete="off" value="${escapeAttr(F.party)}"><datalist id="blPartyList">${parties.map(p=>`<option value="${escapeAttr(p)}"></option>`).join("")}</datalist></th><th>البنك</th><th>طريقة السداد</th><th class="bl-fth" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()"><div>الحالة</div><select class="bl-fi" id="blStH"><option value="all">كل الحالات</option>${stOpts}</select></th><th>البيان</th><th>وارد</th><th>منصرف</th><th>الرصيد</th></tr></thead><tbody id="blBody"></tbody><tfoot id="blFoot"></tfoot></table></div>
     <div style="font-size:11.5px;color:var(--text-dim);margin-top:8px;line-height:1.7">الرصيد التراكمي بيحسب الحركات الفعلية بس (التحويلات البنكية والشيكات المحصَّلة) خلال الفترة المختارة. الشيكات تحت التحصيل / أوراق القبض / الضمان / المرتدة بتظهر بلون باهت ومش بتدخل في الرصيد.</div>
   </div></div>`;
 }
@@ -4411,8 +4441,10 @@ function blExport(){
   }catch(e){ toast("تعذر التصدير","err"); }
 }
 function bindBankLedger(){
-  const F=window.__bl, map={blFrom:"from",blTo:"to",blType:"type",blTr:"tr",blEff:"eff",blQ:"q"};
-  Object.keys(map).forEach(id=>{ const el=document.getElementById(id); if(!el) return; const h=()=>{ F[map[id]]=el.value; blPaint(); }; el.addEventListener(id==="blQ"?"input":"change",h); });
+  const F=window.__bl, map={blFrom:"from",blTo:"to",blType:"type",blTr:"tr",blEff:"eff",blQ:"q",blSt:"st",blStH:"st",blParty:"party"};
+  Object.keys(map).forEach(id=>{ const el=document.getElementById(id); if(!el) return; const h=()=>{ F[map[id]]=el.value;
+    if(map[id]==="st"){ const o=document.getElementById(id==="blSt"?"blStH":"blSt"); if(o) o.value=el.value; }
+    blPaint(); }; el.addEventListener((id==="blQ"||id==="blParty")?"input":"change",h); });
   const x=document.getElementById("blXls"); if(x) x.addEventListener("click",blExport);
   blPaint();
 }
@@ -4426,8 +4458,10 @@ function stmtOpenTx(id){
   txGo(dirIn?"receipts":"payments","all");
 }
 function txGo(page,scope){ window.__txScopeNext=scope||"all"; go(page); }
+function navTagGroups(){ try{ navGroups.forEach(g=>(g.items||[]).forEach(it=>{ if(it&&!it.sep) it.grp=g.id; })); }catch(_){} }
 function navItemGo(it){
   if(!it) return;
+  if(it.grp) window.__navGrp=it.grp;   // فاكر جينا من أنهي نظام (تحويل بين الخزن والبنوك موجود في الخزينة والبنوك)
   if(it.scope&&!it.tab){ txGo(it.id,it.scope); return; }
   if(it.tab){
     if(it.id==="inventory"){ inventoryTab=it.tab; go("inventory"); }
@@ -4439,7 +4473,10 @@ function navItemGo(it){
 }
 function modOfPage(){
   if(currentPage==="apps") return appsMod;
-  const g=navGroups.find(x=>!x.single&&x.items.some(navItemIsCurrent)); return g?g.id:null;
+  navTagGroups();
+  const gs=navGroups.filter(x=>!x.single&&x.items.some(navItemIsCurrent));
+  if(gs.length>1 && window.__navGrp && gs.some(x=>x.id===window.__navGrp)) return window.__navGrp;   // نفس الشاشة في أكتر من نظام: خليك في النظام اللي دخلت منه
+  return gs[0]?gs[0].id:null;
 }
 function appOfPage(){
   if(currentPage==="apps") return appsView;
@@ -4596,7 +4633,7 @@ async function adTrCompute(){
   const refs=treasuryStmtPostedRefs(),linked=l=>refs.ids.has(String(l.entry_id))||refs.nos.has(String(l.no||'')),net=r=>r.incoming?r.amount:-r.amount;
   const out={ts:Date.now()};
   for(const kind of ['safe','bank']){
-    const items=treasuryStmtList(kind).filter(x=>!(typeof chqIsSysBank==='function'&&chqIsSysBank(x)));
+    const items=treasuryStmtList(kind).filter(x=>!(typeof chqIsSysBank==='function'&&chqIsSysBank(x))).filter(x=>kind!=='bank'||bankDashOn(x.code));   // يتجمّع في الداشبورد حسب خانة «يتجمّع مع الداشبورد» في تكويد البنك
     out[kind]=await Promise.all(items.map(async it=>{
       let bal=treasuryStmtOperationalRows(it.code,kind,'','','','all').reduce((t,r)=>t+net(r),0),ok=true,lk=true;
       try{
@@ -4650,8 +4687,9 @@ function adTrPanel(gid){
   const safes=tbl('adTrSafeBody','أرصدة الخزن',['اسم الخزينة','الكود','الرصيد']),banks=tbl('adTrBankBody','أرصدة البنوك',['اسم البنك','الكود','الرصيد','شيكات تحت التحصيل']);
   const noteRows=(l,p)=>l.slice(0,8).map(e=>[String(e.dueDate||'—'),e[p]||e.customer||e.supplier||'—',adBankName(e.treasury,e.bank||e.bankName),adN(e.amount),adDueBadge(e)]);
   const cols=['الاستحقاق','الجهة','البنك','القيمة','الموقف'];
-  return `<div class="ad-ks" style="margin-top:14px">${kp}</div><div class="ad-g2" style="margin-top:14px">${gid==='banking'?banks+safes:safes+banks}</div>`+
-    `<div class="ad-g2" style="margin-top:14px">${adTable('أوراق القبض (شيكات العملاء)',cols,noteRows(N.rec,'customer'),"go('chequeRegister')")}${adTable('أوراق الدفع (شيكات الموردين)',cols,noteRows(N.pay,'supplier'),"txGo('payments','bank')")}</div>`;
+  return {top:`<div class="ad-ks ad-ks-bal" style="margin-bottom:14px">${kp}</div>`,
+    rest:`<div class="ad-g2" style="margin-top:14px">${gid==='banking'?banks+safes:safes+banks}</div>`+
+    `<div class="ad-g2" style="margin-top:14px">${adTable('أوراق القبض (شيكات العملاء)',cols,noteRows(N.rec,'customer'),"go('chequeRegister')")}${adTable('أوراق الدفع (شيكات الموردين)',cols,noteRows(N.pay,'supplier'),"txGo('payments','bank')")}</div>`};
 }
 
 function viewModuleDash(gid){
@@ -4659,8 +4697,8 @@ function viewModuleDash(gid){
   let d; try{ d=adBuild(gid); }catch(e){ console.warn(e); d={k:adK("!","تعذر تحميل اللوحة","—","","n")}; }
   const g=visibleNavGroups().find(x=>x.id===gid), q=g?g.items.filter(it=>!it.sep&&apCat(it,"")==="الملفات الرئيسية").slice(0,8):[];
   _apItems=q;
-  let tx=""; if(gid==="treasury"||gid==="banking"){ try{ tx=adTrPanel(gid); setTimeout(()=>adTrLoad(false),0); }catch(e){ console.warn(e); } }
-  return `<div class="ad"><div class="ad-ks">${d.k||""}</div><div class="ad-g2">${d.c||""}${d.t||""}</div>${tx}`+(q.length?`<div class="ad-card"><h3>وصول سريع</h3><div class="ad-q">${q.map((it,i)=>`<button onclick="navItemGo(_apItems[${i}])"><span>${it.icon||"▦"}</span>${it.label}</button>`).join("")}</div></div>`:"")+`</div>`;
+  let tx="",txTop=""; if(gid==="treasury"||gid==="banking"){ try{ const _p=adTrPanel(gid); txTop=_p.top; tx=_p.rest; setTimeout(()=>adTrLoad(false),0); }catch(e){ console.warn(e); } }
+  return `<div class="ad">${txTop}<div class="ad-ks">${d.k||""}</div><div class="ad-g2">${d.c||""}${d.t||""}</div>${tx}`+(q.length?`<div class="ad-card"><h3>وصول سريع</h3><div class="ad-q">${q.map((it,i)=>`<button onclick="navItemGo(_apItems[${i}])"><span>${it.icon||"▦"}</span>${it.label}</button>`).join("")}</div></div>`:"")+`</div>`;
 }
 
 // أيقونات مرسومة (SVG) لكل تطبيق ونظام — بنفس روح الأيقونات الملوّنة
@@ -4758,7 +4796,7 @@ function renderNav(){
   const n=document.getElementById("nav"), B=navBadges();
   const fmtN=c=>c>99?"99+":c;
   n.innerHTML = visibleNavGroups().map(g => {
-    const isCurrentIn = g.items.some(navItemIsCurrent);
+    const isCurrentIn = g.items.some(navItemIsCurrent) && (g.single || modOfPage()===g.id || !navGroups.some(x=>x.id!==g.id&&!x.single&&x.items.some(navItemIsCurrent)));
     const expanded = g.single ? false : (navExpanded[g.id] || isCurrentIn);
     const activeCls = isCurrentIn ? "active" : "";
     const late=g.items.reduce((a,it)=>a+(it.badge==="late"?(B.late||0):0),0), chq=g.items.reduce((a,it)=>a+(it.badge==="chq"?(B.chq||0):0),0);
@@ -7422,7 +7460,7 @@ function renderManagementReports(){
    بنكا الأوراق الوسيطان (أوراق قبض/دفع) مستبعدان لأنهم مش بنوك حقيقية. */
 let _dxTrCache=null, _dxTrBusy=false;
 async function dxTreasuryTotal(kind){
-  const items=treasuryStmtList(kind).filter(x=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(x)));
+  const items=treasuryStmtList(kind).filter(x=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(x))).filter(x=>kind!=="bank"||bankDashOn(x.code));   // يتجمّع في الداشبورد حسب خانة «يتجمّع مع الداشبورد» في تكويد البنك
   const refs=treasuryStmtPostedRefs(), linked=l=>refs.ids.has(String(l.entry_id))||refs.nos.has(String(l.no||''));
   const net=r=>r.incoming?r.amount:-r.amount;
   let unlinkedAcc=0;
@@ -7686,7 +7724,9 @@ function viewDashboard(){
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+cmpLbl),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi(lateTotal>0?'k-red dx-kpi-late':'k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"dxPulseGoto('salesInstallments',{status:'متأخر'})")}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
+      ${(!_mine&&!_ops&&safe(()=>canView('bankStatement'),false))?kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+dxTrCell('bank').val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+dxTrCell('bank').sub+'</span>','bankStatement','إجمالي أرصدة كل البنوك الحالية (نفس منطق كشف حساب البنك)'):''}
+      ${(!_mine&&!_ops&&safe(()=>canView('safeStatement'),false))?kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+dxTrCell('safe').val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+dxTrCell('safe').sub+'</span>','safeStatement','إجمالي أرصدة كل الخزن الحالية (نفس منطق كشف حساب الخزينة)'):''}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل',"currentTab='customers';go('master')")}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل',"currentTab='suppliers';go('master')")}`;
 
   const lateList = lateTop.map(r=>`<tr style="cursor:pointer" title="فتح أقساط ${escapeAttr(r.customer)} المتأخرة" onclick="dxPulseGoto('salesInstallments',{customer:${escapeAttr(JSON.stringify(r.customer))},status:'متأخر'})"><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
@@ -8691,6 +8731,7 @@ function partyStatementExport(kind,format){
 const treasuryStmtFilters={bank:{accFrom:"",accTo:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"},safe:{accFrom:"",accTo:"",from:igYearStart(),to:igYearEnd(),q:"",direction:"all"}};
 const treasuryStmtToken={};
 /* قائمة البنوك/الخزائن مرتبة بالكود — اختيار «من … إلى …» بياخد كل اللي بينهم */
+function treasuryIsPortfolio(x){ return !!x && (/حافظ/.test(String(x.name||"")+" "+String(x.code||"")) || (typeof txIsChqSafe==="function" && txIsChqSafe(x))); }   // حافظة شيكات: مش بنك حقيقي
 function treasuryStmtList(kind){ return treasuryAll().filter(x=>x.kind===kind).sort((a,b)=>String(a.code).localeCompare(String(b.code),'ar',{numeric:true})); }
 function treasuryStmtSelected(kind){
   const f=treasuryStmtFilters[kind], list=treasuryStmtList(kind), a=f.accFrom||f.accTo, b=f.accTo||f.accFrom; if(!a) return [];
@@ -9587,7 +9628,7 @@ function viewMaster(){
       <tr>
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
         <td><strong style="font-family:monospace;color:var(--gold-text)">${escapeHtml(item.code||"")}</strong></td>
-        <td>${escapeHtml(item.name||"")}</td>
+        <td>${escapeHtml(item.name||"")}${(isBank&&!bankDashOn(item.code))?` <span class="chip" style="font-size:10.5px;margin-inline-start:6px" title="مش داخل في رصيد البنوك بالداشبورد">خارج الداشبورد</span>`:""}</td>
         <td style="direction:ltr;text-align:right;font-family:monospace;color:var(--gold-text)">${escapeHtml(mdAccShow(item).code)}</td>
         <td>${escapeHtml(mdAccShow(item).name)}</td>
         <td style="width:140px">
@@ -10168,6 +10209,14 @@ function treasuryFormRead(){
 // ===== البنك الأب: كل بنك (أب) ينزل منه فروع — الفرع هو سجل البنك الحالي بكوده وحسابه (الحركات مش بتتأثر) =====
 // بيتخزّن في الإعدادات (state.settings.bankParents: كود الفرع ← اسم الأب) عشان مفيش تغيير في جداول Supabase.
 function bankParentsMap(){ const s=state.settings=state.settings||{}; if(!s.bankParents||typeof s.bankParents!=="object") s.bankParents={}; return s.bankParents; }
+// هل البنك يتجمّع في «رصيد البنوك» بالداشبورد؟ (الافتراضي: كل البنوك ما عدا الحافظات وبنكي الأوراق الوسيطين)
+function bankDashMap(){ const s=state.settings=state.settings||{}; if(!s.bankDash||typeof s.bankDash!=="object") s.bankDash={}; return s.bankDash; }
+function bankDashOn(code){
+  const m=bankDashMap(); if(Object.prototype.hasOwnProperty.call(m,code)) return !!m[code];
+  const b=(state.banks||[]).find(x=>String(x.code)===String(code)); if(!b) return true;
+  return !((typeof chqIsSysBank==="function"&&chqIsSysBank(b)) || treasuryIsPortfolio(b));
+}
+function bankDashSet(code,on){ const m=bankDashMap(); m[code]=!!on; }
 function bankParentOf(code){ return String((bankParentsMap()[code])||"").trim(); }
 function bankParentSet(code,name){ const m=bankParentsMap(); name=String(name||"").trim(); if(name) m[code]=name; else delete m[code]; }
 function bankParentNames(){ const set=new Set(); Object.values(bankParentsMap()).forEach(v=>{ if(v) set.add(String(v)); }); return [...set].sort((a,b)=>a.localeCompare(b,"ar")); }
@@ -10199,9 +10248,11 @@ function bankFormHtml(b){
         <datalist id="bk_parent_dl">${bankParentNames().map(n=>`<option value="${escapeAttr(n)}"></option>`).join("")}</datalist>
       </div>
       ${mdAccHtml('bk_acc',b)}
+      <div class="fld" style="grid-column:span 2"><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700"><input type="checkbox" id="bk_dash" ${(b.code?bankDashOn(b.code):true)?"checked":""} style="width:18px;height:18px;accent-color:#D4A017"> يتجمّع مع الداشبورد <span style="color:var(--text-dim);font-weight:400">(يدخل رصيده في كارت «رصيد البنوك» — شيله للحافظات)</span></label></div>
     </div>
   `;
 }
+function bankDashRead(){ const el=document.getElementById("bk_dash"); return el?!!el.checked:true; }
 function bankFormRead(){
   return {
     code: (document.getElementById("bk_code")?.value||"").trim().toUpperCase(),
@@ -10246,7 +10297,7 @@ function addItem(key,label){
       if(!b.code){ toast("الكود مطلوب","err"); return false; }
       if(!b.name){ toast("الاسم مطلوب","err"); return false; }
       if(state[key].some(x=>x.code===b.code)){ toast("هذا الكود موجود بالفعل","err"); return false; }
-      state[key].push(b); bankParentSet(b.code,bankParentRead()); saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
+      state[key].push(b); bankParentSet(b.code,bankParentRead()); bankDashSet(b.code,bankDashRead()); saveState(); go("master"); toast("تمت الإضافة","ok"); return true;
     });
     setTimeout(()=>document.getElementById("bk_code")?.focus(),50);
     return;
@@ -10320,8 +10371,8 @@ function editItem(key,idx){
       if(!b.name){ toast("الاسم مطلوب","err"); return false; }
       if(state[key].some((x,i)=>i!==idx && x.code===b.code)){ toast("هذا الكود موجود بالفعل","err"); return false; }
       state[key][idx] = b;
-      if(originalCode && originalCode!==b.code){ (state.treasuryEntries||[]).forEach(e=>{ if(e.treasury===originalCode) e.treasury=b.code; }); bankParentSet(originalCode,""); }
-      bankParentSet(b.code,bankParentRead());
+      if(originalCode && originalCode!==b.code){ (state.treasuryEntries||[]).forEach(e=>{ if(e.treasury===originalCode) e.treasury=b.code; }); bankParentSet(originalCode,""); { const m=bankDashMap(); delete m[originalCode]; } }
+      bankParentSet(b.code,bankParentRead()); bankDashSet(b.code,bankDashRead());
       saveState(); go("master"); toast("تم التعديل","ok"); return true;
     });
     setTimeout(()=>document.getElementById("bk_code")?.focus(),50);
@@ -15870,7 +15921,10 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
   return "bank";
 }
 function txScopeOK(e){ if(txScope==="all") return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier);   // «كل تحصيلات وتسويات العملاء/الموردين»: بس اللي له عميل/مورد (من غير تسويات الحسابات والتحويلات بين الخزن)
-   if(e.method==="adjustment") return false; return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
+   if(e.method==="adjustment"){   // تسويات العملاء/الموردين: بتظهر هنا بس لو اخترت «تسوية» من فلتر النوع
+      return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier) && txNormFilterArr(txFilter&&txFilter.method).some(v=>String(v).indexOf("adjustment")===0);
+    }
+    return txScope==="cash"?e.method==="cash":e.method!=="cash"; }   // تسويات العملاء/الموردين ليها شاشاتها
 // مفتاح النوع للفلتر: التسوية بتتقسم مدينة/دائنة
 function txMethodKey(e){ return e.method==="adjustment" ? "adjustment:"+(e.adjustmentKind||"debit") : e.method; }
 function txMethodLabelOf(v){
@@ -15878,8 +15932,10 @@ function txMethodLabelOf(v){
   return (txMethods.find(m=>m.v===v)||{}).label||v;
 }
 function txScopeMethods(l){
-  if(txScope==="cash") return l.filter(m=>m.v==="cash");
-  if(txScope==="bank") return l.filter(m=>m.v!=="cash"&&m.v!=="adjustment");
+  if(txScope==="cash"||txScope==="bank"){
+    const base=txScope==="cash"?l.filter(m=>m.v==="cash"):l.filter(m=>m.v!=="cash"&&m.v!=="adjustment");
+    return base.concat([{v:"adjustment:debit",label:"تسوية مدينة",ico:"⚠️"},{v:"adjustment:credit",label:"تسوية دائنة",ico:"✨"}]);
+  }
   const out=[]; l.forEach(m=>{ if(m.v==="adjustment"){ out.push({v:"adjustment:debit",label:"تسوية مدينة",ico:"⚠️"}); out.push({v:"adjustment:credit",label:"تسوية دائنة",ico:"✨"}); } else out.push(m); });
   if(txScope==="all") out.push({v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"});
   return out;
@@ -26614,6 +26670,7 @@ async function txUnpostRun(id,direction){
       else if(key==="status") add(e.status,((txStatuses.find(s=>s.v===e.status)||{}).label)||e.status);
       else if(key==="treasury") add(e.treasury,e.treasury?treasuryLabel(e.treasury):"");
     });
+    if(key==="method"&&(txScope==="cash"||txScope==="bank")){ add("adjustment:debit","⚖ تسوية مدينة"); add("adjustment:credit","⚖ تسوية دائنة"); }
     txNormFilterArr(txFilter[key]).forEach(v=>add(v,
       key==="method"?txMethodLabelOf(v):key==="status"?((txStatuses.find(s=>s.v===v)||{}).label):key==="treasury"?treasuryLabel(v):v));
     return [...map].map(([v,label])=>({v,label})).sort((a,b)=>String(a.label).localeCompare(String(b.label),"ar",{numeric:true}));
@@ -28535,6 +28592,24 @@ html body:not(#_) .topbar .ap-menus .ap-dd button{white-space:normal}
 .tx-page td.tx-party{min-width:270px;max-width:380px;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
 .tx-page th[data-sk="party"]{min-width:270px}
 </style>
+
+<style id="igMenusFix">
+/* القوائم الأربعة في الشريط العلوي: شكل موحّد */
+html body:not(#_) .topbar .ap-menus{display:flex!important;align-items:stretch!important;gap:0!important;padding:3px!important;border-radius:12px!important;background:#f3f5fa!important;border:1px solid #dfe5f0!important;flex-wrap:nowrap}
+html body:not(#_) .topbar .ap-menus .ap-m{flex:0 0 auto;display:flex}
+html body:not(#_) .topbar .ap-menus .ap-m+.ap-m{position:relative}
+html body:not(#_) .topbar .ap-menus .ap-m+.ap-m::before{content:"";position:absolute;right:0;top:25%;bottom:25%;width:1px;background:#d5dcea}
+html body:not(#_) .topbar .ap-menus .ap-m>button{width:100%;min-width:108px;height:34px!important;padding:0 14px!important;display:flex!important;align-items:center!important;justify-content:center!important;gap:7px!important;border-radius:9px!important;font-size:13px!important;font-weight:800!important;line-height:1!important;white-space:nowrap;color:#1d2f4f!important;background:transparent!important;border:0!important;box-shadow:none!important}
+html body:not(#_) .topbar .ap-menus .ap-m>button .ap-lb{font-size:13px!important;font-weight:800!important;line-height:1}
+html body:not(#_) .topbar .ap-menus .ap-m>button .ap-cv{width:5px;height:5px;margin:0 0 3px;border-width:0 2px 2px 0;opacity:.6}
+html body:not(#_) .topbar .ap-menus .ap-m:hover>button,html body:not(#_) .topbar .ap-menus .ap-m:focus-within>button{background:#0f2a52!important;color:#F4C542!important;box-shadow:none!important}
+html body:not(#_) .topbar .ap-menus .ap-cur-m:not(:hover):not(:focus-within)>button{background:#fff!important;color:#0f2a52!important;box-shadow:0 1px 3px rgba(15,42,82,.14),inset 0 -2px 0 #D4A017!important}
+html body:not(#_) .topbar .ap-menus .ap-dd{min-width:250px;max-width:300px;padding:6px;border-radius:12px;border-top:3px solid #D4A017}
+html body:not(#_) .topbar .ap-menus .ap-dd button{min-height:40px;padding:5px 9px!important;font-size:13.5px!important;font-weight:700!important;border-radius:9px;gap:10px}
+html body:not(#_) .topbar .ap-menus .ap-dd button>span:first-child{width:28px;height:28px;font-size:14px;border-radius:8px}
+/* كروت الأرصدة فوق لوحة الخزينة/البنوك */
+.ad-ks-bal .ad-k{min-height:100px}
+</style>
 <script>
 // ===== فترات سريعة لفلاتر التاريخ: اليوم | أمس | الأسبوع ده | الشهر ده | السنة — تظهر تلقائيًا تحت أي زوج (من / إلى) =====
 (function(){
@@ -28932,4 +29007,8 @@ window.__pdCompute=compute; // للاختبار
   document.addEventListener("scroll",function(e){ var t=e.target; if(t&&(t===document||t.id==="app"||t.tagName==="MAIN"||(t.classList&&t.classList.contains("layout")))) fix(); },true);
   window.addEventListener("resize",fix);
 })();
+</script>
+<script>
+/* الشاشات المشتركة بين أنظمة (زي التحويل بين الخزن والبنوك): افتكر النظام اللي دوست منه من القايمة الجانبية */
+document.addEventListener("click",function(e){ try{ var b=e.target.closest&&e.target.closest("#nav .navbtn"); if(!b) return; var w=b.closest(".ng-wrap"); if(w&&w.dataset.gid) window.__navGrp=w.dataset.gid; }catch(_){} },true);
 </script>
