@@ -9730,9 +9730,35 @@ function mdAccChoose(id,accId){
   document.getElementById(id+'_code').value=a.account_code||'';
   document.getElementById(id+'_name').value=a.account_name||'';
   mdAccCloseAll();
+  const _d=document.getElementById(id+'_desc'); if(_d) setTimeout(()=>_d.focus(),0);
 }
 function mdAccClear(id){ ['id','code','name'].forEach(k=>{const e=document.getElementById(id+'_'+k); if(e) e.value='';}); mdAccCloseAll(); }
 document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccCloseAll(); });
+/* تنقل بالكيبورد في قائمة بحث الحسابات: ↓ ↑ للتحديد · Enter للاختيار · Esc للإغلاق */
+(function(){
+  const st=document.createElement('style');
+  st.textContent='.md-acc-item.kb-active{background:#e8f0fb!important;outline:2px solid #c99724;outline-offset:-2px}';
+  document.head.appendChild(st);
+  function items(res){ return [...res.querySelectorAll('.md-acc-item')]; }
+  function setActive(res,i){
+    const it=items(res); if(!it.length) return;
+    i=(i+it.length)%it.length;
+    it.forEach((x,k)=>x.classList.toggle('kb-active',k===i));
+    it[i].scrollIntoView({block:'nearest'});
+  }
+  document.addEventListener('keydown',e=>{
+    const q=e.target; if(!q||!q.classList||!q.classList.contains('md-acc-search')) return;
+    const res=q.parentElement.querySelector('.md-acc-results'); if(!res) return;
+    const it=items(res), cur=it.findIndex(x=>x.classList.contains('kb-active'));
+    if(e.key==='ArrowDown'){ e.preventDefault(); setActive(res,cur<0?0:cur+1); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); setActive(res,cur<0?it.length-1:cur-1); }
+    else if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); const t=it[cur>=0?cur:0]; if(t) t.click(); }
+    else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); mdAccCloseAll(); }
+  },true);
+  // بعد كل فلترة: حدد أول نتيجة تلقائيًا
+  const _f=window.mdAccFilter;
+  window.mdAccFilter=function(id){ _f(id); const res=document.getElementById(id+'_res'); if(res) setActive(res,0); };
+})();
 
 function bindMaster(){ if(currentTab==="companies") coLoad(); if(currentTab==="screenNames") snRender(); if(currentTab==="sysInd" && typeof txJournalSelectsLoad==="function") txJournalSelectsLoad(); }
 
@@ -17454,8 +17480,30 @@ function openTxForm(direction, existing){
       ? ("تم الحفظ بنجاح"+(txScope!=="all"&&document.getElementById("adjView")==null?" — التسوية بتظهر في شاشة "+(isIn?"تسويات العملاء":"تسويات الموردين"):""))
       : ((!existing && isTransferSupplier) ? `✓ تم الحفظ بنجاح · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"✓ تم الحفظ بنجاح — تم تعديل السجل":"✓ تم الحفظ بنجاح — تمت الإضافة"));
     toast(msg,"ok");
+    if(window.__txSaveNew && !existing){
+      // حفظ وإضافة جديد: افتح حركة جديدة في نفس الشاشة بعد قفل النافذة الحالية
+      window.__txSaveNew=false;
+      const _keep={date:d.date, method:(method==="adjustment"||method==="transfer_supplier")?"":method, treasury:d.treasury||""};
+      const _wasGl=isGl, _adj=adjScreen, _adjKind=adjustmentKind;
+      setTimeout(()=>{
+        if(_adj){ window.__adjScreenNext=true; window.__forceAdjustmentNext=_adjKind||"debit"; }
+        else window.__txPrefill=_keep;
+        openTxForm(direction);
+        if(_wasGl && !_adj) setTimeout(()=>{ try{ txKindChanged('gl'); }catch(_){} },120);
+      },60);
+    }
     return true;
   });
+  if(!existing){
+    const _mf=document.querySelector("#modalBackdrop .mfoot");
+    if(_mf){
+      const _nb=document.createElement("button");
+      _nb.type="button"; _nb.className="btn"; _nb.id="txSaveNewBtn"; _nb.textContent="حفظ وإضافة جديد";
+      _nb.style.cssText="background:var(--ok,#1f9d55);border-color:var(--ok,#1f9d55);color:#fff";
+      _nb.onclick=()=>{ window.__txSaveNew=true; try{ confirmModal(); } finally { window.__txSaveNew=false; } };
+      _mf.insertBefore(_nb,_mf.children[1]||null);
+    }
+  }
   setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); if(adjScreen){ const _k=document.querySelector("#modalBackdrop .tx-kind"), _t=document.getElementById("tx_glTargetWrap"); if(_k) _k.style.display="none"; if(_t) _t.style.display="none"; } { const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
 }
 
