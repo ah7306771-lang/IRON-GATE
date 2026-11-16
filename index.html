@@ -8602,11 +8602,29 @@ tfoot td{background:linear-gradient(180deg,#fcd34d,#d4a017);color:#1a1a1a;font-w
 tfoot td.n{direction:ltr;font-variant-numeric:tabular-nums}
 .fnote{text-align:center;color:#9ca3af;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #e5e7eb}
 @media print{
-  @page{size:A4 landscape;margin:6mm}
+  @page{size:A4 landscape;margin:4mm}
   body{padding:0;background:#fff}
-  .doc{box-shadow:none;border-radius:0;padding:4px 6px}
-  .hdr{border-radius:0;margin:-4px -6px 6px;padding:8px 14px 7px}
-  .hdr h1{font-size:16px}.hdr .en{font-size:9px}.hdr .hscope{margin-top:6px;padding-top:5px}.kgrid{margin-bottom:6px;gap:5px}.kc{padding:4px 5px}.kc .kv{font-size:12px}
+  .doc{box-shadow:none;border-radius:0;padding:2px 4px}
+  /* ضغط الطباعة والمشاركة: أكبر عدد أسطر في الصفحة */
+  .hdr{border-radius:0;margin:-2px -4px 4px;padding:4px 12px;border-bottom-width:2px}
+  .hdr .hmain{gap:10px;flex-wrap:nowrap}
+  .hdr .hl{gap:8px}
+  .hdr .emoji{width:24px;height:24px;font-size:12px}
+  .hdr h1{font-size:14px;line-height:1.15}
+  .hdr .en{font-size:7.5px;letter-spacing:1.8px;margin-top:0}
+  .hdr .mi{padding:0 9px;gap:0}.hdr .mi span{font-size:8px}.hdr .mi b{font-size:10.5px}
+  .hdr .hscope{margin-top:3px;padding-top:3px;gap:4px}
+  .hdr .hscope .fl{font-size:8.5px;padding-left:6px}
+  .hdr .hscope .fchip{font-size:8.5px;padding:0 8px}
+  .kgrid{margin:0 0 4px;gap:4px}
+  .kc{padding:2px 4px;border-radius:5px;border-top-width:2px}
+  .kc .kl{font-size:8.5px}.kc .kv{font-size:11.5px;margin:0;line-height:1.2}.kc.sm .kv{font-size:11px}.kc .ks{font-size:7.5px}
+  table{font-size:10.5px;margin-top:0;border-radius:0}
+  thead th{padding:4px 3px;font-size:10px;line-height:1.2}
+  tbody td{padding:2.5px 4px;font-size:10.5px;line-height:1.25}
+  tbody td.d{line-height:1.3;min-width:0}
+  tfoot td{padding:4px;font-size:11px}
+  .fnote{margin-top:4px;padding-top:3px;font-size:8px}
   tr{break-inside:avoid}
   thead{display:table-header-group}
   tfoot{display:table-footer-group}
@@ -16515,11 +16533,13 @@ function renderAdjustments(direction){
       ? `<span class="chip" style="background:#fee2e2;color:#991b1b;font-weight:800">⚠️ مدينة</span>`
       : `<span class="chip" style="background:#dcfce7;color:#166534;font-weight:800">✨ دائنة</span>`;
     const allocCount = (e.allocations||[]).length;
+    let invChip="";
+    if(isIn && kind==="debit" && e.method==="adjustment"){ const inf=adjDebitInfo(e); invChip=inf.done?` <span class="chip" style="background:#dcfce7;color:#166534;font-weight:800">✓ مسددة</span>`:` <span class="chip" style="background:#fff7ed;color:#9a3412;font-weight:800" title="المسدد ${fmt(inf.paid)}">متبقي ${fmt(inf.remaining)}</span>`; }
     return `<tr style="${kind==='debit'?'background:#fef2f2':'background:#f0fdf4'}">
       <td>${e.no||i+1}</td>
       <td>${e.date||"—"}</td>
       <td><strong>${escapeHtml(e[isIn?"customer":"supplier"]||"—")}</strong></td>
-      <td>${kindBadge}</td>
+      <td>${kindBadge}${invChip}</td>
       <td class="num" style="font-weight:800;color:${kind==='debit'?'#991b1b':'#166534'}">${fmt(e.amount)}</td>
       <td>${(()=>{const cp=adjCounterParty(e,isIn), gl=(e.glLines||[]);
         const base=gl.length?`<span class="chip" title="${escapeAttr(gl.map(r=>(r.accountCode||"")+" "+(r.accountName||"")+": "+fmt(r.amount)).join(" | "))}">${gl.length} حساب مقابل</span>`:(allocCount>0?`<span class="chip">${allocCount} تخصيص</span>`:"");
@@ -16553,13 +16573,35 @@ function adjPostCell(e){
   if(e.entryKind!=="gl") return `<span class="tx-unposted" title="تسوية على حساب الطرف فقط — محتاجة حسابات مقابلة عشان تترحّل">بدون حسابات مقابلة</span>`;
   return `<span class="tx-unposted">غير مُرحّل</span>`;
 }
+// التسوية المدينة على العميل = فاتورة (orderNo = ADJ-<no>, قسط 1): المسدد من تخصيصات التحصيلات، والمتبقي، وزرار سداد
+function adjDebitInfo(e){
+  const cust=String(e.customer||"").trim(), orderNo="ADJ-"+(e.no||e.id), amount=+e.amount||0;
+  const paid=(state.treasuryEntries||[])
+    .filter(x=>x.direction==="in" && String(x.customer||"").trim()===cust && (x.method!=="bank"||x.status==="collected") && x.status!=="returned")
+    .reduce((t,x)=>t+(x.allocations||[]).filter(a=>+a.installment===1 && String(a.orderNo||"")===orderNo).reduce((v,a)=>v+(+a.amount||0),0),0);
+  const remaining=Math.max(0,amount-paid);
+  return {orderNo,amount,paid,remaining,done:remaining<=0.009};
+}
+function adjPay(id){
+  const e=(state.treasuryEntries||[]).find(x=>String(x.id)===String(id)); if(!e) return;
+  const inf=adjDebitInfo(e); if(inf.done) return toast("التسوية مسددة بالكامل","ok");
+  window.__txPrefill={customer:e.customer,amount:inf.remaining.toFixed(2),allocationType:"invoice_assistance",method:(txScope==="bank"?"transfer":"cash"),notes:"سداد تسوية مدينة رقم "+(e.no||"")};
+  openTxForm("in",null);
+  setTimeout(()=>{ try{
+    txRenderSettlementDetails();
+    const i=(window.__txCurrentAllocRows||[]).findIndex(r=>String(r.orderNo)===inf.orderNo);
+    if(i>=0){ const c=document.querySelector('.tx-alloc-check[data-index="'+i+'"]'); if(c){ c.checked=true; txPreviewAssistanceAllocations(); } }
+    txUpdateDetailsAccess();
+  }catch(err){} },150);
+}
 function adjActions(e,direction){
   const id=escapeAttr(e.id);
+  const payBtn=(direction==="in" && adjKindOf(e)==="debit" && e.method==="adjustment" && !adjDebitInfo(e).done)?`<button class="tx-post-btn" style="background:#16a34a;border-color:#16a34a;color:#fff" onclick="adjPay('${id}')" title="تحصيل/سداد هذه التسوية المدينة كأنها فاتورة">💰 سداد</button>`:"";
   if(txIsPosted(e)){
-    return `<div class="td-actions"><button class="tx-view-entry-btn" onclick="chqViewEntry('${id}','${direction}')">عرض القيد</button>${txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${id}','${direction}')" title="حذف القيد وإرجاع التسوية غير مُرحّلة">↶ إلغاء الترحيل</button>`:""}</div>`;
+    return `<div class="td-actions">${payBtn}<button class="tx-view-entry-btn" onclick="chqViewEntry('${id}','${direction}')">عرض القيد</button>${txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${id}','${direction}')" title="حذف القيد وإرجاع التسوية غير مُرحّلة">↶ إلغاء الترحيل</button>`:""}</div>`;
   }
   const post = ((e.entryKind==="gl"||e.method==="transfer_supplier") && txCanPost(e,direction)) ? `<button class="tx-post-btn" onclick="txPostOpen('${id}','${direction}')">ترحيل</button>` : "";
-  return `<div class="td-actions">${post}<button onclick="txEdit('${id}','${direction}')">تعديل</button><button class="del" onclick="txDel('${id}','${direction}')">حذف</button></div>`;
+  return `<div class="td-actions">${payBtn}${post}<button onclick="txEdit('${id}','${direction}')">تعديل</button><button class="del" onclick="txDel('${id}','${direction}')">حذف</button></div>`;
 }
 function guardAct(scr,act){
   if(typeof can==="function" && !can(scr,act)){
@@ -17102,6 +17144,8 @@ function openTxForm(direction, existing){
     adjustmentKind: window.__forceAdjustmentNext || ""
   };
   window.__forceAdjustmentNext = false;
+  if(window.__txPrefill && !existing){ Object.assign(draft, window.__txPrefill); }
+  window.__txPrefill = null;
   if(draft.method==="cash" || draft.method==="transfer") draft.status=draft.method;
   if(draft.method==="adjustment") draft.status="adjustment";
   txEditingId = existing ? existing.id : null;
@@ -17273,7 +17317,8 @@ function openTxForm(direction, existing){
     let glLines = [];
     if(isGl){ txGlSync(); glLines = (window.txGlDraft||[]).filter(r=>r.accountId||(+r.amount>0)||String(r.desc||"").trim()).map(r=>({accountId:r.accountId,accountCode:r.accountCode,accountName:r.accountName,desc:String(r.desc||"").trim(),amount:Math.round((+r.amount||0)*100)/100})); }
     const glTotal = Math.round(glLines.reduce((a,r)=>a+(+r.amount||0),0)*100)/100;
-    const allocTypeVal = !isGl ? (isAdj ? ((isIn && adjustmentKind==="credit") ? (document.getElementById("tx_allocationType")?.value||"") : "") : (document.getElementById("tx_allocationType")?.value||"")) : "";
+    const useAlloc = !isGl || (isAdj && isIn && adjustmentKind==="credit" && !window.txGlLegacy);   // التسوية الدائنة للعميل = تحصيل: لها طريقة سداد (تنازلي / مساعدة / مبلغ دائن)
+    const allocTypeVal = useAlloc ? (isAdj ? ((isIn && adjustmentKind==="credit") ? (document.getElementById("tx_allocationType")?.value||"") : "") : (document.getElementById("tx_allocationType")?.value||"")) : "";
 
     const d = {
       ...draft,
@@ -17288,7 +17333,7 @@ function openTxForm(direction, existing){
       status: isAdj ? "adjustment" : (method==="cash" ? "cash" : (method==="transfer"||isTransferSupplier) ? "transfer" : document.getElementById("tx_status").value),
       notes: document.getElementById("tx_notes").value.trim(),
       allocationType: allocTypeVal,
-      allocations: isGl ? [] : ((!isIn && draft.linkedTxId) ? (draft.allocations||[]) : txBuildAllocations(allocTypeVal, +document.getElementById("tx_amount").value||0)),
+      allocations: !useAlloc ? [] : ((!isIn && draft.linkedTxId) ? (draft.allocations||[]) : txBuildAllocations(allocTypeVal, +document.getElementById("tx_amount").value||0)),
       wasCollected: !!(draft.wasCollected || (existing && existing.method==="bank" && existing.status==="collected" && document.getElementById("tx_status").value==="returned")),
       targetSupplier: targetSupplierVal,
       adjustmentKind: adjustmentKind,
@@ -17301,9 +17346,9 @@ function openTxForm(direction, existing){
     if((!isGl || !window.txGlLegacy) && !d[partyField]){ toast(`${partyLabel} مطلوب`,"err"); (document.getElementById("tx_party_search")||document.getElementById("tx_party"))?.focus(); return false; }
     if(!method){ toast("اختر نوع السداد أولاً","err"); document.getElementById("tx_method")?.focus(); return false; }
     if(!d.amount || d.amount<=0){ toast("القيمة لازم تكون أكبر من صفر","err"); return false; }
-    if(!isGl && allocTypeVal==="invoice_assistance"){ const _ve=txValidateAssistance(d.amount); if(_ve){ toast(_ve,"err"); return false; } }
+    if(useAlloc && allocTypeVal==="invoice_assistance"){ const _ve=txValidateAssistance(d.amount); if(_ve){ toast(_ve,"err"); return false; } }
     // حارس عام: لا يُحفظ أبدًا توزيع أكبر من قيمة التحصيل/الدفعة
-    if(!isGl){ const _alSum=(d.allocations||[]).reduce((t,x)=>t+(+x.amount||0),0); if(_alSum>(+d.amount||0)+0.01){ toast(`المبلغ الموزع (${fmt(_alSum)}) أكبر من قيمة ${isIn?"التحصيل":"الدفعة"} (${fmt(d.amount)}) — لا يمكن الحفظ`,"err"); return false; } }
+    if(useAlloc){ const _alSum=(d.allocations||[]).reduce((t,x)=>t+(+x.amount||0),0); if(_alSum>(+d.amount||0)+0.01){ toast(`المبلغ الموزع (${fmt(_alSum)}) أكبر من قيمة ${isIn?"التحصيل":"الدفعة"} (${fmt(d.amount)}) — لا يمكن الحفظ`,"err"); return false; } }
     if(isGl){
       if(!glLines.length){ toast("أضف حسابًا واحدًا على الأقل في جدول الحسابات","err"); return false; }
       const bad = glLines.findIndex(r=>!r.accountId || !(r.amount>0));
@@ -17646,6 +17691,15 @@ function txAllDueRows(){
       const days=dd&&!Number.isNaN(dd.getTime())?Math.floor((today-dd)/86400000):0;
       out.push({customer:g.customer,orderNo:g.orderNo,date:g.date,total,installment:pt.no,label:pt.label,due,amount:pt.amount,paid,remaining,late:days>0,days:Math.max(0,days)});
     });
+  });
+  // التسويات المدينة على العملاء = فواتير مستحقة السداد
+  (state.treasuryEntries||[]).forEach(e=>{
+    if(e.direction!=="in"||e.method!=="adjustment"||e.adjustmentKind!=="debit") return;
+    const customer=String(e.customer||"").trim(); if(!customer) return;
+    const inf=adjDebitInfo(e); if(inf.done) return;
+    const due=String(e.dueDate||e.date||"").slice(0,10), today=new Date(); today.setHours(0,0,0,0);
+    const dd=due?new Date(due+"T00:00:00"):null, days=dd&&!Number.isNaN(dd.getTime())?Math.floor((today-dd)/86400000):0;
+    out.push({customer,orderNo:inf.orderNo,date:String(e.date||"").slice(0,10),total:inf.amount,installment:1,label:"⚖ تسوية مدينة",due,amount:inf.amount,paid:inf.paid,remaining:inf.remaining,late:days>0,days:Math.max(0,days)});
   });
   return out.sort((a,b)=>String(a.due).localeCompare(String(b.due))||String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true})||a.installment-b.installment);
 }
@@ -23180,7 +23234,8 @@ function txKindApply(){
   window.txGlLegacy = accounts;   // تسوية على حسابات = بدون طرف، نقدي/بنكي
   show("tx_glTargetWrap",gl&&!window.__txAdjScreen);
   document.querySelectorAll(".tx-tgt-btn").forEach(b=>b.classList.toggle("on",b.dataset.target===(accounts?"accounts":"party")));
-  show("tx_partyWrap",!accounts); show("tx_glWrap",gl&&!supp); show("tx_allocBlock",!gl);
+  show("tx_partyWrap",!accounts); show("tx_glWrap",gl&&!supp);
+  { const _akv=(($("tx_adjustmentKind")||{}).value)||"credit"; show("tx_allocBlock",!gl||(gl&&!accounts&&!supp&&window.__txDir==="in"&&_akv==="credit")); }
   show("tx_glCounterWrap",gl&&!accounts); document.querySelectorAll(".tx-cnt-btn").forEach(b=>b.classList.toggle("on",b.dataset.counter===(supp?"supplier":"accounts")));
   if(accounts){ const ps=$("tx_party"); if(ps&&ps.value){ ps.value=""; } const si=$("tx_party_search"); if(si) si.value=""; }
   const isInDir=window.__txDir==="in";
@@ -24885,12 +24940,14 @@ async function txJournalSelectsLoad(){
 @media(min-width:901px){ #modalBackdrop .modal.tx-wide{width:1040px;max-width:94vw} }
 /* شاشة إضافة/تعديل تحصيل أو دفعة: عريضة ومضغوطة عشان كل حاجة تبان في شاشة واحدة */
 @media(min-width:901px){
-  #modalBackdrop .modal.tx-wide{width:min(1500px,98vw)!important;max-width:98vw!important}
+  #modalBackdrop .modal.tx-wide{width:min(980px,94vw)!important;max-width:94vw!important;max-height:94vh!important}
+  #modalBackdrop .modal.tx-wide .mbody{overflow:auto}
   #modalBackdrop .modal.tx-wide .mbody{padding:10px 18px!important}
   #modalBackdrop .modal.tx-wide .fld{margin-bottom:6px}
   #modalBackdrop .modal.tx-wide .fld label{margin-bottom:2px;font-size:11.5px}
   #modalBackdrop .modal.tx-wide .inp{padding:6px 10px!important;font-size:13px}
-  #modalBackdrop .modal.tx-wide .tx-form-grid{grid-template-columns:repeat(4,1fr)!important;gap:8px 12px!important;margin-top:8px!important}
+  #modalBackdrop .modal.tx-wide .tx-form-grid{grid-template-columns:repeat(3,1fr)!important;gap:8px 12px!important;margin-top:8px!important}
+  #modalBackdrop .modal.tx-wide .tx-head-grid{grid-template-columns:repeat(2,1fr)!important}
   #modalBackdrop .modal.tx-wide .tx-form-grid>.fld:last-child{grid-column:1/-1!important}
   #modalBackdrop .modal.tx-wide .tx-form-grid>.fld:last-child textarea{height:40px;min-height:0;resize:vertical}
   #modalBackdrop .modal.tx-wide .tx-head-grid{gap:8px 12px!important;padding-bottom:6px!important}
