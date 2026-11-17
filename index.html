@@ -5706,7 +5706,16 @@ async function glSwitchYear(yearId){
 }
 // استرجاع السنة المحفوظة
 try{ const saved=localStorage.getItem("ig_gl_active_year_v1"); if(saved) glActiveYearId=saved; }catch(e){}
-function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
+/* مؤشرات النظام: تابات فرعية (المؤشرات / استيراد Excel / ترحيل مجمع) */
+function glSetIndSub(k){glState.indSub=k;glState.tab="indicators";glRender();}
+function glRenderSysTabs(){
+  const sub=glState.indSub||"ind";
+  const tabs=[["ind","🎚 مؤشرات النظام"],["import_entries","📥 استيراد قيود من Excel"],["bulk_post","⚡ ترحيل/إلغاء مجمع"]];
+  const bar=`<style>.gl-subtabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:14px;border-bottom:2px solid var(--line)}.gl-subtabs button{border:0;background:transparent;padding:10px 18px;font-weight:800;font-size:13px;color:var(--text-dim);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;border-radius:8px 8px 0 0}.gl-subtabs button:hover{background:rgba(212,160,23,.1)}.gl-subtabs button.on{color:var(--gold-text);border-bottom-color:var(--gold);background:rgba(212,160,23,.12)}</style><div class="gl-subtabs" role="tablist">${tabs.map(([k,l])=>`<button type="button" role="tab" aria-selected="${sub===k}" class="${sub===k?"on":""}" onclick="glSetIndSub('${k}')">${l}</button>`).join("")}</div>`;
+  const body=sub==="import_entries"?glRenderImportEntries():sub==="bulk_post"?glRenderBulkPost():glRenderIndicators();
+  return bar+body;
+}
+function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}if(glState.tab==="import_entries"||glState.tab==="bulk_post"){glState.indSub=glState.tab;glState.tab="indicators";}const t=glState.tab;el.innerHTML=t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderSysTabs():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
 
 // ============== موقف مركز تكلفة (Cost Center Position) ==============
 // المصدر: القيود المُرحّلة فقط — الحسابات من مؤشر «حساب المصروفات الرئيسي» (expense_root) وكل فروعه
@@ -6789,19 +6798,80 @@ async function glDeleteDraftEntry(id){
 async function glDeleteSelectedEntry(){ if(!glSelectedEntryId) return toast('اختر القيد أولاً','err'); return glDeleteDraftEntry(glSelectedEntryId); }
 
 function glSourceForEntry(e){return glState.sources.filter(x=>String(x.entry_id||x.gl_entry_id||'')===String(e.id));}
-function glSourceSystem(e){const src=glSourceForEntry(e);const keys=['source_system','source_module','system_name','module_name','source_name','module','source_type','origin','system'];for(const x of src){for(const k of keys){if(x[k]&&String(x[k]).trim())return String(x[k]);}}return e.source_system||e.source_module||e.source_name||e.source_type||'الحسابات العامة';}
+function glEntryJournal(e){return (glState.journals||[]).find(x=>String(x.id)===String(e.journal_id))||null;}
+function glEntryJournalLabel(e){const j=glEntryJournal(e);return j?(String(j.journal_code||'')+' — '+String(j.journal_name||'')):'—';}
+/* النظام المُرحِّل: (1) صف gl_posting_sources الصريح، (2) استنتاج من نوع القيد لو الصف ناقص (insert صامت فشل)، (3) الحسابات العامة للقيود اليدوية فقط */
+function glSourceSystem(e){
+  const src=glSourceForEntry(e);const keys=['source_system','source_module','system_name','module_name','source_name','module','source_type','origin','system'];
+  for(const x of src){for(const k of keys){if(x[k]&&String(x[k]).trim())return String(x[k]);}}
+  const direct=e.source_system||e.source_module||e.source_name||e.source_type;if(direct)return String(direct);
+  const d=String(e.description||'');
+  if(/^قيد\s+(مشتريات|مبيعات)\s+—\s+أمر بيع/.test(d))return 'بيانات التوريد';
+  if(/^قيد\s+تحويل\s+رقم/.test(d))return 'التحويل بين الخزن والبنوك';
+  if(/^قيد\s+(تحصيل|دفعة|دفع|سداد|صرف|مدفوعات|تحصيلات)/.test(d)||/^قيد\s+.+\s+—\s+(تحصيل|دفعة|سداد)\s+رقم/.test(d))return 'التحصيلات والمدفوعات';
+  return 'الحسابات العامة';
+}
+function glSourceTone(sys){
+  if(sys==='بيانات التوريد')return 'supply';
+  if(sys==='التحصيلات والمدفوعات'||sys==='التحويل بين الخزن والبنوك')return 'cash';
+  if(sys==='الحسابات العامة')return 'gl';
+  return 'other';
+}
 function glRenderPostedEntries(){
  const posted=glState.entries.filter(e=>e.status==='posted');
  const systems=[...new Set(posted.map(glSourceSystem))].sort((a,b)=>a.localeCompare(b,'ar'));
- return `<div class="gl-posted-filters" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;margin-bottom:14px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)">
+ const jIds=[...new Set(posted.map(e=>String(e.journal_id||'')).filter(Boolean))];
+ const journals=jIds.map(id=>(glState.journals||[]).find(j=>String(j.id)===id)).filter(Boolean).sort((a,b)=>String(a.journal_code).localeCompare(String(b.journal_code),'en',{numeric:true}));
+ return `<style>
+ .glp-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end;margin-bottom:14px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface,#fff)}
+ .glp-bar label{display:block;font-size:12px;font-weight:700;color:var(--text-dim)}
+ .glp-bar .input{width:100%;margin-top:3px}
+ .glp-wrap{border:1px solid var(--border);border-radius:12px;overflow:auto;background:var(--surface,#fff);max-height:68vh}
+ .glp-t{width:100%;min-width:1000px;border-collapse:separate;border-spacing:0}
+ .glp-t th{position:sticky;top:0;z-index:2;background:#f5ead0;color:#3a2d10;font-weight:800;font-size:12.5px;padding:10px 12px;text-align:right;white-space:nowrap;border-bottom:2px solid var(--gold)}
+ .glp-t td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle;font-size:13px}
+ .glp-t tbody tr:nth-child(even){background:rgba(212,160,23,.05)}
+ .glp-t tbody tr:hover{background:rgba(212,160,23,.14)}
+ .glp-t .no{font-weight:800;color:var(--gold-text);direction:ltr;text-align:right}
+ .glp-t .amt{direction:ltr;text-align:left;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .glp-t th.amt{text-align:left}
+ .glp-t .desc{min-width:300px;max-width:460px}
+ .glp-t .doc{color:var(--text-dim);font-size:11.5px;white-space:nowrap}
+ .glp-t .acts{white-space:nowrap;text-align:center}
+ .glp-t .acts .btn.sm{padding:3px 9px;font-size:11.5px}
+ .glp-t tfoot td{position:sticky;bottom:0;background:#f5ead0;font-weight:800;border-top:2px solid var(--gold);border-bottom:0}
+ .glp-jr{display:inline-block;padding:2px 9px;border-radius:8px;background:#f3f4f6;color:#374151;font-size:11.5px;font-weight:700;white-space:nowrap}
+ .glp-tag{display:inline-block;padding:3px 11px;border-radius:99px;font-size:11.5px;font-weight:800;white-space:nowrap}
+ .glp-tag.gl{background:#e5e7eb;color:#374151}
+ .glp-tag.supply{background:#dcfce7;color:#166534}
+ .glp-tag.cash{background:#dbeafe;color:#1e40af}
+ .glp-tag.other{background:#fef3c7;color:#92400e}
+ </style>
+ <div class="glp-bar">
  <label>من تاريخ<input class="input" id="glPostedFrom" type="date" onchange="glApplyPostedFilters()"></label>
  <label>إلى تاريخ<input class="input" id="glPostedTo" type="date" onchange="glApplyPostedFilters()"></label>
- <label>النظام المُرحِّل<select class="input" id="glPostedSystem" onchange="glApplyPostedFilters()"><option value="">كل الأنظمة</option>${systems.map(x=>`<option value="${glEsc(x)}">${glEsc(x)}</option>`).join('')}</select></label>
+ <label>اليومية<select class="input" id="glPostedJournal" onchange="glApplyPostedFilters()"><option value="">كل اليوميات</option>${journals.map(j=>`<option value="${glEsc(String(j.id))}">${glEsc(String(j.journal_code)+' — '+String(j.journal_name||''))}</option>`).join('')}</select></label>
+ <label>النظام المُرحِّل<select class="input" id="glPostedSystem" onchange="glApplyPostedFilters()"><option value="">كل الأنظمة</option>${systems.map(x=>`<option value="${glEsc(x)}">${glEsc(x)}</option>`).join('')}</select></label>
  <label>بحث برقم القيد أو البيان<input class="input" id="glPostedSearch" placeholder="رقم القيد / البيان" oninput="glApplyPostedFilters()"></label>
  <button class="btn" type="button" onclick="glClearPostedFilters()">مسح الفلاتر</button></div>
  <div id="glPostedTable">${glPostedRows(posted)}</div><div id="glPostedDetails" style="margin-top:12px"></div>`;
 }
-function glPostedRows(list){const rows=list.map(e=>{const ls=glState.lines.filter(x=>x.entry_id===e.id);const total=Number(e.total_debit)||ls.reduce((s,x)=>s+Number(x.debit||0),0);const sys=glSourceSystem(e);const canUnpost = sys==='الحسابات العامة' && glCan('post');return `<tr><td dir="ltr"><b>${glEsc(e.entry_no||e.id.slice(0,8))}</b></td><td>${glEsc(e.entry_date||'')}</td><td>${glEsc(e.description||'')}</td><td>${glNum(total)}</td><td><span style="padding:3px 10px;background:#dcfce7;color:#166534;border-radius:10px;font-size:11px;font-weight:800">${glEsc(sys)}</span></td><td style="text-align:center;white-space:nowrap"><button class="btn sm" title="عرض كامل تفاصيل القيد" onclick="glViewEntry('${e.id}')">👁 عرض</button> <button class="btn sm" title="طباعة القيد" onclick="glPrintPostedEntry('${e.id}')">🖨 طباعة</button> ${canUnpost?`<button class="btn sm danger" title="إلغاء ترحيل القيد وإرجاعه كمسودة" onclick="glUnpost('${e.id}')" style="background:#fee2e2;color:#991b1b;border-color:#fecaca">↶ إلغاء ترحيل</button>`:''}</td></tr>`;}).join('');return glTable(['رقم القيد','التاريخ','البيان','قيمة القيد','النظام المُرحِّل','إجراءات'],rows);}
+function glPostedRows(list){
+ const sorted=[...list].sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));
+ let sum=0;
+ const rows=sorted.map(e=>{
+  const ls=glState.lines.filter(x=>x.entry_id===e.id);
+  const total=Number(e.total_debit)||ls.reduce((s,x)=>s+Number(x.debit||0),0);sum+=total;
+  const sys=glSourceSystem(e);
+  const canUnpost=sys==='الحسابات العامة'&&glCan('post');
+  const raw=String(e.description||'');const m=raw.match(/\s*—\s*\[مستند:\s*([^\]]+)\]\s*$/);
+  const desc=m?raw.replace(m[0],'').trim():raw;const doc=m?m[1].trim():'';
+  return `<tr><td class="no"><b>${glEsc(e.entry_no||String(e.id).slice(0,8))}</b></td><td style="white-space:nowrap">${glEsc(e.entry_date||'')}</td><td><span class="glp-jr">${glEsc(glEntryJournalLabel(e))}</span></td><td class="desc">${glEsc(desc)}</td><td class="doc">${glEsc(doc)}</td><td><span class="glp-tag ${glSourceTone(sys)}">${glEsc(sys)}</span></td><td class="amt">${glNum(total)}</td><td class="acts"><button class="btn sm" title="عرض كامل تفاصيل القيد" onclick="glViewEntry('${e.id}')">👁 عرض</button> <button class="btn sm" title="طباعة القيد" onclick="glPrintPostedEntry('${e.id}')">🖨 طباعة</button> ${canUnpost?`<button class="btn sm danger" title="إلغاء ترحيل القيد وإرجاعه كمسودة" onclick="glUnpost('${e.id}')" style="background:#fee2e2;color:#991b1b;border-color:#fecaca">↶ إلغاء ترحيل</button>`:''}</td></tr>`;
+ }).join('');
+ const head=['رقم القيد','التاريخ','اليومية','البيان','المستند','النظام المُرحِّل','قيمة القيد','إجراءات'].map((h,i)=>`<th class="${i===6?'amt':''}">${h}</th>`).join('');
+ const body=rows||`<tr><td colspan="8" style="padding:30px;text-align:center;color:#9ca3af">لا توجد قيود مرحّلة مطابقة. غيّر الفلاتر أو امسحها.</td></tr>`;
+ return `<div class="glp-wrap"><table class="glp-t"><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="6">عدد القيود: ${sorted.length}</td><td class="amt">${glNum(sum)}</td><td></td></tr></tfoot></table></div>`;
+}
 function glPrintPostedEntry(id){
   const e=glState.entries.find(x=>x.id===id);if(!e)return toast('القيد غير موجود','err');
   const ls=glState.lines.filter(x=>x.entry_id===id).sort((a,b)=>a.line_no-b.line_no);
@@ -6817,8 +6887,8 @@ function glPrintPostedEntry(id){
   const html=`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>قيد محاسبي ${esc(e.entry_no||'')}</title><style>@page{size:A4 landscape;margin:12mm}*{box-sizing:border-box}body{font-family:Tahoma,Arial,sans-serif;color:#1a1a1a;margin:0;font-size:12px}.head{text-align:center;border-bottom:3px solid #d4a017;padding:0 0 12px;margin-bottom:14px}.head h1{font-size:21px;margin:0 0 5px;color:#92400e}.head h2{font-size:15px;margin:0;font-weight:600}.status{display:inline-block;margin-top:9px;padding:6px 18px;border:1px solid #166534;border-radius:20px;color:#166534;background:#dcfce7;font-weight:bold}.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}.field{border:1px solid #e5d7b1;border-radius:6px;padding:8px;min-height:47px;background:#fffbea}.field b{display:block;color:#92400e;font-size:10px;margin-bottom:5px}.field span{font-weight:bold}.desc{grid-column:span 2}table{width:100%;border-collapse:collapse;table-layout:fixed}th{background:#1a1a1a;color:#fef3c7;padding:9px 6px;border:1px solid #1a1a1a}td{padding:8px 6px;border:1px solid #e5d7b1;vertical-align:middle}tbody tr:nth-child(even){background:#fffbea}.center{text-align:center}.code{font-weight:bold;text-align:center;color:#92400e}.money{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}tfoot td{background:#fef3c7;font-weight:bold;border-top:2px solid #d4a017}.signs{display:grid;grid-template-columns:repeat(3,1fr);gap:30px;margin-top:42px;text-align:center}.sign{padding-top:8px;border-top:1px solid #92400e;font-weight:bold}.foot{margin-top:18px;text-align:center;color:#92400e;font-size:10px}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body><header class="head"><h1>IRON GATE SUPPLIES</h1><h2>قيد محاسبي مُرحّل</h2><div class="status">✓ مُرحّل · ${esc(glSourceSystem(e))}</div></header><section class="meta"><div class="field"><b>رقم القيد</b><span dir="ltr">${esc(e.entry_no||'')}</span></div><div class="field"><b>تاريخ القيد</b><span>${esc(e.entry_date||'')}</span></div><div class="field"><b>نوع / يومية القيد</b><span>${esc(j?(j.journal_code+' — '+j.journal_name):'')}</span></div><div class="field"><b>رقم المستند</b><span>${esc(hdr.docNo||'—')}</span></div><div class="field desc"><b>البيان الرئيسي</b><span>${esc(hdr.desc||'—')}</span></div><div class="field"><b>العملة</b><span>الجنيه المصري (EGP)</span></div></section><table><thead><tr><th style="width:4%">م</th><th style="width:14%">رقم الحساب</th><th style="width:21%">اسم الحساب</th><th style="width:21%">بيان السطر</th><th style="width:13%">مركز التكلفة</th><th style="width:13%">مدين</th><th style="width:13%">دائن</th></tr></thead><tbody>${lines}</tbody><tfoot><tr><td colspan="5" class="center">الإجمالي</td><td class="money">${fmt(totalD)}</td><td class="money">${fmt(totalC)}</td></tr></tfoot></table><section class="signs"><div class="sign">إعداد</div><div class="sign">مراجعة</div><div class="sign">اعتماد</div></section><div class="foot">IRON GATE SUPPLIES — طُبع بتاريخ ${esc(new Date().toLocaleDateString('ar-EG'))}</div><script>window.onload=()=>setTimeout(()=>window.print(),250);<\/script></body></html>`;
   w.document.open();w.document.write(html);w.document.close();w.focus();
 }
-function glApplyPostedFilters(){const from=document.getElementById('glPostedFrom')?.value||'',to=document.getElementById('glPostedTo')?.value||'',sys=document.getElementById('glPostedSystem')?.value||'',q=(document.getElementById('glPostedSearch')?.value||'').trim().toLowerCase();let list=glState.entries.filter(e=>e.status==='posted');list=list.filter(e=>(!from||String(e.entry_date)>=from)&&(!to||String(e.entry_date)<=to)&&(!sys||glSourceSystem(e)===sys)&&(!q||String(e.entry_no||'').toLowerCase().includes(q)||String(e.description||'').toLowerCase().includes(q)));const box=document.getElementById('glPostedTable');if(box)box.innerHTML=glPostedRows(list);}
-function glClearPostedFilters(){['glPostedFrom','glPostedTo','glPostedSystem','glPostedSearch'].forEach(id=>{const x=document.getElementById(id);if(x)x.value='';});glApplyPostedFilters();}
+function glApplyPostedFilters(){const g=id=>document.getElementById(id)?.value||'';const from=g('glPostedFrom'),to=g('glPostedTo'),jr=g('glPostedJournal'),sys=g('glPostedSystem'),q=g('glPostedSearch').trim().toLowerCase();let list=glState.entries.filter(e=>e.status==='posted');list=list.filter(e=>(!from||String(e.entry_date)>=from)&&(!to||String(e.entry_date)<=to)&&(!jr||String(e.journal_id)===jr)&&(!sys||glSourceSystem(e)===sys)&&(!q||String(e.entry_no||'').toLowerCase().includes(q)||String(e.description||'').toLowerCase().includes(q)));const box=document.getElementById('glPostedTable');if(box)box.innerHTML=glPostedRows(list);}
+function glClearPostedFilters(){['glPostedFrom','glPostedTo','glPostedJournal','glPostedSystem','glPostedSearch'].forEach(id=>{const x=document.getElementById(id);if(x)x.value='';});glApplyPostedFilters();}
 
 /* ================= كشف حساب لكل الحسابات ================= */
 const GL_PRO_RPT=`
@@ -15269,7 +15339,7 @@ async function supDoPostKind(opts){
     const u=(typeof curU==="function"&&curU())||{};
     const sp=await sb.from("sale_order_postings").upsert({order_no:orderNo,kind,entry_id:entry.id,entry_no:entryNo,journal_code:SUP_POST_JOURNALS[kind],amount:td/100,posted_at:new Date().toISOString(),posted_by:u.name||u.username||""},{onConflict:"order_no,kind"});
     if(sp.error)throw new Error("القيد اترحّل برقم "+entryNo+" لكن تسجيل الترحيل فشل: "+sp.error.message);
-    try{await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"بيانات التوريد",source_ref:orderNo});}catch(e){}
+    try{const _sr=await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"بيانات التوريد",source_ref:orderNo});if(_sr.error)console.warn("gl_posting_sources insert failed",_sr.error);}catch(e){console.warn(e);}
     if(silent){window._supPostMapAt=0;return {ok:true,entryNo};}
     toast("✓ تم ترحيل قيد "+title+" برقم "+entryNo,"ok");closeModal();window._supPostMapAt=0;await supEnsurePostMap(true);
   }catch(e){
