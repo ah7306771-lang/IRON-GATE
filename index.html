@@ -5143,7 +5143,7 @@ function go(page){
   else if(page==="clientStatement"||page==="supplierStatement"){ c.innerHTML=viewPartyStatement(page); renderPartyStatement(); }
   else if(page==="clientTB"||page==="supplierTB"){ c.innerHTML=viewTB(page); renderTB(); }
   else if(page==="bankStatement"||page==="safeStatement"){ c.innerHTML=viewTreasuryAccountStatement(page); renderTreasuryAccountStatement(page); }
-  else if(page==="receipts"){ if(txScope==="bankAll"){ c.innerHTML = viewBankLedger(); bindBankLedger(); } else if(txScope==="cashAll"){ c.innerHTML = viewCashLedger(); bindCashLedger(); } else { c.innerHTML = viewTreasury("in"); renderTreasury("in"); } }
+  else if(page==="receipts"){ if(txScope==="bankAll"){ c.innerHTML = viewTreasury("both"); renderTreasury("both"); } else if(txScope==="cashAll"){ c.innerHTML = viewCashLedger(); bindCashLedger(); } else { c.innerHTML = viewTreasury("in"); renderTreasury("in"); } }
   else if(page==="customerAdjustments"){ c.innerHTML = viewAdjustments("in"); renderAdjustments("in"); }
   else if(page==="supplierAdjustments"){ c.innerHTML = viewAdjustments("out"); renderAdjustments("out"); }
   else if(page==="settlement"){ c.innerHTML = viewSettlement(); renderSettlement(); }
@@ -17283,7 +17283,10 @@ function txEntryKind(e){   // الحركة تخص خزينة أم بنك: حسب
   if(t){ if((state.banks||[]).some(b=>String(b.code)===t)) return "bank"; if((state.safes||[]).some(x=>String(x.code)===t)) return "safe"; }
   return "bank";
 }
-function txScopeOK(e){ if(txScope==="all") return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier);   // «كل تحصيلات وتسويات العملاء/الموردين»: بس اللي له عميل/مورد (من غير تسويات الحسابات والتحويلات بين الخزن)
+function txIsBank(){ return txScope==="bank"||txScope==="bankAll"; }   // نطاق البنوك: مدفوع/تحصيل بنكي + الحركة البنكية (الاتجاهين)
+function txPF(e,direction){ return direction==="both" ? (e.direction==="in"?"customer":"supplier") : (direction==="in"?"customer":"supplier"); }   // حقل الطرف: عميل للوارد / مورد للصادر
+function txScopeOK(e){ if(txScope==="bankAll"){ try{ if(!canView(e.direction==="in"?"receipts":"payments")) return false; }catch(_){} }
+  if(txScope==="all") return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier);   // «كل تحصيلات وتسويات العملاء/الموردين»: بس اللي له عميل/مورد (من غير تسويات الحسابات والتحويلات بين الخزن)
    if(e.method==="adjustment"){   // تسويات العملاء/الموردين: بتظهر هنا بس لو اخترت «تسوية» من فلتر النوع
       return e.entryKind!=="transfer_view" && !!(e.direction==="in"?e.customer:e.supplier) && txNormFilterArr(txFilter&&txFilter.method).some(v=>String(v).indexOf("adjustment")===0);
     }
@@ -17295,7 +17298,7 @@ function txMethodLabelOf(v){
   return (txMethods.find(m=>m.v===v)||{}).label||v;
 }
 function txScopeMethods(l){
-  if(txScope==="cash"||txScope==="bank"){
+  if(txScope==="cash"||txIsBank()){
     const base=txScope==="cash"?l.filter(m=>m.v==="cash"):l.filter(m=>m.v!=="cash"&&m.v!=="adjustment");
     return base.concat([{v:"adjustment:debit",label:"تسوية مدينة",ico:"⚠️"},{v:"adjustment:credit",label:"تسوية دائنة",ico:"✨"}]);
   }
@@ -17304,8 +17307,8 @@ function txScopeMethods(l){
   return out;
 }
 function txIsChqSafe(t){ return !!t && /^chk\b|chk|شيك/i.test(String(t.code||"")+" "+String(t.name||"")); }   // خزنة الشيكات: تخص البنوك مش النقدي
-function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"&&!txIsChqSafe(t)):txScope==="bank"?l.filter(t=>t.kind==="bank"||txIsChqSafe(t)):l; }
-function txScopeStatuses(l){ return txScope==="cash"?l.filter(x=>x.v==="cash"):txScope==="bank"?l.filter(x=>x.v!=="cash"&&x.v!=="adjustment"):l; }
+function txScopeTreasuries(l){ return txScope==="cash"?l.filter(t=>t.kind==="safe"&&!txIsChqSafe(t)):txIsBank()?l.filter(t=>t.kind==="bank"||txIsChqSafe(t)):l; }
+function txScopeStatuses(l){ return txScope==="cash"?l.filter(x=>x.v==="cash"):txIsBank()?l.filter(x=>x.v!=="cash"&&x.v!=="adjustment"):l; }
 function txScopePostOpts(l){ return txScope==="cash"?l.filter(x=>!/^chq_/.test(x.v)):l; }
 let txFilter = { q:"", method:[], status:[], post:[], treasury:[], party:[], from:igYearStart(), to:igYearEnd() };
 // توحيد قيمة الفلتر إلى مصفوفة — للتوافق مع الحفظ القديم (نصّي)
@@ -17319,12 +17322,12 @@ function txFilterNormalizeAll(){
 }
 /* فلتر حالة الترحيل — الخيارات بتختلف بين التحصيلات والمدفوعات (استلام/تحصيل ↔ إصدار/صرف) */
 function txPostOptions(direction){
-  const isIn=direction==="in";
+  const isIn=direction==="in", isB=direction==="both";
   return [
     {v:"unposted",label:"غير مُرحّل"},
     {v:"posted",label:"مُرحّل (كل المراحل)"},
-    {v:"chq_receipt",label:isIn?"شيك مُرحّل الاستلام فقط (لم يُحصَّل)":"شيك مُرحّل الإصدار فقط (لم يُصرف)"},
-    {v:"chq_collect",label:isIn?"شيك مُرحّل التحصيل":"شيك مُرحّل الصرف"}
+    {v:"chq_receipt",label:isB?"شيك مُرحّل الاستلام / الإصدار فقط (لم يُحصَّل / يُصرف)":(isIn?"شيك مُرحّل الاستلام فقط (لم يُحصَّل)":"شيك مُرحّل الإصدار فقط (لم يُصرف)")},
+    {v:"chq_collect",label:isB?"شيك مُرحّل التحصيل / الصرف":(isIn?"شيك مُرحّل التحصيل":"شيك مُرحّل الصرف")}
   ];
 }
 function txPostMatch(selected, e){
@@ -17540,6 +17543,7 @@ function treasuryLabel(code){
 }
 function treasuryUsed(code){ return (state.treasuryEntries||[]).some(e=>e.treasury===code); }
 function treasuryList(direction){
+  if(direction==="both") return (state.treasuryEntries||[]).slice();   // الحركة البنكية: التحصيلات + المدفوعات مع بعض
   return (state.treasuryEntries||[]).filter(e=>e.direction===direction);
 }
 /* سيريال دخول الحركة: createdAt لو موجود، وإلا الطابع الزمني المخزن في id (tx_<ts>_...) — بيحدد أول حركة دخلت في اليوم */
@@ -17576,7 +17580,7 @@ function txRenderKpisHtml(totals,cur,isIn,shown){
   if(txScope==="cash") return k("إجمالي الحركة النقدية", totals.all, cur, "var(--gold-2)")+k("نقدي", totals.cash, cur, "var(--ok)");
   return (
     k("إجمالي الحركة", totals.all, cur, "var(--gold-2)", "إجمالي الحركة النقدية")+
-    (txScope==="bank"?"":k("نقدي", totals.cash, cur, "var(--ok)"))+
+    (txIsBank()?"":k("نقدي", totals.cash, cur, "var(--ok)"))+
     k("تحويلات", totals.transfer, cur, "var(--ok)")+
     k("محصل شيك", totals.collected, cur, "var(--ok)")+
     (isIn?k("أوراق قبض", totals.receivable, cur, "var(--warn)"):"")+
@@ -17586,11 +17590,28 @@ function txRenderKpisHtml(totals,cur,isIn,shown){
     k("⚖ تسويات", totals.adjustment, `م:${fmt(totals.adjDebit)} · د:${fmt(totals.adjCredit)}`, "#8b5cf6", "تسويات (غير نقدية)")
   );
 }
+// كروت الحركة البنكية (تحصيلات + مدفوعات): الفعلي = تحويل بنكي أو شيك محصَّل/مصروف
+function txIsEffective(e){ if(e.method==="adjustment") return false; if(e.method==="bank") return e.status==="collected"; return true; }
+function txBothKpisHtml(list,cur){
+  let ei=0,eo=0,pi=0,po=0,ret=0;
+  list.forEach(e=>{ if(e.method==="adjustment"||e.entryKind==="transfer_view"&&false) return; const v=+e.amount||0, inn=e.direction==="in";
+    if(e.status==="returned"){ ret+=v; return; }
+    if(txIsEffective(e)){ if(inn) ei+=v; else eo+=v; } else { if(inn) pi+=v; else po+=v; } });
+  const k=(lbl,val,color)=>`<div class="kpi" title="${escapeAttr(lbl)}"><div class="lbl">${lbl}</div><div class="val small" style="direction:ltr;color:${color||'inherit'}">${fmt(val)}</div></div>`;
+  return k("إجمالي الوارد (فعلي)",ei,"var(--ok)")+k("إجمالي الصادر (فعلي)",eo,"var(--danger)")+k("صافي حركة البنك",ei-eo,ei-eo<0?"var(--danger)":"var(--gold-2)")
+    +k("شيكات معلّقة (تحصيل)",pi,"var(--warn)")+k("شيكات معلّقة (دفع)",po,"var(--warn)")+k("مرتد",ret,"var(--danger)");
+}
+function txClearBoth(){
+  txFilter={q:"",method:[],status:[],post:[],treasury:[],party:[],from:igYearStart(),to:igYearEnd()};
+  try{ txViewSave("both"); }catch(e){}
+  try{ fpSave(); }catch(e){}
+  go("receipts"); try{ toast("تم مسح كل الفلاتر","ok"); }catch(e){}
+}
 function viewTreasury(direction){
-  const isIn = direction==="in";
-  const title = isIn ? "التحصيلات" : "المدفوعات";
-  const partyLabel = isIn ? "العميل" : "المورد";
-  const partyList = isIn ? partyNames(state.customers) : partyNames(state.suppliers);
+  const isIn = direction==="in", isB = direction==="both";
+  const title = isB ? "الحركة البنكية" : isIn ? "التحصيلات" : "المدفوعات";
+  const partyLabel = isB ? "الطرف" : isIn ? "العميل" : "المورد";
+  const partyList = isB ? [...new Set([].concat(partyNames(state.customers),partyNames(state.suppliers)))].sort((a,b)=>String(a).localeCompare(String(b),"ar")) : isIn ? partyNames(state.customers) : partyNames(state.suppliers);
   const list = treasuryList(direction);
   txRestoreView(direction);
   if(window.__txScopeSeen!==txScope){ txFilter.method=[]; txFilter.treasury=[]; window.__txScopeSeen=txScope; }   // تغيير النطاق يمسح فلتر النوع والخزنة/البنك
@@ -17604,7 +17625,7 @@ function viewTreasury(direction){
   return `
   <div class="tx-page">
   <div id="txKpisWrap" class="kpis compact tx-kpis tx-kpis-top">
-    ${txRenderKpisHtml(totals, cur, isIn)}
+    ${isB?txBothKpisHtml(kpiList,cur):txRenderKpisHtml(totals, cur, isIn)}
   </div>
   <div class="tx-bar">
     <button type="button" class="btn ghost sm" id="txFiltersBtn" onclick="txToggleFilters('${direction}')">${txFiltersOpen()?'▲':'▼'} الفلاتر</button>
@@ -17614,17 +17635,17 @@ function viewTreasury(direction){
     ${txMsBuild("method","كل الأنواع", txScopeMethods(txMethods).map(m=>({v:m.v,label:m.label,ico:m.ico})), direction)}
     ${txMsBuild("status","كل الحالات", txScopeStatuses(txStatuses).map(s=>({v:s.v,label:s.label})), direction)}
     ${txMsBuild("post","كل حالات الترحيل", txScopePostOpts(txPostOptions(direction)), direction)}
-    ${txMsBuild("party", "كل "+(isIn?'العملاء':'الموردين'), partyList.map(n=>({v:n,label:n})), direction)}
-    ${txMsBuild("treasury",txScope==="cash"?"كل الخزن":txScope==="bank"?"كل البنوك":"كل الخزائن/البنوك", txScopeTreasuries(treasuryAll()).filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t))).map(t=>({v:t.code,label:`${t.code} — ${t.name}`,ico:t.kind==="bank"?"🏦":"🗄"})), direction)}
+    ${txMsBuild("party", isB?"كل الأطراف":"كل "+(isIn?'العملاء':'الموردين'), partyList.map(n=>({v:n,label:n})), direction)}
+    ${txMsBuild("treasury",txScope==="cash"?"كل الخزن":txIsBank()?"كل البنوك":"كل الخزائن/البنوك", txScopeTreasuries(treasuryAll()).filter(t=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(t))).map(t=>({v:t.code,label:`${t.code} — ${t.name}`,ico:t.kind==="bank"?"🏦":"🗄"})), direction)}
     <input class="inp" type="date" title="من تاريخ" value="${escapeAttr(txFilter.from||'')}" onchange="txFilter.from=this.value;renderTreasury('${direction}')">
     <input class="inp" type="date" title="إلى تاريخ" value="${escapeAttr(txFilter.to||'')}" onchange="txFilter.to=this.value;renderTreasury('${direction}')">
-    <button type="button" class="btn ghost" onclick="fpClear('${isIn?'receipts':'payments'}')" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
+    <button type="button" class="btn ghost" onclick="${isB?'txClearBoth()':`fpClear('${isIn?'receipts':'payments'}')`}" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
   </div>
     <div class="tx-actions">
       <span class="chip gold tx-count" id="txCount">${list.filter(txScopeOK).length} سجل</span>
       <button type="button" class="btn ghost tx-ic" title="طباعة حسب الفلتر" aria-label="طباعة حسب الفلتر" onclick="txExport('${direction}','pdf')">🖨<span class="tx-lbl"> طباعة حسب الفلتر</span></button>
       <button type="button" class="btn ghost tx-xl" title="تصدير Excel" onclick="txExport('${direction}','excel')">⬇ Excel</button>
-      <button type="button" class="btn tx-new" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>
+      ${isB?`<button type="button" class="btn tx-new" onclick="txNew('in')">+ تحصيل جديد</button><button type="button" class="btn tx-new" onclick="txNew('out')">+ دفعة جديدة</button>`:`<button type="button" class="btn tx-new" onclick="txNew('${direction}')">+ ${isIn?'تحصيل':'دفعة'} جديد${isIn?'':'ة'}</button>`}
     </div>
   </div>
 
@@ -17637,7 +17658,7 @@ function viewTreasury(direction){
       <th class="sortable" data-sk="party" onclick="txSortBy('party','${direction}')"><span class="th-wrap">${partyLabel}<button type="button" class="th-fbtn" data-fk="party" title="فلتر" onclick="txColFilterOpen('party','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="method" onclick="txSortBy('method','${direction}')"><span class="th-wrap">النوع<button type="button" class="th-fbtn" data-fk="method" title="فلتر" onclick="txColFilterOpen('method','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="ref" onclick="txSortBy('ref','${direction}')">رقم المرجع</th>
-      <th class="sortable" data-sk="amount" onclick="txSortBy('amount','${direction}')">القيمة</th>
+      ${isB?`<th class="sortable" data-sk="inamt" onclick="txSortBy('inamt','${direction}')">وارد</th><th class="sortable" data-sk="outamt" onclick="txSortBy('outamt','${direction}')">صادر</th>`:`<th class="sortable" data-sk="amount" onclick="txSortBy('amount','${direction}')">القيمة</th>`}
       <th class="sortable" data-sk="due" onclick="txSortBy('due','${direction}')">تاريخ الاستحقاق</th>
       <th class="sortable" data-sk="treasury" onclick="txSortBy('treasury','${direction}')"><span class="th-wrap">الخزنة / البنك<button type="button" class="th-fbtn" data-fk="treasury" title="فلتر" onclick="txColFilterOpen('treasury','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="bank" onclick="txSortBy('bank','${direction}')">البنك المسحوب عليه</th>
@@ -17667,7 +17688,9 @@ function txSortGetter(key,direction){
   switch(key){
     case "no": return {n:true,g:e=>+e.no||0};
     case "date": return {g:e=>e.date||""};
-    case "party": return {g:e=>e[pf]||""};
+    case "party": return {g:e=>e[txPF(e,direction)]||""};
+    case "inamt": return {n:true,g:e=>e.direction==="in"?(+e.amount||0):null};
+    case "outamt": return {n:true,g:e=>e.direction==="out"?(+e.amount||0):null};
     case "method": return {g:e=>txMethodLabelOf(txMethodKey(e))||""};
     case "ref": return {g:e=>String(e.refNo||"")};
     case "amount": return {n:true,g:e=>+e.amount||0};
@@ -17683,19 +17706,19 @@ function txSortGetter(key,direction){
 function txFilteredSorted(direction){
   const partyField = direction==="in" ? "customer" : "supplier";
   const q = (txFilter.q||"").trim().toLowerCase();
-  const rows = trfVirtualRows(direction).concat(treasuryList(direction)).filter(e=>{
+  const rows = (direction==="both" ? trfVirtualRows("in").concat(trfVirtualRows("out"),treasuryList("both")) : trfVirtualRows(direction).concat(treasuryList(direction))).filter(e=>{
     if(!txScopeOK(e)) return false;
     if(e.entryKind==="transfer_view" && txFilter.dashCollected) return false;
     if(!(txMatchMulti(txFilter.method, txMethodKey(e)) || (e.method==="adjustment" && txMatchMulti(txFilter.method,"adjustment")))) return false;
     if(!txMatchMulti(txFilter.status, e.status)) return false;
     if(!txPostMatch(txFilter.post, e)) return false;
     if(!txMatchMulti(txFilter.treasury, e.treasury)) return false;
-    if(!txMatchMulti(txFilter.party, e[partyField])) return false;
+    if(!txMatchMulti(txFilter.party, e[txPF(e,direction)])) return false;
     if(txFilter.from && String(e.date||"")<txFilter.from) return false;
     if(txFilter.to && String(e.date||"")>txFilter.to) return false;
     if(txFilter.dashCollected && !dxIsCollectionEntry(e)) return false;   // تحصيل فعلي = نفس رقم الداشبورد
     if(q){
-      const hay = [e.no,e.refNo,e.bankDrawn,e.treasury,treasuryLabel(e.treasury),e[partyField],e.notes].map(x=>String(x||"").toLowerCase()).join(" ");
+      const hay = [e.no,e.refNo,e.bankDrawn,e.treasury,treasuryLabel(e.treasury),e[txPF(e,direction)],e.notes].map(x=>String(x||"").toLowerCase()).join(" ");
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -17737,7 +17760,7 @@ function txFilterSummary(direction){
   const m = multiLabel(txFilter.method,"النوع","الأنواع",labMethod); if(m) out.push(m);
   const s = multiLabel(txFilter.status,"الحالة","الحالات",labStatus); if(s) out.push(s);
   { const po=txPostOptions(direction), pp=multiLabel(txFilter.post,"الترحيل","حالات الترحيل",v=>(po.find(x=>x.v===v)||{}).label||v); if(pp) out.push(pp); }
-  const p = multiLabel(txFilter.party, isIn?"العميل":"المورد", isIn?"العملاء":"الموردين", v=>v); if(p) out.push(p);
+  const p = multiLabel(txFilter.party, direction==="both"?"الطرف":(isIn?"العميل":"المورد"), direction==="both"?"الأطراف":(isIn?"العملاء":"الموردين"), v=>v); if(p) out.push(p);
   const t = multiLabel(txFilter.treasury,"الخزنة/البنك","الخزائن/البنوك", v=>treasuryLabel(v)); if(t) out.push(t);
   if(txFilter.dashCollected) out.push("تحصيلات فعلية (مطابقة للوحة التحكم)");
   if(txFilter.from) out.push("من تاريخ: "+txFilter.from);
@@ -17745,14 +17768,14 @@ function txFilterSummary(direction){
   return out.length?out.join(" · "):"بدون فلاتر (كل السجلات)";
 }
 function txExportHtml(direction){
-  const isIn=direction==="in", rows=txFilteredSorted(direction), pf=isIn?"customer":"supplier";
+  const isIn=direction==="in", B=direction==="both", rows=txFilteredSorted(direction), pf=isIn?"customer":"supplier";
   const title=isIn?"التحصيلات":"المدفوعات", cur=state.settings.currency||"ج.م";
-  const sortName=({no:"م",date:"التاريخ",party:isIn?"العميل":"المورد",method:"النوع",ref:"رقم المرجع",amount:"القيمة",due:"تاريخ الاستحقاق",treasury:"الخزنة/البنك",bank:"البنك المسحوب عليه",status:"الحالة",alert:"التنبيه",notes:"الملاحظات"})[txSort.key]||"التاريخ";
+  const sortName=({inamt:"وارد",outamt:"صادر",no:"م",date:"التاريخ",party:direction==="both"?"الطرف":isIn?"العميل":"المورد",method:"النوع",ref:"رقم المرجع",amount:"القيمة",due:"تاريخ الاستحقاق",treasury:"الخزنة/البنك",bank:"البنك المسحوب عليه",status:"الحالة",alert:"التنبيه",notes:"الملاحظات"})[txSort.key]||"التاريخ";
   let total=0;
   const body=rows.map((e,i)=>{
     total+=+e.amount||0;
     const al=txAlertInfo(e);
-    return `<tr><td>${escapeHtml(String(e.no||i+1))}</td><td>${escapeHtml(e.date||"—")}</td><td class="nm">${escapeHtml(e[pf]||"—")}</td><td>${escapeHtml(((txMethods.find(m=>m.v===e.method)||{}).label)||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td class="n">${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(((txStatuses.find(s=>s.v===e.status)||{}).label)||"—")}</td><td>${escapeHtml(al?al.text:"—")}</td><td class="nt">${escapeHtml(e.notes||"")}</td></tr>`;
+    return `<tr><td>${escapeHtml(String(e.no||i+1))}</td><td>${escapeHtml(e.date||"—")}</td><td class="nm">${escapeHtml(e[txPF(e,direction)]||"—")}</td><td>${escapeHtml(((txMethods.find(m=>m.v===e.method)||{}).label)||"—")}</td><td>${escapeHtml(String(e.refNo||"—"))}</td><td class="n">${fmt(e.amount)}</td><td>${escapeHtml(e.dueDate||"—")}</td><td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td><td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td><td>${escapeHtml(((txStatuses.find(s=>s.v===e.status)||{}).label)||"—")}</td><td>${escapeHtml(al?al.text:"—")}</td><td class="nt">${escapeHtml(e.notes||"")}</td></tr>`;
   }).join("");
   const style=`body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:16px}h1{text-align:center;color:#9a7410;font-size:22px;margin:0 0 4px}p{text-align:center;color:#475569;margin:3px 0;font-size:12px}table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}td.nm{font-weight:800}td.n{direction:ltr;white-space:nowrap;font-weight:800}td.nt{text-align:right;max-width:200px}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{font-weight:bold;background:#e2e8f0}thead{display:table-header-group}tr{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}}`;
   // محدَّث: استخدام القالب الاحترافي الموحَّد
@@ -17760,7 +17783,8 @@ function txExportHtml(direction){
     const map = {receivable:{bg:"#fef3c7",fg:"#854d0e"}, pending:{bg:"#dbeafe",fg:"#1e40af"}, deposited:{bg:"#dbeafe",fg:"#1e40af"}, collected:{bg:"#dcfce7",fg:"#166534"}, returned:{bg:"#fee2e2",fg:"#991b1b"}, guarantee:{bg:"#fef3c7",fg:"#854d0e"}, cash:{bg:"#dcfce7",fg:"#166534"}, transfer:{bg:"#dcfce7",fg:"#166534"}};
     return map[s] || {bg:"#e5e7eb",fg:"#374151"};
   };
-  let cashTotal=0, transferTotal=0, chequeTotal=0;
+  let cashTotal=0, transferTotal=0, chequeTotal=0, totIn=0, totOut=0;
+  rows.forEach(e=>{ if(e.direction==="in") totIn+=+e.amount||0; else totOut+=+e.amount||0; });
   rows.forEach(e=>{ const amt=+e.amount||0;
     if(e.method==="cash") cashTotal+=amt;
     else if(e.method==="transfer"||e.method==="transfer_supplier") transferTotal+=amt;
@@ -17774,10 +17798,10 @@ function txExportHtml(direction){
     return `<tr>
       <td>${escapeHtml(String(e.no||i+1))}</td>
       <td>${escapeHtml(e.date||"—")}</td>
-      <td class="c-party">${escapeHtml(e[pf]||"—")}</td>
+      <td class="c-party">${escapeHtml(e[txPF(e,direction)]||"—")}</td>
       <td>${escapeHtml(methodLabel)}</td>
       <td>${escapeHtml(String(e.refNo||"—"))}</td>
-      <td class="n ${isIn?'c-cr':'c-dr'}">${fmt(e.amount)}</td>
+      ${B?`<td class="n c-cr">${e.direction==="in"?fmt(e.amount):"—"}</td><td class="n c-dr">${e.direction==="out"?fmt(e.amount):"—"}</td>`:`<td class="n ${isIn?'c-cr':'c-dr'}">${fmt(e.amount)}</td>`}
       <td>${escapeHtml(e.dueDate||"—")}</td>
       <td>${escapeHtml(e.treasury?treasuryLabel(e.treasury):"—")}</td>
       <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
@@ -17788,7 +17812,7 @@ function txExportHtml(direction){
   }).join("");
   const kpis = [
     {lbl:"عدد السجلات", val:rows.length+" سجل", sub:"&nbsp;", color:"#64748b"},
-    {lbl:"إجمالي الحركة", val:fmt(total), sub:cur, color:isIn?"#16a34a":"#dc2626"},
+    ...(B?[{lbl:"إجمالي الوارد", val:fmt(totIn), sub:cur, color:"#16a34a"},{lbl:"إجمالي الصادر", val:fmt(totOut), sub:cur, color:"#dc2626"},{lbl:"الصافي", val:fmt(totIn-totOut), sub:cur, color:"#1e40af"}]:[{lbl:"إجمالي الحركة", val:fmt(total), sub:cur, color:isIn?"#16a34a":"#dc2626"}]),
     {lbl:"نقدي", val:fmt(cashTotal), sub:cur, color:"#059669"},
     {lbl:"تحويلات", val:fmt(transferTotal), sub:cur, color:"#1e40af"},
     {lbl:"شيكات", val:fmt(chequeTotal), sub:cur, color:"#d97706"}
@@ -17800,22 +17824,22 @@ function txExportHtml(direction){
   const tableHtml = `
     <table class="rprt-tbl">
       <thead><tr>
-        <th>م</th><th>التاريخ</th><th>${isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th>
-        <th>القيمة (${escapeHtml(cur)})</th>
+        <th>م</th><th>التاريخ</th><th>${B?"الطرف":isIn?"العميل":"المورد"}</th><th>النوع</th><th>رقم المرجع</th>
+        ${B?`<th>وارد (${escapeHtml(cur)})</th><th>صادر (${escapeHtml(cur)})</th>`:`<th>القيمة (${escapeHtml(cur)})</th>`}
         <th>تاريخ الاستحقاق</th><th>الخزنة / البنك</th><th>البنك المسحوب عليه</th>
         <th>الحالة</th><th>التنبيه</th><th>ملاحظات</th>
       </tr></thead>
       <tbody>${proBody||`<tr><td colspan="12" style="padding:28px;color:#9ca3af">لا توجد سجلات مطابقة</td></tr>`}</tbody>
       <tfoot><tr>
         <td colspan="5" style="text-align:right">💰 الإجمالي</td>
-        <td class="n">${fmt(total)}</td>
+        ${B?`<td class="n">${fmt(totIn)}</td><td class="n">${fmt(totOut)}</td>`:`<td class="n">${fmt(total)}</td>`}
         <td colspan="6"></td>
       </tr></tfoot>
     </table>`;
   return igProReportHtml({
-    emoji: isIn?"↓":"↑",
-    title: isIn?"سجل التحصيلات":"سجل المدفوعات",
-    titleEn: isIn?"RECEIPTS LEDGER":"PAYMENTS LEDGER",
+    emoji: B?"⇅":isIn?"↓":"↑",
+    title: B?"الحركة البنكية":isIn?"سجل التحصيلات":"سجل المدفوعات",
+    titleEn: B?"BANK LEDGER":isIn?"RECEIPTS LEDGER":"PAYMENTS LEDGER",
     sub: `${rows.length} حركة`,
     filters: filters,
     kpis: kpis,
@@ -17823,11 +17847,11 @@ function txExportHtml(direction){
   });
 }
 function txExport(direction,format){
-  const rows=txFilteredSorted(direction), isIn=direction==="in", title=isIn?"التحصيلات":"المدفوعات";
+  const rows=txFilteredSorted(direction), isIn=direction==="in", title=direction==="both"?"الحركة البنكية":isIn?"التحصيلات":"المدفوعات";
   if(!rows.length){ toast("لا توجد سجلات مطابقة للفلتر","err"); return; }
   const html=txExportHtml(direction);
   if(format==="excel"){
-    igSaveXlsx(html,(isIn?"التحصيلات_":"المدفوعات_")+new Date().toISOString().slice(0,10)); toast("تم تجهيز ملف Excel","ok");
+    igSaveXlsx(html,(direction==="both"?"الحركة_البنكية_":isIn?"التحصيلات_":"المدفوعات_")+new Date().toISOString().slice(0,10)); toast("تم تجهيز ملف Excel","ok");
   } else openReportPreview(html,title);
 }
 
@@ -17846,6 +17870,7 @@ function txAllocStatusChip(e){
   return `<span class="chip" style="background:${m[1]};color:${m[2]};font-weight:800;white-space:nowrap">${m[0]}</span>`;
 }
 function renderTreasury(direction){
+  if(txScope==="bankAll" && document.getElementById("txBody")) direction="both";   // بعد أي حفظ/تعديل من نموذج تحصيل أو دفعة نرجع نرسم الحركة البنكية كلها
   txViewSave(direction);
   { const sm=document.getElementById("txFiltersSum"); if(sm) sm.textContent=txFilterSummary(direction); }
   const partyField = direction==="in" ? "customer" : "supplier";
@@ -17858,22 +17883,23 @@ function renderTreasury(direction){
     const wrap=document.getElementById("txKpisWrap");
     if(wrap){
       const totals=txComputeTotals(filtered.filter(e=>!(e.entryKind==="transfer_view"&&txScope==="all")));
-      wrap.innerHTML = txRenderKpisHtml(totals, state.settings.currency, direction==="in");
+      wrap.innerHTML = direction==="both" ? txBothKpisHtml(filtered, state.settings.currency) : txRenderKpisHtml(totals, state.settings.currency, direction==="in");
     }
   }catch(_){}
-  let totalFiltered = 0;
+  let totalFiltered = 0, tIn=0, tOut=0, eIn=0, eOut=0;
   const body = filtered.map(e=>{
     if(!(e.entryKind==="transfer_view"&&txScope==="all")) totalFiltered += +e.amount||0;
+    if(direction==="both" && e.method!=="adjustment"){ const _v=+e.amount||0; if(e.direction==="in"){ tIn+=_v; if(txIsEffective(e)) eIn+=_v; } else { tOut+=_v; if(txIsEffective(e)) eOut+=_v; } }
     const _virt=e.entryKind==="transfer_view";
     const _al = _virt?null:txAlertInfo(e);
     const alert = _al ? `<span class="cr-due ${_al.cls}">${escapeHtml(_al.text)}</span>` : "";
     return `<tr>
       <td style="color:var(--text-dim)">${e.no||""}</td>
       <td>${e.date||""}</td>
-      <td class="tx-party"><strong>${escapeHtml(e.entryKind==="transfer_view" ? e._label : e.entryKind==="gl" ? txGlLabel(e) : (partyWithCode(partyField==="customer"?"customers":"suppliers",e[partyField])||"—"))}</strong></td>
+      <td class="tx-party"><strong>${escapeHtml(e.entryKind==="transfer_view" ? e._label : e.entryKind==="gl" ? txGlLabel(e) : (partyWithCode(txPF(e,direction)==="customer"?"customers":"suppliers",e[txPF(e,direction)])||"—"))}</strong></td>
       <td style="text-align:center">${txMethodBadge(e.method, e)}</td>
       <td style="direction:ltr;text-align:right">${escapeHtml(e.refNo||"—")}</td>
-      <td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>
+      ${direction==="both" ? `<td class="num" style="color:var(--ok);font-weight:800">${e.direction==="in"?fmt(e.amount):"—"}</td><td class="num" style="color:var(--danger);font-weight:800">${e.direction==="out"?fmt(e.amount):"—"}</td>` : `<td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>`}
       <td>${e.dueDate||"—"}</td>
       <td>${escapeHtml(treasuryLabel(e.treasury))}</td>
       <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
@@ -17881,11 +17907,13 @@ function renderTreasury(direction){
       <td>${alert}</td>
       <td style="font-size:11px;color:var(--text-dim);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.notes||"")}</td>
       <td>${_virt?"":txAllocStatusChip(e)}</td>
-      <td>${_virt?trfVirtActions(e):txRowActions(e,direction)}</td>
+      <td>${_virt?trfVirtActions(e):txRowActions(e,direction==="both"?e.direction:direction)}</td>
     </tr>`;
   }).join("");
-  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="14"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
-  document.getElementById("txFoot").innerHTML = filtered.length ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="8"></td></tr>` : "";
+  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="15"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
+  document.getElementById("txFoot").innerHTML = !filtered.length ? "" : direction==="both"
+    ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي (كل الحركات)</td><td class="num" style="color:var(--ok)">${fmt(tIn)}</td><td class="num" style="color:var(--danger)">${fmt(tOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي: <b style="direction:ltr;display:inline-block">${fmt(tIn-tOut)}</b></td></tr><tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الفعلي (تحويل / شيك محصَّل)</td><td class="num" style="color:var(--ok)">${fmt(eIn)}</td><td class="num" style="color:var(--danger)">${fmt(eOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي الفعلي: <b style="direction:ltr;display:inline-block">${fmt(eIn-eOut)}</b></td></tr>`
+    : `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="8"></td></tr>`;
   { const ch=document.getElementById("txDashChip");
     if(ch){
       if(txFilter.dashCollected){
@@ -18038,7 +18066,7 @@ function adjPay(id){
   const e=(state.treasuryEntries||[]).find(x=>String(x.id)===String(id)); if(!e) return;
   const inf=adjDebitInfo(e); if(inf.done) return toast("التسوية مسددة بالكامل","ok");
   const isOut=e.direction==="out";
-  window.__txPrefill={[isOut?"supplier":"customer"]:(isOut?e.supplier:e.customer),amount:inf.remaining.toFixed(2),allocationType:"invoice_assistance",method:(txScope==="bank"?"transfer":"cash"),notes:"سداد تسوية "+(isOut?"دائنة":"مدينة")+" رقم "+(e.no||"")};
+  window.__txPrefill={[isOut?"supplier":"customer"]:(isOut?e.supplier:e.customer),amount:inf.remaining.toFixed(2),allocationType:"invoice_assistance",method:(txIsBank()?"transfer":"cash"),notes:"سداد تسوية "+(isOut?"دائنة":"مدينة")+" رقم "+(e.no||"")};
   openTxForm(isOut?"out":"in",null);
   setTimeout(()=>{ try{
     txRenderSettlementDetails();
@@ -18609,7 +18637,7 @@ function openTxForm(direction, existing){
   const safeOptions = (state.safes||[]).map(s=>`<option value="${escapeAttr(s.code)}" ${draft.treasury===s.code?'selected':''}>${escapeHtml(s.code)} — ${escapeHtml(s.name)}</option>`).join("");
   // قائمة طرق التحصيل/الدفع — في التحصيلات فقط فيه "تحويل لمورد"
   const _adjNow = !existing && !!window.__adjScreenNext;
-  const _keepTS = _adjNow || txScope!=="bank" || !!(existing && existing.method==="transfer_supplier");   // شاشة التحصيلات البنكية: مفيش «تحويل لمورد» في نوع التحصيل
+  const _keepTS = _adjNow || !txIsBank() || !!(existing && existing.method==="transfer_supplier");   // شاشة التحصيلات البنكية: مفيش «تحويل لمورد» في نوع التحصيل
   const methodsForDir = (isIn && _keepTS ? [...txMethods, {v:"transfer_supplier",label:"تحويل لمورد",ico:"🔄"}] : txMethods);   // القائمة كاملة: حدود الخزينة/البنك بتتطبق في txKindApply بحسب نوع الحركة (التسوية على عميل لازم تظهر "تسوية غير نقدية")
   // قائمة الموردين لحقل "تحويل لمورد"
   const supplierOptionsHtml = (partyNames(state.suppliers)||[]).map(n=>`<option value="${escapeAttr(n)}" ${draft.targetSupplier===n?'selected':''}>${escapeHtml(n)}</option>`).join("");
@@ -24956,7 +24984,7 @@ function txKindApply(){
   if(lab){ lab.childNodes[0].nodeValue="القيمة * "; const sp=lab.querySelector("span"); if(sp) sp.style.display=gl?"none":""; }
   const sel=$("tx_method");
   if(sel){
-    const okM=hasParty?["adjustment"]:(supp?["transfer_supplier"]:(txScope==="cash"?["cash"]:(txScope==="bank"?["transfer"]:["cash","transfer"])));
+    const okM=hasParty?["adjustment"]:(supp?["transfer_supplier"]:(txScope==="cash"?["cash"]:(txIsBank()?["transfer"]:["cash","transfer"])));
     [...sel.options].forEach(o=>{ const b=gl&&o.value!==""&&!okM.includes(o.value); o.hidden=b; o.disabled=b; });
     if(gl&&sel.value&&!okM.includes(sel.value)) sel.value="";
     if(gl&&!sel.value&&okM.length===1&&!hasParty&&!supp) sel.value=okM[0];
@@ -24964,7 +24992,7 @@ function txKindApply(){
     else if(supp){ sel.value="transfer_supplier"; sel.dataset.glForced="1"; }
     else if(sel.dataset.glForced){ delete sel.dataset.glForced; if(sel.value==="adjustment"||sel.value==="transfer_supplier") sel.value=""; }
     // سداد المورد وتحصيل العميل: نخفي "تسوية" من أنواع الدفع/التحصيل — التسويات من تاب التسويات (إلا لو الحركة نفسها تسوية)
-    if(!gl){ [...sel.options].forEach(o=>{ if(!o.value) return; if(o.value==="adjustment"){ const b=sel.value!=="adjustment"; o.hidden=b; o.disabled=b; } else { const okS=txScope==="cash"?o.value==="cash":(txScope==="bank"?o.value!=="cash":true); const b=!okS&&sel.value!==o.value; o.hidden=b; o.disabled=b; } }); }
+    if(!gl){ [...sel.options].forEach(o=>{ if(!o.value) return; if(o.value==="adjustment"){ const b=sel.value!=="adjustment"; o.hidden=b; o.disabled=b; } else { const okS=txScope==="cash"?o.value==="cash":(txIsBank()?o.value!=="cash":true); const b=!okS&&sel.value!==o.value; o.hidden=b; o.disabled=b; } }); }
   }
   if(gl){ txGlRender(); txGlTotal(); if(typeof mdAccEnsure==="function") mdAccEnsure(); }
   if(typeof txToggleFields==="function") txToggleFields();
@@ -28426,15 +28454,15 @@ async function txUnpostRun(id,direction){
   const closePanel=()=>{ if(panelEl){ panelEl.remove(); panelEl=null; panelKey=""; } };
   const norm=t=>(window.igNormAr?window.igNormAr(t):String(t||"").toLowerCase());
   function colValues(key,direction){
-    const pf=direction==="in"?"customer":"supplier", map=new Map();
+    const map=new Map();
     const add=(v,l)=>{ v=String(v==null?"":v); if(v==="") return; if(!map.has(v)) map.set(v,l||v); };
     treasuryList(direction).filter(txScopeOK).forEach(e=>{
-      if(key==="party") add(e.entryKind==="gl"&&typeof txGlLabel==="function"?e[pf]:e[pf], e[pf]);
+      if(key==="party") add(e[txPF(e,direction)], e[txPF(e,direction)]);
       else if(key==="method") add(txMethodKey(e),txMethodLabelOf(txMethodKey(e)));
       else if(key==="status") add(e.status,((txStatuses.find(s=>s.v===e.status)||{}).label)||e.status);
       else if(key==="treasury") add(e.treasury,e.treasury?treasuryLabel(e.treasury):"");
     });
-    if(key==="method"&&(txScope==="cash"||txScope==="bank")){ add("adjustment:debit","⚖ تسوية مدينة"); add("adjustment:credit","⚖ تسوية دائنة"); }
+    if(key==="method"&&(txScope==="cash"||txIsBank())){ add("adjustment:debit","⚖ تسوية مدينة"); add("adjustment:credit","⚖ تسوية دائنة"); }
     txNormFilterArr(txFilter[key]).forEach(v=>add(v,
       key==="method"?txMethodLabelOf(v):key==="status"?((txStatuses.find(s=>s.v===v)||{}).label):key==="treasury"?treasuryLabel(v):v));
     return [...map].map(([v,label])=>({v,label})).sort((a,b)=>String(a.label).localeCompare(String(b.label),"ar",{numeric:true}));
