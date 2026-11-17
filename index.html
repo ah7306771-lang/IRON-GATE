@@ -5596,13 +5596,21 @@ async function glLoad(){
     // أسطر القيود: نجيب بس أسطر القيود اللي حمّلناها
     const entryIds = glState.entries.map(e=>e.id);
     if(entryIds.length){
-      // Supabase .in() بيقبل حد أقصى معين — نقسّم على دفعات 500
+      // Supabase بيحدد max 1000 row لكل request — نقسّم على دفعات أصغر + range pagination
+      // دفعات 200 قيد × متوسط 3-6 أسطر = أقل من 1200، لكن نستخدم range برده علشان ضمان 100%
       glState.lines = [];
-      for(let i=0;i<entryIds.length;i+=500){
-        const chunk = entryIds.slice(i,i+500);
-        const lr=await sb.from("gl_entry_lines").select("*").in("entry_id",chunk).order("line_no");
-        if(lr.error) throw lr.error;
-        glState.lines = glState.lines.concat(lr.data||[]);
+      for(let i=0;i<entryIds.length;i+=200){
+        const chunk = entryIds.slice(i,i+200);
+        // range pagination لضمان جلب كل الأسطر حتى لو تجاوزت الحد الافتراضي
+        let off = 0;
+        while(true){
+          const lr = await sb.from("gl_entry_lines").select("*").in("entry_id",chunk).order("entry_id").order("line_no").range(off, off+999);
+          if(lr.error) throw lr.error;
+          const batch = lr.data||[];
+          glState.lines = glState.lines.concat(batch);
+          if(batch.length < 1000) break;
+          off += 1000;
+        }
       }
     } else { glState.lines = []; }
     const sr=await sb.from("gl_posting_sources").select("*");
