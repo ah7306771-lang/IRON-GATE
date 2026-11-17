@@ -4333,7 +4333,8 @@ const navGroups = [
     { id:"bankStatement", icon:"📒", label:"كشف حساب بنك" },
     { id:"chequeRegister", icon:"🧾", label:"أوراق القبض وشيكات تحت التحصيل", badge:"chq" },
     { sep:"البيانات الأساسية للبنوك" },
-    { id:"master", tab:"banks", icon:"🏦", label:"البنوك" }
+    { id:"master", tab:"banks", icon:"🏦", label:"البنوك" },
+    { id:"master", tab:"bankInd", from:"banking", icon:"🎚", label:"مؤشرات البنوك" }
   ]},
   { id:"custSys", icon:"👥", label:"نظام العملاء", items:[
     { sep:"الملفات الرئيسية" },
@@ -5335,7 +5336,7 @@ const glEsc=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt
 const glNum=v=>(Number(v)||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const glDate=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 const glCan=a=>can("gl",a);
-const glTabs=[ ["dashboard","لوحة التحليلات المالية"],["entries","قيود يومية"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"],["rpt_posted","تقرير القيود المرحّلة"],["rpt_acct","كشف حساب لكل الحسابات"],["rpt_tb","ميزان المراجعة"],["rpt_exp","تحليل المصروفات الشهري"],["rpt_cc","موقف مركز تكلفة"] ];
+const glTabs=[ ["dashboard","لوحة التحليلات المالية"],["entries","قيود يومية"],["import_entries","استيراد قيود من Excel"],["bulk_post","⚡ ترحيل/إلغاء مجمع"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"],["rpt_posted","تقرير القيود المرحّلة"],["rpt_acct","كشف حساب لكل الحسابات"],["rpt_tb","ميزان المراجعة"],["rpt_exp","تحليل المصروفات الشهري"],["rpt_cc","موقف مركز تكلفة"] ];
 // مؤشرات النظام (System Indicators) — تحدد الأب الرئيسي لكل مجموعة حسابات حتى يتعرف النظام تلقائيًا
 const GL_IND_KEY = "ig_gl_indicators_v1";
 const GL_INDICATORS_DEF = [
@@ -5705,7 +5706,7 @@ async function glSwitchYear(yearId){
 }
 // استرجاع السنة المحفوظة
 try{ const saved=localStorage.getItem("ig_gl_active_year_v1"); if(saved) glActiveYearId=saved; }catch(e){}
-function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
+function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderIndicators():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():glRenderEntries();}
 
 // ============== موقف مركز تكلفة (Cost Center Position) ==============
 // المصدر: القيود المُرحّلة فقط — الحسابات من مؤشر «حساب المصروفات الرئيسي» (expense_root) وكل فروعه
@@ -6322,6 +6323,423 @@ function glSearchAccounts(){const q=prompt('ابحث بكود الحساب أو 
 function glRenderCenters(){const rows=glState.centers.map(a=>`<tr><td>${a.dimension_no}</td><td dir="ltr">${glEsc(a.center_code)}</td><td>${glEsc(a.center_name)}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddCenter()">إضافة مركز تكلفة</button>`:""}${glTable(["البُعد","الكود","الاسم","التصنيف","الحالة"],rows)}`;}
 function glRenderYears(){const yr=glState.years.map(y=>`<tr><td>${glEsc(y.year_code)}</td><td>${glEsc(y.year_name)}</td><td>${y.start_date}</td><td>${y.end_date}</td><td>${glEsc(y.status)}</td></tr>`).join("");const pr=glState.periods.map(p=>`<tr><td>${glEsc((glState.years.find(y=>y.id===p.fiscal_year_id)||{}).year_code||"")}</td><td>${p.period_no}</td><td>${glEsc(p.period_name)}</td><td>${p.start_date}</td><td>${p.end_date}</td><td>${glEsc(p.status)}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddYear()">إضافة سنة مالية</button> <button class="btn" onclick="glAddPeriod()">إضافة فترة</button>`:""}<h3>السنوات المالية</h3>${glTable(["الكود","الاسم","من","إلى","الحالة"],yr)}<h3 style="margin-top:18px">الفترات</h3>${glTable(["السنة","رقم","اسم الفترة","من","إلى","الحالة"],pr)}`;}
 function glRenderJournals(){const rows=glState.journals.map(j=>`<tr><td dir="ltr">${glEsc(j.journal_code)}</td><td>${glEsc(j.journal_name)}</td><td>${glEsc(j.description)}</td><td>${j.is_active?"نشطة":"موقوفة"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddJournal()">إضافة يومية</button>`:""}${glTable(["الكود","اسم اليومية","الوصف","الحالة"],rows)}`;}
+/* ============================================================
+   📥 استيراد قيود من Excel
+   أعمدة الملف (بالترتيب أو بالاسم):
+   التاريخ | رقم القيد | الحساب | مدين | دائن | شرح
+   - صفوف ليها نفس "رقم القيد" + نفس "التاريخ" بتتجمّع في قيد واحد
+   - "الحساب" ممكن يكون كود الحساب أو اسمه
+   - كل قيد لازم يكون متوازن (مجموع مدين = مجموع دائن)
+   - بيتحفظ كمسودة (status:draft) وبيظهر في شاشة "قيود يومية"
+============================================================ */
+window.glImportState = window.glImportState || { rows:[], parsed:null, journalId:null, fileName:"", busy:false };
+
+function glRenderImportEntries(){
+  if(!glCan("edit")) return `<div class="empty"><p>لا تملك صلاحية إضافة القيود.</p></div>`;
+  const S=window.glImportState, journals=(glState.journals||[]).filter(j=>j.is_active);
+  // اليومية بتتختار تلقائيًا (أول يومية نشطة) — المستخدم مش محتاج يختارها
+  if(!S.journalId && journals.length) S.journalId = String(journals[0].id);
+
+  let preview = "";
+  if(S.parsed){
+    const P = S.parsed;
+    const stats = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin:14px 0">
+      ${_glImpStat("عدد القيود", P.entries.length, "#1f4e8c")}
+      ${_glImpStat("عدد السطور", P.totalLines, "#1f4e8c")}
+      ${_glImpStat("قيود متوازنة ✓", P.okN, "#166534")}
+      ${_glImpStat("قيود فيها أخطاء", P.badN, P.badN?"#b91c1c":"#166534")}
+      ${_glImpStat("إجمالي مدين", (+P.totalDr).toFixed(2), "#92400e")}
+      ${_glImpStat("إجمالي دائن", (+P.totalCr).toFixed(2), "#92400e")}
+    </div>`;
+    const entriesTbl = P.entries.map((e,i)=>{
+      const stCls = e.errors.length ? "background:#fee2e2;color:#b91c1c" : (e.balanced ? "background:#dcfce7;color:#166534" : "background:#fef3c7;color:#92400e");
+      const stTxt = e.errors.length ? "❌ خطأ" : (e.balanced ? "✓ متوازن" : "⚠ غير متوازن");
+      const err = e.errors.length ? `<ul style="margin:4px 0 0;padding-inline-start:18px;color:#b91c1c;font-size:11px">${e.errors.map(x=>`<li>${glEsc(x)}</li>`).join("")}</ul>` : "";
+      const lines = e.lines.map(l=>{
+        const accInfo = l.accountId ? `<span style="color:#166534">✓ ${glEsc(l.accountCode)} — ${glEsc(l.accountName||"")}</span>` : `<span style="color:#b91c1c">❌ ${glEsc(l.rawAcc||"فارغ")}</span>`;
+        return `<tr><td class="num">${l.row}</td><td>${accInfo}</td><td class="num">${(+l.debit).toFixed(2)}</td><td class="num">${(+l.credit).toFixed(2)}</td><td>${glEsc(l.description||"")}</td></tr>`;
+      }).join("");
+      return `<div class="card" style="margin-bottom:12px"><div class="head" style="padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><strong style="color:var(--gold-text)">قيد ${i+1} — رقم ${glEsc(e.entryNo||"—")} — تاريخ ${glEsc(e.date||"—")}</strong>${e.rowsRange?`<span style="font-size:11px;color:var(--text-dim);background:#f1f5f9;padding:2px 8px;border-radius:999px">📍 سطر Excel: ${glEsc(e.rowsRange)}</span>`:""}<span class="chip" style="${stCls};padding:3px 10px;border-radius:999px;font-weight:800">${stTxt}</span><span style="margin-inline-start:auto;font-size:11px;color:var(--text-dim)">مدين: <b>${e.td.toFixed(2)}</b> / دائن: <b>${e.tc.toFixed(2)}</b></span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>سطر Excel</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>البيان</th></tr></thead><tbody>${lines}</tbody></table></div>${err?`<div style="padding:8px 14px">${err}</div>`:""}</div></div>`;
+    }).join("");
+    preview = `${stats}<div style="margin-top:10px">${entriesTbl}</div>`;
+  }
+
+  const curJ = journals.find(j=>String(j.id)===String(S.journalId));
+  const jInfo = curJ ? `<span style="font-size:11.5px;color:var(--text-dim)">📒 كل القيود هتُحفظ على اليومية: <b style="color:var(--gold-text)">${glEsc(String(curJ.journal_code))} — ${glEsc(String(curJ.journal_name||""))}</b></span>` : `<span style="font-size:11.5px;color:#b91c1c">⚠ مفيش يوميات نشطة — أضف يومية من تبويب «اليوميات» قبل الاستيراد.</span>`;
+  const loadErrBox = S.loadError ? `<div style="margin-bottom:10px;padding:10px 14px;background:#fef2f2;border:2px solid #dc2626;border-radius:9px;color:#991b1b"><div style="font-weight:800;margin-bottom:4px">❌ فشل تحميل الملف "${glEsc(S.fileName||"")}":</div><div style="font-size:12.5px;white-space:pre-line">${glEsc(S.loadError)}</div></div>` : "";
+  return `<div class="card" style="padding:14px">
+    <h3 style="margin:0 0 8px">📥 استيراد قيود من Excel</h3>
+    <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 12px">ارفع ملف Excel فيه الأعمدة: <b>التاريخ — رقم القيد — الحساب — مدين — دائن — شرح</b>. القيود هتُحفظ كمسودات، وتقدر تراجعها وتعدّلها وترحّلها من شاشة <b>«قيود يومية»</b>.</p>
+    ${loadErrBox}
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="btn ghost" onclick="glImportDownloadTemplate()">⬇ تحميل قالب Excel</button>
+      <label class="btn" style="cursor:pointer;margin:0">📂 اختر ملف Excel<input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="glImportFileChange(event)"></label>
+      ${S.fileName?`<span style="font-size:12px;color:var(--gold-text);font-weight:700">📄 ${glEsc(S.fileName)}</span>`:""}
+      ${S.parsed?`<button type="button" class="btn ghost" onclick="glImportReset()">✕ مسح</button>`:""}
+      <div style="margin-inline-start:auto;display:flex;gap:8px">
+        ${S.parsed && S.parsed.okN>0 ? `<button type="button" class="btn" ${S.busy?"disabled":""} onclick="glImportSave()">${S.busy?"جارٍ الحفظ...":"💾 حفظ القيود السليمة ("+S.parsed.okN+") كمسودات"}</button>` : ""}
+      </div>
+    </div>
+    <div style="margin-top:8px">${jInfo}</div>
+  </div>
+  <div style="margin-top:14px">${preview || `<div class="empty" style="padding:30px;text-align:center"><p>ارفع ملف Excel لعرض القيود هنا قبل الحفظ.</p></div>`}</div>`;
+}
+
+function _glImpStat(label, value, color){
+  return `<div class="card" style="padding:10px 16px;min-width:130px"><div style="font-size:11px;color:var(--text-dim)">${label}</div><div style="font-size:20px;font-weight:900;color:${color}">${value}</div></div>`;
+}
+
+function glImportReset(){
+  window.glImportState = { rows:[], parsed:null, journalId:window.glImportState.journalId||null, fileName:"", busy:false };
+  glRender();
+}
+
+async function glImportFileChange(ev){
+  const f=ev.target.files && ev.target.files[0]; if(!f) return;
+  if(!window.XLSX){ ev.target.value=""; return toast("مكتبة Excel غير متاحة","err"); }
+  const S=window.glImportState; S.fileName=f.name; S.loadError="";
+  try{
+    const buf=await f.arrayBuffer();
+    let wb; try{ wb=XLSX.read(buf,{type:"array",cellDates:true}); }
+    catch(e){ throw new Error("الملف مش Excel صحيح أو تالف — "+(e.message||e)); }
+    if(!wb.SheetNames||!wb.SheetNames.length) throw new Error("الملف ما فيهوش أي شيت");
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    if(!ws) throw new Error("الشيت الأول فاضي أو ما قدرناش نقراه");
+    let rows; try{ rows=XLSX.utils.sheet_to_json(ws,{defval:"",raw:false}); }
+    catch(e){ throw new Error("تعذر تحويل الشيت لصفوف — "+(e.message||e)); }
+    if(!rows.length) throw new Error("الشيت ما فيهوش أي صف بيانات (الهيدر فقط أو فاضي)");
+    // تحقق إن فيه أعمدة الهيدر الأساسية
+    const first=rows[0]||{}, keys=Object.keys(first).map(k=>String(k||"").trim().toLowerCase());
+    const needed=[["التاريخ","date"],["رقم القيد","entry no","entry_no","no","رقم"],["الحساب","account","account_code","code","الكود"],["مدين","debit","dr"],["دائن","credit","cr"]];
+    const missing=needed.filter(group=>!group.some(n=>keys.some(k=>k.indexOf(n.toLowerCase())>=0))).map(g=>g[0]);
+    if(missing.length) throw new Error("الملف ناقص أعمدة: "+missing.join("، ")+"\nلازم الهيدر يكون: التاريخ | رقم القيد | الحساب | مدين | دائن | شرح");
+    S.rows=rows; S.parsed=glImportParse(rows); S.loadError="";
+    if(!S.parsed.entries.length) toast("الملف اتقرأ بس ما لقيناش أي صفوف قيود — تأكد من البيانات","err");
+    else toast("✓ اتقرأ "+S.parsed.entries.length+" قيد / "+S.parsed.totalLines+" سطر — "+S.parsed.okN+" سليم، "+S.parsed.badN+" فيه أخطاء","ok");
+  }catch(e){
+    S.rows=[]; S.parsed=null;
+    S.loadError=String(e.message||e);
+    toast("❌ فشل تحميل الملف: "+S.loadError,"err");
+  }
+  ev.target.value="";
+  glRender();
+}
+
+/* تعرف اسم العمود بأي من المسميات المتداولة */
+function _glImpCol(row, names){
+  for(const n of names){ for(const k in row){ const kk=String(k||"").trim().toLowerCase(); if(kk===n.toLowerCase()) return row[k]; } }
+  for(const n of names){ for(const k in row){ const kk=String(k||"").trim().toLowerCase(); if(kk.indexOf(n.toLowerCase())>=0) return row[k]; } }
+  return "";
+}
+
+function _glImpParseDate(v){
+  if(!v) return "";
+  if(v instanceof Date){ const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,"0"),d=String(v.getDate()).padStart(2,"0"); return y+"-"+m+"-"+d; }
+  const s=String(v).trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // d/m/yyyy or d-m-yyyy
+  const m1=s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+  if(m1){ const d=m1[1].padStart(2,"0"),mo=m1[2].padStart(2,"0"); let y=m1[3]; if(y.length===2) y="20"+y; return y+"-"+mo+"-"+d; }
+  // Excel serial number
+  const n=parseFloat(s);
+  if(!isNaN(n) && n>10000 && n<80000){ const d=new Date(Math.round((n-25569)*86400000)); if(!isNaN(d.getTime())){ const y=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,"0"),dd=String(d.getDate()).padStart(2,"0"); return y+"-"+mo+"-"+dd; } }
+  return "";
+}
+
+function _glImpNum(v){ if(v===""||v==null) return 0; const n=parseFloat(String(v).replace(/[,\s]/g,"")); return isNaN(n)?0:n; }
+
+function _glImpFindAccount(raw){
+  const s=String(raw||"").trim(); if(!s) return null;
+  const accs=glState.accounts||[];
+  // 1) exact match by account_code
+  let a=accs.find(x=>String(x.account_code).trim()===s);
+  if(a) return a;
+  // 2) exact match by account_name
+  a=accs.find(x=>String(x.account_name||"").trim()===s);
+  if(a) return a;
+  // 3) starts with code
+  a=accs.find(x=>String(x.account_code).trim().startsWith(s));
+  if(a) return a;
+  // 4) contains in name
+  a=accs.find(x=>String(x.account_name||"").trim().indexOf(s)>=0);
+  return a||null;
+}
+
+function _glImpIsLeaf(a){
+  if(!a||!a.is_active||a.is_group||!a.allow_posting) return false;
+  const kids=(glState.accounts||[]).some(ch=>ch.is_active&&ch.parent_id===a.id);
+  return !kids;
+}
+
+function glImportParse(rows){
+  const groups=new Map(); // key: entryNo|date → lines
+  let rowIdx=1;
+  const parsed={entries:[], totalLines:0, totalDr:0, totalCr:0, okN:0, badN:0};
+  for(const r of rows){
+    rowIdx++; // row 1 is header
+    const date=_glImpParseDate(_glImpCol(r,["التاريخ","date","entry_date"]));
+    const entryNo=String(_glImpCol(r,["رقم القيد","entry no","entry_no","entrynumber","no","رقم","number"])||"").trim();
+    const accRaw=String(_glImpCol(r,["الحساب","الكود","account","account_code","code"])||"").trim();
+    const debit=_glImpNum(_glImpCol(r,["مدين","debit","dr"]));
+    const credit=_glImpNum(_glImpCol(r,["دائن","credit","cr"]));
+    const desc=String(_glImpCol(r,["شرح","البيان","description","desc","notes"])||"").trim();
+    if(!entryNo && !accRaw && !debit && !credit) continue; // صف فارغ
+    const key=(entryNo||"__"+rowIdx)+"|"+(date||"__");
+    if(!groups.has(key)) groups.set(key,{entryNo,date,lines:[]});
+    const acc=_glImpFindAccount(accRaw);
+    groups.get(key).lines.push({row:rowIdx, rawAcc:accRaw, accountId:acc&&_glImpIsLeaf(acc)?acc.id:"", accountCode:acc?acc.account_code:"", accountName:acc?acc.account_name:"", debit, credit, description:desc, accValid:!!(acc&&_glImpIsLeaf(acc))});
+  }
+  for(const g of groups.values()){
+    const td=g.lines.reduce((s,l)=>s+(+l.debit||0),0);
+    const tc=g.lines.reduce((s,l)=>s+(+l.credit||0),0);
+    const balanced=Math.abs(td-tc)<0.005 && td>0;
+    const errors=[];
+    const rowsStr = g.lines.map(l=>l.row).join("، ");
+    if(!g.date) errors.push("سطر "+rowsStr+": التاريخ فاضي أو بصيغة غير صحيحة (اكتبه YYYY-MM-DD مثل 2026-01-15)");
+    if(!g.entryNo) errors.push("سطر "+rowsStr+": رقم القيد فاضي");
+    const badLines=g.lines.filter(l=>!l.accValid);
+    if(badLines.length){
+      badLines.forEach(l=>{
+        const reason = !l.rawAcc ? "عمود الحساب فاضي" : (l.accountCode ? "الحساب "+l.accountCode+" مش حساب نهائي قابل للترحيل (حساب مجموعة أو موقوف)" : "الحساب \""+l.rawAcc+"\" مش موجود في دليل الحسابات");
+        errors.push("سطر "+l.row+": "+reason);
+      });
+    }
+    // سطور بدون مبالغ
+    const zeroLines = g.lines.filter(l=>(+l.debit||0)===0 && (+l.credit||0)===0);
+    if(zeroLines.length){
+      errors.push("سطر "+zeroLines.map(l=>l.row).join("، ")+": بدون مدين أو دائن");
+    }
+    // سطور فيها مدين ودائن في نفس الوقت
+    const bothLines = g.lines.filter(l=>(+l.debit||0)>0 && (+l.credit||0)>0);
+    if(bothLines.length){
+      errors.push("سطر "+bothLines.map(l=>l.row).join("، ")+": فيه قيمة في مدين ودائن سوا — لازم واحد منهم بس");
+    }
+    if(!balanced && !(td===0&&tc===0)) errors.push("القيد غير متوازن — مدين "+td.toFixed(2)+" ≠ دائن "+tc.toFixed(2)+" (فرق "+Math.abs(td-tc).toFixed(2)+")");
+    if(td===0&&tc===0) errors.push("القيد كله بدون مبالغ (كل السطور صفر)");
+    if(g.lines.length<2) errors.push("القيد لازم يكون فيه سطرين على الأقل (مدين + دائن)");
+    parsed.entries.push({entryNo:g.entryNo, date:g.date, lines:g.lines, td, tc, balanced, errors, rowsRange: g.lines.length?(g.lines[0].row+(g.lines.length>1?("-"+g.lines[g.lines.length-1].row):"")):""});
+    parsed.totalLines+=g.lines.length; parsed.totalDr+=td; parsed.totalCr+=tc;
+    if(errors.length) parsed.badN++; else parsed.okN++;
+  }
+  // رتب بالتاريخ ثم رقم القيد
+  parsed.entries.sort((a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.entryNo||'').localeCompare(String(b.entryNo||''),'en',{numeric:true}));
+  return parsed;
+}
+
+async function glImportSave(){
+  const S=window.glImportState; if(S.busy) return;
+  if(!glCan("edit")) return toast("لا تملك صلاحية إضافة القيود","err");
+  if(!S.parsed||!S.parsed.entries.length) return toast("مفيش قيود للحفظ","err");
+  // لو اليومية فاضية، خد أول يومية نشطة تلقائيًا
+  if(!S.journalId){
+    const firstJ=(glState.journals||[]).find(j=>j.is_active);
+    if(!firstJ) return toast("مفيش يوميات نشطة — أضف يومية من تبويب «اليوميات»","err");
+    S.journalId = String(firstJ.id);
+  }
+  const ok=S.parsed.entries.filter(e=>!e.errors.length);
+  if(!ok.length) return toast("مفيش قيود سليمة للحفظ","err");
+  const okc=await askConfirm(`هيتم حفظ ${ok.length} قيد كمسودات (status: draft) على اليومية المختارة. تقدر تراجعها وتعدّلها وترحّلها من شاشة «قيود يومية». هل تريد المتابعة؟`,{title:"حفظ القيود المستوردة",ok:"نعم، احفظ",cancel:"رجوع"});
+  if(!okc) return;
+  S.busy=true; glRender();
+  let savedN=0, failedN=0, errors=[];
+  const years=glState.years||[], periods=glState.periods||[];
+  for(let i=0;i<ok.length;i++){
+    const e=ok[i];
+    try{
+      const y=years.find(v=>v.status==='open'&&v.start_date<=e.date&&v.end_date>=e.date);
+      if(!y){ throw new Error("لا توجد سنة مالية مفتوحة تغطي "+e.date); }
+      const per=periods.find(v=>v.status==='open'&&v.fiscal_year_id===y.id&&v.start_date<=e.date&&v.end_date>=e.date);
+      if(!per){ throw new Error("لا توجد فترة مفتوحة تغطي "+e.date); }
+      // استخدم رقم القيد من الملف إذا ممكن، وإلا ولّد واحد شهري
+      let entryNo = String(e.entryNo||"").trim();
+      // تأكد ما فيش قيد بنفس الرقم في الـstate
+      if(entryNo && (glState.entries||[]).some(x=>String(x.entry_no)===entryNo)){
+        entryNo = glNextMonthlyEntryNo(e.date);
+      }
+      if(!entryNo) entryNo = glNextMonthlyEntryNo(e.date);
+      const entry = await glInsert('gl_entries',{
+        entry_no:entryNo, journal_id:S.journalId, fiscal_year_id:y.id, period_id:per.id,
+        entry_date:e.date, document_date:e.date,
+        description:"قيد مستورد من Excel — "+(e.entryNo||"")+(S.fileName?(" — "+S.fileName):""),
+        status:'draft', currency_code:'EGP', exchange_rate:1,
+        total_debit:e.td, total_credit:e.tc
+      });
+      const lines = e.lines.map((l,i)=>({
+        entry_id:entry.id, line_no:i+1, account_id:l.accountId,
+        description:l.description||"", debit:+l.debit||0, credit:+l.credit||0
+      }));
+      const lr = await sb.from('gl_entry_lines').insert(lines);
+      if(lr.error){ await sb.from('gl_entries').delete().eq('id',entry.id).eq('status','draft'); throw lr.error; }
+      savedN++;
+    }catch(err){
+      failedN++;
+      errors.push({
+        entryNo: e.entryNo,
+        rows: e.rowsRange || (e.lines||[]).map(l=>l.row).join("، "),
+        date: e.date,
+        msg: (err.message||String(err))
+      });
+    }
+  }
+  S.busy=false;
+  if(savedN) await glLoad();
+  const summary = `تم حفظ ${savedN} قيد كمسودة${failedN?(" — فشل "+failedN):""}`;
+  toast(summary, failedN?"err":"ok");
+  if(failedN){
+    const errMsg = summary+"\n\nتفاصيل الأخطاء:\n\n"+errors.slice(0,15).map((x,i)=>(i+1)+") سطر Excel ["+(x.rows||"؟")+"] — قيد رقم "+(x.entryNo||"؟")+" — "+(x.date||"")+"\n   ❌ "+x.msg).join("\n\n")+(errors.length>15?"\n\n…و "+(errors.length-15)+" خطأ آخر":"");
+    try{ _igDialog({title:"❌ أخطاء في حفظ القيود", msg:errMsg, ok:"حسنًا", single:true, danger:true}); }catch(_){}
+  }
+  if(savedN===ok.length) glImportReset(); else glRender();
+}
+
+/* ============================================================
+   ⚡ ترحيل / إلغاء ترحيل مجمع للقيود اليومية
+   - يعرض كل القيود (draft + posted) في النطاق المحدد
+   - فلتر بالتاريخ + اليومية + الحالة
+   - تحديد متعدد أو الكل في النطاق
+   - ترحيل مجمع للمسودات عبر gl_post_entry_authorized
+   - إلغاء ترحيل مجمع عبر gl_unpost_entry_authorized
+============================================================ */
+window.glBulk = window.glBulk || { from:"", to:"", journalId:"", status:"all", sel:{}, busy:false, prog:"" };
+function glBulkList(){
+  const B=window.glBulk;
+  return (glState.entries||[]).filter(e=>{
+    if(B.from && String(e.entry_date||"")<B.from) return false;
+    if(B.to && String(e.entry_date||"")>B.to) return false;
+    if(B.journalId && String(e.journal_id)!==String(B.journalId)) return false;
+    if(B.status==="draft" && e.status!=="draft") return false;
+    if(B.status==="posted" && e.status!=="posted") return false;
+    return true;
+  }).sort((a,b)=>String(a.entry_date||'').localeCompare(String(b.entry_date||''))||String(a.entry_no||'').localeCompare(String(b.entry_no||''),'en',{numeric:true}));
+}
+function glRenderBulkPost(){
+  if(!glCan("edit")) return `<div class="empty"><p>لا تملك صلاحية ترحيل القيود.</p></div>`;
+  const B=window.glBulk;
+  if(!B.from && !B.to){ const t=glDate(); B.from=t.slice(0,7)+"-01"; B.to=t; }
+  const list=glBulkList(), sel=B.sel||{};
+  const nSel=Object.keys(sel).filter(id=>list.find(e=>String(e.id)===id)).length;
+  const draftsInSel=Object.keys(sel).filter(id=>{ const e=list.find(x=>String(x.id)===id); return e&&e.status==="draft"; }).length;
+  const postedInSel=Object.keys(sel).filter(id=>{ const e=list.find(x=>String(x.id)===id); return e&&e.status==="posted"; }).length;
+  const draftsAll=list.filter(e=>e.status==="draft").length;
+  const postedAll=list.filter(e=>e.status==="posted").length;
+  // أزرار الترحيل: لو فيه محدد يستخدم المحدد، وإلا بيستخدم كل المسودات في النطاق
+  const toPost = nSel ? draftsInSel : draftsAll;
+  const toUnpost = nSel ? postedInSel : postedAll;
+  const jopts=`<option value="">— كل اليوميات —</option>`+(glState.journals||[]).map(j=>`<option value="${glEsc(String(j.id))}" ${String(j.id)===String(B.journalId)?"selected":""}>${glEsc(String(j.journal_code))} — ${glEsc(String(j.journal_name||""))}</option>`).join("");
+  const rows=list.slice(0,500).map(e=>{
+    const checked=sel[e.id]?"checked":"";
+    const j=(glState.journals||[]).find(x=>String(x.id)===String(e.journal_id));
+    const stChip = e.status==="posted" ? `<span class="chip" style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:999px;font-weight:800">مُرحّل ✓</span>` : `<span class="chip" style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:999px;font-weight:800">مسودة</span>`;
+    return `<tr><td style="text-align:center;width:34px"><input type="checkbox" ${checked} onchange="glBulkToggle('${glEsc(String(e.id))}',this.checked)"></td><td>${glEsc(e.entry_date||'')}</td><td><strong>${glEsc(e.entry_no||'')}</strong></td><td>${j?glEsc(String(j.journal_code||'')):""}</td><td>${glEsc(e.description||'').slice(0,80)}</td><td class="num">${(+e.total_debit||0).toFixed(2)}</td><td class="num">${(+e.total_credit||0).toFixed(2)}</td><td>${stChip}</td></tr>`;
+  }).join("");
+  return `<div class="card" style="padding:14px">
+    <h3 style="margin:0 0 10px">⚡ ترحيل / إلغاء ترحيل مجمع للقيود</h3>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+      <label>من تاريخ <input class="inp" type="date" value="${glEsc(B.from)}" onchange="glBulk.from=this.value;glBulk.sel={};glRender()"></label>
+      <label>إلى تاريخ <input class="inp" type="date" value="${glEsc(B.to)}" onchange="glBulk.to=this.value;glBulk.sel={};glRender()"></label>
+      <label>اليومية <select class="inp" onchange="glBulk.journalId=this.value;glBulk.sel={};glRender()">${jopts}</select></label>
+      <label>الحالة <select class="inp" onchange="glBulk.status=this.value;glBulk.sel={};glRender()">${[["all","الكل"],["draft","مسودات فقط"],["posted","مُرحّلة فقط"]].map(o=>`<option value="${o[0]}" ${B.status===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
+      <button type="button" class="btn ghost" onclick="glBulkToggleAll(true)">تحديد الكل في النطاق</button>
+      <button type="button" class="btn ghost" onclick="glBulkToggleAll(false)">مسح التحديد</button>
+      <div style="margin-inline-start:auto;display:flex;gap:8px">
+        <button type="button" class="btn" ${toPost&&!B.busy?"":"disabled"} onclick="glBulkPost()" title="ترحيل كل المسودات المحددة (أو كل المسودات في النطاق لو مفيش تحديد)">📥 ترحيل مجمع (${toPost})</button>
+        <button type="button" class="btn ghost" style="border-color:#dc2626;color:#b91c1c" ${toUnpost&&!B.busy?"":"disabled"} onclick="glBulkUnpost()" title="إلغاء ترحيل كل المرحّلة المحددة (أو كل المرحّلة في النطاق لو مفيش تحديد)">↶ إلغاء ترحيل مجمع (${toUnpost})</button>
+      </div>
+      <span id="glBulkProg" style="font-weight:800;color:var(--gold-text)">${glEsc(B.prog||"")}</span>
+    </div>
+    <div style="margin-top:8px;font-size:11.5px;color:var(--text-dim)">إجمالي القيود المعروضة: <b>${list.length}</b> — مسودات: <b>${draftsAll}</b> — مُرحّلة: <b>${postedAll}</b> ${nSel?` — محدد: <b>${nSel}</b>`:""}${list.length>500?` <span style="color:#b91c1c">— معروض أول 500 فقط، الترحيل بيشمل الكل</span>`:""}</div>
+  </div>
+  <div class="card" style="margin-top:10px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="width:34px"><input type="checkbox" ${list.length&&nSel===list.length?"checked":""} onchange="glBulkToggleAll(this.checked)"></th><th>التاريخ</th><th>رقم القيد</th><th>اليومية</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الحالة</th></tr></thead><tbody>${rows||'<tr><td colspan="8" style="text-align:center;padding:16px">لا توجد قيود في النطاق</td></tr>'}</tbody></table></div></div>`;
+}
+function glBulkToggle(id,on){ const B=window.glBulk; if(B.busy) return; B.sel=B.sel||{}; if(on) B.sel[id]=1; else delete B.sel[id]; glRender(); }
+function glBulkToggleAll(on){ const B=window.glBulk; if(B.busy) return; B.sel={}; if(on) glBulkList().forEach(e=>{B.sel[e.id]=1;}); glRender(); }
+
+async function glBulkPost(){
+  const B=window.glBulk; if(B.busy) return;
+  if(!glCan("edit")) return toast("لا تملك صلاحية الترحيل","err");
+  const list=glBulkList(), sel=B.sel||{};
+  const targets = Object.keys(sel).length
+    ? list.filter(e=>sel[e.id]&&e.status==="draft")
+    : list.filter(e=>e.status==="draft");
+  if(!targets.length) return toast("مفيش مسودات للترحيل","err");
+  const okc=await askConfirm(`هيتم ترحيل ${targets.length} قيد من المسودات. بعد الترحيل لا يُسمح بالتعديل أو الحذف. هل تريد المتابعة؟`,{title:"ترحيل مجمع",ok:"نعم، رحّل",cancel:"رجوع"});
+  if(!okc) return;
+  B.busy=true; glRender();
+  let okN=0, failN=0, errors=[];
+  const pe=()=>document.getElementById("glBulkProg");
+  for(let i=0;i<targets.length;i++){
+    const e=targets[i]; B.prog=`ترحيل ${i+1} / ${targets.length} — ${e.entry_no||""}`;
+    const ep=pe(); if(ep) ep.textContent=B.prog;
+    try{
+      const r=await sb.rpc("gl_post_entry_authorized",{p_entry_id:e.id});
+      if(r.error) throw r.error;
+      // تأكد إن القيد اتحدث فعلاً لـposted
+      const chk=await sb.from("gl_entries").select("status").eq("id",e.id).maybeSingle();
+      if(chk.data && chk.data.status!=="posted") throw new Error("الترحيل لم يكتمل");
+      okN++;
+    }catch(err){ failN++; errors.push({entryNo:e.entry_no, msg:(err.message||String(err))}); }
+  }
+  B.busy=false; B.prog=""; B.sel={};
+  await glLoad();
+  const summary=`انتهى الترحيل — تم ${okN} / فشل ${failN}`;
+  toast(summary, failN?"err":"ok");
+  if(failN){ try{ _igDialog({title:"أخطاء في الترحيل", msg:summary+"\n\n"+errors.slice(0,10).map(x=>(x.entryNo||"؟")+" — "+x.msg).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""), ok:"حسنًا",single:true}); }catch(_){} }
+}
+
+async function glBulkUnpost(){
+  const B=window.glBulk; if(B.busy) return;
+  if(!glCan("edit")) return toast("لا تملك صلاحية إلغاء الترحيل","err");
+  const list=glBulkList(), sel=B.sel||{};
+  const targets = Object.keys(sel).length
+    ? list.filter(e=>sel[e.id]&&e.status==="posted")
+    : list.filter(e=>e.status==="posted");
+  if(!targets.length) return toast("مفيش قيود مُرحّلة للإلغاء","err");
+  const okc=await askConfirm(`هيتم إلغاء ترحيل ${targets.length} قيد وحذفهم نهائياً من القيود اليومية (بدون قيد عكسي). القيود هترجع مسودات قابلة للتعديل/الحذف/الترحيل من جديد. هل تريد المتابعة؟`,{title:"إلغاء ترحيل مجمع",ok:"نعم، ألغِ الترحيل",danger:true,cancel:"رجوع"});
+  if(!okc) return;
+  B.busy=true; glRender();
+  let okN=0, failN=0, errors=[];
+  const pe=()=>document.getElementById("glBulkProg");
+  for(let i=0;i<targets.length;i++){
+    const e=targets[i]; B.prog=`إلغاء ${i+1} / ${targets.length} — ${e.entry_no||""}`;
+    const ep=pe(); if(ep) ep.textContent=B.prog;
+    try{
+      const id=e.id;
+      let rp=await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id});
+      let chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+      if(chk.data && chk.data.status==="posted"){
+        const u=await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted").select();
+        chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+        if(chk.data && chk.data.status==="posted") throw new Error("تعذر فك الترحيل في قاعدة البيانات"+((rp.error||u.error)?" ("+((rp.error||u.error).message||"")+")":""));
+      }
+      try{ await sb.from("gl_posting_sources").delete().eq("entry_id",id); }catch(_){}
+      okN++;
+    }catch(err){ failN++; errors.push({entryNo:e.entry_no, msg:(err.message||String(err))}); }
+  }
+  B.busy=false; B.prog=""; B.sel={};
+  await glLoad();
+  const summary=`انتهى إلغاء الترحيل — تم ${okN} / فشل ${failN}`;
+  toast(summary, failN?"err":"ok");
+  if(failN){ try{ _igDialog({title:"أخطاء في إلغاء الترحيل", msg:summary+"\n\n"+errors.slice(0,10).map(x=>(x.entryNo||"؟")+" — "+x.msg).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""), ok:"حسنًا",single:true}); }catch(_){} }
+}
+
+function glImportDownloadTemplate(){
+  if(!window.XLSX) return toast("مكتبة Excel غير متاحة","err");
+  const sampleRows=[
+    ["التاريخ","رقم القيد","الحساب","مدين","دائن","شرح"],
+    ["2026-01-15","110001","410203010001",1500,"","قيد افتتاحي — نقدية ببنك مصر"],
+    ["2026-01-15","110001","310101010001","",1500,"قيد افتتاحي — رأس المال"],
+    ["2026-01-20","110002","510101010001",250,"","مصروف كهرباء يناير"],
+    ["2026-01-20","110002","410203010001","",250,"سداد من بنك مصر"],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(sampleRows);
+  // عرض الأعمدة
+  ws['!cols']=[{wch:14},{wch:12},{wch:20},{wch:14},{wch:14},{wch:40}];
+  const wb=XLSX.utils.book_new(); wb.Workbook={Views:[{RTL:true}]};
+  XLSX.utils.book_append_sheet(wb,ws,"قيود");
+  XLSX.writeFile(wb,"قالب_استيراد_قيود.xlsx");
+  toast("✓ تم تحميل القالب — املأه ثم ارفعه","ok");
+}
+
 // توليد رقم قيد شهري: MMNNNN (مثلاً نوفمبر = 110001, 110002, ...)
 function glNextMonthlyEntryNo(date){
   const d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : glDate();
@@ -10392,6 +10810,7 @@ const masterTabs = [
   { id:"banks", key:"banks", label:"البنوك", icon:"🏦" },
   { id:"safes", key:"safes", label:"الخزائن", icon:"🗄" },
   { id:"sysInd", key:"sysInd", label:"مؤشرات النظام", icon:"🎚" },
+  { id:"bankInd", key:"bankInd", label:"مؤشرات البنوك", icon:"🏦" },
   { id:"screenNames", key:"screenNames", label:"تقارير وشاشات البرنامج", icon:"🏷" },
   { id:"companies", key:"companies", label:"الشركات", icon:"🏢" },
 ];
@@ -10410,8 +10829,8 @@ const masterScopes = {
   suppSys:  { label:"بيانات الموردين الأساسية",  crumb:"الموردين وتصنيفهم", tabs:["suppliers","supplierClasses"] },
   items:    { label:"بيانات الأصناف الأساسية",   crumb:"الأنواع وأنواع الاسمنت وحالات التعتيق", tabs:["types","cementTypes","statuses"] },
   treasury: { label:"بيانات الخزينة الأساسية",   crumb:"الخزائن",  tabs:["safes"] },
-  banking:  { label:"بيانات البنوك الأساسية",    crumb:"البنوك",   tabs:["banks"] },
-  system:   { label:"مؤشرات النظام",             crumb:"الحسابات الوسيطة وفلاجات الدورة", tabs:["sysInd"] },
+  banking:  { label:"بيانات البنوك الأساسية",    crumb:"البنوك ومؤشرات البنوك",   tabs:["banks","bankInd"] },
+  system:   { label:"مؤشرات النظام",             crumb:"فلاجات الدورة ويوميات الخزينة", tabs:["sysInd"] },
   company:  { label:"الشركات", crumb:"كود كل شركة وصلاحيات المستخدمين عليها", tabs:["companies"] },
   names:    { label:"تقارير وشاشات البرنامج",    crumb:"أسماء كل الشاشات والتقارير وتغيير مسمياتها", tabs:["screenNames"] }
 };
@@ -10432,6 +10851,7 @@ function viewMaster(){
 
   const tab = allowed.find(t=>t.id===currentTab) || allowed[0];
   if(tab.id==="sysInd" && typeof chqSysIndView==="function") return chqSysIndView(tabs);
+  if(tab.id==="bankInd" && typeof chqBankIndView==="function") return chqBankIndView(tabs);
   if(tab.id==="screenNames") return viewScreenNames(tabs);
   if(tab.id==="companies") return viewCompanies(tabs);
   const items = state[tab.key] || [];
@@ -10643,7 +11063,7 @@ document.addEventListener('click',e=>{ if(!e.target.closest('.md-acc')) mdAccClo
   window.mdAccFilter=function(id){ _f(id); const res=document.getElementById(id+'_res'); if(res) setActive(res,0); };
 })();
 
-function bindMaster(){ if(currentTab==="companies") coLoad(); if(currentTab==="screenNames") snRender(); if(currentTab==="sysInd" && typeof txJournalSelectsLoad==="function") txJournalSelectsLoad(); }
+function bindMaster(){ if(currentTab==="companies") coLoad(); if(currentTab==="screenNames") snRender(); if((currentTab==="sysInd"||currentTab==="bankInd") && typeof txJournalSelectsLoad==="function") txJournalSelectsLoad(); }
 
 // ================= المخازن: شجرة مخازن بنفس أسلوب دليل الحسابات + ربط كل مخزن بحساب (آخر مستوى) =================
 // التخزين في state.warehouses ← جدول warehouses في Supabase (كان قديمًا داخل settings.warehouses ويتم ترحيله تلقائيًا).
@@ -14993,7 +15413,72 @@ function viewSupplyBulk(){
     <label>من أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.ofrom)}" oninput="supBulk.ofrom=this.value.trim();renderSupplyBulk()"></label>
     <label>إلى أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.oto)}" oninput="supBulk.oto=this.value.trim();renderSupplyBulk()"></label>
     <button id="sbPost" type="button" class="btn" onclick="supBulkRun()">📥 ترحيل</button>
+    <button id="sbUnpost" type="button" class="btn ghost" style="border-color:#dc2626;color:#b91c1c" onclick="supBulkUnpost()" title="إلغاء ترحيل كل المشتريات والمبيعات المُرحّلة للأوامر في النطاق">↶ إلغاء الترحيل المجمع</button>
     <span id="sbProg" style="font-weight:800;color:var(--gold-text)"></span></div></div><div id="sbBody"></div>`;
+}
+/* ============================================================
+   إلغاء ترحيل مجمع لبيانات التوريد: بيدور على كل الأوامر في النطاق
+   اللي ليها قيد مشتريات أو مبيعات مُرحّل، ويلغي ترحيلهم واحد ورا التاني.
+============================================================ */
+async function supBulkUnpostOne(orderNo, kind){
+  const id=(window.supPostIds||{})[orderNo+"|"+kind];
+  if(!id) return {ok:false, msg:"القيد غير موجود في الخريطة"};
+  try{
+    let r=await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:id});
+    let chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+    if(chk.data&&chk.data.status==="posted"){
+      const u=await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",id).eq("status","posted").select();
+      chk=await sb.from("gl_entries").select("status").eq("id",id).maybeSingle();
+      if(chk.data&&chk.data.status==="posted") return {ok:false, msg:"تعذر فك الترحيل في قاعدة البيانات"+((r.error||u.error)?" ("+((r.error||u.error).message||"")+")":"")};
+    }
+    if(chk.data){
+      const dl=await sb.from("gl_entry_lines").delete().eq("entry_id",id); if(dl.error) return {ok:false,msg:dl.error.message};
+      const de=await sb.from("gl_entries").delete().eq("id",id).eq("status","draft"); if(de.error) return {ok:false,msg:de.error.message};
+    }
+    try{ await sb.from("gl_posting_sources").delete().eq("entry_id",id); }catch(_){}
+    const dp=await sb.from("sale_order_postings").delete().eq("order_no",orderNo).eq("kind",kind);
+    if(dp.error) return {ok:false, msg:dp.error.message};
+    return {ok:true};
+  }catch(err){ return {ok:false, msg:err.message||String(err)}; }
+}
+async function supBulkUnpost(){
+  const B=window.supBulk; if(B.busy) return;
+  if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
+  await supEnsurePostMap(true);
+  const list=supBulkList();
+  // ابني قايمة الأوامر المُرحّلة (مشتريات + مبيعات بشكل منفصل)
+  const todo=[];
+  list.forEach(o=>{
+    if(window.supPostMap[o.orderNo+"|purchase"]) todo.push({orderNo:o.orderNo, kind:"purchase"});
+    if(window.supPostMap[o.orderNo+"|sales"])    todo.push({orderNo:o.orderNo, kind:"sales"});
+  });
+  if(!todo.length) return toast("لا توجد قيود مُرحّلة في النطاق قابلة للإلغاء","err");
+  const nOrd=new Set(todo.map(x=>x.orderNo)).size;
+  const nPur=todo.filter(x=>x.kind==="purchase").length;
+  const nSal=todo.filter(x=>x.kind==="sales").length;
+  const msg=`سيتم إلغاء ترحيل ${todo.length} قيد (${nPur} مشتريات / ${nSal} مبيعات) من ${nOrd} أمر بيع في النطاق.\n\n- كل قيد هيتحذف نهائياً من القيود اليومية (بدون قيد عكسي)\n- الأوامر هترجع غير مُرحّلة وتقدر ترحّلها من جديد\n- العملية مش ممكن التراجع عنها\n\nهل تريد المتابعة؟`;
+  const okc=await askConfirm(msg,{title:"إلغاء الترحيل المجمع — بيانات التوريد",ok:"نعم، ألغِ الترحيل",danger:true,cancel:"رجوع"});
+  if(!okc) return;
+  B.busy="unpost"; renderSupplyBulk();
+  let okN=0, errN=0; const errors=[];
+  const pe=document.getElementById("sbProg");
+  for(let i=0;i<todo.length;i++){
+    const t=todo[i];
+    if(pe) pe.textContent="إلغاء "+(i+1)+" / "+todo.length+" — "+t.orderNo+" ("+(t.kind==="purchase"?"مشتريات":"مبيعات")+")";
+    const r=await supBulkUnpostOne(t.orderNo, t.kind);
+    if(r.ok) okN++;
+    else{ errN++; errors.push({orderNo:t.orderNo, msg:(t.kind==="purchase"?"مشتريات: ":"مبيعات: ")+(r.msg||"فشل")}); }
+  }
+  B.busy=false; if(pe) pe.textContent="";
+  window._supPostMapAt=0; await supEnsurePostMap(true);
+  renderSupplyBulk();
+  const summary=`انتهى إلغاء الترحيل — تم إلغاء ${okN} / فشل ${errN}`;
+  toast(summary, errN?"err":"ok");
+  if(errN){
+    // نحفظ الأخطاء مؤقتًا في res علشان نقدر نصدرها PDF لو احتجنا
+    B.res={pur:0,sal:0,err:errN,skip:0,errors};
+    try{ if(typeof chqDialog==="function") chqDialog("warn","أخطاء في إلغاء الترحيل", summary+"\n\n"+errors.slice(0,10).map(e=>e.orderNo+" — "+e.msg).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":"")); }catch(_){}
+  }
 }
 function renderSupplyBulk(){
   const B=window.supBulk, box=document.getElementById("sbBody"); if(!box) return;
@@ -15001,7 +15486,8 @@ function renderSupplyBulk(){
   const st=(o,k)=>window.supPostMap[o.orderNo+"|"+k]?'<span class="chip ok">مُرحّل ✓</span>':'<span class="muted">—</span>';
   const rows=list.map((o,i)=>{const ds=[...o.dates].sort(), d=ds.length?(ds[0]===ds[ds.length-1]?ds[0]:ds[0]+" ← "+ds[ds.length-1]):"—";
     return `<tr><td class="num">${i+1}</td><td><strong style="color:var(--gold-text)">${escapeHtml(o.orderNo)}</strong></td><td>${escapeHtml(d)}</td><td>${escapeHtml(o.supplier||"—")}</td><td>${escapeHtml(o.customer||"—")}</td><td>${st(o,"purchase")}</td><td>${st(o,"sales")}</td></tr>`;}).join("");
-  const pb=document.getElementById("sbPost"); if(pb){pb.style.display=can_?"":"none";pb.disabled=B.busy||!list.length;pb.textContent=B.busy?"جارٍ الترحيل…":"📥 ترحيل";}
+  const pb=document.getElementById("sbPost"); if(pb){pb.style.display=can_?"":"none";pb.disabled=B.busy||!list.length;pb.textContent=B.busy==="unpost"?"⏳":B.busy?"جارٍ الترحيل…":"📥 ترحيل";}
+  const ub=document.getElementById("sbUnpost"); if(ub){ub.style.display=can_?"":"none"; const anyPosted=list.some(o=>window.supPostMap[o.orderNo+"|purchase"]||window.supPostMap[o.orderNo+"|sales"]); ub.disabled=B.busy||!anyPosted; ub.textContent=B.busy==="unpost"?"جارٍ الإلغاء…":"↶ إلغاء الترحيل المجمع";}
   const cnt=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${[["ترحيل مشتريات",r.pur,"var(--ok)"],["ترحيل مبيعات",r.sal,"var(--ok)"],["أوامر فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)"],["أوامر مترحّلة سابقًا (تخطّت)",r.skip,"var(--text-dim)"]].map(x=>`<div class="card" style="padding:10px 16px;min-width:150px"><div style="font-size:12px;color:var(--text-dim)">${x[0]}</div><div style="font-size:22px;font-weight:800;color:${x[2]}">${x[1]}</div></div>`).join("")}</div>`:"";
   const err=r&&r.errors.length?`<div class="card" style="padding:12px;margin-top:6px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong style="color:var(--danger)">تقرير الأخطاء (${r.errors.length})</strong><button type="button" class="btn ghost" onclick="supBulkErrPdf()">⬇ تصدير PDF</button></div><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>رقم أمر البيع</th><th>نوع الخطأ</th></tr></thead><tbody>${r.errors.map(e=>`<tr><td><strong>${escapeHtml(e.orderNo)}</strong></td><td style="color:var(--danger)">${escapeHtml(e.msg)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
   box.innerHTML=`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>#</th><th>أمر البيع</th><th>تاريخ التوريد</th><th>المورد</th><th>العميل</th><th>مشتريات</th><th>مبيعات</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;padding:18px" class="muted">لا توجد أوامر في النطاق</td></tr>'}</tbody></table></div><div style="padding:8px 12px;font-weight:700">عدد الأوامر: ${list.length}</div></div>${cnt}${err}`;
@@ -27362,34 +27848,14 @@ function chqCfg(){
   const s=state.settings||{}, f=(k,d)=>s[k]===undefined?d:!!s[k];
   return { nrAcc:s.chqNrAccId||"", npAcc:s.chqNpAccId||"", cycleIn:f("chqCycleIn",true), cycleOut:f("chqCycleOut",true), stmtNR:f("chqStmtNR",false), stmtUC:f("chqStmtUC",false), stmtNP:f("chqStmtNP",false) };
 }
+/* ========== مؤشرات النظام (الخزينة فقط) — مؤشرات البنوك اتنقلت لنظام البنوك ========== */
 function chqSysIndView(tabsHtml){
   const c=chqCfg(), s=state.settings||{};
   const cb=(id,label,on)=>`<label class="chq-flag"><input type="checkbox" id="${id}" ${on?"checked":""}><span>${label}</span></label>`;
   const jrSel=(id,key)=>`<select class="inp" id="${id}" style="width:100%"><option value="">— اختر اليومية —</option>${s[key]?`<option value="${escapeAttr(String(s[key]))}" selected>${escapeHtml(String(s[key]))}</option>`:""}</select>`;
-  return `<div class="page-head"><h2>مؤشرات النظام</h2></div>
+  return `<div class="page-head"><h2>مؤشرات النظام — الخزينة</h2></div>
   <div style="max-width:820px">
 
-    <!-- ============ 🏦 مؤشرات البنوك ============ -->
-    <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #1f4e8c;border-radius:12px;background:linear-gradient(180deg,#f0f6ff,#fafcff)">
-      <div style="font-weight:900;color:#1f4e8c;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #cfdcee">🏦 مؤشرات البنوك</div>
-
-      <div class="chq-ind-card"><h4>🎚 الحسابان الوسيطان للشيكات</h4><p>بيتختاروا من الحسابات النهائية في دليل الحسابات، وبيُستخدموا في دورة ترحيل الشيكات على البنوك.</p>
-        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
-          ${mdAccHtml("chqNr",{accountId:c.nrAcc,accountCode:s.chqNrAccCode,accountName:s.chqNrAccName},"شيكات تحت التحصيل أوراق قبض")}
-          ${mdAccHtml("chqNp",{accountId:c.npAcc,accountCode:s.chqNpAccCode,accountName:s.chqNpAccName},"شيكات تحت التحصيل أوراق دفع")}
-        </div>
-      </div>
-
-      <div class="chq-ind-card"><h4>📒 البنوك — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل/دفعة/تحويل في شاشة <b>«ترحيل مجمع للبنوك»</b> (الشيكات والتحويلات البنكية).</p>
-        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
-          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية تحصيلات البنوك</label>${jrSel("sysJrBankIn","txJournalBankIn")}</div>
-          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية مدفوعات البنوك</label>${jrSel("sysJrBankOut","txJournalBankOut")}</div>
-        </div>
-        <p style="font-size:11.5px;color:var(--text-dim);margin-top:6px">لو اليوميات دي فاضية، السيستم هيستخدم يوميات الخزينة اللي تحت كـfallback.</p>
-      </div>
-    </div>
-
-    <!-- ============ 💰 مؤشرات الخزينة ============ -->
     <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #92400e;border-radius:12px;background:linear-gradient(180deg,#fffaf0,#fffdf6)">
       <div style="font-weight:900;color:#92400e;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #e6c46b">💰 مؤشرات الخزينة</div>
 
@@ -27406,21 +27872,63 @@ function chqSysIndView(tabsHtml){
       </div>
     </div>
 
-    <p style="font-size:12px;color:var(--text-dim)">بنكا «أوراق قبض» و«أوراق دفع» موجودان في تبويب <b>البنوك</b> — اربط كل واحد بحسابه من هناك.</p>
-    <button class="btn" onclick="chqSysIndSave()">حفظ المؤشرات</button>
+    <p style="font-size:12px;color:var(--text-dim)">🏦 <b>مؤشرات البنوك</b> (الحسابان الوسيطان للشيكات + يوميات ترحيل البنوك) اتنقلت لـ: <b>نظام البنوك ← البيانات الأساسية للبنوك ← مؤشرات البنوك</b>.</p>
+    <button class="btn" onclick="chqSysIndSave()">حفظ مؤشرات الخزينة</button>
   </div>`;
 }
+
+/* ========== مؤشرات البنوك (الجديدة — جوه نظام البنوك) ========== */
+function chqBankIndView(tabsHtml){
+  const c=chqCfg(), s=state.settings||{};
+  const jrSel=(id,key)=>`<select class="inp" id="${id}" style="width:100%"><option value="">— اختر اليومية —</option>${s[key]?`<option value="${escapeAttr(String(s[key]))}" selected>${escapeHtml(String(s[key]))}</option>`:""}</select>`;
+  return `<div class="page-head"><h2>مؤشرات البنوك</h2></div>
+  <div style="max-width:820px">
+
+    <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #1f4e8c;border-radius:12px;background:linear-gradient(180deg,#f0f6ff,#fafcff)">
+      <div style="font-weight:900;color:#1f4e8c;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #cfdcee">🏦 مؤشرات البنوك</div>
+
+      <div class="chq-ind-card"><h4>🎚 الحسابان الوسيطان للشيكات</h4><p>بيتختاروا من الحسابات النهائية في دليل الحسابات، وبيُستخدموا في دورة ترحيل الشيكات على البنوك.</p>
+        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
+          ${mdAccHtml("chqNr",{accountId:c.nrAcc,accountCode:s.chqNrAccCode,accountName:s.chqNrAccName},"شيكات تحت التحصيل أوراق قبض")}
+          ${mdAccHtml("chqNp",{accountId:c.npAcc,accountCode:s.chqNpAccCode,accountName:s.chqNpAccName},"شيكات تحت التحصيل أوراق دفع")}
+        </div>
+      </div>
+
+      <div class="chq-ind-card"><h4>📒 البنوك — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل/دفعة/تحويل في شاشة <b>«ترحيل مجمع للبنوك»</b> (الشيكات والتحويلات البنكية).</p>
+        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية تحصيلات البنوك</label>${jrSel("sysJrBankIn","txJournalBankIn")}</div>
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية مدفوعات البنوك</label>${jrSel("sysJrBankOut","txJournalBankOut")}</div>
+        </div>
+        <p style="font-size:11.5px;color:var(--text-dim);margin-top:6px">لو اليوميات دي فاضية، السيستم هيستخدم يوميات الخزينة كـfallback (من: مؤشرات النظام ← الخزينة).</p>
+      </div>
+    </div>
+
+    <p style="font-size:12px;color:var(--text-dim)">بنكا «أوراق قبض» و«أوراق دفع» موجودان في تبويب <b>البنوك</b> — اربط كل واحد بحسابه من هناك. <br>💰 <b>فلاجات دورة الشيكات ويوميات الخزينة النقدية</b> موجودين في: <b>مؤشرات النظام (الخزينة)</b>.</p>
+    <button class="btn" onclick="chqBankIndSave()">حفظ مؤشرات البنوك</button>
+  </div>`;
+}
+
+/* حفظ مؤشرات الخزينة (الفلاجات + يوميات الخزينة النقدية) */
 function chqSysIndSave(){
   if(!can("master","edit")) return toast("لا تملك صلاحية تعديل البيانات الأساسية","err");
-  const a=mdAccRead("chqNr"), b=mdAccRead("chqNp"), s=state.settings;
+  const s=state.settings;
+  const ci=document.getElementById("chqCycleIn"), co=document.getElementById("chqCycleOut");
+  if(ci) s.chqCycleIn=!!ci.checked; if(co) s.chqCycleOut=!!co.checked;
+  const _ji=document.getElementById("sysJrIn"), _jo=document.getElementById("sysJrOut");
+  if(_ji) s.txJournalIn=_ji.value; if(_jo) s.txJournalOut=_jo.value;
+  saveState(); toast("✓ تم حفظ مؤشرات الخزينة","ok");
+}
+
+/* حفظ مؤشرات البنوك (الحسابان الوسيطان + يوميات البنوك) */
+function chqBankIndSave(){
+  if(!can("master","edit")) return toast("لا تملك صلاحية تعديل البيانات الأساسية","err");
+  const s=state.settings;
+  const a=mdAccRead("chqNr"), b=mdAccRead("chqNp");
   s.chqNrAccId=a.accountId; s.chqNrAccCode=a.accountCode; s.chqNrAccName=a.accountName;
   s.chqNpAccId=b.accountId; s.chqNpAccCode=b.accountCode; s.chqNpAccName=b.accountName;
-  s.chqCycleIn=!!document.getElementById("chqCycleIn")?.checked; s.chqCycleOut=!!document.getElementById("chqCycleOut")?.checked;
-  const _ji=document.getElementById("sysJrIn"), _jo=document.getElementById("sysJrOut");
   const _jbi=document.getElementById("sysJrBankIn"), _jbo=document.getElementById("sysJrBankOut");
-  if(_ji) s.txJournalIn=_ji.value; if(_jo) s.txJournalOut=_jo.value;
   if(_jbi) s.txJournalBankIn=_jbi.value; if(_jbo) s.txJournalBankOut=_jbo.value;
-  saveState(); toast("✓ تم حفظ مؤشرات النظام","ok");
+  saveState(); toast("✓ تم حفظ مؤشرات البنوك","ok");
 }
 function chqSettingsCard(){
   const c=chqCfg(), cb=(id,l,on)=>`<label class="chq-flag"><input type="checkbox" id="${id}" ${on?"checked":""}><span>${l}</span></label>`;
