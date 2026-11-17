@@ -3025,12 +3025,25 @@ function fromRow(cfg, r){
   return o;
 }
 
+/* متابعة التحميل: بتعرض إيه اللي لسه بيتحمّل وكام ثانية عدّت (عشان لو علّق على الموبايل نعرف فين) */
+const _ldPend=new Set(); let _ldT0=0, _ldTimer=null;
+function _ldShow(){
+  const sec=Math.round((Date.now()-_ldT0)/1000), left=[..._ldPend].join("، ");
+  const msg="جاري تحميل البيانات… ("+sec+" ث)"+(left&&sec>=4?" — بانتظار: "+left:"");
+  loginErr(msg); const bt=document.querySelector("#bootLoader .bl-txt"); if(bt) bt.textContent=msg;
+}
+function _ldTrack(label,pr){
+  _ldPend.add(label);
+  if(!_ldTimer){ _ldT0=Date.now(); _ldTimer=setInterval(_ldShow,1000); }
+  const done=()=>{ _ldPend.delete(label); if(!_ldPend.size&&_ldTimer){ clearInterval(_ldTimer); _ldTimer=null; } };
+  return Promise.resolve(pr).then(v=>{ done(); return v; },e=>{ done(); console.warn("تعذر تحميل: "+label,e); throw e; });
+}
 async function loadMaster(admin){
   const kinds = MASTER_KINDS;
-  const [res, st] = await Promise.all([
+  const [res, st] = await _ldTrack("البيانات الأساسية",Promise.all([
     Promise.all(kinds.map(k=>sb.from(MASTER_TABLES[k].t).select("*").order("sort"))),
     sb.from("settings").select("data").eq("id",1).maybeSingle()
-  ]);
+  ]));
   let whMigrate=false;
   res.forEach((r,i)=>{
     const k=kinds[i];
@@ -3065,7 +3078,7 @@ async function loadMaster(admin){
       if(!pr.error && pr.data) state.users = pr.data.map(mapProfile);
       if(!al.error && al.data) state.auditLog = al.data.reverse().map(r=>({ t:new Date(r.ts).getTime(), u:r.user_no, n:r.user_name, type:r.type, d:r.detail }));
     }) : Promise.resolve();
-  await Promise.all([ adminP, loadDocs(), igPurchaseFetchAll(), supLoadPaymentPlansFromSupabase(), txLoadTreasuryFromDb(), loadQuotesFromSupabase(), loadOpeningFromSupabase(), loadOrderTermsFromSupabase() ]);
+  await Promise.all([ _ldTrack("المستخدمين",adminP), _ldTrack("البوالص وأوامر البيع",loadDocs()), _ldTrack("المشتريات",igPurchaseFetchAll()), _ldTrack("خطط السداد",supLoadPaymentPlansFromSupabase()), _ldTrack("الخزينة",txLoadTreasuryFromDb()), _ldTrack("عروض الأسعار",loadQuotesFromSupabase()), _ldTrack("الأرصدة الافتتاحية",loadOpeningFromSupabase()), _ldTrack("شروط السداد",loadOrderTermsFromSupabase()) ]);
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
   if(whMigrate){ state.settings.warehouses=[]; lastSnaps.warehouses="__migrate__"; lastSnaps.settings="__migrate__"; }   // يرفع المخازن القديمة للجدول الجديد أول مرة ويفضّي النسخة القديمة من الإعدادات
@@ -3943,7 +3956,7 @@ let loginBusy = false;
 async function startSessionInner(user, restored){
   const _lgTo=(pr,ms,what)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error("انتهت مهلة "+what+" — تأكد من الإنترنت وجرّب تاني")),ms))]);
   loginErr("جاري التحقق من الحساب...");
-  let p; try{ p = await _lgTo(sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle(),25000,"قراءة الحساب"); }catch(e){ try{ await sb.auth.signOut(); }catch(_){} loginErr(e.message||String(e)); return false; }
+  let p; try{ p = await _lgTo(sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle(),90000,"قراءة الحساب"); }catch(e){ try{ await sb.auth.signOut(); }catch(_){} loginErr(e.message||String(e)); return false; }
   if(p.error || !p.data){ await sb.auth.signOut(); loginErr("تعذر إكمال الدخول — راجع المدير"); return false; }
   if(!p.data.active){ await sb.auth.signOut(); loginErr("هذا الحساب موقوف — راجع المدير"); return false; }
   try{ const ac=await sb.rpc("company_access_check",{p_company:CUR_CO}); if(!ac.error&&ac.data===false){ await sb.auth.signOut(); loginErr("غير مصرح لك بالدخول على هذه الشركة — اختر شركة أخرى"); return false; } }catch(e){}
@@ -3951,7 +3964,7 @@ async function startSessionInner(user, restored){
   state.users = [me]; securityMigrate(state);
   currentUser = { no:me.no, name:me.name };
   loginErr("جاري تحميل البيانات...");
-  try{ await _lgTo(loadMaster(me.role==="admin"),60000,"تحميل البيانات"); }
+  try{ await _lgTo(loadMaster(me.role==="admin"),300000,"تحميل البيانات"); }
   catch(e){ await sb.auth.signOut(); currentUser = null; masterLoaded = false; loginErr("فشل تحميل البيانات: "+(e.message||e)); return false; }
   const u = state.users.find(x=>x.no===me.no) || me;
   enterApp(u, restored);
@@ -4153,18 +4166,20 @@ document.addEventListener("DOMContentLoaded",()=>{
   try{ if(typeof showBoot==="function") showBoot("جارى التحقق من الجلسة…"); }catch(_){}
   const _revealLogin=()=>{ const lg=document.getElementById("login"); if(lg){ lg.style.visibility="visible"; if(lg.style.display==="none") lg.style.display="flex"; } try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} };
   // لو لأى سبب الـboot فضل مفتوح أكتر من 8 ثوانى، أظهر اللوجن علشان المستخدم ما يعلّقش
-  const _bootWatchdog=setTimeout(()=>{ const app=document.getElementById("app"); if(!app||app.style.display!=="block") _revealLogin(); },8000);
+  const _bootWatchdog=setTimeout(()=>{ const app=document.getElementById("app"); if(window._igRestoring) return; if(!app||app.style.display!=="block") _revealLogin(); },8000);
   sb.auth.getSession().then(async r=>{
     if(r.data && r.data.session){
       let ok=false;
+      window._igRestoring=true;
       try{ ok = await startSession(r.data.session.user,true); }catch(e){ ok=false; }
+      window._igRestoring=false;
       clearTimeout(_bootWatchdog);
       if(!ok) _revealLogin();
       else { try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} }
     } else { clearTimeout(_bootWatchdog); _revealLogin(); }
   }).catch(()=>{ clearTimeout(_bootWatchdog); _revealLogin(); });
   // ضمان ثانوى (مهلة قصيرة فى حالة عدم وجود جلسة أصلاً)
-  setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); },2500);
+  setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(window._igRestoring) return; if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); },2500);
   // رقم المستخدم وكلمة المرور (لو "تذكّر" مفعّل) من آخر دخول ناجح
   restoreSavedLogin();
   try{ const n0=parseInt(noInp?.value,10); if(n0>0&&((lockGet()[n0]||{}).until||0)>Date.now()) lgLockCountdown(n0); }catch(e){}
