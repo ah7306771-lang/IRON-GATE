@@ -3908,14 +3908,17 @@ async function checkBackupReminder(){
 }
 let loginBusy = false;
 async function startSessionInner(user, restored){
-  const p = await sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle();
+  const _lgTo=(pr,ms,what)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error("انتهت مهلة "+what+" — تأكد من الإنترنت وجرّب تاني")),ms))]);
+  loginErr("جاري التحقق من الحساب...");
+  let p; try{ p = await _lgTo(sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle(),25000,"قراءة الحساب"); }catch(e){ try{ await sb.auth.signOut(); }catch(_){} loginErr(e.message||String(e)); return false; }
   if(p.error || !p.data){ await sb.auth.signOut(); loginErr("تعذر إكمال الدخول — راجع المدير"); return false; }
   if(!p.data.active){ await sb.auth.signOut(); loginErr("هذا الحساب موقوف — راجع المدير"); return false; }
   try{ const ac=await sb.rpc("company_access_check",{p_company:CUR_CO}); if(!ac.error&&ac.data===false){ await sb.auth.signOut(); loginErr("غير مصرح لك بالدخول على هذه الشركة — اختر شركة أخرى"); return false; } }catch(e){}
   const me = mapProfile(p.data);
   state.users = [me]; securityMigrate(state);
   currentUser = { no:me.no, name:me.name };
-  try{ await loadMaster(me.role==="admin"); }
+  loginErr("جاري تحميل البيانات...");
+  try{ await _lgTo(loadMaster(me.role==="admin"),60000,"تحميل البيانات"); }
   catch(e){ await sb.auth.signOut(); currentUser = null; masterLoaded = false; loginErr("فشل تحميل البيانات: "+(e.message||e)); return false; }
   const u = state.users.find(x=>x.no===me.no) || me;
   enterApp(u, restored);
@@ -29848,7 +29851,7 @@ function _igDevFootHtmlOld(){ var s=igDevLogoSrc(); return '<div class="ig-devfo
   #login .foot{margin-top:10px!important;padding-top:8px!important;border-top:1px solid rgba(204,172,119,.22)!important;color:#9fa9c4!important;font-size:11px!important;letter-spacing:1px!important;text-align:center}
   /* تحت: لوجو المطور H2M+ واسمه تحته ثم BY Ahmed Hamdy */
   #login .lgb-in{order:3;display:flex!important;flex-direction:column;align-items:center;gap:0!important;padding:0!important;margin:auto 0 0!important;position:relative;direction:ltr}
-  #login #lgBannerLogo{display:block;width:44px!important;height:44px!important;aspect-ratio:1;margin:12px 0 0;filter:drop-shadow(0 4px 10px rgba(0,0,0,.55))}
+  #login #lgBannerLogo{display:block;width:96px!important;height:96px!important;aspect-ratio:1;object-fit:contain;border-radius:50%;margin:12px 0 4px;filter:drop-shadow(0 4px 10px rgba(0,0,0,.55))}
   #login .lgb-foot{order:4;display:block!important;text-align:center;direction:ltr;white-space:nowrap;padding:4px 10px 0;font-size:8.5px;letter-spacing:1.6px;color:#8fa0c8}
   #login .lg-by{order:5;display:block;margin:0!important;padding:4px 0 calc(10px + env(safe-area-inset-bottom,0px))!important;text-align:center;font:600 17px/1.2 Georgia,"Times New Roman",serif!important;letter-spacing:6px!important;
     background:linear-gradient(90deg,#A07C4D 0%,#EDD69E 30%,#F6EBCB 50%,#EDD69E 70%,#A07C4D 100%)!important;background-size:250% 100%!important;
@@ -29865,7 +29868,7 @@ function _igDevFootHtmlOld(){ var s=igDevLogoSrc(); return '<div class="ig-devfo
   #login .field-icon-input input,#login #loginCompany{height:38px!important}
   #login .btn-login{height:40px!important;margin-top:6px!important}
   #login .lg-forgot{margin-top:2px!important}
-  #login #lgBannerLogo{width:34px!important;height:34px!important;margin-top:4px}
+  #login #lgBannerLogo{width:66px!important;height:66px!important;margin-top:4px}
   #login .foot{margin-top:4px!important;padding-top:3px!important;font-size:10px!important}
   #login .box .sub{font-size:11px!important;margin-bottom:6px!important}
   #login .err{margin-top:2px!important}
@@ -29924,6 +29927,7 @@ html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar-corner{back
 .ig-hbar .ig-hth{position:absolute;top:2px;bottom:2px;min-width:60px;background:#c99724;border-radius:8px;cursor:grab}
 .ig-hbar .ig-hth:hover,.ig-hbar.drag .ig-hth{background:#a97d12}
 .ig-hbar.off{display:none}
+.ig-hbar{display:none!important}
 </style>
 <script id="ig-supply-purchase-mirror">
 (function(){
@@ -30118,12 +30122,15 @@ function upd(el,bar){
 }
 function fit(){
   raf=0;
+  var c=document.getElementById("content"), dev=document.getElementById("igDevBar");
+  var pb=c?(parseFloat(getComputedStyle(c).paddingBottom)||0):0;
+  var devH=(dev&&dev.offsetParent!==null)?dev.offsetHeight:0;
   document.querySelectorAll("#content .supply-page .tbl-wrap").forEach(function(el){
     if(el.closest(".modal,#modalBackdrop")) return;
-    var top=el.getBoundingClientRect().top;
-    var h=Math.floor(window.innerHeight-Math.max(top,0)-44);
-    el.style.maxHeight=Math.max(280,h)+"px";
-    hbar(el);
+    var nb=el.nextElementSibling; if(nb&&nb.classList.contains("ig-hbar")) nb.remove();   // شريط قديم مش لازم: الشريط الأصلي ظاهر
+    var r=el.getBoundingClientRect(), cr=c?c.getBoundingClientRect():{top:0,bottom:window.innerHeight};
+    var bottom=Math.min(window.innerHeight-devH, cr.bottom)-pb;
+    el.style.maxHeight=Math.max(280,Math.floor(bottom-r.top-4))+"px";
   });
 }
 function schedFit(){ if(!raf) raf=requestAnimationFrame(fit); }
@@ -30141,5 +30148,58 @@ if(typeof _renderSupply==="function") window.renderSupply=function(){
 };
 /* لو الصفحة مفتوحة بالفعل */
 setTimeout(function(){ try{ if(currentPage==="supply") renderSupply(); }catch(e){} },600);
+})();
+</script>
+
+<script id="ig-login-company-logo">
+(function(){
+"use strict";
+/* لوجو الشركة المختارة في شاشة الدخول (موبايل + كمبيوتر) */
+function img(){ return document.getElementById("igLoginLogo"); }
+function nameOf(c){ try{ return coName(c)||c; }catch(e){ return c; } }
+function placeholder(code){
+  var n=String(nameOf(code)||code).replace(/[^\u0600-\u06FFA-Za-z0-9 ]/g,"").trim().split(/\s+/).filter(Boolean);
+  var ini=(n[0]?n[0].charAt(0):"")+(n[1]?n[1].charAt(0):""); if(!ini) ini=String(code);
+  var svg='<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F6EBCB"/><stop offset="1" stop-color="#C9A24A"/></linearGradient></defs><circle cx="120" cy="120" r="116" fill="#fff" stroke="url(#g)" stroke-width="8"/><text x="120" y="148" text-anchor="middle" font-family="Tahoma,Arial,sans-serif" font-size="88" font-weight="800" fill="#14213d">'+ini.replace(/&/g,"&amp;").replace(/</g,"&lt;")+'</text></svg>';
+  return "data:image/svg+xml;charset=utf-8,"+encodeURIComponent(svg);
+}
+function show(code){
+  var e=img(); if(!e) return;
+  var logo=""; try{ logo=coLogoOf(code)||""; }catch(_){}
+  var want=logo||(code==="01"||code==="*"?"":placeholder(code));
+  if(!want) return;                       // الشركة 01 من غير لوجو محفوظ: يفضل اللوجو الافتراضي
+  if(e.getAttribute("src")!==want) e.setAttribute("src",want);
+}
+function curShow(){ try{ show(CUR_CO); }catch(e){} }
+/* لو أي كود تاني رجّع اللوجو الافتراضي، نرجّع لوجو الشركة */
+try{
+  var e0=img(); if(e0){ var busy=false; new MutationObserver(function(){ if(busy||window._igCoPreview) return; busy=true; setTimeout(function(){ curShow(); busy=false; },0); }).observe(e0,{attributes:true,attributeFilter:["src"]}); }
+}catch(e){}
+/* تحميل لوجوهات كل الشركات مسبقًا عشان تظهر فورًا عند الاختيار */
+async function prefetch(){
+  var sel=document.getElementById("loginCompany"); if(!sel) return;
+  var codes=[].map.call(sel.options,function(o){return o.value;}).filter(function(c){return c&&c!=="*";});
+  for(var i=0;i<codes.length;i++){
+    try{
+      var r=await sb.rpc("company_logo_public",{p_code:codes[i]});
+      if(!r.error&&typeof r.data==="string"&&r.data){ if(coLogoOf(codes[i])!==r.data) coLogoSet(codes[i],r.data); }
+    }catch(e){}
+  }
+  curShow();
+}
+var _init=window.coInitLogin;
+if(typeof _init==="function") window.coInitLogin=async function(){
+  var r=await _init.apply(this,arguments);
+  curShow(); prefetch();
+  return r;
+};
+/* معاينة فورية عند تغيير الشركة قبل إعادة تحميل الصفحة */
+document.addEventListener("change",function(ev){
+  var t=ev.target; if(!t||t.id!=="loginCompany") return;
+  var e=img(); if(!e) return;
+  window._igCoPreview=true; var c=t.value, logo=""; try{ logo=coLogoOf(c)||""; }catch(_){}
+  e.setAttribute("src",logo||(c==="01"||c==="*"?e.getAttribute("src"):placeholder(c)));
+},true);
+curShow(); setTimeout(curShow,800);
 })();
 </script>
