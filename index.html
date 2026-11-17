@@ -21259,8 +21259,41 @@ async function openMfaSetup(){
 })();
 </script>
 <script>
+/* ===== Service Worker — تسجيل مع فحص تحديثات تلقائي وإعادة تحميل عند التغيير =====
+   المشكلة السابقة: لما ترفع نسخة جديدة على GitHub Pages، المتصفح كان بيعرض نسخة قديمة
+   من الكاش ولا بيحدّث شريط العنوان (التاب) ولا الواجهة إلا بعد Ctrl+Shift+R يدوي.
+   الحل: SW بيفحص التحديث تلقائيًا، وأول ما يلاقي نسخة جديدة بيعيد تحميل الصفحة. */
 if('serviceWorker' in navigator){
-  window.addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').then(function(reg){
+      // فحص فوري عند التسجيل + كل 60 ثانية + كل ما يرجع التركيز للتبويب
+      try{ reg.update(); }catch(_){}
+      setInterval(function(){ try{ reg.update(); }catch(_){} }, 60000);
+      window.addEventListener('focus', function(){ try{ reg.update(); }catch(_){} });
+      document.addEventListener('visibilitychange', function(){
+        if(document.visibilityState==='visible'){ try{ reg.update(); }catch(_){} }
+      });
+      // لما يلاقي Worker جديد اتنصّب، نخليه ياخد التحكم فورًا
+      reg.addEventListener('updatefound', function(){
+        var nw = reg.installing; if(!nw) return;
+        nw.addEventListener('statechange', function(){
+          if(nw.state==='installed' && navigator.serviceWorker.controller){
+            // نسخة جديدة متاحة — نطلب من الـSW يعدّي الـwaiting فورًا
+            try{ nw.postMessage({type:'SKIP_WAITING'}); }catch(_){}
+            try{ if(reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'}); }catch(_){}
+            // لو الـSW ما استجابش لـSKIP_WAITING خلال 3 ثواني، نعمل reload يدوي
+            setTimeout(function(){ try{ window.location.reload(); }catch(_){} }, 3000);
+          }
+        });
+      });
+      // لما يتبدّل الـSW المتحكّم، نعمل reload فوري (مرة واحدة) علشان الواجهة تتحدّث
+      var reloaded=false;
+      navigator.serviceWorker.addEventListener('controllerchange', function(){
+        if(reloaded) return; reloaded=true;
+        try{ window.location.reload(); }catch(_){}
+      });
+    }).catch(function(){});
+  });
 }
 </script>
 <script>
@@ -27052,9 +27085,9 @@ aside .brand .t1,aside .brand .t2{display:none!important}
 const CHQ_SYS_BANKS={ nr:{code:"NR-BANK",name:"بنك أوراق قبض"}, np:{code:"NP-BANK",name:"بنك أوراق دفع"} };
 function chqIsSysBank(b){ return !!b && (b.code===CHQ_SYS_BANKS.nr.code || b.code===CHQ_SYS_BANKS.np.code); }
 function chqEnsureSysBanks(s){
-  s=s||state; if(!Array.isArray(s.banks)) s.banks=[]; let added=false;
-  Object.values(CHQ_SYS_BANKS).forEach(v=>{ if(!s.banks.some(b=>b.code===v.code)){ s.banks.push({code:v.code,name:v.name,accountId:"",accountCode:"",accountName:""}); added=true; } });
-  return added;
+  /* بقى اختياريًا: لو المستخدم حذف البنكين النظاميين (NR-BANK/NP-BANK)
+     السيستم مش هيضيفهم تاني — بدل كده بيستخدم أول بنك "حافظة أوراق قبض/دفع" من البنوك العادية. */
+  return false;
 }
 /* ---------- الإعدادات ---------- */
 function chqCfg(){
@@ -27133,17 +27166,34 @@ function chqCanCollect(e){
   return chqIsChq(e) && (e.status==="receivable"||e.status==="pending") && chqHasKind(e,"receipt") && !chqHasKind(e,"collect");
 }
 const CHQ_TITLES={ in:["استلام شيك","تحصيل الشيك","قيد عكسي لقيد الاستلام"], out:["إصدار شيك","صرف الشيك","قيد عكسي لقيد الإصدار"] };
-function chqSysBankAcc(kind){ const b=(state.banks||[]).find(x=>x.code===CHQ_SYS_BANKS[kind].code); return b?b.accountId:""; }
+function chqSysBankAcc(kind){
+  /* 1) جرّب البنك النظامي NR-BANK/NP-BANK لو لسه موجود ومربوط بحساب */
+  const sysB=(state.banks||[]).find(x=>x.code===CHQ_SYS_BANKS[kind].code);
+  if(sysB && sysB.accountId) return sysB.accountId;
+  /* 2) Fallback: دوّر على أول بنك اسمه بيبدأ بـ "حافظة" ومربوط بحساب
+        كده لو المستخدم محذف البنكين النظاميين، السيستم يستخدم بنوكه العادية (191/192 مثلاً). */
+  const pat = kind==="nr"
+    ? /(حافظة|أوراق\s*قبض|اوراق\s*قبض|notes?\s*receivable)/i
+    : /(حافظة|أوراق\s*دفع|اوراق\s*دفع|notes?\s*payable)/i;
+  const skip = kind==="nr"
+    ? /(دفع|payable)/i
+    : /(قبض|receivable)/i;
+  const alt=(state.banks||[]).find(x=>x && x.accountId && !chqIsSysBank(x) && pat.test(x.name||"") && !skip.test(x.name||""));
+  return alt ? alt.accountId : "";
+}
 /* يرجع {err:{title,msg}} أو {checks,entries} */
 function chqPlan(e,accs,ctx){
   const isIn=e.direction==="in", C=v=>Math.round((+v||0)*100), cfg=chqCfg();
   const accOf=id=>id?(accs||[]).find(x=>String(x.id)===String(id)):null;
   const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!(accs||[]).some(ch=>ch.is_active&&ch.parent_id===x.id);
   const stage=(ctx&&ctx.stage)||"all", full=(ctx&&ctx.mode)?(ctx.mode==="full"):(isIn?cfg.cycleIn:cfg.cycleOut), amount=C(e.amount);
-  const sysKey=isIn?"nr":"np", sysName=CHQ_SYS_BANKS[sysKey].name, indId=isIn?cfg.nrAcc:cfg.npAcc, indName=isIn?"شيكات تحت التحصيل أوراق قبض":"شيكات تحت التحصيل أوراق دفع";
+  const sysKey=isIn?"nr":"np", indId=isIn?cfg.nrAcc:cfg.npAcc, indName=isIn?"شيكات تحت التحصيل أوراق قبض":"شيكات تحت التحصيل أوراق دفع";
   if(full && !accOf(indId)) return {err:{title:"تعذّر الترحيل",msg:"حساب «"+indName+"» غير محدد في مؤشرات النظام (البيانات الأساسية).\nحدده ثم أعد المحاولة."}};
   const sysAcc=chqSysBankAcc(sysKey);
-  if(!accOf(sysAcc)) return {err:{title:"تعذّر الترحيل",msg:"«"+sysName+"» غير مربوط بحساب في البيانات الأساسية.\nاربطه بحسابه ثم أعد المحاولة."}};
+  // نستخدم اسم البنك الفعلي المرتبط بالحساب (لو الـNR-BANK محذوف، هيبقى اسم البنك البديل اللي اتاختار — زي "حافظة اوراق قبض")
+  const portfolioBank=(state.banks||[]).find(b=>b && b.accountId && String(b.accountId)===String(sysAcc));
+  const sysName = portfolioBank ? portfolioBank.name : CHQ_SYS_BANKS[sysKey].name;
+  if(!accOf(sysAcc)) return {err:{title:"تعذّر الترحيل",msg:"محتاج تحدد بنك «حافظة أوراق "+(isIn?"قبض":"دفع")+"» مربوط بحساب في شاشة البنوك.\nاربط أي بنك من بنوكك باسم يحتوي على «حافظة» أو «أوراق "+(isIn?"قبض":"دفع")+"» بحساب نهائي، وأعد المحاولة."}};
   const checks=[], who=isIn?(e.customer||""):(e.supplier||"");
   const chk=(label,id,fix)=>{ const x=accOf(id); checks.push([label,x?x.account_code+" — "+x.account_name:"—",!!x&&isLeaf(x),!x?(fix||"غير مربوط بحساب"):isLeaf(x)?"":"مش حساب نهائي قابل للترحيل"]); return id; };
   if(full) chk(indName,indId); chk(sysName,sysAcc);
@@ -27509,19 +27559,10 @@ async function txUnpostRun(id,direction){
   if(typeof renderAdjustments==="function"&&document.getElementById("adjView")) renderAdjustments(direction);
   toast("✓ تم إلغاء الترحيل وحذف القيد "+eno,"ok");
 }
-/* ---------- حماية البنكين الوسيطين ---------- */
-(function(){
-  const _del=window.delItem, _edit=window.editItem;
-  if(typeof _del==="function") window.delItem=function(key,idx){
-    const v=(state[key]||[])[idx]; if(key==="banks"&&chqIsSysBank(v)) return chqDialog("warn","بنك أساسي للنظام","«"+v.name+"» مستخدم في دورة الشيكات ولا يمكن حذفه. تقدر فقط تربطه بحسابه.");
-    return _del.apply(this,arguments);
-  };
-  if(typeof _edit==="function") window.editItem=function(key,idx){
-    const r=_edit.apply(this,arguments), v=(state[key]||[])[idx];
-    if(key==="banks"&&chqIsSysBank(v)) setTimeout(()=>{ const c=document.getElementById("bk_code"); if(c){ c.readOnly=true; c.title="كود ثابت للنظام"; } },80);
-    return r;
-  };
-})();
+/* ---------- حماية البنكين الوسيطين (ألغيت بناءً على طلب المستخدم) ----------
+   الآن ممكن تحذف NR-BANK و NP-BANK عادي من شاشة البنوك.
+   السيستم هيستخدم تلقائيًا أول بنك "حافظة أوراق قبض/دفع" من بنوكك العادية (chqSysBankAcc).
+*/
 </script>
 
 <style id="tx-screen-v2">
