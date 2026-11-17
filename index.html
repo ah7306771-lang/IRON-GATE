@@ -3979,6 +3979,19 @@ async function startSessionInner(user, restored){
   if(!restored){ audit("login","تسجيل دخول",u); sb.rpc("touch_login").then(()=>{},()=>{}); }
   return true;
 }
+/* الموبايل: بعد نجاح تسجيل الدخول نعمل إعادة تحميل واحدة تلقائية — مسار استرجاع الجلسة (زي الريفريش) هو اللي بيفتح فورًا */
+async function igMobileFreshReload(){
+  try{
+    if(!/iPhone|iPad|Android|Mobile/i.test(navigator.userAgent||"")) return false;
+    if(sessionStorage.getItem("ig_fresh_login")) return false;
+    const s=await sb.auth.getSession();
+    if(!(s&&s.data&&s.data.session)) return false;   // الجلسة لازم تكون اتحفظت قبل الريلود
+    sessionStorage.setItem("ig_fresh_login","1");
+    loginErr("جاري فتح النظام…");
+    setTimeout(()=>location.reload(),30);
+    return true;
+  }catch(e){ return false; }
+}
 async function startSession(user, restored){ showBoot(); try{ return await startSessionInner(user, restored); } finally{ hideBoot(); } }
 const SAVED_KEY="irongate_saved_login", REMEMBER_KEY="irongate_remember";
 function rememberOn(){ try{ return localStorage.getItem(REMEMBER_KEY)!=="0"; }catch(e){ return true; } }
@@ -4076,6 +4089,7 @@ async function doLogin(){
           if(v.error){ await sb.auth.signOut(); loginErr("كود 2FA غير صحيح"); document.getElementById("loginPass")?.focus(); return; }
         }
       }catch(mfaErr){ console.warn("MFA check failed",mfaErr); /* نكمل بدون MFA لو Supabase Auth MFA مش مُفعّل */ }
+      if(await igMobileFreshReload()){ delete locks[no]; lockSet(locks); saveLogin(no,pass); try{ extNotifCacheSave(no,pass); }catch(e){} return; }
       const ok = await startSession(r.data.user,false);
       if(ok){ delete locks[no]; lockSet(locks); saveLogin(no,pass); try{ extNotifCacheSave(no,pass); }catch(e){} document.getElementById("loginPass").value=""; }
       return;
@@ -4187,13 +4201,14 @@ document.addEventListener("DOMContentLoaded",()=>{
       if(r && r.data && r.data.session){
         let ok=false;
         window._igRestoring=true;
-        try{ ok = await startSession(r.data.session.user,true); }catch(e){ ok=false; }
+        let _fresh=false; try{ _fresh=sessionStorage.getItem("ig_fresh_login")==="1"; sessionStorage.removeItem("ig_fresh_login"); }catch(_){}
+        try{ ok = await startSession(r.data.session.user,!_fresh); }catch(e){ ok=false; }
         window._igRestoring=false;
         clearTimeout(_bootWatchdog);
         if(!ok) _revealLogin();
         else { try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} }
-      } else { clearTimeout(_bootWatchdog); _revealLogin(); }
-    }).catch(()=>{ clearTimeout(_bootWatchdog); _revealLogin(); });
+      } else { try{ sessionStorage.removeItem("ig_fresh_login"); }catch(_){} clearTimeout(_bootWatchdog); _revealLogin(); }
+    }).catch(()=>{ try{ sessionStorage.removeItem("ig_fresh_login"); }catch(_){} clearTimeout(_bootWatchdog); _revealLogin(); });
     setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(window._igRestoring) return; if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); }, _isMobile ? 2000 : 2500);
   }
   // رقم المستخدم وكلمة المرور (لو "تذكّر" مفعّل) من آخر دخول ناجح
@@ -6441,14 +6456,32 @@ function _glImpCol(row, names){
   return "";
 }
 
+let _glImpDateOrder="dmy";
+function _glImpDetectOrder(vals){
+  let dmy=0, mdy=0;
+  for(const v of vals){
+    if(v instanceof Date||typeof v==="number") continue;
+    const m=String(v||"").trim().match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/); if(!m) continue;
+    const a=+m[1], b=+m[2];
+    if(a>12&&b<=12) dmy++; else if(b>12&&a<=12) mdy++;
+  }
+  return mdy>dmy?"mdy":"dmy";
+}
 function _glImpParseDate(v){
   if(!v) return "";
   if(v instanceof Date){ const y=v.getFullYear(),m=String(v.getMonth()+1).padStart(2,"0"),d=String(v.getDate()).padStart(2,"0"); return y+"-"+m+"-"+d; }
   const s=String(v).trim();
   if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // d/m/yyyy or d-m-yyyy
+  // d/m/yyyy أو m/d/yyyy — الترتيب بيتحدد من الملف كله (_glImpDetectOrder) وبيتصلّح لو قيمة مستحيلة (شهر > 12)
   const m1=s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
-  if(m1){ const d=m1[1].padStart(2,"0"),mo=m1[2].padStart(2,"0"); let y=m1[3]; if(y.length===2) y="20"+y; return y+"-"+mo+"-"+d; }
+  if(m1){
+    let a=+m1[1], b=+m1[2], d, mo;
+    if(_glImpDateOrder==="mdy"){ mo=a; d=b; } else { d=a; mo=b; }
+    if(mo>12 && d<=12){ const t=mo; mo=d; d=t; }
+    if(mo<1||mo>12||d<1||d>31) return "";
+    let y=m1[3]; if(y.length===2) y="20"+y;
+    return y+"-"+String(mo).padStart(2,"0")+"-"+String(d).padStart(2,"0");
+  }
   // Excel serial number
   const n=parseFloat(s);
   if(!isNaN(n) && n>10000 && n<80000){ const d=new Date(Math.round((n-25569)*86400000)); if(!isNaN(d.getTime())){ const y=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,"0"),dd=String(d.getDate()).padStart(2,"0"); return y+"-"+mo+"-"+dd; } }
@@ -6484,6 +6517,8 @@ function glImportParse(rows){
   const groups=new Map(); // key: entryNo|date → lines
   let rowIdx=1;
   const parsed={entries:[], totalLines:0, totalDr:0, totalCr:0, okN:0, badN:0};
+  _glImpDateOrder=_glImpDetectOrder(rows.map(r=>_glImpCol(r,["التاريخ","date","entry_date"])));
+  parsed.dateOrder=_glImpDateOrder;
   for(const r of rows){
     rowIdx++; // row 1 is header
     const date=_glImpParseDate(_glImpCol(r,["التاريخ","date","entry_date"]));
@@ -21424,6 +21459,7 @@ async function doBiometricLogin(){
         if(v.error){ await sb.auth.signOut(); loginErr("كود 2FA غير صحيح"); return; }
       }
     }catch(e){}
+    if(await igMobileFreshReload()) return;
     const ok = await startSession(r.data.user,false);
     if(ok){ document.getElementById("loginPass").value=""; }
   }catch(e){
