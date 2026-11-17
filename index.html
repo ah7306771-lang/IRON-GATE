@@ -6547,11 +6547,30 @@ async function glImportSave(){
   }
   const ok=S.parsed.entries.filter(e=>!e.errors.length);
   if(!ok.length) return toast("مفيش قيود سليمة للحفظ","err");
-  const okc=await askConfirm(`هيتم حفظ ${ok.length} قيد كمسودات (status: draft) على اليومية المختارة. تقدر تراجعها وتعدّلها وترحّلها من شاشة «قيود يومية». هل تريد المتابعة؟`,{title:"حفظ القيود المستوردة",ok:"نعم، احفظ",cancel:"رجوع"});
+  const okc=await askConfirm(`هيتم حفظ ${ok.length} قيد كمسودات (status: draft) على اليومية المختارة، وكل قيد هياخد رقم جديد بعد آخر رقم موجود في شهره (رقم الملف الأصلي هيتسجل في البيان). تقدر تراجعها وتعدّلها وترحّلها من شاشة «قيود يومية». هل تريد المتابعة؟`,{title:"حفظ القيود المستوردة",ok:"نعم، احفظ",cancel:"رجوع"});
   if(!okc) return;
   S.busy=true; glRender();
   let savedN=0, failedN=0, errors=[];
   const years=glState.years||[], periods=glState.periods||[];
+  // اقرأ كل أرقام القيود الموجودة فعليًا في قاعدة البيانات (مش بس اللي في الشاشة) علشان نتجنب التكرار
+  const used=new Set((glState.entries||[]).map(x=>String(x.entry_no)));
+  try{
+    for(let from=0;;from+=1000){
+      const r=await sb.from('gl_entries').select('entry_no').range(from,from+999);
+      if(r.error||!r.data||!r.data.length) break;
+      r.data.forEach(x=>used.add(String(x.entry_no)));
+      if(r.data.length<1000) break;
+    }
+  }catch(_){}
+  const freeNo=(date)=>{
+    const d=/^\d{4}-\d{2}-\d{2}$/.test(date)?date:glDate();
+    const prefix=String(parseInt(d.slice(5,7),10));
+    let mx=0;
+    used.forEach(en=>{ if(en.startsWith(prefix)&&en.length===prefix.length+4&&/^\d+$/.test(en)){ const n=parseInt(en.slice(prefix.length),10); if(!isNaN(n)&&n>mx) mx=n; } });
+    let n=mx+1, no;
+    do{ no=prefix+String(n).padStart(4,"0"); n++; }while(used.has(no));
+    return no;
+  };
   for(let i=0;i<ok.length;i++){
     const e=ok[i];
     try{
@@ -6559,20 +6578,24 @@ async function glImportSave(){
       if(!y){ throw new Error("لا توجد سنة مالية مفتوحة تغطي "+e.date); }
       const per=periods.find(v=>v.status==='open'&&v.fiscal_year_id===y.id&&v.start_date<=e.date&&v.end_date>=e.date);
       if(!per){ throw new Error("لا توجد فترة مفتوحة تغطي "+e.date); }
-      // استخدم رقم القيد من الملف إذا ممكن، وإلا ولّد واحد شهري
-      let entryNo = String(e.entryNo||"").trim();
-      // تأكد ما فيش قيد بنفس الرقم في الـstate
-      if(entryNo && (glState.entries||[]).some(x=>String(x.entry_no)===entryNo)){
-        entryNo = glNextMonthlyEntryNo(e.date);
+      // دايمًا رقم جديد: بعد آخر رقم موجود في قاعدة البيانات لنفس شهر القيد (رقم الملف الأصلي بيتسجل في البيان)
+      let entryNo = freeNo(e.date);
+      let entry=null;
+      for(let att=0;att<6;att++){
+        const r0=await sb.from('gl_entries').insert({
+          entry_no:entryNo, journal_id:S.journalId, fiscal_year_id:y.id, period_id:per.id,
+          entry_date:e.date, document_date:e.date,
+          description:"قيد مستورد من Excel — "+(e.entryNo||"")+(S.fileName?(" — "+S.fileName):""),
+          status:'draft', currency_code:'EGP', exchange_rate:1,
+          total_debit:e.td, total_credit:e.tc
+        }).select("*").single();
+        if(!r0.error){ entry=r0.data; break; }
+        const dup=r0.error.code==='23505'||/duplicate key|entry_no_key/i.test(r0.error.message||"");
+        if(!dup) throw r0.error;
+        used.add(entryNo); entryNo=freeNo(e.date);
       }
-      if(!entryNo) entryNo = glNextMonthlyEntryNo(e.date);
-      const entry = await glInsert('gl_entries',{
-        entry_no:entryNo, journal_id:S.journalId, fiscal_year_id:y.id, period_id:per.id,
-        entry_date:e.date, document_date:e.date,
-        description:"قيد مستورد من Excel — "+(e.entryNo||"")+(S.fileName?(" — "+S.fileName):""),
-        status:'draft', currency_code:'EGP', exchange_rate:1,
-        total_debit:e.td, total_credit:e.tc
-      });
+      if(!entry) throw new Error("تعذر إيجاد رقم قيد فاضي");
+      used.add(String(entry.entry_no));
       const lines = e.lines.map((l,i)=>({
         entry_id:entry.id, line_no:i+1, account_id:l.accountId,
         description:l.description||"", debit:+l.debit||0, credit:+l.credit||0
