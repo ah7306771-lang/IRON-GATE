@@ -2531,6 +2531,7 @@ html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollba
         <div class="user"></div>
       </div>
       <div class="content" id="content"></div>
+      <div class="ig-devbar" id="igDevBar" aria-label="Developed by H2M+ ERP Systems"><img id="igDevBarImg" alt="H2M+" style="display:none"><span>Developed by <b>H2M+ ERP Systems</b></span></div>
     </main>
   </div>
   <nav id="mobileTabs" aria-label="التنقل السريع"></nav>
@@ -4611,10 +4612,10 @@ function adBuild(gid){
   const party=e=>e.customer||e.supplier||"—";
   if(gid==="treasury"){
     const ci=M6.map(()=>0), co=M6.map(()=>0); let mi=0,mo=0,today=0;
-    E.forEach(e=>{ const k=String(e.date||"").slice(0,7), a=+e.amount||0; if(dxIsCollectionEntry(e)){ if(k in idx) ci[idx[k]]+=a; if(k===mk) mi+=a; } else if(isPay(e)){ if(k in idx) co[idx[k]]+=a; if(k===mk) mo+=a; } if(String(e.date||"").slice(0,10)===td) today++; });
-    const last=E.filter(e=>e.entryKind!=="gl").slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||(b.createdAt||0)-(a.createdAt||0)).slice(0,8);
-    return {k:adK("↓","تحصيلات الشهر",val(mi),"محصّل فعليًا","g","txGo('receipts','cash')")+adK("↑","مدفوعات الشهر",val(mo),"للموردين وغيرهم","r","txGo('payments','cash')")+adK("⇅","صافي حركة الشهر",val(mi-mo),mi-mo>=0?"فائض":"عجز",mi-mo>=0?"g":"r")+adK("▤","حركات اليوم",today,"تحصيل ومدفوع","b"),
-      c:adChart("التحصيلات والمدفوعات — آخر 6 شهور",M6,ci,co,"تحصيلات","مدفوعات"),
+    E.forEach(e=>{ if(e.method!=="cash") return; const k=String(e.date||"").slice(0,7), a=+e.amount||0; if(dxIsCollectionEntry(e)){ if(k in idx) ci[idx[k]]+=a; if(k===mk) mi+=a; } else if(isPay(e)){ if(k in idx) co[idx[k]]+=a; if(k===mk) mo+=a; } if(String(e.date||"").slice(0,10)===td) today++; });
+    const last=E.filter(e=>e.entryKind!=="gl"&&e.method==="cash").slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))||(b.createdAt||0)-(a.createdAt||0)).slice(0,8);
+    return {k:adK("↓","تحصيلات نقدية الشهر",val(mi),"نقدي — محصّل فعليًا","g","txGo('receipts','cash')")+adK("↑","مدفوعات نقدية الشهر",val(mo),"نقدي — للموردين وغيرهم","r","txGo('payments','cash')")+adK("⇅","صافي حركة الشهر",val(mi-mo),mi-mo>=0?"فائض":"عجز",mi-mo>=0?"g":"r")+adK("▤","حركات نقدية اليوم",today,"تحصيل ومدفوع","b"),
+      c:adChart("التحصيلات والمدفوعات النقدية — آخر 6 شهور",M6,ci,co,"تحصيلات","مدفوعات"),
       t:adTable("آخر الحركات",["التاريخ","النوع","الجهة","القيمة"],last.map(e=>[String(e.date||"").slice(0,10),e.direction==="in"?adBadge("تحصيل","g"):adBadge("دفعة","r"),party(e),adN(e.amount)]),"txGo('receipts','cash')")};
   }
   if(gid==="banking"){
@@ -4905,6 +4906,7 @@ function renderNav(){
   try{ const rb=document.getElementById("navResetOrder"); if(rb) rb.style.display = (Array.isArray(_navOrder)&&_navOrder.length)?"block":"none"; }catch(e){}
   try{ renderTabs(); }catch(e){}
   try{ renderApBar(); }catch(e){}
+  try{ igDevBarInit(); }catch(e){}
   try{ updateTopbarUser(); renderQuickNew(); }catch(e){}
 }
 // Drag & Drop لإعادة ترتيب مجموعات القائمة
@@ -4969,6 +4971,10 @@ function faExportCsv(){const rows=[['رقم الأصل','الاسم','النوع
 function go(page){
   if(page==="receipts"||page==="payments"){ if(window.__txScopeNext!==undefined){ txScope=window.__txScopeNext; window.__txScopeNext=undefined; } else if(currentPage!==page) txScope="all"; }
   { const _m=(page==="salesInvoices"); if((page==="shipments"||_m)&&_m!==SI_MODE){ SI_MODE=_m; draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; } }
+  if(page==="purchaseOrders"||page==="purchaseInvoices"){
+    if(window.__igPurKeep) window.__igPurKeep=false;
+    else { igPurchaseFormOpen=false; igPurchaseDraft=null; igPurchaseEditing=null; igPurchaseReceiptDraft=null; }   // الدخول على المشتريات يفتح جدول كل المستندات مش نموذج قديم
+  }
   _navTrack(page);
   currentPage = page;
   try{ tbClose(); }catch(e){}
@@ -5086,7 +5092,7 @@ function go(page){
 
 // ================= نظام المشتريات المستقل — أوامر شراء وفواتير موردين =================
 const IG_PUR_TABLES={orders:"purchase_orders",orderItems:"purchase_order_items",invoices:"purchase_invoices",invoiceItems:"purchase_invoice_items",receipts:"purchase_receipts",receiptItems:"purchase_receipt_items"};
-let igPurchaseDocs={orders:[],invoices:[],receipts:[]},igPurchaseLoaded=false,igPurchaseLoading=false,igPurchaseEditing=null,igPurchaseDraft=null,igPurchaseFormOpen=false,igPurchaseQuery="",igPurchaseStatus="all";
+let igPurchaseDocs={orders:[],invoices:[],receipts:[]},igPurchaseLoaded=false,igPurchaseLoading=false,igPurchaseEditing=null,igPurchaseDraft=null,igPurchaseFormOpen=false,igPurchaseQuery="",igPurchaseStatus="all",igPurchaseFrom="",igPurchaseTo="";
 const igPesc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const igPnum=v=>Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const igPdate=()=>new Date().toISOString().slice(0,10);
@@ -5098,7 +5104,7 @@ async function igPurchaseFetchAll(){try{for(const isO of [true,false]){const hea
 async function igPurchaseLoad(){if(igPurchaseLoading)return;igPurchaseLoading=true;try{const ok=await igPurchaseFetchAll();if(!ok)throw new Error("راجع تشغيل irongate_purchasing_setup.sql وصلاحيات الجداول");}catch(e){toast("تعذر تحميل مستندات المشتريات من Supabase: "+(e.message||e),"err");}finally{igPurchaseLoading=false;const el=document.getElementById("content");if(el&&["purchaseOrders","purchaseInvoices"].includes(currentPage))el.innerHTML=igPurchaseView();}}
 function igPoptions(arr,sel,empty="اختر") {return `<option value="">${empty}</option>`+(arr||[]).map(x=>{const v=typeof x==="object"?(x.id??x.name??x.code):x,lab=typeof x==="object"?(x.name||x.label||x.code||x.id):x;return `<option value="${igPesc(v)}" ${String(sel)===String(v)?"selected":""}>${igPesc(lab)}</option>`}).join("");}
 function igPurchaseView(){const isO=currentPage==="purchaseOrders",kind=isO?"order":"invoice",list=igPurchaseDocs[isO?"orders":"invoices"]||[];if(!igPurchaseDraft)igPurchaseDraft=igPnew(kind);const d=igPurchaseDraft,edit=!!igPurchaseEditing,calc=igPcalc(d),F=(label,key,type="text",extra="")=>`<label class="fld"><span>${label}</span><input class="inp" type="${type}" value="${igPesc(d[key]??"")}" ${extra} oninput="igPurchaseDraft.${key}=this.value;igPurchaseRefreshTotals()"></label>`;const readOnly=!!(d.status==="posted");
-if(!igPurchaseFormOpen)return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أوامر الشراء":"فواتير المشتريات"}</h2><span class="chip">${list.length} مستند</span><div class="spacer"></div><button class="btn" onclick="igPurchaseNew('${kind}')">＋ مستند جديد</button><button class="btn ghost" onclick="igPurchaseLoad()">↻ تحديث</button></div><div class="igp-toolbar"><input class="inp" placeholder="بحث برقم المستند أو المورد أو رقم فاتورة المورد أو أمر البيع" value="${igPesc(igPurchaseQuery)}" oninput="igPurchaseQuery=this.value;igPurchaseRenderList()"><select class="inp" onchange="igPurchaseStatus=this.value;igPurchaseRenderList()"><option value="all">كل الحالات</option><option value="draft">مسودة</option><option value="posted">مرحّل</option></select><button class="btn ghost" onclick="igPurchaseExport()">⬇ تصدير CSV</button></div><div id="igPurchaseList">${igPurchaseListHtml(list,isO)}</div>`;
+if(!igPurchaseFormOpen)return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أوامر الشراء":"فواتير المشتريات"}</h2><span class="chip">${list.length} مستند</span><div class="spacer"></div><button class="btn" onclick="igPurchaseNew('${kind}')">＋ مستند جديد</button><button class="btn ghost" onclick="igPurchaseLoad()">↻ تحديث</button></div><div class="igp-toolbar"><input class="inp" placeholder="بحث برقم المستند أو المورد أو رقم فاتورة المورد أو أمر البيع" value="${igPesc(igPurchaseQuery)}" oninput="igPurchaseQuery=this.value;igPurchaseRenderList()"><select class="inp" onchange="igPurchaseStatus=this.value;igPurchaseRenderList()"><option value="all">كل الحالات</option><option value="draft">مسودة</option><option value="posted">مرحّل</option></select><label class="fld" style="flex:0 0 auto"><span>من</span><input class="inp" type="date" value="${igPesc(igPurchaseFrom)}" onchange="igPurchaseFrom=this.value;igPurchaseRenderList()"></label><label class="fld" style="flex:0 0 auto"><span>إلى</span><input class="inp" type="date" value="${igPesc(igPurchaseTo)}" onchange="igPurchaseTo=this.value;igPurchaseRenderList()"></label><button class="btn ghost" onclick="igPurchaseFrom='';igPurchaseTo='';igPurchaseQuery='';igPurchaseStatus='all';document.getElementById('content').innerHTML=igPurchaseView()">مسح الفلاتر</button><button class="btn ghost" onclick="igPurchaseExport()">⬇ تصدير CSV</button></div><div id="igPurchaseList">${igPurchaseListHtml(list,isO)}</div>`;
 return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أمر شراء":"فاتورة مشتريات"} ${edit?"رقم "+igPesc(d.docNo):"جديد"}</h2><span class="chip ${d.status==="posted"?"ok":"warn"}">${d.status==="posted"?"مرحّل":"مسودة"}</span><div class="spacer"></div><button class="btn ghost" onclick="igPurchaseBack()">↩ رجوع للقائمة</button>${!readOnly?`<button class="btn" onclick="igPurchaseSave()">💾 حفظ</button>`:""}${!isO?`<button class="btn ghost" onclick="igPurchasePrint()">🖨 طباعة الفاتورة</button>${d.status==="posted"?`<button class="btn ghost" onclick="igPurchasePrintJournal()">📒 طباعة قيد المشتريات</button><button class="btn danger" onclick="igPurchaseUnpost()">↶ إلغاء الترحيل</button>`:`<button class="btn primary" onclick="igPurchasePost()">✓ اعتماد وترحيل</button>`}`:""}${edit&&d.status!=="posted"?`<button class="btn danger" onclick="igPurchaseDelete()">حذف</button>`:""}</div>
 <div class="igp-grid"><section class="card"><div class="head"><h3>بيانات المستند والمورد</h3></div><div class="body"><div class="igp-fields">
 <label class="fld"><span>المورد *</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.supplier=this.value">${igPoptions(state.suppliers.map(x=>({id:x.name,name:x.name})),d.supplier,"اختر المورد")}</select></label>
@@ -5113,7 +5119,59 @@ ${!isO?`<section class="card igp-payments"><div class="head"><h3>توزيع ال
 ${!isO?`<div class="igp-hint">ملاحظة محاسبية: حفظ الفاتورة لا يعني ترحيلها للأستاذ العام. يجب مراجعة ربط حساب المورد والمخزون وضريبة المدخلات ويومية المشتريات قبل اعتماد الترحيل المحاسبي.</div>`:""}`;}
 function igPurchaseCss(){return `.igp-toolbar,.igp-fields{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.igp-toolbar{padding:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;margin-bottom:12px}.igp-toolbar input{flex:1;min-width:220px}.igp-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.igp-fields>.fld{flex:1 1 170px;min-width:150px}.igp-fields .inp{width:100%}.igp-lines{min-width:1150px;width:100%;border-collapse:collapse}.igp-lines th,.igp-lines td{padding:6px;border-bottom:1px solid var(--line);font-size:12px}.igp-lines .inp{min-width:72px;width:100%;padding:6px}.igp-lines td:nth-child(3) .inp{min-width:140px}.igp-lines .num{text-align:right;font-weight:800;white-space:nowrap}.igp-notes{margin-top:12px}.igp-totals{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px}.igp-total{min-width:135px;padding:10px;border:1px solid var(--line);border-radius:9px;background:var(--bg-2)}.igp-total b{display:block;font-size:15px;margin-top:4px}.igp-hint{margin-top:12px;padding:12px;border:1px solid #e9c46a;background:#fff9e8;color:#76540b;border-radius:9px;font-size:12px}@media(max-width:800px){.igp-grid{grid-template-columns:1fr}.igp-fields>.fld{flex-basis:100%}}`}
 function igPurchaseTotalsHtml(d,isO){const c=igPcalc(d),item=(l,v)=>`<div class="igp-total"><small>${l}</small><b>${igPnum(v)} ج.م</b></div>`;return item("إجمالي قبل الخصم",c.subtotal)+item("الخصومات",c.discount)+item("ضريبة القيمة المضافة",c.tax)+item("النقل والمصاريف",c.charges)+(isO?"":item("الاستقطاعات",c.withholding)+item("المدفوع",c.paid))+item(isO?"إجمالي أمر الشراء":"صافي الفاتورة",c.net)+(isO?"":item("المتبقي للمورد",c.remaining));}
-function igPurchaseListHtml(list,isO){const q=igPurchaseQuery.toLowerCase();const visible=list.filter(x=>!isO||(!(x.data?.closed||x.closed||x.status==="cancelled")&&!igPurchaseOrderRemaining(x).complete));const rows=visible.filter(x=>(igPurchaseStatus==="all"||x.status===igPurchaseStatus)&&[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo].some(v=>String(v||"").toLowerCase().includes(q))).map(x=>`<tr><td>${igPesc(x.docNo)}</td><td>${igPesc(x.date||"")}</td><td>${igPesc(x.supplier||"")}</td><td>${igPesc(isO?x.sourceSaleOrderNo||"—":x.supplierInvoiceNo||"—")}</td><td class="num">${igPnum(igPcalc(x).net)}</td><td><span class="chip ${x.status==="posted"?"ok":"warn"}">${isO?(Object.values(igPurchaseOrderRemaining(x).received).some(v=>v>0)?"استلام جزئي":"مفتوح"):(x.status==="posted"?"مرحّل":"مسودة")}</span></td><td>${isO?`<button class="btn sm primary" onclick="igPurchaseNewReceipt('${x.id}')" ${igPurchaseOrderRemaining(x).remainingLines.length?"":"disabled"}>إذن استلام</button>`:""}<button class="btn sm" onclick="igPurchaseOpen('${x.id}','${isO?"order":"invoice"}')">فتح</button></td></tr>`).join("");return `<div class="card"><div class="tbl-wrap"><table style="width:100%;min-width:750px"><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>${isO?"أمر البيع المصدر":"رقم فاتورة المورد"}</th><th>الإجمالي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>${rows||`<tr><td colspan="7" class="empty">لا توجد مستندات مطابقة</td></tr>`}</tbody></table></div></div>`;}
+
+// لينكات جنب الفاتورة: فتحها في فاتورة المشتريات + فتح بوليصتها في بيانات التوريد
+function igPurchasePolicyKey(x){
+  let no=String(x.sourceSaleOrderNo||"").trim(), id=x.sourceSaleOrderId||"";
+  if(!no&&!id&&x.purchaseOrderId){ const o=(igPurchaseDocs.orders||[]).find(v=>String(v.id)===String(x.purchaseOrderId)); if(o){ no=String(o.sourceSaleOrderNo||"").trim(); id=o.sourceSaleOrderId||""; } }
+  const sh=(state.shipments||[]);
+  let s=(no||id)?sh.find(p=>(id&&String(p.saleOrderId)===String(id))||(no&&String(p.saleOrderNo||"").trim()===no)):null;
+  if(s) return s.saleOrderId?"so:"+s.saleOrderId:"no:"+String(s.saleOrderNo||"").trim();
+  const ref=String(x.referenceNo||"").trim();
+  if(ref){ s=sh.find(p=>String(p.policyNo||"").trim()===ref); if(s) return "policy:"+s.id; }
+  return "";
+}
+const IGP_LK="background:none;border:0;padding:2px 4px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:700;text-decoration:underline;color:var(--gold-2,#b8891a)";
+function igPurchasePolicyLink(x){
+  const has=!!igPurchasePolicyKey(x);
+  return `<button type="button" style="${IGP_LK}${has?"":";opacity:.4;text-decoration:none;cursor:not-allowed"}" title="${has?"فتح البوليصة في بيانات التوريد":"لا توجد بوليصة مرتبطة بهذا المستند"}" onclick="igPurchaseOpenPolicy('${x.id}')">🚚 البوليصة</button>`;
+}
+function igPurchaseLinks(x){
+  return `<button type="button" style="${IGP_LK}" title="فتح الفاتورة في فاتورة المشتريات" onclick="igPurchaseOpen('${x.id}','invoice')">🧾 الفاتورة</button> `+igPurchasePolicyLink(x);
+}
+// من كشف الحساب: فتح فاتورة المشتريات / بوليصة بيانات التوريد
+function stmtOpenPurchaseInv(id){
+  if(!canView("purchaseInvoices")) return toast("لا تملك صلاحية فتح فواتير المشتريات","err");
+  go("purchaseInvoices"); setTimeout(()=>{ try{ igPurchaseOpen(id,"invoice"); }catch(e){ toast("تعذر فتح الفاتورة","err"); } },0);
+}
+function stmtOpenPolicyByInv(id){ igPurchaseOpenPolicy(id); }
+function stmtOpenPolicyByOrder(k){
+  k=String(k||""); let key=k;
+  if(!/^(so:|no:|policy:)/.test(k)){ const s=(state.shipments||[]).find(p=>String(p.saleOrderId)===k); key=s?"so:"+k:"no:"+k; }
+  try{ supOpenGroupPolicy(key); }catch(e){ toast("تعذر فتح البوليصة","err"); }
+}
+function igPurchaseOpenPolicy(id){
+  const x=(igPurchaseDocs.invoices||[]).find(v=>String(v.id)===String(id))||(igPurchaseDocs.orders||[]).find(v=>String(v.id)===String(id)); if(!x) return;
+  const key=igPurchasePolicyKey(x);
+  if(!key) return toast("لا توجد بوليصة مرتبطة بهذه الفاتورة في بيانات التوريد (اربطها برقم أمر البيع أو الرقم المرجعي)","warn");
+  try{ supOpenGroupPolicy(key); }catch(e){ toast("تعذر فتح البوليصة: "+(e.message||e),"err"); }
+}
+function igPurchaseListHtml(list,isO){
+  const q=igPurchaseQuery.toLowerCase();
+  const visible=list.filter(x=>!isO||(!(x.data?.closed||x.closed||x.status==="cancelled")&&!igPurchaseOrderRemaining(x).complete));
+  const rowsData=visible.filter(x=>(igPurchaseStatus==="all"||x.status===igPurchaseStatus)&&(!igPurchaseFrom||String(x.date||"")>=igPurchaseFrom)&&(!igPurchaseTo||String(x.date||"")<=igPurchaseTo)&&[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo,x.purchaseOrderNo].some(v=>String(v||"").toLowerCase().includes(q)));
+  if(isO){
+    const rows=rowsData.map(x=>`<tr><td>${igPesc(x.docNo)}</td><td>${igPesc(x.date||"")}</td><td>${igPesc(x.supplier||"")}</td><td>${igPesc(x.sourceSaleOrderNo||"—")}</td><td class="num">${igPnum(igPcalc(x).net)}</td><td><span class="chip ${x.status==="posted"?"ok":"warn"}">${Object.values(igPurchaseOrderRemaining(x).received).some(v=>v>0)?"استلام جزئي":"مفتوح"}</span></td><td><button class="btn sm primary" onclick="igPurchaseNewReceipt('${x.id}')" ${igPurchaseOrderRemaining(x).remainingLines.length?"":"disabled"}>إذن استلام</button><button class="btn sm" onclick="igPurchaseOpen('${x.id}','order')">فتح</button> ${igPurchasePolicyLink(x)}</td></tr>`).join("");
+    return `<div class="card"><div class="tbl-wrap"><table style="width:100%;min-width:750px"><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>أمر البيع المصدر</th><th>الإجمالي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>${rows||`<tr><td colspan="7" class="empty">${igPurchaseLoaded?"لا توجد مستندات مطابقة":"جاري التحميل…"}</td></tr>`}</tbody></table></div></div>`;
+  }
+  let tNet=0,tPaid=0,tRem=0,tPosted=0;
+  const rows=rowsData.map((x,i)=>{const c=igPcalc(x);tNet+=c.net;tPaid+=c.paid;tRem+=c.remaining;if(x.status==="posted")tPosted++;
+    return `<tr style="cursor:pointer" ondblclick="igPurchaseOpen('${x.id}','invoice')"><td>${i+1}</td><td>${igPesc(x.docNo)}</td><td dir="ltr">${igPesc(x.date||"")}</td><td><b>${igPesc(x.supplier||"")}</b></td><td>${igPesc(x.supplierInvoiceNo||"—")}</td><td>${igPesc(x.purchaseOrderNo||"—")}</td><td class="num">${igPnum(c.net)}</td><td class="num">${igPnum(c.paid)}</td><td class="num" style="color:${c.remaining>0.004?"var(--danger)":"inherit"}">${igPnum(c.remaining)}</td><td><span class="chip ${x.status==="posted"?"ok":"warn"}">${x.status==="posted"?"مرحّل":"مسودة"}</span></td><td style="white-space:nowrap">${igPurchaseLinks(x)}</td></tr>`;}).join("");
+  const kpi=(l,v,col)=>`<div class="igp-total" style="min-width:150px"><small>${l}</small><b${col?` style="color:${col}"`:""}>${v}</b></div>`;
+  const kp=`<div class="igp-totals" style="justify-content:flex-start;margin:0 0 10px">${kpi("عدد الفواتير",rowsData.length)}${kpi("مرحّلة / مسودة",tPosted+" / "+(rowsData.length-tPosted))}${kpi("إجمالي المشتريات",igPnum(tNet)+" ج.م")}${kpi("المدفوع",igPnum(tPaid)+" ج.م","var(--ok)")}${kpi("المتبقي للموردين",igPnum(tRem)+" ج.م",tRem>0.004?"var(--danger)":"")}</div>`;
+  const foot=rowsData.length?`<tfoot><tr style="font-weight:800;background:var(--card)"><td colspan="6">الإجمالي (${rowsData.length} فاتورة)</td><td class="num">${igPnum(tNet)}</td><td class="num">${igPnum(tPaid)}</td><td class="num">${igPnum(tRem)}</td><td colspan="2"></td></tr></tfoot>`:"";
+  return kp+`<div class="card"><div class="tbl-wrap"><table style="width:100%;min-width:980px"><thead><tr><th>م</th><th>رقم المستند</th><th>التاريخ</th><th>المورد</th><th>رقم فاتورة المورد</th><th>أمر الشراء</th><th>الصافي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>الروابط</th></tr></thead><tbody>${rows||`<tr><td colspan="11" class="empty">${igPurchaseLoaded?"لا توجد فواتير مطابقة":"جاري التحميل…"}</td></tr>`}</tbody>${foot}</table></div></div>`;
+}
 function igPurchaseOrderRemaining(order){const posted=(igPurchaseDocs.receipts||[]).filter(r=>r.status==="posted"&&String(r.purchaseOrderId||r.purchase_order_id)===String(order.id));const received={};posted.forEach(r=>(r.items||[]).forEach(it=>{const k=Number(it.orderLineNo||0);received[k]=(received[k]||0)+(Number(it.qty)||0);}));const remainingLines=(order.items||[]).map((it,i)=>({...it,orderLineNo:i+1,orderedQty:Number(it.qty)||0,receivedQty:received[i+1]||0,remainingQty:Math.max(0,(Number(it.qty)||0)-(received[i+1]||0))})).filter(x=>x.remainingQty>0.000001);return {remainingLines,complete:remainingLines.length===0,received};}
 function igPurchaseNewReceipt(orderId){const o=igPurchaseDocs.orders.find(x=>String(x.id)===String(orderId));if(!o)return toast("أمر الشراء غير موجود","err");const rem=igPurchaseOrderRemaining(o);if(rem.complete||o.status==="cancelled"||o.data?.closed||o.closed)return toast("أمر الشراء مكتمل أو مغلق ولا يقبل استلامًا جديدًا","err");igPurchaseReceiptDraft={id:crypto.randomUUID(),purchaseOrderId:o.id,purchaseOrderNo:o.docNo,supplier:o.supplier,warehouseId:o.warehouseId||whDefaultId(),date:igPdate(),status:"draft",allowOverReceipt:o.allowOverReceipt!==false,items:rem.remainingLines.map(x=>({...x,qty:x.remainingQty,receivedQty:x.remainingQty,orderedQty:x.orderedQty,receivedBefore:x.receivedQty,remainingBefore:x.remainingQty,unitCost:Number(x.unitPrice)||0}))};igPurchaseReceiptRender();}
 function igPurchaseReceiptRender(){const d=igPurchaseReceiptDraft;if(!d)return;const c=document.getElementById("content");if(!c)return;c.innerHTML=`<style>${igPurchaseCss()}</style><div class="page-head"><h2>إذن استلام مشتريات — ${igPesc(d.purchaseOrderNo)}</h2><span class="chip warn">مسودة</span><div class="spacer"></div><button class="btn ghost" onclick="igPurchaseReceiptBack()">↩ رجوع</button><button class="btn" onclick="igPurchaseReceiptSave()">💾 حفظ الإذن</button><button class="btn primary" onclick="igPurchaseReceiptPost()">✓ ترحيل واستلام للمخزن</button></div><section class="card"><div class="body"><div class="igp-fields"><label class="fld"><span>أمر الشراء</span><input class="inp" disabled value="${igPesc(d.purchaseOrderNo)}"></label><label class="fld"><span>المورد</span><input class="inp" disabled value="${igPesc(d.supplier)}"></label><label class="fld"><span>تاريخ الاستلام</span><input class="inp" type="date" value="${igPesc(d.date)}" onchange="igPurchaseReceiptDraft.date=this.value"></label><label class="fld"><span>المخزن</span><select class="inp" onchange="igPurchaseReceiptDraft.warehouseId=this.value">${igPoptions((state.warehouses||[]).map(w=>({id:w.id,name:w.name})),d.warehouseId,"اختر المخزن")}</select></label></div></div></section><section class="card"><div class="head"><h3>الأصناف المتبقية للاستلام الجزئي أو الكامل</h3></div><div class="body"><div class="tbl-wrap"><table class="igp-lines"><thead><tr><th>الصنف</th><th>المواصفة</th><th>الكمية المطلوبة</th><th>تم استلامه سابقًا</th><th>المتبقي قبل الإذن</th><th>كمية الاستلام الآن</th><th>الزيادة عن المتبقي</th><th>تكلفة الوحدة</th></tr></thead><tbody>${d.items.map((x,i)=>`<tr><td>${igPesc(x.description||x.itemCode||"صنف")}</td><td>${igPesc([x.factory,x.diameter,x.type,x.spec].filter(Boolean).join(" / "))}</td><td>${igPnum(x.orderedQty)}</td><td>${igPnum(x.receivedBefore)}</td><td><b>${igPnum(x.remainingBefore)}</b></td><td><input class="inp" type="number" min="0" ${d.allowOverReceipt===false?`max="${x.remainingBefore}"`:""} step="0.001" value="${x.qty}" oninput="igPurchaseReceiptDraft.items[${i}].qty=this.value;document.getElementById('igpReceiptExcess${i}').textContent=igPnum(Math.max(0,Number(this.value||0)-Number(igPurchaseReceiptDraft.items[${i}].remainingBefore||0)))"></td><td><b id="igpReceiptExcess${i}">${igPnum(Math.max(0,Number(x.qty||0)-Number(x.remainingBefore||0)))}</b></td><td><input class="inp" type="number" min="0" step="0.01" value="${x.unitCost}" oninput="igPurchaseReceiptDraft.items[${i}].unitCost=this.value"></td></tr>`).join("")}</tbody></table></div><p class="muted">يمكن استلام جزء من كل صنف. الكمية غير المستلمة تظل على أمر الشراء وتظهر في إذن جديد لاحقًا. ${d.allowOverReceipt===false?"تجاوز المتبقي ممنوع حسب شرط أمر الشراء.":"مسموح تجاوز المتبقي حسب شرط أمر الشراء، وسيظهر مقدار الزيادة ضمن الكمية المستلمة."}</p></div></section>`;}
@@ -5185,7 +5243,7 @@ async function igPurchasePrintJournal(){
  }catch(e){toast("تعذر تجهيز طباعة القيد: "+(e.message||e),"err");}
 }
 function igPurchaseExport(){const isO=currentPage==="purchaseOrders",list=igPurchaseDocs[isO?"orders":"invoices"]||[],q=igPurchaseQuery.toLowerCase(),rows=list.filter(x=>[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo].some(v=>String(v||"").toLowerCase().includes(q))).map(x=>{const c=igPcalc(x);return [x.docNo,x.date,x.supplier,x.supplierInvoiceNo||"",x.supplierInvoiceDate||"",x.deliveryDate||"",x.purchaseOrderNo||"",x.warehouseId||"",c.subtotal,c.discount,c.tax,c.charges,c.net,c.paid,c.remaining,x.status,x.notes||""];});const head=["رقم المستند","التاريخ","المورد","رقم فاتورة المورد","تاريخ فاتورة المورد","تاريخ الاستلام","أمر الشراء","المخزن","قبل الخصم","الخصم","ضريبة المدخلات","مصاريف","الصافي","المدفوع","المتبقي","الحالة","ملاحظات"];const csv="\ufeff"+[head,...rows].map(r=>r.map(v=>'"'+String(v??"").replace(/"/g,'""')+'"').join(",")).join("\r\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=(isO?"purchase-orders":"purchase-invoices")+".csv";a.click();URL.revokeObjectURL(url);}
-async function igConvertSaleOrderToPurchase(id){const so=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!so)return toast("أمر البيع غير موجود","err");if(!so.supplier)return toast("أمر البيع لا يحتوي على مورد؛ اختر المورد في أمر البيع أولاً","err");igPurchaseEditing=null;igPurchaseFormOpen=true;igPurchaseDraft=igPnew("order");igPurchaseDraft.supplier=so.supplier;igPurchaseDraft.sourceSaleOrderId=so.id;igPurchaseDraft.sourceSaleOrderNo=so.orderNo;igPurchaseDraft.warehouseId=so.warehouseId||whDefaultId();igPurchaseDraft.notes="تم التحويل تلقائيًا من أمر البيع رقم "+so.orderNo;igPurchaseDraft.items=(so.items||[]).map(x=>({...igPemptyLine(),description:[x.diameter,x.type,x.spec].filter(Boolean).join(" — "),diameter:x.diameter||"",type:x.type||"",spec:x.spec||"",qty:Number(x.qty)||0,receivedQty:Number(x.qty)||0,unitPrice:0}));if(!igPurchaseDraft.items.length)igPurchaseDraft.items=[igPemptyLine()];go("purchaseOrders");}
+async function igConvertSaleOrderToPurchase(id){const so=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!so)return toast("أمر البيع غير موجود","err");if(!so.supplier)return toast("أمر البيع لا يحتوي على مورد؛ اختر المورد في أمر البيع أولاً","err");igPurchaseEditing=null;igPurchaseFormOpen=true;igPurchaseDraft=igPnew("order");igPurchaseDraft.supplier=so.supplier;igPurchaseDraft.sourceSaleOrderId=so.id;igPurchaseDraft.sourceSaleOrderNo=so.orderNo;igPurchaseDraft.warehouseId=so.warehouseId||whDefaultId();igPurchaseDraft.notes="تم التحويل تلقائيًا من أمر البيع رقم "+so.orderNo;igPurchaseDraft.items=(so.items||[]).map(x=>({...igPemptyLine(),description:[x.diameter,x.type,x.spec].filter(Boolean).join(" — "),diameter:x.diameter||"",type:x.type||"",spec:x.spec||"",qty:Number(x.qty)||0,receivedQty:Number(x.qty)||0,unitPrice:0}));if(!igPurchaseDraft.items.length)igPurchaseDraft.items=[igPemptyLine()];window.__igPurKeep=true;go("purchaseOrders");}
 
 // ================= المحاسبة العامة GL — واجهة تشغيل أولية =================
 let glSelectedAccountId=null;
@@ -8570,7 +8628,7 @@ function renderPartyStatement(){
   const detBlank=det?'<td>—</td><td>—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td>':'';
   const partyTd=p=>multi?`<td class="ps-party">${escapeHtml(p||'—')}</td>`:'';
   const openRowsHtml=parties.map(p=>`<tr class="ps-open"><td>${escapeHtml(f.from||'—')}</td>${partyTd(p)}<td>—</td>${detBlank}<td class="ps-desc"><b>رصيد أول المدة</b></td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num">—</td><td class="si-num ps-bal">${money(openMap.get(p)||0)}</td></tr>`).join('');
-  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}${(r.source==='treasury'&&/^treasury:/.test(r.unique||''))?` <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenTx('${escapeAttr(String(r.unique).slice(9))}')">↗ فتح الحركة</a>`:''}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
+  const dataRowsHtml=rows.map(r=>`<tr><td>${escapeHtml(r.date)}</td>${partyTd(r.party)}<td class="si-order">${escapeHtml(String(r.order||'—'))}</td>${detTd(r)}<td class="ps-desc">${escapeHtml(r.desc)}${(r.source==='treasury'&&/^treasury:/.test(r.unique||''))?` <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenTx('${escapeAttr(String(r.unique).slice(9))}')">↗ فتح الحركة</a>`:''}${r.source==='purchaseInvoice'?` <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenPurchaseInv('${escapeAttr(String(r.unique).slice(17))}')">🧾 الفاتورة</a> <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenPolicyByInv('${escapeAttr(String(r.unique).slice(17))}')">🚚 البوليصة</a>`:''}${r.source==='supply'?` <a href="javascript:void(0)" class="no-print" style="font-weight:800;color:#8e6715;white-space:nowrap" onclick="stmtOpenPolicyByOrder('${escapeAttr(String(r.orderKey||''))}')">🚚 البوليصة</a>`:''}</td><td class="si-num">${r.source==='treasury'?'—':money(r.inclusiveTotal)}</td><td class="si-num ps-dr">${+r.debit?money(r.debit):'—'}</td><td class="si-num ps-cr">${+r.credit?money(r.credit):'—'}</td><td class="si-num ps-bal"><b>${money(r.balance)}</b></td></tr>`).join('');
   const emptyHtml=!parties.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">اختر ${customer?'عميلًا':'موردًا'} من الفلتر لعرض كشف الحساب</td></tr>`:(!rows.length?`<tr><td colspan="${ncol}" class="sales-inst-empty">لا توجد حركات مطابقة للفترة</td></tr>`:'');
   const headCols=['التاريخ'].concat(multi?[customer?'العميل':'المورد']:[]).concat(['أمر البيع']).concat(det?['القطر','الصنف','الكمية','الوزن الفعلي (طن)','سعر الوحدة (شامل)']:[]).concat(['البيان','السعر الشامل','مدين','دائن','الرصيد الجاري']);
   el.innerHTML=`<style>
@@ -29661,18 +29719,28 @@ html body .layout:not(.collapsed) aside nav .ns-solo:not(.open) .navsub{display:
 .ap-bar .ap-dev{display:inline-flex;align-items:center;gap:9px;direction:ltr;padding:3px 14px 3px 5px;border-radius:999px;border:1px solid rgba(244,197,66,.38);background:rgba(244,197,66,.07);white-space:nowrap}
 .ap-bar .ap-dev img{width:28px;height:28px;border-radius:50%;object-fit:cover;display:block;box-shadow:0 0 0 1px rgba(244,197,66,.55)}
 .ap-bar .ap-dev span{font:700 11.5px/1.2 Georgia,"Times New Roman",serif;letter-spacing:1.4px;color:#EDD69E}
-.ap-bar .ap-dev small{display:block;font:600 8.5px/1.1 Georgia,serif;letter-spacing:1.6px;color:#8fa0c8;text-transform:uppercase}
+.ap-bar .ap-dev small{display:inline;margin-right:7px;font:600 9px/1.2 Georgia,serif;letter-spacing:1.6px;color:#8fa0c8;text-transform:uppercase}
 @media(max-width:900px){.ap-bar .ap-dev{display:none}}
 .ig-devfoot{display:flex;align-items:center;justify-content:center;gap:10px;margin:26px 0 10px;padding:14px 0 6px;border-top:1px solid rgba(201,162,74,.35);direction:ltr}
 .ig-devfoot img{width:34px;height:34px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 1px rgba(201,162,74,.7)}
 .ig-devfoot span{font:600 12px/1.3 Georgia,"Times New Roman",serif;letter-spacing:1.8px;color:#8d7a45}
 .ig-devfoot b{color:#9a7415;font-weight:800}
 @media print{.ig-devfoot{display:none}}
+.ig-devbar{flex:none;display:flex;align-items:center;justify-content:center;gap:8px;height:30px;padding:0 12px;border-top:1px solid rgba(201,162,74,.35);background:var(--bg);direction:ltr;white-space:nowrap}
+.ig-devbar img{width:20px;height:20px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 1px rgba(201,162,74,.7)}
+.ig-devbar span{font:600 11px/1 Georgia,"Times New Roman",serif;letter-spacing:1.6px;color:#8d7a45}
+.ig-devbar b{color:#9a7415;font-weight:800}
+body[data-theme="dark"] .ig-devbar{background:#0b1220}
+body[data-theme="dark"] .ig-devbar span{color:#b9a56a}
+body[data-theme="dark"] .ig-devbar b{color:#EDD69E}
+@media print{.ig-devbar{display:none}}
 </style>
 <script>
 function igDevLogoSrc(){ try{ var e=document.getElementById("hmLoginLogo"); return e?e.getAttribute("src"):""; }catch(_){ return ""; } }
 function igDevBrandHtml(){ var s=igDevLogoSrc(); return '<span class="ap-dev" title="H2M+ ERP Systems">'+(s?'<img src="'+s+'" alt="H2M+">':'')+'<span><small>Developed by</small>H2M+ ERP Systems</span></span>'; }
-function igDevFootHtml(){ var s=igDevLogoSrc(); return '<div class="ig-devfoot">'+(s?'<img src="'+s+'" alt="H2M+">':'')+'<span>Developed by <b>H2M+ ERP Systems</b></span></div>'; }
+function igDevBarInit(){ try{ var s=igDevLogoSrc(), i=document.getElementById("igDevBarImg"); if(i&&s&&i.getAttribute("src")!==s){ i.src=s; i.style.display=""; } }catch(_){} }
+function igDevFootHtml(){ return ""; }
+function _igDevFootHtmlOld(){ var s=igDevLogoSrc(); return '<div class="ig-devfoot">'+(s?'<img src="'+s+'" alt="H2M+">':'')+'<span>Developed by <b>H2M+ ERP Systems</b></span></div>'; }
 </script>
 <style id="lg-desktop-split">
 /* كمبيوتر: البانر ثلثين (يسار) + نموذج الدخول ثلث (يمين) */
@@ -29832,5 +29900,212 @@ function igDevFootHtml(){ var s=igDevLogoSrc(); return '<div class="ig-devfoot">
   if(mq.addEventListener) mq.addEventListener("change",sync); else if(mq.addListener) mq.addListener(sync);
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded",sync); else sync();
   setTimeout(sync,300);
+})();
+</script>
+<style id="ig-supply-mirror-css">
+/* ===== بيانات التوريد: شريط تمرير أفقي/رأسي ظاهر دايمًا في أسفل الشاشة ===== */
+html body #content .supply-page .tbl-wrap{
+  overflow-x:scroll!important;overflow-y:auto!important;
+  scrollbar-width:auto!important;scrollbar-color:#c99724 #e7ebf1!important;
+  scrollbar-gutter:stable both-edges;
+}
+html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar{width:16px!important;height:16px!important;display:block!important}
+html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar-track{background:#e7ebf1!important;border-radius:8px}
+html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar-thumb{background:#c99724!important;border:3px solid #e7ebf1!important;border-radius:10px;min-width:70px;min-height:50px}
+html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar-thumb:hover{background:#a97d12!important}
+html body:not(#_) #content .supply-page .tbl-wrap::-webkit-scrollbar-corner{background:#e7ebf1}
+/* فواتير المشتريات المعكوسة في بيانات التوريد */
+.sup-pi-tag{display:inline-block;margin-inline-start:6px;padding:1px 8px;border-radius:999px;background:#e0ecff;color:#1d4ed8;font-size:10.5px;font-weight:800;white-space:nowrap}
+.sup-pi-pay.ok{background:#dcfce7;color:#166534}.sup-pi-pay.mid{background:#fef3c7;color:#92400e}.sup-pi-pay.bad{background:#fee2e2;color:#991b1b}
+.sup-pi-pay{display:inline-block;padding:2px 10px;border-radius:999px;font-weight:800;font-size:11.5px;white-space:nowrap}
+</style>
+<script id="ig-supply-purchase-mirror">
+(function(){
+"use strict";
+/* ------------------------------------------------------------------
+   1) مرآة فواتير المشتريات داخل بيانات التوريد
+   - أي فاتورة مشتريات ليها بوليصة (بأمر البيع أو الرقم المرجعي) => بتتقرأ مع البوليصة نفسها
+   - أي فاتورة مباشرة من غير بوليصة => بتظهر كسطر توريد "افتراضي" (ما بيتخزّنش في state.shipments)
+   ------------------------------------------------------------------ */
+var VIRT_KEYS=new Set(), VIRT_BY_KEY=new Map();
+function R2(v){return Math.round((Number(v)+Number.EPSILON)*100)/100;}
+function invList(){
+  try{ if(typeof canView==="function" && !canView("purchaseInvoices")) return []; }catch(e){}
+  try{ return (igPurchaseDocs&&igPurchaseDocs.invoices)||[]; }catch(e){ return []; }
+}
+function invAlive(x){ return x && x.status!=="cancelled" && x.status!=="void" && !x.deleted_at; }
+function invKey(x){
+  var k=""; try{ k=igPurchasePolicyKey(x)||""; }catch(e){}
+  if(k) return {key:k,orphan:false};
+  var id=x.sourceSaleOrderId, no=String(x.sourceSaleOrderNo||"").trim();
+  return {key: id?("so:"+id):(no?("no:"+no):("policy:pi_"+x.id)), orphan:true};
+}
+function buildVirtuals(){
+  VIRT_KEYS=new Set(); VIRT_BY_KEY=new Map();
+  var out=[];
+  invList().filter(invAlive).forEach(function(x){
+    var k=invKey(x); if(!k.orphan) return;
+    var c; try{ c=igPcalc(x); }catch(e){ return; }
+    var items=(c.lines||[]).map(function(l){
+      var q=Number(l.qty)||0, rq=(l.receivedQty!=null&&l.receivedQty!=="")?(Number(l.receivedQty)||0):q;
+      var w=rq>0?rq:q;
+      return {supplyQty:q, actualWeight:w, buyPrice:w>0?R2(l.lineNet/w):0, sellPrice:0,
+              diameter:l.diameter||"", type:l.type||"", factory:l.factory||"", agingStatus:"",
+              itemCode:l.itemCode||"", description:l.description||""};
+    });
+    if(!items.length) return;
+    var s={ id:"pi_"+x.id, virtual:true, purchaseInvoiceId:x.id, purchaseInvoiceNo:x.docNo,
+      policyNo:"فاتورة "+(x.docNo||""), date:x.date||"", supplier:x.supplier||"", customer:"", company:"", site:"",
+      notes:"فاتورة مشتريات"+(x.supplierInvoiceNo?(" — فاتورة المورد "+x.supplierInvoiceNo):""),
+      saleOrderNo:String(x.sourceSaleOrderNo||"").trim(), saleOrderId:x.sourceSaleOrderId||"",
+      applyVat:false, terms:{}, items:items, createdAt:Date.parse(x.created_at||x.date||"")||0 };
+    out.push(s); VIRT_KEYS.add(k.key); if(!VIRT_BY_KEY.has(k.key)) VIRT_BY_KEY.set(k.key,x);
+  });
+  return out;
+}
+var inSwap=false;
+function withVirtuals(fn,self,args){
+  if(inSwap) return fn.apply(self,args);
+  var orig=state.shipments, v=[];
+  try{ v=buildVirtuals(); }catch(e){ v=[]; }
+  if(!v.length) return fn.apply(self,args);
+  state.shipments=(orig||[]).concat(v); inSwap=true;
+  try{ return fn.apply(self,args); } finally{ state.shipments=orig; inSwap=false; }
+}
+/* تجميع السداد للمورد لكل مجموعة (نفس مفتاح مجموعة بيانات التوريد) */
+function aggInvoices(){
+  var m=new Map();
+  invList().filter(invAlive).forEach(function(x){
+    var k=invKey(x).key, c; try{ c=igPcalc(x); }catch(e){ return; }
+    var g=m.get(k)||{net:0,paid:0,n:0,draft:0,docs:[]};
+    g.net+=c.net; g.paid+=c.paid; g.n++; if(x.status!=="posted") g.draft++; g.docs.push(x.docNo);
+    m.set(k,g);
+  });
+  return m;
+}
+/* دوال أصلية بتشتغل على النسخة المدموجة */
+var _supplyLines=window.supplyLines;
+if(typeof _supplyLines==="function") window.supplyLines=function(){ return withVirtuals(_supplyLines,this,arguments); };
+var _supColValues=window.supColValues;
+if(typeof _supColValues==="function") window.supColValues=function(){ return withVirtuals(_supColValues,this,arguments); };
+/* الفاتورة الافتراضية ملهاش حركات مخزون بوليصة => متعتبرش "غير مسوّاة" */
+var _invPendInfo=window.invPendInfo;
+if(typeof _invPendInfo==="function") window.invPendInfo=function(sh){ if(sh&&sh.virtual) return {r:true,i:true}; return _invPendInfo.apply(this,arguments); };
+/* فتح السطر الافتراضي = فتح فاتورة المشتريات نفسها */
+function openInvoice(id){
+  try{ if(typeof closeModal==="function") closeModal(); }catch(e){}
+  go("purchaseInvoices"); setTimeout(function(){ try{ igPurchaseOpen(id,"invoice"); }catch(e){ toast("تعذر فتح فاتورة المشتريات","err"); } },60);
+}
+window.igSupOpenPurchaseInv=openInvoice;
+var _editShipment=window.editShipment;
+if(typeof _editShipment==="function") window.editShipment=function(id){
+  if(String(id).indexOf("pi_")===0) return openInvoice(String(id).slice(3));
+  return _editShipment.apply(this,arguments);
+};
+/* منع ترحيل مشتريات تاني لمجموعة كلها فواتير مشتريات (اترحّلت من شاشة الفواتير) */
+var _supPostAccounts=window.supPostAccounts;
+if(typeof _supPostAccounts==="function") window.supPostAccounts=function(key){
+  try{ buildVirtuals(); if(VIRT_KEYS.has(String(key))){ toast("المجموعة دي فواتير مشتريات — الترحيل والإلغاء من شاشة فواتير المشتريات","warn"); return; } }catch(e){}
+  return _supPostAccounts.apply(this,arguments);
+};
+/* ------------------------------------------------------------------
+   2) تحميل فواتير المشتريات مع فتح بيانات التوريد + تحديثها بشكل دوري
+   ------------------------------------------------------------------ */
+var loadingInv=false, lastLoad=0;
+function ensureInvoices(force){
+  if(loadingInv||typeof igPurchaseFetchAll!=="function") return;
+  try{ if(typeof canView==="function" && !canView("purchaseInvoices")) return; }catch(e){}
+  if(!force && igPurchaseLoaded && Date.now()-lastLoad<45000) return;
+  loadingInv=true;
+  igPurchaseFetchAll().then(function(ok){
+    loadingInv=false; lastLoad=Date.now();
+    if(ok && currentPage==="supply" && typeof renderSupply==="function") renderSupply();
+  }).catch(function(){ loadingInv=false; });
+}
+/* ------------------------------------------------------------------
+   3) أعمدة سداد المورد + تحسين سطور الفواتير في عرض التجميع
+   ------------------------------------------------------------------ */
+function mk(tag,html,cls){ var e=document.createElement(tag); if(cls) e.className=cls; e.innerHTML=html; return e; }
+function decorate(){
+  var tb=document.querySelector('.sup-grouped-wrap table[data-rs-key="supply-grouped"]');
+  if(!tb||tb.dataset.igPi==="1") return;
+  var ths=[].slice.call(tb.querySelectorAll("thead th"));
+  var hasBuy=ths.some(function(t){return t.textContent.indexOf("إجمالي الشراء")>-1;});
+  if(!hasBuy) return;                       // المستخدم مش مسموحله يشوف الشراء
+  tb.dataset.igPi="1";
+  var agg=aggInvoices(); try{ buildVirtuals(); }catch(e){}
+  var idxStatus=ths.findIndex(function(t){return t.textContent.trim().indexOf("الحالة")===0;});
+  if(idxStatus<0) idxStatus=ths.length-1;
+  var cur=(state&&state.settings&&state.settings.currency)||"";
+  ths[idxStatus].parentNode.insertBefore(mk("th","مدفوع للمورد"),ths[idxStatus]);
+  ths[idxStatus].parentNode.insertBefore(mk("th","متبقي للمورد"),ths[idxStatus]);
+  ths[idxStatus].parentNode.insertBefore(mk("th","سداد المورد"),ths[idxStatus]);
+  var T={paid:0,rem:0};
+  tb.querySelectorAll("tbody tr").forEach(function(tr){
+    var first=tr.querySelector("td.sup-ord-td"); if(!first) return;          // صفوف التفاصيل بتتعدّى
+    var m=/supToggleDet\('([^']*)'\)/.exec(first.getAttribute("onclick")||""); var key=m?m[1]:"";
+    var g=agg.get(key), tds=tr.children, anchor=tds[idxStatus], virt=VIRT_KEYS.has(key);
+    var c1,c2,c3;
+    if(!g){ c1=mk("td","—","num"); c2=mk("td","—","num"); c3=mk("td","<span class='muted'>—</span>"); }
+    else{
+      var rem=Math.max(0,R2(g.net-g.paid)); T.paid+=g.paid; T.rem+=rem;
+      var st=(g.net>0.005&&g.paid>=g.net-0.005)?"ok":(g.paid>0.005?"mid":"bad");
+      var lbl=st==="ok"?"مسدد":st==="mid"?"جزئي":"آجل";
+      c1=mk("td",fmt(g.paid),"num");
+      c2=mk("td","<strong style='color:"+(rem>0.005?"#b91c1c":"#166534")+"'>"+fmt(rem)+"</strong>","num");
+      c3=mk("td","<span class='sup-pi-pay "+st+"' title='"+g.n+" فاتورة مشتريات"+(g.draft?(" — منها "+g.draft+" مسودة"):"")+" — إجمالي "+fmt(g.net)+" "+cur+"'>"+lbl+(g.draft?" (مسودة)":"")+"</span>");
+    }
+    tr.insertBefore(c1,anchor); tr.insertBefore(c2,anchor); tr.insertBefore(c3,anchor);
+    if(virt){
+      var inv=VIRT_BY_KEY.get(key), no=inv?inv.docNo:"";
+      var strong=first.querySelector("strong"), none=first.querySelector("span[style*='text-dim']");
+      var tag="<span class='sup-pi-tag' title='فاتورة مشتريات مباشرة بدون بوليصة'>🧾 فاتورة مشتريات"+(no?(" "+no):"")+"</span>";
+      if(none) none.outerHTML="<b>"+(no||"—")+"</b>";
+      first.insertAdjacentHTML("beforeend"," "+tag);
+      // خلية التسوية المخزنية ملهاش لازمة للفاتورة المباشرة
+      if(tds[1]) tds[1].innerHTML="<span class='muted' title='وارد المخزون بيتثبّت من ترحيل الفاتورة'>—</span>";
+      // إخفاء أزرار ترحيل/طباعة مبيعات البوليصة (مش بتخص فاتورة مشتريات)
+      tr.querySelectorAll("td.sup-act-td button").forEach(function(b){
+        var oc=b.getAttribute("onclick")||"";
+        if(/supPostAccounts|supPrintPostedEntry|supPrintInvoiceForKey|supOpenOrderTermsEdit/.test(oc)) b.remove();
+      });
+      var open=tr.querySelector("td.sup-act-td button[onclick*='supOpenGroupPolicy']");
+      if(open){ open.title="فتح فاتورة المشتريات"; open.setAttribute("aria-label","فتح فاتورة المشتريات"); }
+    }
+  });
+  var tf=tb.querySelector("tfoot tr");
+  if(tf){
+    var a=[].slice.call(tf.children).find(function(td){return td.getAttribute("colspan")==="2";});
+    if(a){ tf.insertBefore(mk("td",fmt(T.paid),"num"),a); tf.insertBefore(mk("td","<strong>"+fmt(T.rem)+"</strong>","num"),a); tf.insertBefore(mk("td",""),a); }
+  }
+}
+/* ------------------------------------------------------------------
+   4) ملاءمة ارتفاع الجدول مع الشاشة => شريط التمرير الأفقي يفضل ظاهر تحت
+   ------------------------------------------------------------------ */
+var raf=0;
+function fit(){
+  raf=0;
+  document.querySelectorAll("#content .supply-page .tbl-wrap").forEach(function(el){
+    if(el.closest(".modal,#modalBackdrop")) return;
+    var top=el.getBoundingClientRect().top;
+    var h=Math.floor(window.innerHeight-Math.max(top,0)-16);
+    el.style.maxHeight=Math.max(300,h)+"px";
+  });
+}
+function schedFit(){ if(!raf) raf=requestAnimationFrame(fit); }
+window.addEventListener("resize",schedFit);
+document.addEventListener("scroll",schedFit,true);
+/* ------------------------------------------------------------------
+   5) تغليف renderSupply
+   ------------------------------------------------------------------ */
+var _renderSupply=window.renderSupply;
+if(typeof _renderSupply==="function") window.renderSupply=function(){
+  var r=_renderSupply.apply(this,arguments);
+  try{ ensureInvoices(false); decorate(); }catch(e){ console.warn("supply mirror",e); }
+  setTimeout(fit,0); setTimeout(fit,250);
+  return r;
+};
+/* لو الصفحة مفتوحة بالفعل */
+setTimeout(function(){ try{ if(currentPage==="supply") renderSupply(); }catch(e){} },600);
 })();
 </script>
