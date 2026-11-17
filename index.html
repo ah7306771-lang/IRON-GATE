@@ -2399,6 +2399,14 @@ html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollba
 </head>
 <body>
 
+<!-- Boot splash: بيظهر فورًا لحد ما نعرف نودى اللوجن ولا التطبيق — بيتخفى بالكود بعد فحص الجلسة -->
+<div id="bootLoader" style="display:flex;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 0%,#17376a 0%,#0a1a35 60%,#040b19 100%);color:#F4C542">
+  <div class="bl-box" style="text-align:center">
+    <div class="bl-spin" style="width:54px;height:54px;border-radius:50%;border:4px solid rgba(244,197,66,.2);border-top-color:#F4C542;margin:0 auto 16px;animation:igSpin .8s linear infinite"></div>
+    <div class="bl-txt" style="font-weight:700;letter-spacing:1px;font-size:14px">IRON GATE SUPPLIES</div>
+  </div>
+</div>
+
 <!-- LOGIN -->
 <div id="login" style="visibility:hidden">
   <div id="lgDateBar" aria-live="polite"><span id="lgDay"></span><i class="lgd-sep"></i><span id="lgDate"></span><span id="lgTempWrap" style="display:none"><i class="lgd-sep"></i><span id="lgTemp"></span></span></div>
@@ -4118,15 +4126,20 @@ document.addEventListener("DOMContentLoaded",()=>{
   // استرجاع الجلسة في نفس التبويب (بتتمسح لما التبويب يتقفل)
   // Boot splash بيستر الشاشة لحد ما نعرف نودي للوجن ولا للتطبيق (علشان شاشة اللوجن ماتظهرش لحظيًا ثم تختفي)
   try{ if(typeof showBoot==="function") showBoot("جارى التحقق من الجلسة…"); }catch(_){}
-  const _revealLogin=()=>{ const lg=document.getElementById("login"); if(lg&&lg.style.display!=="none"){ lg.style.visibility="visible"; } try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} };
-  sb.auth.getSession().then(r=>{
+  const _revealLogin=()=>{ const lg=document.getElementById("login"); if(lg){ lg.style.visibility="visible"; if(lg.style.display==="none") lg.style.display="flex"; } try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} };
+  // لو لأى سبب الـboot فضل مفتوح أكتر من 8 ثوانى، أظهر اللوجن علشان المستخدم ما يعلّقش
+  const _bootWatchdog=setTimeout(()=>{ const app=document.getElementById("app"); if(!app||app.style.display!=="block") _revealLogin(); },8000);
+  sb.auth.getSession().then(async r=>{
     if(r.data && r.data.session){
-      try{ startSession(r.data.session.user,true); }catch(e){ _revealLogin(); }
-      setTimeout(()=>{ try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} },100);
-    } else { _revealLogin(); }
-  }).catch(()=>_revealLogin());
-  // ضمان نهائي: لو حاجة علّقت، نظهر اللوجن بعد ثانيتين كحد أقصى
-  setTimeout(()=>{ const lg=document.getElementById("login"); if(lg&&lg.style.visibility==="hidden"&&lg.style.display!=="none") _revealLogin(); },2500);
+      let ok=false;
+      try{ ok = await startSession(r.data.session.user,true); }catch(e){ ok=false; }
+      clearTimeout(_bootWatchdog);
+      if(!ok) _revealLogin();
+      else { try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} }
+    } else { clearTimeout(_bootWatchdog); _revealLogin(); }
+  }).catch(()=>{ clearTimeout(_bootWatchdog); _revealLogin(); });
+  // ضمان ثانوى (مهلة قصيرة فى حالة عدم وجود جلسة أصلاً)
+  setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); },2500);
   // رقم المستخدم وكلمة المرور (لو "تذكّر" مفعّل) من آخر دخول ناجح
   restoreSavedLogin();
   try{ const n0=parseInt(noInp?.value,10); if(n0>0&&((lockGet()[n0]||{}).until||0)>Date.now()) lgLockCountdown(n0); }catch(e){}
@@ -6318,51 +6331,83 @@ function glAcSystems(){return [...new Set(glState.entries.filter(e=>e.status==='
 function glRenderRptAcct(){
   const f=glAcState();
   const leafs=glState.accounts.filter(a=>{try{return glIsPostingLeafAccount(a);}catch(e){return false;}}).sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),'en',{numeric:true}));
-  const accOpts=leafs.map(a=>`<option value="${glEsc(a.account_code)}">${glEsc(a.account_code)} — ${glEsc(a.account_name)}</option>`).join('');
+  window._glAcList=leafs.map(a=>({code:String(a.account_code||''),name:String(a.account_name||'')}));
   const systems=glAcSystems();
   const ck=v=>v?'checked':'';
   const collapsed=!!f._collapsed;
+  const fromLabel=glAcPickLabel(f.accFrom)||'— كل الحسابات —';
+  const toLabel=glAcPickLabel(f.accTo)||'— كل الحسابات —';
   return `<style>${GL_AC_CSS}
-.glra-card{margin-bottom:12px;border:1px solid #d6e4f2;border-radius:14px;background:linear-gradient(180deg,#f7fbff,#fff);box-shadow:0 1px 3px rgba(31,78,121,.06);overflow:hidden}
-.glra-card-hd{display:flex;align-items:center;gap:10px;padding:11px 14px;background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff;cursor:pointer;user-select:none}
-.glra-card-hd h4{margin:0;flex:1;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
-.glra-card-hd .glra-caret{transition:transform .25s;font-size:14px}
+/* ==== تقليل مساحة الهيدر الخاص بالصفحة دى فقط ==== */
+.gl-screen-wrap:has(#glAcFilterCard) ~ *,.gl-screen-wrap:has(#glAcFilterCard){}
+.gl-head-card:has(~ .gl-screen-wrap #glAcFilterCard){padding:8px 14px!important}
+.gl-head-card:has(~ .gl-screen-wrap #glAcFilterCard) h2{font-size:15px!important;margin:0!important}
+.gl-head-card:has(~ .gl-screen-wrap #glAcFilterCard) .sub{font-size:11px!important;margin:2px 0 0!important}
+.gl-head-card:has(~ .gl-screen-wrap #glAcFilterCard) .perm{display:none!important}
+
+.glra-card{margin-bottom:10px;border:1px solid #d6e4f2;border-radius:12px;background:linear-gradient(180deg,#f7fbff,#fff);box-shadow:0 1px 3px rgba(31,78,121,.06);overflow:visible}
+.glra-card-hd{display:flex;align-items:center;gap:10px;padding:8px 12px;background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff;cursor:pointer;user-select:none;border-radius:11px 11px 0 0}
+.glra-card-hd h4{margin:0;flex:1;font-size:13px;font-weight:800;display:flex;align-items:center;gap:8px}
+.glra-card-hd .glra-caret{transition:transform .25s;font-size:12px}
 .glra-card.collapsed .glra-caret{transform:rotate(-90deg)}
 .glra-card.collapsed .glra-card-body{display:none}
-.glra-card-body{padding:14px}
-.glra-card .glra-badge{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);border-radius:12px;padding:2px 10px;font-size:11px;font-weight:700}
-.glra-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;align-items:end;margin-bottom:10px}
-.glra-row:last-child{margin-bottom:0}
-.glra-row label{display:flex;flex-direction:column;gap:4px;font-weight:700;font-size:12.5px;color:#1f3b57}
-.glra-row label.chk{flex-direction:row;align-items:center;gap:6px;cursor:pointer;padding:9px 10px;border:1px solid #d6e4f2;border-radius:9px;background:#fff;font-size:12px}
-.glra-row label.chk:has(input:checked){background:#e8f0fa;border-color:#9dc3e6;color:#1f4e79}
-.glra-row .grp{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:9px 12px;border:1px solid #d6e4f2;border-radius:10px;background:#fff}
-.glra-row .grp>b{color:#1f4e79;font-size:12.5px;min-width:70px}
-.glra-row .grp label.inline{flex-direction:row;align-items:center;gap:6px;cursor:pointer;font-weight:600;font-size:12px}
-.glra-row .grp select{min-width:180px}
-.glra-run-bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px;padding:12px 14px;border:1px solid #bdd7ee;border-radius:12px;background:linear-gradient(180deg,#eff7fd,#fff)}
-.glra-run-bar .glra-run-left{display:flex;gap:10px;align-items:center;flex:1 1 auto;flex-wrap:wrap}
-.glra-run-bar .glra-run-left b{font-size:12.5px;color:#1f3b57}
-.glra-run-bar button.glra-exec{background:linear-gradient(90deg,#d4a017,#f4c542);color:#1a1a1a;border:0;padding:10px 20px;font-weight:900;font-size:14px;border-radius:10px;cursor:pointer;box-shadow:0 2px 6px rgba(212,160,23,.3)}
-.glra-run-bar button.glra-exec:hover{filter:brightness(1.05);transform:translateY(-1px)}
-.glra-seg{display:inline-flex;border:1px solid #bdd7ee;border-radius:10px;overflow:hidden;background:#fff}
-.glra-seg button{background:#fff;color:#1f3b57;border:0;padding:8px 14px;font-weight:700;font-size:12.5px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;border-inline-end:1px solid #e0ebf7}
+.glra-card .glra-badge{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);border-radius:10px;padding:1px 9px;font-size:10.5px;font-weight:700}
+.glra-card-body{padding:10px 12px}
+.glra-line{display:grid;gap:8px;align-items:center;margin-bottom:8px}
+.glra-line:last-child{margin-bottom:0}
+.glra-line.l1{grid-template-columns:repeat(4,1fr)}
+.glra-line.l2{grid-template-columns:repeat(5,1fr)}
+.glra-line.l3{grid-template-columns:2fr 1.5fr auto}
+@media(max-width:1100px){.glra-line.l1{grid-template-columns:repeat(2,1fr)}.glra-line.l2{grid-template-columns:repeat(2,1fr)}.glra-line.l3{grid-template-columns:1fr}}
+.glra-fld{display:flex;flex-direction:column;gap:3px;min-width:0}
+.glra-fld>span{font-weight:700;font-size:11px;color:#1f3b57;padding-inline-start:3px}
+.glra-fld .input,.glra-fld select,.glra-fld .glra-combo-btn{height:34px;padding:0 10px;font-size:12.5px;border:1px solid #cbd7e8;border-radius:8px;background:#fff;width:100%;color:#1a1a1a}
+.glra-fld .input:focus,.glra-fld select:focus,.glra-fld .glra-combo-btn:focus{outline:0;border-color:#1f4e79;box-shadow:0 0 0 3px rgba(31,78,121,.12)}
+.glra-chk{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid #d6e4f2;border-radius:8px;background:#fff;font-size:11.5px;font-weight:600;color:#1f3b57;cursor:pointer;white-space:nowrap;min-height:34px;justify-content:center}
+.glra-chk:has(input:checked){background:linear-gradient(180deg,#e8f0fa,#d8e5f3);border-color:#1f4e79;color:#1f4e79;font-weight:800}
+.glra-chk input{accent-color:#1f4e79}
+.glra-syscur{display:flex;gap:8px;align-items:center;padding:6px 10px;border:1px solid #d6e4f2;border-radius:8px;background:#fff;min-height:34px;overflow:hidden}
+.glra-syscur b{font-size:11px;color:#1f4e79;flex-shrink:0}
+.glra-syscur label{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:#1f3b57;cursor:pointer;white-space:nowrap}
+.glra-syscur select{flex:1;min-width:0;height:28px;padding:0 6px;font-size:11.5px;border:1px solid #cbd7e8;border-radius:6px}
+.glra-seg{display:inline-flex;border:1px solid #bdd7ee;border-radius:8px;overflow:hidden;background:#fff;height:34px}
+.glra-seg button{background:#fff;color:#1f3b57;border:0;padding:0 14px;font-weight:700;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-inline-end:1px solid #e0ebf7}
 .glra-seg button:last-child{border-inline-end:0}
 .glra-seg button.active{background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff}
 .glra-seg button:hover:not(.active){background:#f7fbff}
-.glra-out-wrap{background:#fff;border:1px solid #bdd7ee;border-radius:12px;overflow:hidden;position:relative}
-.glra-out-tb{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(180deg,#f7fbff,#eef5fb);border-bottom:1px solid #d6e4f2;flex-wrap:wrap}
-.glra-out-tb .ttl{font-weight:800;color:#1f4e79;font-size:13px;flex:1;display:flex;align-items:center;gap:8px}
+
+/* Combo box with search */
+.glra-combo{position:relative}
+.glra-combo-btn{display:flex;align-items:center;justify-content:space-between;cursor:pointer;text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.glra-combo-btn::after{content:"▼";font-size:9px;color:#6b7280;margin-inline-start:6px}
+.glra-combo-pop{display:none;position:absolute;top:calc(100% + 4px);inset-inline:0;z-index:1000;background:#fff;border:1px solid #1f4e79;border-radius:10px;box-shadow:0 8px 24px rgba(31,78,121,.18);overflow:hidden;max-height:320px;min-width:280px}
+.glra-combo.open .glra-combo-pop{display:flex;flex-direction:column}
+.glra-combo-search{padding:8px;background:#f7fbff;border-bottom:1px solid #d6e4f2}
+.glra-combo-search input{width:100%;height:32px;padding:0 10px;border:1px solid #cbd7e8;border-radius:7px;font-size:12.5px;background:#fff}
+.glra-combo-search input:focus{outline:0;border-color:#1f4e79}
+.glra-combo-list{flex:1;overflow:auto;padding:4px}
+.glra-combo-list button{display:block;width:100%;text-align:start;padding:7px 10px;background:transparent;border:0;cursor:pointer;font-size:12px;color:#1a1a1a;border-radius:6px;font-weight:500}
+.glra-combo-list button:hover,.glra-combo-list button.hl{background:#eaf2fb;color:#1f4e79;font-weight:700}
+.glra-combo-list button b.c{font-family:monospace;color:#92400e;margin-inline-end:6px}
+.glra-combo-list .empty{padding:14px;text-align:center;color:#9ca3af;font-size:12px}
+
+.glra-run-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;padding:8px 12px;border:1px solid #bdd7ee;border-radius:10px;background:linear-gradient(180deg,#eff7fd,#fff)}
+.glra-run-bar .glra-run-left{display:flex;gap:10px;align-items:center;flex:1 1 auto;flex-wrap:wrap}
+.glra-run-bar button.glra-exec{background:linear-gradient(90deg,#d4a017,#f4c542);color:#1a1a1a;border:0;padding:9px 18px;font-weight:900;font-size:13px;border-radius:9px;cursor:pointer;box-shadow:0 2px 6px rgba(212,160,23,.3)}
+.glra-run-bar button.glra-exec:hover{filter:brightness(1.05);transform:translateY(-1px)}
+
+.glra-out-wrap{background:#fff;border:1px solid #bdd7ee;border-radius:10px;overflow:hidden;position:relative}
+.glra-out-tb{display:flex;align-items:center;gap:8px;padding:7px 10px;background:linear-gradient(180deg,#f7fbff,#eef5fb);border-bottom:1px solid #d6e4f2;flex-wrap:wrap}
+.glra-out-tb .ttl{font-weight:800;color:#1f4e79;font-size:12.5px;flex:1;display:flex;align-items:center;gap:6px}
 .glra-out-tb .ttl .dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.2)}
-.glra-out-tb button{background:#fff;color:#1f3b57;border:1px solid #bdd7ee;padding:7px 14px;font-weight:700;font-size:12px;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s}
+.glra-out-tb button{background:#fff;color:#1f3b57;border:1px solid #bdd7ee;padding:6px 12px;font-weight:700;font-size:11.5px;border-radius:7px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
 .glra-out-tb button:hover{background:#1f4e79;color:#fff;border-color:#1f4e79}
 .glra-out-tb button.pri{background:linear-gradient(90deg,#1f4e79,#2e75b6);color:#fff;border-color:#1f4e79}
-.glra-out-tb button.pri:hover{filter:brightness(1.1)}
-#glAcOut{padding:16px;overflow:auto;max-height:calc(100vh - 340px);background:#fff}
-.glra-foot-dev{margin-top:14px;padding:12px 16px;border:1px dashed #bdd7ee;border-radius:10px;background:linear-gradient(90deg,#f7fbff,#fff,#f7fbff);text-align:center;font-size:11px;color:#6b7280;letter-spacing:.5px}
+#glAcOut{padding:14px;overflow:auto;max-height:calc(100vh - 260px);background:#fff}
+.glra-foot-dev{margin-top:10px;padding:8px 14px;border:1px dashed #bdd7ee;border-radius:9px;background:linear-gradient(90deg,#f7fbff,#fff,#f7fbff);text-align:center;font-size:10.5px;color:#6b7280;letter-spacing:.5px}
 .glra-foot-dev b{color:#1f4e79;letter-spacing:1px}
-.glra-foot-dev .dev-hm{font-weight:900;color:#d4a017;font-size:13px;letter-spacing:0}
-.glra-foot-dev .dev-hm sup{font-size:9px;vertical-align:super}
+.glra-foot-dev .dev-hm{font-weight:900;color:#d4a017;font-size:12.5px;letter-spacing:0}
+.glra-foot-dev .dev-hm sup{font-size:8px;vertical-align:super}
 
 /* Report header with logos */
 .glra-rpt-brand{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:#fff;border-bottom:3px solid #d4a017;margin-bottom:10px;border-radius:8px 8px 0 0}
@@ -6384,65 +6429,69 @@ function glRenderRptAcct(){
       <span class="glra-caret">▼</span>
     </div>
     <div class="glra-card-body">
-      <div class="glra-row">
-        <label>من تاريخ<input class="input" id="glAcFrom" type="date" value="${glEsc(f.from)}" onchange="glAcSave()"></label>
-        <label>إلى تاريخ<input class="input" id="glAcTo" type="date" value="${glEsc(f.to)}" onchange="glAcSave()"></label>
-        <label>من حساب تحليلي
-          <select class="input" id="glAcAccFrom" onchange="glAcSave()">
-            <option value="">— كل الحسابات —</option>${accOpts.replace(new RegExp(`value="${f.accFrom}"`,'g'),`value="${f.accFrom}" selected`)}
-          </select>
-        </label>
-        <label>إلى حساب تحليلي
-          <select class="input" id="glAcAccTo" onchange="glAcSave()">
-            <option value="">— كل الحسابات —</option>${accOpts.replace(new RegExp(`value="${f.accTo}"`,'g'),`value="${f.accTo}" selected`)}
-          </select>
-        </label>
-      </div>
-      <div class="glra-row" style="grid-template-columns:1fr">
-        <div class="grp"><b>العملة</b>
-          <label class="inline"><input type="radio" checked disabled> عملة واحدة — الجنيه المصري (EGP)</label>
-          <label class="inline" title="النظام يعمل بعملة واحدة حاليًا"><input type="radio" disabled> عملات متعددة (غير مفعّلة)</label>
+
+      <div class="glra-line l1">
+        <div class="glra-fld"><span>من تاريخ</span><input class="input" id="glAcFrom" type="date" value="${glEsc(f.from)}" onchange="glAcSave()"></div>
+        <div class="glra-fld"><span>إلى تاريخ</span><input class="input" id="glAcTo" type="date" value="${glEsc(f.to)}" onchange="glAcSave()"></div>
+        <div class="glra-fld"><span>من حساب تحليلى</span>
+          <div class="glra-combo" id="glAcPickFromWrap">
+            <button type="button" class="glra-combo-btn" id="glAcPickFromBtn" onclick="glAcComboOpen('From')"><span id="glAcPickFromLbl">${glEsc(fromLabel)}</span></button>
+            <div class="glra-combo-pop">
+              <div class="glra-combo-search"><input type="search" id="glAcPickFromSearch" placeholder="ابحث بالكود أو الاسم…" oninput="glAcComboFilter('From',this.value)" onkeydown="glAcComboKey(event,'From')"></div>
+              <div class="glra-combo-list" id="glAcPickFromList"></div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="glra-row" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
-        <label class="chk"><input type="checkbox" id="glAcDetail" ${ck(f.detail)} onchange="glAcSave()"> تفصيلي (حركة كل حساب)</label>
-        <label class="chk"><input type="checkbox" id="glAcShowDesc" ${ck(f.showDesc)} onchange="glAcSave()"> طباعة الشرح</label>
-        <label class="chk"><input type="checkbox" id="glAcCcDetail" ${ck(f.ccDetail)} onchange="glAcSave()"> مراكز تكلفة تفصيلي</label>
-        <label class="chk"><input type="checkbox" id="glAcNoCc2" ${ck(f.noCc2)} onchange="glAcSave()"> بدون مركز تكلفة 2</label>
-        <label class="chk" id="glAcPbLbl"><input type="checkbox" id="glAcPb" ${ck(f.pagePer)} onchange="glAcSave()"> كل حساب في صفحة مستقلة</label>
-      </div>
-      <div class="glra-row" style="grid-template-columns:1fr">
-        <div class="grp"><b>النظام</b>
-          <label class="inline"><input type="radio" name="glAcSysMode" value="all" ${f.sysMode==='all'?'checked':''} onchange="glAcSave()"> كل الأنظمة</label>
-          <label class="inline"><input type="radio" name="glAcSysMode" value="one" ${f.sysMode==='one'?'checked':''} onchange="glAcSave()"> نظام واحد</label>
-          <select class="input" id="glAcSys" ${f.sysMode==='one'?'':'disabled'} onchange="glAcSave()"><option value="">— اختر النظام —</option>${systems.map(x=>`<option value="${glEsc(x)}" ${f.sys===x?'selected':''}>${glEsc(x)}</option>`).join('')}</select>
-          <span style="flex:1"></span>
-          <b style="min-width:unset">جهة التقرير</b>
-          <div class="glra-seg" role="radiogroup" aria-label="جهة التقرير">
-            <button type="button" class="${f.dest==='preview'?'active':''}" onclick="glAcSetDest('preview')">👁 عرض</button>
-            <button type="button" class="${f.dest==='print'?'active':''}" onclick="glAcSetDest('print')">🖨 طباعة</button>
-            <button type="button" class="${f.dest==='excel'?'active':''}" onclick="glAcSetDest('excel')">📊 Excel</button>
+        <div class="glra-fld"><span>إلى حساب تحليلى</span>
+          <div class="glra-combo" id="glAcPickToWrap">
+            <button type="button" class="glra-combo-btn" id="glAcPickToBtn" onclick="glAcComboOpen('To')"><span id="glAcPickToLbl">${glEsc(toLabel)}</span></button>
+            <div class="glra-combo-pop">
+              <div class="glra-combo-search"><input type="search" id="glAcPickToSearch" placeholder="ابحث بالكود أو الاسم…" oninput="glAcComboFilter('To',this.value)" onkeydown="glAcComboKey(event,'To')"></div>
+              <div class="glra-combo-list" id="glAcPickToList"></div>
+            </div>
           </div>
         </div>
       </div>
+
+      <div class="glra-line l2">
+        <label class="glra-chk"><input type="checkbox" id="glAcDetail" ${ck(f.detail)} onchange="glAcSave()"> تفصيلى</label>
+        <label class="glra-chk"><input type="checkbox" id="glAcShowDesc" ${ck(f.showDesc)} onchange="glAcSave()"> طباعة الشرح</label>
+        <label class="glra-chk"><input type="checkbox" id="glAcCcDetail" ${ck(f.ccDetail)} onchange="glAcSave()"> مراكز تكلفة تفصيلى</label>
+        <label class="glra-chk"><input type="checkbox" id="glAcNoCc2" ${ck(f.noCc2)} onchange="glAcSave()"> بدون مركز تكلفة 2</label>
+        <label class="glra-chk" id="glAcPbLbl"><input type="checkbox" id="glAcPb" ${ck(f.pagePer)} onchange="glAcSave()"> صفحة لكل حساب</label>
+      </div>
+
+      <div class="glra-line l3">
+        <div class="glra-syscur">
+          <b>النظام</b>
+          <label><input type="radio" name="glAcSysMode" value="all" ${f.sysMode==='all'?'checked':''} onchange="glAcSave()"> كل الأنظمة</label>
+          <label><input type="radio" name="glAcSysMode" value="one" ${f.sysMode==='one'?'checked':''} onchange="glAcSave()"> نظام واحد</label>
+          <select id="glAcSys" ${f.sysMode==='one'?'':'disabled'} onchange="glAcSave()"><option value="">— اختر —</option>${systems.map(x=>`<option value="${glEsc(x)}" ${f.sys===x?'selected':''}>${glEsc(x)}</option>`).join('')}</select>
+        </div>
+        <div class="glra-syscur"><b>العملة</b><label><input type="radio" checked disabled> جنيه مصرى (EGP)</label></div>
+        <div class="glra-seg" role="radiogroup" aria-label="جهة التقرير" title="جهة التقرير">
+          <button type="button" class="${f.dest==='preview'?'active':''}" onclick="glAcSetDest('preview',this)">👁 عرض</button>
+          <button type="button" class="${f.dest==='print'?'active':''}" onclick="glAcSetDest('print',this)">🖨 طباعة</button>
+          <button type="button" class="${f.dest==='excel'?'active':''}" onclick="glAcSetDest('excel',this)">📊 Excel</button>
+        </div>
+      </div>
+
     </div>
   </div>
 
   <div class="glra-run-bar">
     <div class="glra-run-left">
       <button type="button" class="glra-exec" onclick="glAcRun()">▶ تنفيذ التقرير</button>
-      <span style="font-size:11.5px;color:#6b7280">مصدر البيانات: القيود المُرحّلة فقط</span>
+      <span style="font-size:11px;color:#6b7280">مصدر البيانات: القيود المُرحّلة فقط</span>
     </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <button type="button" class="btn" onclick="glAcReset()" style="padding:8px 14px;font-size:12px">↺ افتراضي</button>
-    </div>
+    <button type="button" class="btn" onclick="glAcReset()" style="padding:7px 12px;font-size:11.5px">↺ افتراضى</button>
   </div>
 
   <div class="glra-out-wrap" id="glAcOutWrap">
     <div class="glra-out-tb">
       <div class="ttl"><span class="dot"></span>عرض التقرير</div>
       <button type="button" onclick="glAcShare()" title="مشاركة">📤 مشاركة</button>
-      <button type="button" onclick="glAcDownload()" title="تحميل PDF">⬇ تحميل</button>
+      <button type="button" onclick="glAcDownload()" title="تحميل">⬇ تحميل</button>
       <button type="button" class="pri" onclick="glAcPrintCurrent()" title="طباعة">🖨 طباعة</button>
     </div>
     <div id="glAcOut"><div class="glra-empty">حدد الفلاتر ثم اضغط «تنفيذ التقرير» لعرض النتيجة هنا</div></div>
@@ -6452,6 +6501,35 @@ function glRenderRptAcct(){
     DEVELOPED BY &nbsp; <span class="dev-hm">h<sup>2</sup>m+</span> &nbsp; <b>ERP SYSTEMS</b> &nbsp; · &nbsp; PREMIUM BUSINESS SOLUTIONS
   </div>`;
 }
+/* ==== Combobox للحسابات ==== */
+function glAcPickLabel(code){ if(!code) return ''; const a=(window._glAcList||[]).find(x=>x.code===code); return a?(a.code+' — '+a.name):code; }
+function glAcComboOpen(side){
+  const w=document.getElementById('glAcPick'+side+'Wrap');if(!w)return;
+  const open=w.classList.contains('open');
+  document.querySelectorAll('.glra-combo.open').forEach(x=>x.classList.remove('open'));
+  if(!open){ w.classList.add('open'); glAcComboFilter(side,''); setTimeout(()=>document.getElementById('glAcPick'+side+'Search')?.focus(),30); }
+}
+function glAcComboFilter(side,q){
+  const list=document.getElementById('glAcPick'+side+'List');if(!list)return;
+  const all=window._glAcList||[]; const s=String(q||'').trim().toLowerCase();
+  const rows=all.filter(a=>!s||a.code.toLowerCase().includes(s)||a.name.toLowerCase().includes(s)).slice(0,500);
+  const items=[`<button type="button" data-code="" onclick="glAcComboPick('${side}','')">— كل الحسابات —</button>`]
+    .concat(rows.map(a=>`<button type="button" data-code="${glEsc(a.code)}" onclick="glAcComboPick('${side}','${glEsc(a.code)}')"><b class="c">${glEsc(a.code)}</b>${glEsc(a.name)}</button>`));
+  list.innerHTML=items.length>1?items.join(''):'<div class="empty">لا توجد نتائج</div>';
+}
+function glAcComboPick(side,code){
+  const f=glAcState(); if(side==='From') f.accFrom=code; else f.accTo=code;
+  const lbl=document.getElementById('glAcPick'+side+'Lbl'); if(lbl) lbl.textContent=glAcPickLabel(code)||'— كل الحسابات —';
+  document.getElementById('glAcPick'+side+'Wrap')?.classList.remove('open');
+  const sum=document.getElementById('glAcSum'); if(sum) sum.textContent=glAcSumText(f);
+}
+function glAcComboKey(ev,side){
+  if(ev.key==='Escape'){ document.getElementById('glAcPick'+side+'Wrap')?.classList.remove('open'); ev.preventDefault(); return; }
+  if(ev.key==='Enter'){ const first=document.querySelector('#glAcPick'+side+'List button'); if(first){ first.click(); ev.preventDefault(); } }
+}
+document.addEventListener('click',function(e){
+  document.querySelectorAll('.glra-combo.open').forEach(w=>{ if(!w.contains(e.target)) w.classList.remove('open'); });
+},true);
 function glAcSumText(f){
   const d=f.detail?'تفصيلي':'إجمالي';
   const r=(f.accFrom||f.accTo)?` · ${f.accFrom||'كل'} ← ${f.accTo||'كل'}`:' · كل الحسابات';
@@ -6459,7 +6537,7 @@ function glAcSumText(f){
   return `${d}${r}${s}`;
 }
 function glAcToggle(){const f=glAcState();f._collapsed=!f._collapsed;document.getElementById('glAcFilterCard')?.classList.toggle('collapsed',f._collapsed);}
-function glAcSetDest(d){const f=glAcState();f.dest=d;document.querySelectorAll('.glra-seg button').forEach(b=>b.classList.remove('active'));event?.currentTarget?.classList.add('active');}
+function glAcSetDest(d,btn){const f=glAcState();f.dest=d;document.querySelectorAll('.glra-seg button').forEach(b=>b.classList.remove('active'));(btn||event?.currentTarget)?.classList.add('active');}
 function glAcReset(){const t=new Date();glState.ac={from:t.getFullYear()+'-01-01',to:t.toISOString().slice(0,10),accFrom:'',accTo:'',detail:true,noCc2:false,ccDetail:false,showDesc:true,sysMode:'all',sys:'',dest:'preview',pagePer:false};glRender();}
 function glAcShare(){
   const out=document.getElementById('glAcOut');if(!out||!out.innerHTML.trim()||out.querySelector('.glra-empty'))return toast('شغّل التقرير أولاً','warn');
@@ -6481,7 +6559,7 @@ function glAcPrintCurrent(){const d=glAcBuild();if(d)glAcPrint(d);}
 function glAcSave(){
   const f=glAcState(),g=id=>document.getElementById(id);
   f.from=g('glAcFrom')?.value||'';f.to=g('glAcTo')?.value||'';
-  f.accFrom=String(g('glAcAccFrom')?.value||'').trim();f.accTo=String(g('glAcAccTo')?.value||'').trim();
+  // accFrom/accTo بتتحدّث مباشرة من glAcComboPick
   f.detail=!!g('glAcDetail')?.checked;f.showDesc=!!g('glAcShowDesc')?.checked;
   f.ccDetail=!!g('glAcCcDetail')?.checked;f.noCc2=!!g('glAcNoCc2')?.checked;f.pagePer=!!g('glAcPb')?.checked;
   f.sysMode=document.querySelector('input[name="glAcSysMode"]:checked')?.value||'all';
