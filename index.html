@@ -3942,17 +3942,23 @@ async function checkBackupReminder(){
 }
 let loginBusy = false;
 async function startSessionInner(user, restored){
+  // مُهل أقصر على الموبايل علشان المستخدم ما يفضلش معلّق دقيقة ونص
+  const isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent||"");
+  const T_PROF = isMobile ? 12000 : 25000;
+  const T_LOAD = isMobile ? 25000 : 60000;
   const _lgTo=(pr,ms,what)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error("انتهت مهلة "+what+" — تأكد من الإنترنت وجرّب تاني")),ms))]);
-  loginErr("جاري التحقق من الحساب...");
-  let p; try{ p = await _lgTo(sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle(),25000,"قراءة الحساب"); }catch(e){ try{ await sb.auth.signOut(); }catch(_){} loginErr(e.message||String(e)); return false; }
+  // تحديث نص شاشة التحميل علشان المستخدم يعرف إحنا فين
+  const _bt=(msg)=>{ try{ const el=document.querySelector("#bootLoader .bl-txt"); if(el) el.textContent=msg; }catch(_){} };
+  _bt("جاري التحقق من الحساب…"); loginErr("جاري التحقق من الحساب...");
+  let p; try{ p = await _lgTo(sb.from("profiles").select("id,user_no,name,role,active,must_change,perms").eq("id",user.id).maybeSingle(),T_PROF,"قراءة الحساب"); }catch(e){ try{ await sb.auth.signOut(); }catch(_){} loginErr(e.message||String(e)); return false; }
   if(p.error || !p.data){ await sb.auth.signOut(); loginErr("تعذر إكمال الدخول — راجع المدير"); return false; }
   if(!p.data.active){ await sb.auth.signOut(); loginErr("هذا الحساب موقوف — راجع المدير"); return false; }
   try{ const ac=await sb.rpc("company_access_check",{p_company:CUR_CO}); if(!ac.error&&ac.data===false){ await sb.auth.signOut(); loginErr("غير مصرح لك بالدخول على هذه الشركة — اختر شركة أخرى"); return false; } }catch(e){}
   const me = mapProfile(p.data);
   state.users = [me]; securityMigrate(state);
   currentUser = { no:me.no, name:me.name };
-  loginErr("جاري تحميل البيانات...");
-  try{ await _lgTo(loadMaster(me.role==="admin"),60000,"تحميل البيانات"); }
+  _bt("جاري تحميل البيانات…"); loginErr("جاري تحميل البيانات...");
+  try{ await _lgTo(loadMaster(me.role==="admin"),T_LOAD,"تحميل البيانات"); }
   catch(e){ await sb.auth.signOut(); currentUser = null; masterLoaded = false; loginErr("فشل تحميل البيانات: "+(e.message||e)); return false; }
   const u = state.users.find(x=>x.no===me.no) || me;
   enterApp(u, restored);
@@ -4151,21 +4157,33 @@ document.addEventListener("DOMContentLoaded",()=>{
   }
   // استرجاع الجلسة في نفس التبويب (بتتمسح لما التبويب يتقفل)
   // Boot splash بيستر الشاشة لحد ما نعرف نودي للوجن ولا للتطبيق (علشان شاشة اللوجن ماتظهرش لحظيًا ثم تختفي)
-  try{ if(typeof showBoot==="function") showBoot("جارى التحقق من الجلسة…"); }catch(_){}
+  const _isMobile = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent||"");
   const _revealLogin=()=>{ const lg=document.getElementById("login"); if(lg){ lg.style.visibility="visible"; if(lg.style.display==="none") lg.style.display="flex"; } try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} };
-  // لو لأى سبب الـboot فضل مفتوح أكتر من 8 ثوانى، أظهر اللوجن علشان المستخدم ما يعلّقش
-  const _bootWatchdog=setTimeout(()=>{ const app=document.getElementById("app"); if(!app||app.style.display!=="block") _revealLogin(); },8000);
-  sb.auth.getSession().then(async r=>{
-    if(r.data && r.data.session){
-      let ok=false;
-      try{ ok = await startSession(r.data.session.user,true); }catch(e){ ok=false; }
-      clearTimeout(_bootWatchdog);
-      if(!ok) _revealLogin();
-      else { try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} }
-    } else { clearTimeout(_bootWatchdog); _revealLogin(); }
-  }).catch(()=>{ clearTimeout(_bootWatchdog); _revealLogin(); });
-  // ضمان ثانوى (مهلة قصيرة فى حالة عدم وجود جلسة أصلاً)
-  setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); },2500);
+  // لو الجهاز Offline خالص، اعرض اللوجن فورًا بدون ما نحاول نعمل أي حاجة للسبابيز (بتستنى 30 ثانية غير مفيدة)
+  if(typeof navigator!=="undefined" && navigator.onLine===false){
+    _revealLogin();
+    setTimeout(()=>{ try{ loginErr("لا يوجد اتصال بالإنترنت — تحقّق ثم جرّب تاني."); }catch(_){} }, 100);
+  } else {
+    try{ if(typeof showBoot==="function") showBoot("جارى التحقق من الجلسة…"); }catch(_){}
+    // Watchdog أقصر على الموبايل (6 ثواني) وأطول قليلاً على الديسكتوب (10 ثواني)
+    const _bootWatchdog=setTimeout(()=>{ const app=document.getElementById("app"); if(!app||app.style.display!=="block") _revealLogin(); }, _isMobile ? 6000 : 10000);
+    // timeout على فحص الجلسة نفسها (مش بس على المجموع)
+    const _sessPromise = new Promise((resolve,reject)=>{
+      sb.auth.getSession().then(resolve, reject);
+      setTimeout(()=>reject(new Error("session-timeout")), _isMobile ? 5000 : 9000);
+    });
+    _sessPromise.then(async r=>{
+      if(r && r.data && r.data.session){
+        let ok=false;
+        try{ ok = await startSession(r.data.session.user,true); }catch(e){ ok=false; }
+        clearTimeout(_bootWatchdog);
+        if(!ok) _revealLogin();
+        else { try{ if(typeof hideBoot==="function") hideBoot(); }catch(_){} }
+      } else { clearTimeout(_bootWatchdog); _revealLogin(); }
+    }).catch(()=>{ clearTimeout(_bootWatchdog); _revealLogin(); });
+    // ضمان ثانوى (مهلة قصيرة فى حالة عدم وجود جلسة أصلاً)
+    setTimeout(()=>{ const lg=document.getElementById("login"),app=document.getElementById("app"); if(lg&&lg.style.visibility==="hidden"&&(!app||app.style.display!=="block")) _revealLogin(); }, _isMobile ? 2000 : 2500);
+  }
   // رقم المستخدم وكلمة المرور (لو "تذكّر" مفعّل) من آخر دخول ناجح
   restoreSavedLogin();
   try{ const n0=parseInt(noInp?.value,10); if(n0>0&&((lockGet()[n0]||{}).until||0)>Date.now()) lgLockCountdown(n0); }catch(e){}
@@ -11701,10 +11719,30 @@ window.alert=function(m){ return _igDialog({title:"تنبيه",msg:String(m||"")
 
 function showBoot(msg){
   let el=document.getElementById("bootLoader");
-  if(!el){ el=document.createElement("div"); el.id="bootLoader"; el.innerHTML='<div class="bl-box"><div class="bl-spin"></div><div class="bl-txt"></div></div>'; document.body.appendChild(el); }
-  el.querySelector(".bl-txt").textContent=msg||"جاري تحميل البيانات…"; el.style.display="flex";
+  if(!el){
+    el=document.createElement("div"); el.id="bootLoader";
+    el.innerHTML='<div class="bl-box"><div class="bl-spin"></div><div class="bl-txt"></div><div class="bl-sub" style="font-size:11px;margin-top:6px;opacity:.75"></div><button type="button" id="bootSkipBtn" style="display:none;margin-top:18px;padding:9px 22px;background:#F4C542;color:#0a1a35;border:0;border-radius:9px;font-weight:800;font-size:13px;cursor:pointer">دخول يدوي</button></div>';
+    document.body.appendChild(el);
+  }
+  el.querySelector(".bl-txt").textContent=msg||"جاري تحميل البيانات…";
+  el.style.display="flex";
+  // أظهر زرار "دخول يدوي" بعد 4 ثواني لو لسه معلّق
+  try{ clearTimeout(window._bootSkipTimer); }catch(_){}
+  const sk=el.querySelector("#bootSkipBtn"); if(sk) sk.style.display="none";
+  window._bootSkipTimer=setTimeout(function(){
+    const b=document.getElementById("bootSkipBtn"); if(!b) return;
+    b.style.display="inline-block";
+    b.onclick=function(){
+      try{ hideBoot(); }catch(_){}
+      const lg=document.getElementById("login");
+      if(lg){ lg.style.visibility="visible"; if(lg.style.display==="none") lg.style.display="flex"; }
+    };
+  },4000);
 }
-function hideBoot(){ const el=document.getElementById("bootLoader"); if(el) el.style.display="none"; }
+function hideBoot(){
+  try{ clearTimeout(window._bootSkipTimer); }catch(_){}
+  const el=document.getElementById("bootLoader"); if(el) el.style.display="none";
+}
 let _topN=0;
 function topBusy(on){
   _topN=Math.max(0,_topN+(on?1:-1));
@@ -25904,7 +25942,21 @@ function viewBkBulk(){
   const L={in:"التحصيلات البنكية فقط",out:"المدفوعات البنكية فقط",trf:"التحويلات من البنك فقط"};
   const opts=[["all","الكل (تحصيلات + مدفوعات + تحويلات)"]].concat(ok.map(k=>[k,L[k]]));
   const st=state.settings||{};
-  const jInfo=`<div style="margin-top:10px;font-size:12.5px;color:var(--text-dim)">يومية التحصيلات: <b>${escapeHtml(String(st.txJournalIn||"غير محددة"))}</b> — يومية المدفوعات: <b>${escapeHtml(String(st.txJournalOut||"غير محددة"))}</b> <span>(من مؤشرات النظام)</span> — التحويلات: <b>اليومية المستخدمة آخر مرة أو يومية بنك/خزنة</b></div>`;
+  // بيان واضح من أين يأخذ السيستم اليومية + زرار لتعديلها
+  // يوميات البنوك لها الأولوية، ولو مش محددة بيرجع يستخدم يوميات الخزينة
+  const _jIn = st.txJournalBankIn || st.txJournalIn || "";
+  const _jOut = st.txJournalBankOut || st.txJournalOut || "";
+  const _jInSrc = st.txJournalBankIn ? "بنوك" : (st.txJournalIn ? "خزينة (fallback)" : "");
+  const _jOutSrc = st.txJournalBankOut ? "بنوك" : (st.txJournalOut ? "خزينة (fallback)" : "");
+  const jInfo=`<div style="margin-top:10px;padding:10px 12px;background:#f0f6ff;border:1px dashed #1f4e8c;border-radius:9px;font-size:12.5px;color:#1f4e8c">
+    <div style="font-weight:800;margin-bottom:4px">🧭 اليوميات اللي بيتم الترحيل عليها للبنوك:</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <span>📥 يومية التحصيلات: <b>${escapeHtml(String(_jIn||"⚠ غير محددة"))}</b>${_jInSrc?` <small>(${_jInSrc})</small>`:""}</span>
+      <span>📤 يومية المدفوعات: <b>${escapeHtml(String(_jOut||"⚠ غير محددة"))}</b>${_jOutSrc?` <small>(${_jOutSrc})</small>`:""}</span>
+      <span>↔ يومية التحويلات: <b>أي يومية نشطة اسمها فيه بنك/خزنة/تحويل</b></span>
+    </div>
+    <div style="margin-top:6px;font-size:11.5px;opacity:.85">لتغييرها: الملفات الرئيسية → <b>مؤشرات النظام</b> → قسم <b>🏦 مؤشرات البنوك</b> → "يوميات الترحيل التلقائي للبنوك"</div>
+  </div>`;
   return `<div class="card" style="padding:14px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
     <label>النوع <select class="inp" onchange="bkBulk.kind=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()">${opts.map(o=>`<option value="${o[0]}" ${B.kind===o[0]?"selected":""}>${o[1]}</option>`).join("")}</select></label>
     <label>طريقة السداد <details style="position:relative"><summary class="inp" style="cursor:pointer;min-width:190px;list-style:none"><span id="bkMethSum">${escapeHtml(bkMethodLabel())}</span> ▾</summary><div class="card" style="position:absolute;z-index:30;padding:8px 12px;min-width:240px;margin-top:4px">${BK_METHODS.map(o=>`<label style="display:flex;gap:8px;align-items:center;padding:4px 0;cursor:pointer"><input type="checkbox" class="bkMethCb" ${bkMethods().includes(o[0])?"checked":""} onchange="bkMethodToggle('${o[0]}',this.checked)"> ${o[1]}</label>`).join("")}<button type="button" class="btn ghost sm" style="margin-top:6px" onclick="bkMethodClear()">مسح الاختيار (الكل)</button></div></details></label>
@@ -25913,7 +25965,54 @@ function viewBkBulk(){
     <label>إلى تاريخ <input class="inp" type="date" value="${escapeAttr(B.to)}" onchange="bkBulk.to=this.value;bkBulk.pre=null;bkBulk.sel={};renderBkBulk()"></label>
     <button id="bkCheck" type="button" class="btn ghost" onclick="bkBulkPrecheck()" title="يفحص ربط الحسابات والسنة المالية واليومية لكل حركة جاهزة — من غير ما يرحّل أي حاجة">🔍 فحص قبل الترحيل</button>
     <button id="bkPost" type="button" class="btn" onclick="bkBulkRun()">📥 ترحيل</button>
+    <button id="bkUnpost" type="button" class="btn ghost" style="border-color:#dc2626;color:#b91c1c" onclick="bkBulkUnpost()" title="إلغاء ترحيل كل الحركات المُرحّلة في النطاق (أو المحددة فقط) — بيحذف قيودها من القيود اليومية">↶ إلغاء الترحيل المجمع</button>
     <span id="bkProg" style="font-weight:800;color:var(--gold-text)"></span></div>${jInfo}</div><div id="bkBody"></div>`;
+}
+/* ============================================================
+   إلغاء الترحيل المجمع: يأخذ كل الحركات المُرحّلة في النطاق (أو المحددة
+   منها فقط لو فيه تحديد)، ويلغي ترحيلها واحدة ورا التانية.
+   بيستخدم txUnpostRun للحركات العادية و chqUnpostRun للشيكات.
+============================================================ */
+function bkBulkPostedItems(){
+  const B=window.bkBulk, list=bkBulkList(), sel=B.sel||{}, picked=[];
+  list.forEach(it=>{
+    const e=it.e; if(it.t==="trf") return;    // التحويلات ليها إلغاء منفصل
+    if(!txIsPosted(e)) return;
+    const dir=it.t;
+    if(typeof chqCanUnpost==="function"&&chqCanUnpost(e,dir)) picked.push({it,dir,kind:"chq"});
+    else if(typeof txCanUnpost==="function"&&txCanUnpost(e,dir)) picked.push({it,dir,kind:"tx"});
+  });
+  const selKeys=Object.keys(sel);
+  if(selKeys.length){ const s=new Set(selKeys); return picked.filter(p=>s.has(bkBulkKey(p.it))); }
+  return picked;
+}
+async function bkBulkUnpost(){
+  const B=window.bkBulk; if(B.busy) return;
+  const items=bkBulkPostedItems();
+  if(!items.length) return toast("لا توجد حركات مُرحّلة في النطاق قابلة لإلغاء الترحيل","err");
+  const nSel=Object.keys(B.sel||{}).length;
+  const msg=`سيتم إلغاء ترحيل ${items.length} حركة${nSel?" (المحددة)":" (كل المرحّلة في النطاق)"}.\n\n- كل قيد هيتحذف نهائياً من القيود اليومية (بدون قيد عكسي)\n- الحركات هترجع غير مُرحّلة وتقدر تعدلها/تحذفها/ترحّلها من جديد\n- الشيكات اللي اترحّل منها قيد الاستلام فقط، هيتم إلغاؤه ورجوعها "أوراق قبض"\n\nهل تريد المتابعة؟`;
+  const okc=await askConfirm(msg,{title:"إلغاء الترحيل المجمع",ok:"نعم، ألغِ الترحيل",danger:true,cancel:"رجوع"});
+  if(!okc) return;
+  B.busy="unpost"; renderBkBulk();
+  let okN=0, errN=0; const errors=[];
+  const pe=document.getElementById("bkProg");
+  for(let i=0;i<items.length;i++){
+    const it=items[i], e=it.it.e;
+    if(pe) pe.textContent="إلغاء "+(i+1)+" / "+items.length;
+    try{
+      if(it.kind==="chq") await chqUnpostRun(e.id, it.dir);
+      else await txUnpostRun(e.id, it.dir);
+      if(txIsPosted(e)) { errN++; errors.push((it.dir==="in"?"تحصيل":"دفعة")+" "+(e.no||"")+": لم يُلغَ"); }
+      else okN++;
+    }catch(err){ errN++; errors.push((it.dir==="in"?"تحصيل":"دفعة")+" "+(e.no||"")+": "+(err.message||err)); }
+  }
+  B.busy=false; if(pe) pe.textContent="";
+  B.sel={};
+  saveState(); renderBkBulk();
+  const summary=`انتهى إلغاء الترحيل — تم إلغاء ${okN} / فشل ${errN}`;
+  toast(summary, errN?"err":"ok");
+  if(errN) chqDialog("warn","أخطاء في إلغاء الترحيل", summary+"\n\n"+errors.slice(0,10).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""));
 }
 function renderBkBulk(){
   const B=window.bkBulk, box=document.getElementById("bkBody"); if(!box) return;
@@ -26012,7 +26111,8 @@ async function bkBulkPrecheck(){
   const B=window.bkBulk; if(B.busy) return;
   const kinds=bkBulkKinds(); if(!kinds.length) return toast("لا تملك صلاحية الترحيل","err");
   const todo=bkBulkTodo(); if(!todo.length) return toast("لا توجد حركات جاهزة للفحص في النطاق","err");
-  const st=state.settings||{}, jc={in:st.txJournalIn||"",out:st.txJournalOut||""};
+  // يوميات البنوك لها الأولوية، ولو مش محددة بيرجع يستخدم يوميات الخزينة كـfallback
+  const st=state.settings||{}, jc={in:st.txJournalBankIn||st.txJournalIn||"",out:st.txJournalBankOut||st.txJournalOut||""};
   B.busy="check"; B.pre=null; renderBkBulk();
   const P={checked:0,okN:0,badN:0,errors:[],ids:{}}; let failed=false;
   try{
@@ -26053,7 +26153,8 @@ async function bkBulkPrecheck(){
 async function bkBulkRun(){
   const B=window.bkBulk; if(B.busy) return;
   const kinds=bkBulkKinds(); if(!kinds.length) return toast("لا تملك صلاحية الترحيل","err");
-  const st=state.settings||{}, jc={in:st.txJournalIn||"",out:st.txJournalOut||""};
+  // يوميات البنوك لها الأولوية، ولو مش محددة بيرجع يستخدم يوميات الخزينة كـfallback
+  const st=state.settings||{}, jc={in:st.txJournalBankIn||st.txJournalIn||"",out:st.txJournalBankOut||st.txJournalOut||""};
   const todo=bkBulkTodo(); if(!todo.length) return toast("لا توجد حركات جاهزة للترحيل في النطاق","err");
   const need=["in","out"].filter(k=>todo.some(it=>it.t===k)&&!jc[k]);
   if(need.length) return toast("حدّد "+need.map(k=>k==="in"?"يومية التحصيلات":"يومية المدفوعات").join(" و ")+" من مؤشرات النظام أولًا","err");
@@ -26191,13 +26292,15 @@ async function txBulkErrPdf(src){
   }catch(e){ console.error(e); toast("تعذر إنشاء PDF","err"); }
   finally{ host.remove(); }
 }
-/* قوائم اختيار اليوميات في مؤشرات النظام */
+/* قوائم اختيار اليوميات في مؤشرات النظام (خزينة + بنوك) */
 async function txJournalSelectsLoad(){
-  const sIn=document.getElementById("sysJrIn"), sOut=document.getElementById("sysJrOut"); if(!sIn&&!sOut) return;
+  const sIn=document.getElementById("sysJrIn"), sOut=document.getElementById("sysJrOut");
+  const sBIn=document.getElementById("sysJrBankIn"), sBOut=document.getElementById("sysJrBankOut");
+  if(!sIn&&!sOut&&!sBIn&&!sBOut) return;
   try{
     const r=await sb.from("gl_journals").select("*"); if(r.error) throw r.error;
     const js=(r.data||[]).filter(x=>x.is_active).sort((a,b)=>String(a.journal_code).localeCompare(String(b.journal_code),undefined,{numeric:true}));
-    [[sIn,"txJournalIn"],[sOut,"txJournalOut"]].forEach(([el,key])=>{
+    [[sIn,"txJournalIn"],[sOut,"txJournalOut"],[sBIn,"txJournalBankIn"],[sBOut,"txJournalBankOut"]].forEach(([el,key])=>{
       if(!el) return; const cur=String(el.value||state.settings[key]||"");
       let html='<option value="">— اختر اليومية —</option>'+js.map(j=>`<option value="${escapeAttr(String(j.journal_code))}" ${String(j.journal_code)===cur?"selected":""}>${escapeHtml(String(j.journal_code))} — ${escapeHtml(String(j.journal_name||""))}</option>`).join("");
       if(cur && !js.some(j=>String(j.journal_code)===cur)) html+=`<option value="${escapeAttr(cur)}" selected>${escapeHtml(cur)} (غير نشطة / غير موجودة)</option>`;
@@ -27097,22 +27200,47 @@ function chqCfg(){
 function chqSysIndView(tabsHtml){
   const c=chqCfg(), s=state.settings||{};
   const cb=(id,label,on)=>`<label class="chq-flag"><input type="checkbox" id="${id}" ${on?"checked":""}><span>${label}</span></label>`;
+  const jrSel=(id,key)=>`<select class="inp" id="${id}" style="width:100%"><option value="">— اختر اليومية —</option>${s[key]?`<option value="${escapeAttr(String(s[key]))}" selected>${escapeHtml(String(s[key]))}</option>`:""}</select>`;
   return `<div class="page-head"><h2>مؤشرات النظام</h2></div>
-  <div style="max-width:760px">
-    <div class="chq-ind-card"><h4>🎚 الحسابان الوسيطان للشيكات</h4><p>بيتختاروا من الحسابات النهائية في دليل الحسابات، وبيُستخدموا في دورة ترحيل الشيكات.</p>
-      <div class="chq-grid" style="grid-template-columns:1fr 1fr">
-        ${mdAccHtml("chqNr",{accountId:c.nrAcc,accountCode:s.chqNrAccCode,accountName:s.chqNrAccName},"شيكات تحت التحصيل أوراق قبض")}
-        ${mdAccHtml("chqNp",{accountId:c.npAcc,accountCode:s.chqNpAccCode,accountName:s.chqNpAccName},"شيكات تحت التحصيل أوراق دفع")}
-      </div></div>
-    <div class="chq-ind-card"><h4>⚙ فلاجات الدورة</h4><p>معلّم = دورة كاملة بالحسابات الوسيطة (استلام ← تحصيل ← قيد عكسي). غير معلّم = تأثير مباشر على العميل/المورد وقت الاستلام أو الإصدار.</p>
-      ${cb("chqCycleIn","احتساب دورة أوراق القبض على العميل",c.cycleIn)}
-      ${cb("chqCycleOut","احتساب دورة أوراق الدفع على المورد",c.cycleOut)}
+  <div style="max-width:820px">
+
+    <!-- ============ 🏦 مؤشرات البنوك ============ -->
+    <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #1f4e8c;border-radius:12px;background:linear-gradient(180deg,#f0f6ff,#fafcff)">
+      <div style="font-weight:900;color:#1f4e8c;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #cfdcee">🏦 مؤشرات البنوك</div>
+
+      <div class="chq-ind-card"><h4>🎚 الحسابان الوسيطان للشيكات</h4><p>بيتختاروا من الحسابات النهائية في دليل الحسابات، وبيُستخدموا في دورة ترحيل الشيكات على البنوك.</p>
+        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
+          ${mdAccHtml("chqNr",{accountId:c.nrAcc,accountCode:s.chqNrAccCode,accountName:s.chqNrAccName},"شيكات تحت التحصيل أوراق قبض")}
+          ${mdAccHtml("chqNp",{accountId:c.npAcc,accountCode:s.chqNpAccCode,accountName:s.chqNpAccName},"شيكات تحت التحصيل أوراق دفع")}
+        </div>
+      </div>
+
+      <div class="chq-ind-card"><h4>📒 البنوك — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل/دفعة/تحويل في شاشة <b>«ترحيل مجمع للبنوك»</b> (الشيكات والتحويلات البنكية).</p>
+        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية تحصيلات البنوك</label>${jrSel("sysJrBankIn","txJournalBankIn")}</div>
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية مدفوعات البنوك</label>${jrSel("sysJrBankOut","txJournalBankOut")}</div>
+        </div>
+        <p style="font-size:11.5px;color:var(--text-dim);margin-top:6px">لو اليوميات دي فاضية، السيستم هيستخدم يوميات الخزينة اللي تحت كـfallback.</p>
+      </div>
     </div>
-    <div class="chq-ind-card"><h4>📒 الخزينة — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل وكل دفعة في شاشة «ترحيل التحصيلات والمدفوعات» (نظام الخزينة).</p>
-      <div class="chq-grid" style="grid-template-columns:1fr 1fr">
-        <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية التحصيلات</label><select class="inp" id="sysJrIn" style="width:100%"><option value="">— اختر اليومية —</option>${s.txJournalIn?`<option value="${escapeAttr(String(s.txJournalIn))}" selected>${escapeHtml(String(s.txJournalIn))}</option>`:""}</select></div>
-        <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية المدفوعات</label><select class="inp" id="sysJrOut" style="width:100%"><option value="">— اختر اليومية —</option>${s.txJournalOut?`<option value="${escapeAttr(String(s.txJournalOut))}" selected>${escapeHtml(String(s.txJournalOut))}</option>`:""}</select></div>
-      </div></div>
+
+    <!-- ============ 💰 مؤشرات الخزينة ============ -->
+    <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #92400e;border-radius:12px;background:linear-gradient(180deg,#fffaf0,#fffdf6)">
+      <div style="font-weight:900;color:#92400e;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #e6c46b">💰 مؤشرات الخزينة</div>
+
+      <div class="chq-ind-card"><h4>⚙ فلاجات الدورة</h4><p>معلّم = دورة كاملة بالحسابات الوسيطة (استلام ← تحصيل ← قيد عكسي). غير معلّم = تأثير مباشر على العميل/المورد وقت الاستلام أو الإصدار.</p>
+        ${cb("chqCycleIn","احتساب دورة أوراق القبض على العميل",c.cycleIn)}
+        ${cb("chqCycleOut","احتساب دورة أوراق الدفع على المورد",c.cycleOut)}
+      </div>
+
+      <div class="chq-ind-card"><h4>📒 الخزينة — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل وكل دفعة <b>نقدية</b> في شاشة «ترحيل التحصيلات والمدفوعات» (الخزن النقدية).</p>
+        <div class="chq-grid" style="grid-template-columns:1fr 1fr">
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية التحصيلات</label>${jrSel("sysJrIn","txJournalIn")}</div>
+          <div><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">يومية المدفوعات</label>${jrSel("sysJrOut","txJournalOut")}</div>
+        </div>
+      </div>
+    </div>
+
     <p style="font-size:12px;color:var(--text-dim)">بنكا «أوراق قبض» و«أوراق دفع» موجودان في تبويب <b>البنوك</b> — اربط كل واحد بحسابه من هناك.</p>
     <button class="btn" onclick="chqSysIndSave()">حفظ المؤشرات</button>
   </div>`;
@@ -27124,7 +27252,9 @@ function chqSysIndSave(){
   s.chqNpAccId=b.accountId; s.chqNpAccCode=b.accountCode; s.chqNpAccName=b.accountName;
   s.chqCycleIn=!!document.getElementById("chqCycleIn")?.checked; s.chqCycleOut=!!document.getElementById("chqCycleOut")?.checked;
   const _ji=document.getElementById("sysJrIn"), _jo=document.getElementById("sysJrOut");
+  const _jbi=document.getElementById("sysJrBankIn"), _jbo=document.getElementById("sysJrBankOut");
   if(_ji) s.txJournalIn=_ji.value; if(_jo) s.txJournalOut=_jo.value;
+  if(_jbi) s.txJournalBankIn=_jbi.value; if(_jbo) s.txJournalBankOut=_jbo.value;
   saveState(); toast("✓ تم حفظ مؤشرات النظام","ok");
 }
 function chqSettingsCard(){
