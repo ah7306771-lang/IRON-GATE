@@ -3665,7 +3665,9 @@ const SCREENS = [
     {id:"details",label:"تفاصيل السداد (التخصيص على فواتير المورد)"}
   ]},
   { id:"treasuryTransfer", label:"التحويل بين الخزن والبنوك", icon:"🔁", acts:["add","edit","delete","post","print"] },
-  { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","close","print"] },
+  { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","post","close","print"] },
+  { id:"custodyCodes", label:"تكويد العهد", icon:"🔖", acts:["add","edit","delete"] },
+  { id:"expenseItems", label:"بند المصروف", icon:"🏷", acts:["add","edit","delete"] },
   { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
   { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage","print"] },
   { id:"fixedAssets", label:"الأصول الثابتة", icon:"🏢", acts:["add","edit","delete","post","print","manage"] }
@@ -4337,6 +4339,7 @@ const navGroups = [
     { id:"safeStatement", icon:"📒", label:"كشف حساب خزينة" },
     { sep:"البيانات الأساسية للخزينة" },
     { id:"master", tab:"safes", icon:"🗄", label:"الخزائن" },
+    { id:"expenseItems", icon:"🏷", label:"بند المصروف" },
     { id:"master", tab:"sysInd", from:"treasury", icon:"🎚", label:"مؤشرات النظام (يوميات الترحيل)" }
   ]},
   { id:"banking", icon:"🏦", label:"البنوك", items:[
@@ -4381,7 +4384,10 @@ const navGroups = [
   ]},
   { id:"custody", icon:"💼", label:"نظام العهد", items:[
     { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
-    { id:"custodyReport", icon:"🧾", label:"تقرير العهد" }
+    { id:"custodyReport", icon:"🧾", label:"تقرير العهد" },
+    { sep:"البيانات الأساسية للعهد" },
+    { id:"custodyCodes", icon:"🔖", label:"تكويد العهد" },
+    { id:"expenseItems", icon:"🏷", label:"بند المصروف" }
   ]},
   { id:"fixedAssets", icon:"🏢", label:"الأصول الثابتة", items:[
     { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
@@ -5119,8 +5125,10 @@ function go(page){
     users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"],
     trash:["🗑 سلة المحذوفات","القيود والبوالص وأوامر البيع والخزنة والعروض المحذوفة — استرجاع متاح للأدمن"],
     dataHealth:["🩺 فحص سلامة البيانات","اكتشف التناقضات والسجلات المعلّقة والمكررة قبل ما تسبّب مشاكل"],
-    custodyLedger:["العهد والخزن","إدارة أكواد العهد وأصحابها وحركات الوارد والمنصرف"],
+    custodyLedger:["العهد","حركات الوارد والمنصرف لكل عهدة — عرض الحركة وترحيلها كقيد محاسبي"],
     custodyReport:["تقرير العهد","كشف حساب العهد والأرصدة وتقفيل الفترات"],
+    custodyCodes:["تكويد العهد","ربط كل موظف برقم عهدة وحساب من شجرة الحسابات"],
+    expenseItems:["بند المصروف","بنود المصروف وربط كل بند بحساب من شجرة الحسابات"],
     gl:["المحاسبة العامة","دليل الحسابات، مراكز التكلفة، السنوات والفترات، والقيود اليومية"],
     fixedAssets:["الأصول الثابتة","إدارة دورة حياة الأصل من التسجيل حتى الإهلاك والاستبعاد"],
     apps:["التطبيقات","اختر التطبيق للمتابعة"]
@@ -5171,6 +5179,7 @@ function go(page){
   else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
   else if(page==="gl"){ c.innerHTML=viewGL(); glLoad(); }
+  else if(page==="custodyCodes"||page==="expenseItems"){ window.CGL.page(page,c); }
   else if(page==="custodyLedger"||page==="custodyReport"){
     const _cgPaint=()=>{ c.innerHTML=page==="custodyLedger"?viewCustodyLedger():viewCustodyReport(); if(page==="custodyLedger")bindCustodyLedger();else bindCustodyReport(); };
     if(custodyCache.loaded){
@@ -12369,7 +12378,7 @@ const BACKUP_TABLES = [
   "gl_accounts","gl_cost_centers","gl_fiscal_years","gl_periods","gl_journals",
   "gl_entries","gl_entry_lines","gl_indicators","gl_audit_log",
   // العهد
-  "custody_accounts","custody_entries",
+  "custody_accounts","custody_entries","custody_expense_items",
   // المخزون
   "inventory_items","inventory_moves","inventory_movements",
   // إعدادات ومستخدمين وسجل
@@ -12484,7 +12493,7 @@ async function fullBackupImport(ev){
       "sale_order_items","shipment_items",
       "treasury_entries","app_counters",
       "gl_entries","gl_entry_lines","gl_indicators","gl_audit_log",
-      "custody_accounts","custody_entries",
+      "custody_accounts","custody_entries","custody_expense_items",
       "inventory_items","inventory_moves",
       "settings","profiles","audit_log"
     ];
@@ -27002,7 +27011,495 @@ function txShowLog(id){
  .cgx-showlocked{font-size:9px;padding:0 5px}
 }
 .cgx-row,.cgx-card,.cgx-sec{-webkit-tap-highlight-color:transparent}
+/* ===== يومية العهد: فلاتر + جدول سطور + نماذج البند/الحساب ===== */
+.cgx.cgx-wide{max-width:1240px}
+.cgx-cards.c4{grid-template-columns:repeat(4,1fr)}
+.cgx-rep.alt{background:#eef1f5;color:#49566b}
+.cgx-fbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:6px 0 8px;align-items:end;background:#fff;border:1px solid #e1e6ed;border-radius:11px;padding:8px}
+.cgx-fbar label{display:block;font-size:10.5px;color:var(--text-dim);margin-bottom:2px}
+.cgx-fbar input,.cgx-fbar select{width:100%;padding:5px 7px;min-height:32px;border:1px solid #dce2ea;border-radius:8px;font:inherit;font-size:12.5px;background:#fff}
+.cgx-fbar .fe{grid-column:span 2}.cgx-fbar .fq{grid-column:span 3}
+.cgx-fbar .fb{display:flex;gap:6px;align-items:center}
+.cgx-addbar{display:flex;gap:6px;margin:6px 0}
+.cgx-addbar button{flex:1;border:1px solid #e1e6ed;border-radius:9px;padding:8px;font:inherit;font-weight:800;font-size:13px;cursor:pointer;background:#fff}
+.cgx-addbar .in{color:var(--ok);border-right:3px solid var(--ok)}.cgx-addbar .out{color:var(--danger);border-right:3px solid var(--danger)}
+.cgx-tblwrap{background:#fff;border:1px solid #e1e6ed;border-radius:11px;overflow:auto;margin-top:6px}
+.cgx-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.cgx-tbl th{background:#f7f9fc;padding:7px 8px;text-align:right;font-size:11.5px;color:var(--text-dim);border-bottom:1px solid #e8ecf2;white-space:nowrap}
+.cgx-tbl td{padding:6px 8px;border-top:1px solid #edf0f4;vertical-align:middle}
+.cgx-tbl tr.locked{background:#f8fafc;opacity:.8}
+.cgx-tbl td.in{color:var(--ok);font-weight:800;white-space:nowrap}.cgx-tbl td.out{color:var(--danger);font-weight:800;white-space:nowrap}
+.cgx-tbl small{display:block;color:var(--text-dim);font-size:10.5px;font-weight:600}
+.cgx-tbl small.cgx-proj{color:var(--gold-2);font-weight:800}
+.cgx-tbl tfoot td{background:#fbf7ec;font-weight:800;border-top:2px solid #ecd9a3}
+.cgx-tbl td.cgx-empty{text-align:center;padding:14px}
+.cgx-nolink{color:var(--text-dim)}
+.cgx-tp{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:800}
+.cgx-tp.in{background:#e6f5ec;color:var(--ok)}.cgx-tp.out{background:#fdecea;color:var(--danger)}
+.cgx-st{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:800;white-space:nowrap}
+.cgx-st.ok{background:#e6f5ec;color:var(--ok)}.cgx-st.dr{background:#fff3d6;color:#8a5a00}
+.cgx-acts{display:flex;gap:4px;flex-wrap:wrap}
+.cgx-tb{border:1px solid #dce2ea;background:#fff;border-radius:7px;padding:3px 8px;font:inherit;font-size:11.5px;font-weight:700;cursor:pointer;color:var(--text)}
+.cgx-tb.post{background:linear-gradient(135deg,#d8ab3f,#b98a20);color:#fff;border-color:transparent}
+.cgx-tb.del,.cgx-tb.unpost{color:var(--danger)}
+.cgx-more{display:block;width:100%;margin-top:8px;border:1px dashed #d5a12a;background:#fff;border-radius:9px;padding:8px;font:inherit;font-weight:800;color:var(--gold-dim);cursor:pointer}
+.cgx-wide .cgx-draft{grid-template-columns:repeat(4,1fr);gap:8px;padding:10px;border:1px solid #ecd9a3;border-radius:11px;margin:6px 0}
+.cgx-draft .f{display:block;margin:0}.cgx-draft .f.full{grid-column:1/-1}
+.cgx-draft .f span{display:block;font-size:10.5px;color:var(--text-dim);margin-bottom:2px}
+.cgx-draft select{width:100%;padding:5px 7px;min-height:30px;border:1px solid #dce2ea;border-radius:8px;font:inherit;font-size:12px;background:#fff}
+.cgx-draft .dh{grid-column:1/-1;font-weight:800;font-size:12.5px}
+.cgx-draft.in .dh{color:var(--ok)}.cgx-draft.out .dh{color:var(--danger)}
+.cgx-draft input:disabled{background:#f3f5f8;color:var(--text)}
+.cgx-tbl tr.cgx-editrow>td{padding:0;background:#fffaf0}
+@media(max-width:900px){.cgx-fbar{grid-template-columns:repeat(2,minmax(0,1fr))}.cgx-fbar .fe,.cgx-fbar .fq{grid-column:1/-1}.cgx-wide .cgx-draft{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){
+ .cgx-cards.c4{grid-template-columns:repeat(2,1fr)}
+ .cgx-tblwrap{border:0;background:transparent;overflow:visible}
+ .cgx-tbl,.cgx-tbl tbody,.cgx-tbl tfoot{display:block}
+ .cgx-tbl thead{display:none}
+ .cgx-tbl tr{display:block;background:#fff;border:1px solid #e1e6ed;border-radius:10px;margin:0 0 6px;padding:6px 8px}
+ .cgx-tbl td{display:flex;justify-content:space-between;gap:10px;border:0;padding:2px 0;font-size:11.5px;text-align:left}
+ .cgx-tbl td::before{content:attr(data-l);color:var(--text-dim);font-weight:700;flex:none}
+ .cgx-tbl td small{display:inline;margin-inline-start:4px}
+ .cgx-tbl td.c-act::before,.cgx-tbl tr.cgx-editrow>td::before{content:none}
+ .cgx-tbl tfoot tr{display:flex;flex-wrap:wrap;gap:8px}.cgx-tbl tfoot td{display:block;background:none;border:0}.cgx-tbl tfoot td::before{content:none}
+ .cgx-tbl tr.cgx-editrow{padding:0;border:0;background:none}
+}
 </style>
+<script id="cgl-core">
+/* ===== العهد ↔ الحسابات العامة =====
+   - تكويد العهد: كل عهدة = موظف (من المستخدمين) + رقم عهدة + حساب من شجرة الحسابات.
+   - بند المصروف: اسم + رقم + حساب من شجرة الحسابات.
+   - كل حركة عهدة لها قيد محاسبي يُنشأ عند «ترحيل الحركة»:
+       وارد  : حساب العهدة مدين   / الحساب المقابل دائن
+       منصرف : حساب المصروف (البند) مدين / حساب العهدة دائن
+   - يحتاج تشغيل custody_gl_upgrade.sql مرة واحدة في Supabase. */
+(function(){
+"use strict";
+const E=v=>custodyEsc(v);
+const money=n=>(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const C100=v=>Math.round((+v||0)*100);
+const d10=d=>String(d==null?"":d).slice(0,10);
+const norm=s=>String(s==null?"":s).replace(/\s+/g," ").trim().toLowerCase();
+const $=id=>document.getElementById(id);
+const SQL_FILE="custody_gl_upgrade.sql";
+const JKEY="ig_custody_post_journal_v1";
+const K={v2:null,v2err:"",items:[],accounts:[],accLoaded:false,byId:new Map(),byCode:new Map(),labels:new Map(),parents:new Set(),leaf:[]};
+const S2={codeEdit:null,itemEdit:null};
+
+/* ---------- شجرة الحسابات ---------- */
+const isLeaf=x=>!!(x&&x.is_active&&!x.is_group&&x.allow_posting&&!K.parents.has(String(x.id)));
+const accLabel=x=>String(x.account_code)+" — "+String(x.account_name||"");
+async function loadAccounts(force){
+  if(K.accLoaded&&!force) return K.accounts;
+  let all=[],from=0; const step=1000;
+  for(;;){
+    const r=await sb.from("gl_accounts").select("id,account_code,account_name,parent_id,is_active,is_group,allow_posting").order("account_code").range(from,from+step-1);
+    if(r.error) throw r.error;
+    all=all.concat(r.data||[]);
+    if(!r.data||r.data.length<step) break;
+    from+=step;
+  }
+  K.accounts=all;
+  K.parents=new Set(all.filter(a=>a.is_active&&a.parent_id).map(a=>String(a.parent_id)));
+  K.byId=new Map(all.map(a=>[String(a.id),a]));
+  K.byCode=new Map(all.map(a=>[String(a.account_code),a]));
+  K.leaf=all.filter(isLeaf);
+  K.labels=new Map(K.leaf.map(a=>[accLabel(a),a]));
+  K.accLoaded=true;
+  return all;
+}
+function ensureDatalist(){
+  let d=$("cglAccList");
+  if(!d){ d=document.createElement("datalist"); d.id="cglAccList"; document.body.appendChild(d); }
+  if(d.dataset.n!==String(K.leaf.length)){
+    d.innerHTML=K.leaf.map(a=>'<option value="'+E(accLabel(a))+'"></option>').join("");
+    d.dataset.n=String(K.leaf.length);
+  }
+}
+function accOf(id,code){
+  return (id!=null&&id!==""&&K.byId.get(String(id)))||(code!=null&&code!==""&&K.byCode.get(String(code)))||null;
+}
+function parseAcc(t){
+  t=String(t||"").trim(); if(!t) return null;
+  let x=K.labels.get(t); if(x) return x;
+  const tok=t.split(/\s*[—–]\s*/)[0].trim();
+  x=K.byCode.get(tok); if(x&&isLeaf(x)) return x;
+  const n=norm(t); return K.leaf.find(a=>norm(a.account_name)===n)||null;
+}
+function rowAccLabel(o){
+  const x=accOf(o.gl_account_id,o.gl_account_code);
+  if(x) return accLabel(x);
+  return o.gl_account_code?(String(o.gl_account_code)+(o.gl_account_name?" — "+o.gl_account_name:"")):"";
+}
+
+/* ---------- بنود المصروف + اكتشاف الترقية ---------- */
+async function loadItems(){
+  try{
+    const r=await sb.from("custody_expense_items").select("*").order("item_no");
+    if(r.error) throw r.error;
+    K.items=r.data||[]; K.v2=true; K.v2err="";
+  }catch(e){
+    const m=String((e&&(e.message||e.details))||e||"");
+    if(e&&(e.code==="42P01"||e.code==="PGRST205"||/does not exist|schema cache|could not find/i.test(m))){ K.items=[]; K.v2=false; K.v2err=m; }
+    else if(K.v2===null){ K.v2=false; K.v2err=m; }
+  }
+}
+const item=id=>K.items.find(x=>String(x.id)===String(id))||null;
+const activeItems=keepId=>K.items.filter(x=>x.is_active!==false||(keepId&&String(x.id)===String(keepId)));
+{
+  const _cl=window.custodyLoad;
+  window.custodyLoad=async function(){ await _cl.apply(this,arguments); await loadItems(); };
+}
+
+/* ---------- تجهيز القيد ---------- */
+function stmtOf(r,a){
+  const inn=r.entry_type==="in";
+  return (inn?"وارد عهدة ":"منصرف عهدة ")+a.code+" — "+a.owner_name+(r.expense_item_name?" — بند: "+r.expense_item_name:"")+" — "+(r.description||"");
+}
+function plan(r,a){
+  const amt=C100(r.amount); if(amt<=0) return {reason:"قيمة الحركة صفر"};
+  const inn=r.entry_type==="in", checks=[], lines=[];
+  const chk=(label,x,fix)=>{ checks.push([label,x?accLabel(x):"—",!!x&&isLeaf(x),!x?fix:(isLeaf(x)?"":"مش حساب نهائي قابل للترحيل")]); return x; };
+  const cust=chk("حساب العهدة: "+a.owner_name,accOf(a.gl_account_id,a.gl_account_code),"اربط العهدة بحساب من شاشة تكويد العهد");
+  const ctr=chk(inn?"الحساب المقابل":(r.expense_item_name?"حساب بند: "+r.expense_item_name:"حساب المصروف"),accOf(r.gl_account_id,r.gl_account_code),"حدّد الحساب/البند في الحركة (زر تعديل)");
+  const desc=stmtOf(r,a);
+  if(inn){
+    lines.push({k:"العهدة",acc:cust&&cust.id,dr:amt,cr:0,desc});
+    lines.push({k:"المقابل",acc:ctr&&ctr.id,dr:0,cr:amt,desc});
+  }else{
+    lines.push({k:"المصروف",acc:ctr&&ctr.id,dr:amt,cr:0,desc});
+    lines.push({k:"العهدة",acc:cust&&cust.id,dr:0,cr:amt,desc});
+  }
+  return {checks,lines,td:amt,tc:amt,desc};
+}
+async function nextEntryNo(date){
+  const prefix=String(parseInt(date.slice(5,7),10));
+  const q=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"____").order("entry_no",{ascending:false}).limit(20);
+  if(q.error) throw q.error;
+  const nums=(q.data||[]).map(r=>String(r.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
+  return prefix+String((nums.length?Math.max(...nums):0)+1).padStart(4,"0");
+}
+const findRow=id=>custodyCache.entries.find(x=>String(x.id)===String(id));
+const canPost=()=>can("custodyLedger","post");
+const changed=()=>{ try{ if(typeof K.refresh==="function") K.refresh(); }catch(e){} };
+function modalTune(okText){
+  const mdl=document.querySelector("#modalBackdrop .modal"); if(mdl){ mdl.style.width="min(980px,96vw)"; mdl.style.maxWidth="96vw"; }
+  const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)");
+  if(okb){ if(okText) okb.textContent=okText; else okb.remove(); }
+  const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
+}
+function linesTable(rows,td,tc){
+  return '<div class="tbl-wrap"><table><thead><tr><th style="width:150px">رقم الحساب</th><th>اسم الحساب</th><th>البيان</th><th style="width:120px">مدين</th><th style="width:120px">دائن</th></tr></thead><tbody>'+rows+'</tbody><tfoot><tr><td colspan="3">الإجمالي</td><td class="num">'+money(td)+'</td><td class="num">'+money(tc)+'</td></tr></tfoot></table></div>';
+}
+function lineRow(x,a){
+  return '<tr><td dir="ltr" style="text-align:center;font-weight:700;white-space:nowrap">'+E(a&&a.account_code||"—")+'</td><td style="text-align:right">'+E(a&&a.account_name||x.k||"—")+'</td><td style="text-align:right">'+E(x.desc||"")+'</td><td class="num">'+(x.dr?money(x.dr/100):"—")+'</td><td class="num">'+(x.cr?money(x.cr/100):"—")+'</td></tr>';
+}
+
+/* ---------- عرض الحركة (قيد مقترح / قيد مُرحّل) ---------- */
+async function viewEntry(id){
+  const r=findRow(id); if(!r) return; const a=custodyAccount(r.account_id); if(!a) return;
+  try{
+    await loadAccounts();
+    if(r.gl_entry_id){
+      const [er,lr]=await Promise.all([sb.from("gl_entries").select("*").eq("id",r.gl_entry_id).maybeSingle(),sb.from("gl_entry_lines").select("*").eq("entry_id",r.gl_entry_id).order("line_no")]);
+      if(er.error) throw er.error; if(lr.error) throw lr.error;
+      const e=er.data; if(!e) throw new Error("القيد المرتبط غير موجود (ربما حُذف من اليومية العامة)");
+      let jn=""; try{ const j=await sb.from("gl_journals").select("journal_code,journal_name").eq("id",e.journal_id).maybeSingle(); if(j.data) jn=j.data.journal_code+" — "+(j.data.journal_name||""); }catch(_){}
+      const rows=(lr.data||[]).map(x=>lineRow({desc:x.description,dr:C100(x.debit),cr:C100(x.credit)},accOf(x.account_id,null))).join("");
+      const body='<div class="tx-post-box"><div style="margin-bottom:8px;font-weight:800">قيد رقم '+E(e.entry_no)+' — '+E(d10(e.entry_date))+(jn?' — يومية '+E(jn):"")+' — <span style="color:'+(e.status==="posted"?"var(--ok)":"var(--danger)")+'">'+(e.status==="posted"?"✔ مُرحّل":"مسودة")+'</span></div><div class="custody-muted" style="margin-bottom:8px">'+E(e.description||"")+'</div>'+linesTable(rows,C100(e.total_debit),C100(e.total_credit))+'</div>';
+      openModal("عرض الحركة — قيد "+E(e.entry_no),body,()=>false); modalTune("");
+    }else{
+      const P=plan(r,a); if(P.reason) return toast(P.reason,"err");
+      const rows=P.lines.map(x=>lineRow(x,K.byId.get(String(x.acc)))).join("");
+      const bad=P.checks.filter(c=>!c[2]);
+      const body='<div class="tx-post-box"><div style="margin-bottom:8px;font-weight:800">قيد مقترح (غير مُرحّل) — '+(r.entry_type==="in"?"وارد":"منصرف")+' عهدة '+E(a.code)+' — '+E(a.owner_name)+' — '+money(r.amount)+'</div>'+
+        (bad.length?'<div style="margin-bottom:10px;padding:8px 12px;border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-weight:700">'+bad.map(c=>E(c[0])+": ⚠ "+E(c[3]||"")).join("<br>")+'</div>':"")+
+        linesTable(rows,P.td/100,P.tc/100)+'<p class="custody-muted" style="margin-top:8px">القيد بيتكوّن فعليًا في اليومية العامة عند الضغط على «ترحيل الحركة».</p></div>';
+      openModal("عرض الحركة — قيد مقترح",body,()=>false); modalTune("");
+    }
+  }catch(e){ toast("تعذر عرض الحركة: "+(e.message||e),"err"); }
+}
+
+/* ---------- ترحيل الحركة ---------- */
+async function postOpen(id){
+  const r=findRow(id); if(!r) return; const a=custodyAccount(r.account_id); if(!a) return;
+  if(!canPost()) return toast("لا تملك صلاحية ترحيل العهد","err");
+  if(r.gl_entry_id) return toast("الحركة مُرحّلة بالفعل","err");
+  if(!K.v2) return toast("شغّل ملف "+SQL_FILE+" في Supabase أولاً","err");
+  let journals=[],years=[],periods=[];
+  try{
+    await loadAccounts();
+    const [j,y,p]=await Promise.all([sb.from("gl_journals").select("*"),sb.from("gl_fiscal_years").select("*").eq("status","open"),sb.from("gl_periods").select("*").eq("status","open")]);
+    if(j.error) throw j.error; if(y.error) throw y.error; if(p.error) throw p.error;
+    journals=(j.data||[]).filter(x=>x.is_active); years=y.data||[]; periods=p.data||[];
+  }catch(e){ return toast("تعذر قراءة بيانات الحسابات: "+(e.message||e),"err"); }
+  const P=plan(r,a); if(P.reason) return toast(P.reason,"err");
+  const d=d10(r.entry_date), y=years.find(x=>x.start_date<=d&&x.end_date>=d), per=y&&periods.find(x=>x.fiscal_year_id===y.id&&x.start_date<=d&&x.end_date>=d);
+  const checks=P.checks.slice(); checks.push(["السنة/الفترة المالية ("+d+")",per?y.year_code:"—",!!per,per?"":"لا توجد سنة/فترة مفتوحة تغطي التاريخ"]);
+  if(!journals.length) checks.push(["اليومية","—",false,"لا توجد يومية نشطة"]);
+  const bad=checks.filter(c=>!c[2]);
+  let saved=""; try{ saved=localStorage.getItem(JKEY)||""; }catch(_){}
+  const st=(typeof state!=="undefined"&&state.settings)||{};
+  const pref=journals.find(x=>String(x.journal_code)===saved)||journals.find(x=>String(x.journal_code)===String(st.custodyJournal||""))||journals.find(x=>/عهد|custody/i.test(String(x.journal_name||"")))||journals.find(x=>/خزن|نقد|بنك|cash|bank/i.test(String(x.journal_name||"")))||journals[0];
+  const rows=P.lines.map(x=>lineRow(x,K.byId.get(String(x.acc)))).join("");
+  const body='<div class="tx-post-box"><div style="margin-bottom:8px;font-weight:800">'+(r.entry_type==="in"?"وارد":"منصرف")+' عهدة '+E(a.code)+' — '+E(a.owner_name)+' — '+money(r.amount)+'</div>'+
+    '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px"><div class="fld" style="flex:1;min-width:240px;margin:0"><label>اليومية</label><select class="inp" id="cglJournal">'+journals.map(j=>'<option value="'+E(j.journal_code)+'"'+(pref&&pref.id===j.id?" selected":"")+'>'+E(j.journal_code)+' — '+E(j.journal_name||"")+'</option>').join("")+'</select></div>'+
+    '<div class="fld" style="flex:1;min-width:200px;margin:0"><label>السنة / الفترة المالية</label><div class="inp" style="display:flex;align-items:center;gap:8px">'+E(per?y.year_code:"—")+' <span style="color:var(--text-dim);font-size:12px">('+E(d)+')</span> <span style="color:'+(per?"var(--ok)":"var(--danger)")+'">'+(per?"✓":"⚠")+'</span></div></div></div>'+
+    (bad.length?'<div style="margin-bottom:10px;padding:8px 12px;border:1px solid var(--danger);border-radius:8px;color:var(--danger);font-weight:700">'+bad.map(c=>E(c[0])+": ⚠ "+E(c[3]||"")).join("<br>")+'</div>':"")+
+    linesTable(rows,P.td/100,P.tc/100)+
+    '<p style="margin-top:10px;font-weight:700;color:'+(bad.length?"var(--danger)":"var(--ok)")+'">'+(bad.length?"في "+bad.length+" بند محتاج تصليح قبل الترحيل.":"كل الحسابات جاهزة. بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها إلا بإلغاء الترحيل.")+'</p></div>';
+  window._cglCtx={id,plan:P,journals,years,periods};
+  openModal("ترحيل حركة عهدة — "+a.owner_name,body,()=>{ postDo(); return false; });
+  modalTune(bad.length?"":"ترحيل الحركة");
+}
+async function postDo(){
+  const X=window._cglCtx; if(!X) return;
+  const r=findRow(X.id), a=r&&custodyAccount(r.account_id);
+  if(!r||!a) return;
+  if(r.gl_entry_id) return toast("الحركة مُرحّلة بالفعل","err");
+  if(!canPost()) return toast("لا تملك صلاحية ترحيل العهد","err");
+  const P=X.plan;
+  if(P.lines.some(l=>!l.acc)) return toast("يوجد حساب غير مربوط بأحد بنود القيد","err");
+  const jc=$("cglJournal")&&$("cglJournal").value, j=X.journals.find(v=>String(v.journal_code)===String(jc));
+  if(!j) return toast("اختر اليومية","err");
+  try{ localStorage.setItem(JKEY,String(j.journal_code)); }catch(_){}
+  const btn=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(btn){ btn.disabled=true; btn.textContent="جارٍ الترحيل…"; }
+  let entry=null;
+  try{
+    const date=d10(r.entry_date);
+    const y=X.years.find(v=>v.start_date<=date&&v.end_date>=date); if(!y) throw new Error("لا توجد سنة مالية مفتوحة تغطي "+date);
+    const per=X.periods.find(v=>v.fiscal_year_id===y.id&&v.start_date<=date&&v.end_date>=date); if(!per) throw new Error("لا توجد فترة مفتوحة تغطي "+date);
+    if(P.td!==P.tc||!P.td) throw new Error("القيد غير متوازن");
+    const ref="عهدة "+a.code;
+    const description="قيد "+(r.entry_type==="in"?"وارد":"منصرف")+" عهدة "+a.code+" — "+a.owner_name+" — "+(r.description||"")+" — [مستند: "+ref+"]";
+    let entryNo=await nextEntryNo(date);
+    for(let attempt=0;;attempt++){
+      try{ entry=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:y.id,period_id:per.id,entry_date:date,document_date:date,description:description,status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:P.td/100,total_credit:P.tc/100}); break; }
+      catch(ie){ if(attempt<3&&(ie.code==="23505"||/duplicate|unique/i.test(String(ie.message||"")))){ entryNo=await nextEntryNo(date); continue; } throw ie; }
+    }
+    const lr=await sb.from("gl_entry_lines").insert(P.lines.map((x,i)=>({entry_id:entry.id,line_no:i+1,account_id:x.acc,description:x.desc,debit:x.dr/100,credit:x.cr/100})));
+    if(lr.error) throw lr.error;
+    const pr=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id}); if(pr.error) throw pr.error;
+    const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
+    const up=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}).eq("id",r.id);
+    if(up.error){
+      try{ await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:entry.id}); await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){}
+      entry=null; throw up.error;
+    }
+    Object.assign(r,{gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by});
+    try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"نظام العهد",source_ref:ref}); }catch(_){}
+    try{ audit("ترحيل حركة عهدة","عهدة "+a.code+" — "+(r.entry_type==="in"?"وارد":"منصرف")+" "+money(r.amount)+" بقيد "+entryNo+" — يومية "+j.journal_code); }catch(_){}
+    toast("✓ تم ترحيل الحركة بقيد رقم "+entryNo,"ok"); closeModal(); changed();
+  }catch(err){
+    if(entry){ try{ await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){} }
+    if(btn){ btn.disabled=false; btn.textContent="إعادة المحاولة"; }
+    toast("تعذر الترحيل: "+(err.message||err),"err");
+  }
+}
+
+/* ---------- إلغاء الترحيل ---------- */
+async function unpost(id){
+  const r=findRow(id); if(!r||!r.gl_entry_id) return; const a=custodyAccount(r.account_id); if(!a) return;
+  if(!canPost()) return toast("لا تملك صلاحية إلغاء الترحيل","err");
+  if(a.lock_date&&d10(r.entry_date)<=d10(a.lock_date)) return toast("الحركة داخل فترة مقفولة","err");
+  if(!await askConfirm("سيتم إلغاء ترحيل القيد رقم "+r.gl_entry_no+" وحذفه من اليومية العامة، وترجع الحركة «غير مُرحّلة» وتقدر تعدّلها أو تحذفها. تكمل؟",{title:"إلغاء ترحيل حركة عهدة",ok:"إلغاء الترحيل",cancel:"تراجع",danger:true})) return;
+  const eid=r.gl_entry_id, no=r.gl_entry_no; let warn="";
+  try{
+    const rp=await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:eid});
+    let chk=await sb.from("gl_entries").select("status").eq("id",eid).maybeSingle();
+    if(chk.data&&chk.data.status==="posted"){
+      const u=await sb.from("gl_entries").update({status:"draft",updated_at:new Date().toISOString()}).eq("id",eid).eq("status","posted").select();
+      chk=await sb.from("gl_entries").select("status").eq("id",eid).maybeSingle();
+      if(chk.data&&chk.data.status==="posted") throw new Error("تعذر فك الترحيل في قاعدة البيانات"+((rp.error||u.error)?" ("+((rp.error||u.error).message||"")+")":""));
+    }
+    if(chk.data){
+      try{
+        const dl=await sb.from("gl_entry_lines").delete().eq("entry_id",eid); if(dl.error) throw dl.error;
+        const de=await sb.from("gl_entries").delete().eq("id",eid).eq("status","draft"); if(de.error) throw de.error;
+      }catch(e){ warn=" — القيد رجع مسودة في اليومية العامة وتعذر حذفه تلقائيًا، احذفه من هناك قبل إعادة الترحيل"; }
+    }
+    try{ await sb.from("gl_posting_sources").delete().eq("entry_id",eid); }catch(_){}
+    const q=await sb.from("custody_entries").update({gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null}).eq("id",r.id);
+    if(q.error) throw q.error;
+    Object.assign(r,{gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null});
+    try{ audit("إلغاء ترحيل حركة عهدة","عهدة "+a.code+" — قيد "+no); }catch(_){}
+    toast("تم إلغاء ترحيل القيد "+no+warn,warn?"err":"ok"); changed();
+  }catch(e){ toast("تعذر إلغاء الترحيل: "+(e.message||e),"err"); }
+}
+
+/* ===================== شاشات: تكويد العهد / بند المصروف ===================== */
+const stEl=(id,msg,err)=>{ const el=$(id); if(el){ el.textContent=msg||""; el.className="custody-status"+(err?" err":""); } };
+const hint=m=>/column|schema cache|does not exist|could not find/i.test(String(m||""))?" — شغّل ملف "+SQL_FILE+" في Supabase":"";
+function banner(){
+  return K.v2===false?'<div class="custody-status err" style="padding:10px 12px;border:1px solid var(--danger);border-radius:10px;margin-bottom:12px;font-size:13px">⚠ ترقية قاعدة البيانات لسه ما اتعملتش — شغّل الملف <b dir="ltr">'+SQL_FILE+'</b> مرة واحدة في Supabase ← SQL Editor ثم حدّث الصفحة.'+(K.v2err?'<br><small dir="ltr">'+E(K.v2err)+'</small>':"")+'</div>':"";
+}
+function suggestNo(list,key,prefix,width){
+  let mx=0; list.forEach(x=>{ const m=String(x[key]||"").match(/(\d+)\s*$/); if(m) mx=Math.max(mx,parseInt(m[1],10)); });
+  return prefix+String(mx+1).padStart(width,"0");
+}
+const accField=(id,val,dis)=>'<input class="inp" id="'+id+'" list="cglAccList" autocomplete="off" placeholder="اكتب رقم أو اسم الحساب ثم اختر من القائمة" value="'+E(val||"")+'"'+(dis?" disabled":"")+'>';
+
+/* ----- تكويد العهد ----- */
+function codesView(){
+  const canAdd=can("custodyCodes","add"), canEdit=can("custodyCodes","edit"), canDel=can("custodyCodes","delete");
+  const ed=S2.codeEdit?custodyAccount(S2.codeEdit):null;
+  const users=(state.users||[]).filter(u=>u.active!==false);
+  const mu=ed?users.find(u=>(ed.user_no!=null&&ed.user_no!==""&&String(ed.user_no)===String(u.no))||norm(u.name)===norm(ed.owner_name)||norm(u.username)===norm(ed.owner_name)):null;
+  const userOpts='<option value="">— اختر الموظف —</option>'+(ed&&!mu?'<option value="__keep" selected>'+E(ed.owner_name)+' (اسم قديم غير موجود في المستخدمين)</option>':"")+users.map(u=>'<option value="'+E(u.no)+'"'+(mu&&String(mu.no)===String(u.no)?" selected":"")+'>'+E(u.name||u.username)+(u.username&&u.name&&u.username!==u.name?" ("+E(u.username)+")":"")+'</option>').join("");
+  const form=((ed&&canEdit)||(!ed&&canAdd))?'<section class="card"><div class="head"><h3>'+(ed?"✎ تعديل عهدة "+E(ed.code):"＋ تكويد عهدة جديدة")+'</h3></div><div class="body"><div class="custody-form-grid">'+
+    '<div class="custody-field"><label>اسم الموظف (من المستخدمين) *</label><select class="inp" id="ccUser">'+userOpts+'</select></div>'+
+    '<div class="custody-field"><label>رقم العهدة *</label><input class="inp" id="ccCode" maxlength="40" value="'+E(ed?ed.code:suggestNo(custodyCache.accounts,"code","CUS-",3))+'"></div>'+
+    '<div class="custody-field" style="grid-column:span 2"><label>الحساب من شجرة الحسابات *</label>'+accField("ccAcc",ed?rowAccLabel(ed):"")+'</div>'+
+    '<div class="custody-field" style="grid-column:1/-1"><label>ملاحظات</label><input class="inp" id="ccNotes" maxlength="250" value="'+E(ed?ed.notes||"":"")+'" placeholder="اختياري"></div>'+
+    '</div><div class="custody-actions" style="margin-top:12px"><button class="btn" id="ccSave">'+(ed?"حفظ التعديل":"حفظ العهدة")+'</button>'+(ed?'<button class="btn ghost" id="ccCancel">إلغاء التعديل</button>':"")+'</div><div id="ccStatus" class="custody-status"></div></div></section>':"";
+  const rows=custodyCache.accounts.slice().sort((x,y)=>String(x.code).localeCompare(String(y.code),"en",{numeric:true})).map((a,i)=>{
+    const lbl=rowAccLabel(a), bal=custodyAccountBalance(a.id), used=custodyRows(a.id).length;
+    return '<tr><td>'+(i+1)+'</td><td dir="ltr"><b>'+E(a.code)+'</b></td><td>'+E(a.owner_name)+'</td><td>'+(lbl?'<span dir="ltr">'+E(lbl)+'</span>':'<span class="custody-pill lock">غير مربوطة بحساب</span>')+'</td><td style="color:'+(bal<0?"var(--danger)":"var(--ok)")+'"><b>'+money(bal)+'</b></td><td>'+(a.is_active===false?'<span class="custody-pill lock">موقوفة</span>':'<span class="custody-pill">نشطة</span>')+'</td><td><div class="td-actions">'+
+      (canEdit?'<button data-cc-edit="'+E(a.id)+'">تعديل</button><button data-cc-toggle="'+E(a.id)+'">'+(a.is_active===false?"تفعيل":"إيقاف")+'</button>':"")+
+      (canDel&&!used?'<button class="del" data-cc-del="'+E(a.id)+'">حذف</button>':"")+'</div></td></tr>';
+  }).join("");
+  return '<div class="page-head"><h2>🔖 تكويد العهد</h2><span class="spacer"></span><button class="btn ghost" id="ccRefresh">↻ تحديث</button></div><div class="custody-wrap">'+banner()+form+
+    '<section class="card"><div class="head"><h3>أكواد العهد</h3><span class="count">'+custodyCache.accounts.length+' عهدة</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>رقم العهدة</th><th>الموظف</th><th>الحساب في شجرة الحسابات</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>'+(rows||'<tr><td colspan="7" style="text-align:center">لا توجد عهد مكوّدة بعد</td></tr>')+'</tbody></table></div></div></section></div>';
+}
+async function saveCode(){
+  const ed=S2.codeEdit?custodyAccount(S2.codeEdit):null;
+  if(ed?!can("custodyCodes","edit"):!can("custodyCodes","add")) return toast("لا تملك الصلاحية","err");
+  const uv=$("ccUser").value, code=$("ccCode").value.trim().toUpperCase(), notes=$("ccNotes").value.trim(), acc=parseAcc($("ccAcc").value);
+  if(!uv) return stEl("ccStatus","اختر الموظف",true);
+  if(!code) return stEl("ccStatus","اكتب رقم العهدة",true);
+  if(!acc) return stEl("ccStatus","اختر حسابًا نهائيًا صحيحًا من شجرة الحسابات (اكتب الرقم أو الاسم واختار من القائمة)",true);
+  if(custodyCache.accounts.some(x=>(!ed||String(x.id)!==String(ed.id))&&norm(x.code)===norm(code))) return stEl("ccStatus","رقم العهدة مستخدم بالفعل",true);
+  const other=custodyCache.accounts.find(x=>(!ed||String(x.id)!==String(ed.id))&&x.is_active!==false&&String(x.gl_account_id||"")===String(acc.id));
+  if(other&&!await askConfirm("الحساب "+accLabel(acc)+" مربوط بالفعل بالعهدة "+other.code+" — "+other.owner_name+". ربط نفس الحساب بأكثر من عهدة هيخلط أرصدتهم في الأستاذ العام. تكمل؟",{title:"الحساب مستخدم",ok:"متابعة",cancel:"رجوع",danger:false})) return;
+  if(ed&&String(ed.gl_account_id||"")&&String(ed.gl_account_id)!==String(acc.id)&&custodyRows(ed.id).some(r=>r.gl_entry_id)&&!await askConfirm("في حركات مُرحّلة على الحساب القديم، وهتفضل عليه في الأستاذ العام. الحركات الجديدة بس هتروح للحساب الجديد. تكمل؟",{title:"تغيير حساب عهدة عليها قيود",ok:"متابعة",cancel:"رجوع",danger:false})) return;
+  const u=uv==="__keep"?null:(state.users||[]).find(x=>String(x.no)===String(uv));
+  if(uv!=="__keep"&&!u) return stEl("ccStatus","الموظف غير موجود",true);
+  const name=u?(u.name||u.username):ed.owner_name;
+  const rec={code,owner_name:name,notes,gl_account_id:String(acc.id),gl_account_code:acc.account_code,gl_account_name:acc.account_name};
+  if(u){ rec.user_no=String(u.no); rec.user_name=name; }
+  const b=$("ccSave"); b.disabled=true; stEl("ccStatus","جارٍ الحفظ…");
+  try{
+    if(ed){
+      const q=await sb.from(CUSTODY_TABLES.accounts).update({...rec,updated_at:new Date().toISOString()}).eq("id",ed.id).select().single();
+      if(q.error) throw q.error; Object.assign(ed,q.data); try{ audit("تعديل تكويد عهدة",code+" — "+name+" ← "+accLabel(acc)); }catch(_){}
+      S2.codeEdit=null; toast("تم حفظ التعديل","ok");
+    }else{
+      const q=await sb.from(CUSTODY_TABLES.accounts).insert({...rec,created_by:custodyUserName()}).select().single();
+      if(q.error) throw q.error; custodyCache.accounts.push(q.data); try{ audit("إضافة عهدة",code+" — "+name+" ← "+accLabel(acc)); }catch(_){}
+      toast("تم تكويد العهدة","ok");
+    }
+    paintPage("custodyCodes");
+  }catch(e){ b.disabled=false; stEl("ccStatus",e.code==="23505"?"رقم العهدة مستخدم بالفعل":("تعذر الحفظ: "+(e.message||e)+hint(e.message)),true); }
+}
+function bindCodes(c){
+  const g=id=>$(id);
+  if(g("ccSave")) g("ccSave").onclick=saveCode;
+  if(g("ccCancel")) g("ccCancel").onclick=()=>{ S2.codeEdit=null; paintPage("custodyCodes"); };
+  g("ccRefresh").onclick=()=>{ S2.codeEdit=null; page("custodyCodes",c); };
+  c.querySelectorAll("[data-cc-edit]").forEach(b=>b.onclick=()=>{ S2.codeEdit=b.dataset.ccEdit; paintPage("custodyCodes"); window.scrollTo({top:0,behavior:"smooth"}); });
+  c.querySelectorAll("[data-cc-toggle]").forEach(b=>b.onclick=async()=>{
+    const a=custodyAccount(b.dataset.ccToggle); if(!a||!can("custodyCodes","edit")) return;
+    const on=a.is_active===false;
+    const q=await sb.from(CUSTODY_TABLES.accounts).update({is_active:on,updated_at:new Date().toISOString()}).eq("id",a.id);
+    if(q.error) return toast(q.error.message,"err"); a.is_active=on; try{ audit(on?"تفعيل عهدة":"إيقاف عهدة",a.code); }catch(_){} paintPage("custodyCodes");
+  });
+  c.querySelectorAll("[data-cc-del]").forEach(b=>b.onclick=async()=>{
+    const a=custodyAccount(b.dataset.ccDel); if(!a||!can("custodyCodes","delete")) return;
+    if(custodyRows(a.id).length) return toast("عليها حركات — أوقفها بدل الحذف","err");
+    if(!await askConfirm("حذف كود العهدة "+a.code+" نهائيًا؟")) return;
+    const q=await sb.from(CUSTODY_TABLES.accounts).delete().eq("id",a.id);
+    if(q.error) return toast("تعذر الحذف: "+q.error.message,"err");
+    custodyCache.accounts=custodyCache.accounts.filter(x=>x.id!==a.id); try{ audit("حذف عهدة",a.code); }catch(_){} paintPage("custodyCodes");
+  });
+}
+
+/* ----- بند المصروف ----- */
+function itemsView(){
+  const canAdd=can("expenseItems","add"), canEdit=can("expenseItems","edit"), canDel=can("expenseItems","delete");
+  const ed=S2.itemEdit?item(S2.itemEdit):null;
+  const form=(K.v2!==false&&((ed&&canEdit)||(!ed&&canAdd)))?'<section class="card"><div class="head"><h3>'+(ed?"✎ تعديل بند "+E(ed.item_name):"＋ بند مصروف جديد")+'</h3></div><div class="body"><div class="custody-form-grid">'+
+    '<div class="custody-field"><label>رقم البند *</label><input class="inp" id="eiNo" maxlength="30" value="'+E(ed?ed.item_no:suggestNo(K.items,"item_no","",3))+'"></div>'+
+    '<div class="custody-field"><label>اسم البند *</label><input class="inp" id="eiName" maxlength="160" value="'+E(ed?ed.item_name:"")+'" placeholder="مثال: بنزين / انتقالات / ضيافة"></div>'+
+    '<div class="custody-field" style="grid-column:span 2"><label>رقم الحساب في شجرة الحسابات *</label>'+accField("eiAcc",ed?rowAccLabel(ed):"")+'</div>'+
+    '</div><div class="custody-actions" style="margin-top:12px"><button class="btn" id="eiSave">'+(ed?"حفظ التعديل":"حفظ البند")+'</button>'+(ed?'<button class="btn ghost" id="eiCancel">إلغاء التعديل</button>':"")+'</div><div id="eiStatus" class="custody-status"></div></div></section>':"";
+  const rows=K.items.slice().sort((x,y)=>String(x.item_no).localeCompare(String(y.item_no),"en",{numeric:true})).map((it,i)=>{
+    const lbl=rowAccLabel(it), used=custodyCache.entries.some(r=>String(r.expense_item_id||"")===String(it.id));
+    return '<tr><td>'+(i+1)+'</td><td dir="ltr"><b>'+E(it.item_no)+'</b></td><td>'+E(it.item_name)+'</td><td>'+(lbl?'<span dir="ltr">'+E(lbl)+'</span>':'<span class="custody-pill lock">غير مربوط</span>')+'</td><td>'+(it.is_active===false?'<span class="custody-pill lock">موقوف</span>':'<span class="custody-pill">نشط</span>')+'</td><td><div class="td-actions">'+
+      (canEdit?'<button data-ei-edit="'+E(it.id)+'">تعديل</button><button data-ei-toggle="'+E(it.id)+'">'+(it.is_active===false?"تفعيل":"إيقاف")+'</button>':"")+
+      (canDel&&!used?'<button class="del" data-ei-del="'+E(it.id)+'">حذف</button>':"")+'</div></td></tr>';
+  }).join("");
+  return '<div class="page-head"><h2>🏷 بند المصروف</h2><span class="spacer"></span><button class="btn ghost" id="eiRefresh">↻ تحديث</button></div><div class="custody-wrap">'+banner()+form+
+    '<section class="card"><div class="head"><h3>بنود المصروف</h3><span class="count">'+K.items.length+' بند</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>رقم البند</th><th>اسم البند</th><th>رقم الحساب في شجرة الحسابات</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>'+(rows||'<tr><td colspan="6" style="text-align:center">لا توجد بنود مصروف بعد</td></tr>')+'</tbody></table></div></div></section></div>';
+}
+async function saveItem(){
+  const ed=S2.itemEdit?item(S2.itemEdit):null;
+  if(ed?!can("expenseItems","edit"):!can("expenseItems","add")) return toast("لا تملك الصلاحية","err");
+  const no=$("eiNo").value.trim(), name=$("eiName").value.trim(), acc=parseAcc($("eiAcc").value);
+  if(!no) return stEl("eiStatus","اكتب رقم البند",true);
+  if(!name) return stEl("eiStatus","اكتب اسم البند",true);
+  if(!acc) return stEl("eiStatus","اختر حسابًا نهائيًا صحيحًا من شجرة الحسابات (اكتب الرقم أو الاسم واختار من القائمة)",true);
+  if(K.items.some(x=>(!ed||String(x.id)!==String(ed.id))&&norm(x.item_no)===norm(no))) return stEl("eiStatus","رقم البند مستخدم بالفعل",true);
+  const rec={item_no:no,item_name:name,gl_account_id:String(acc.id),gl_account_code:acc.account_code,gl_account_name:acc.account_name};
+  const b=$("eiSave"); b.disabled=true; stEl("eiStatus","جارٍ الحفظ…");
+  try{
+    if(ed){
+      const q=await sb.from("custody_expense_items").update({...rec,updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",ed.id).select().single();
+      if(q.error) throw q.error; Object.assign(ed,q.data); try{ audit("تعديل بند مصروف",no+" — "+name+" ← "+accLabel(acc)); }catch(_){}
+      S2.itemEdit=null; toast("تم حفظ التعديل","ok");
+    }else{
+      const q=await sb.from("custody_expense_items").insert({...rec,created_by:custodyUserName()}).select().single();
+      if(q.error) throw q.error; K.items.push(q.data); try{ audit("إضافة بند مصروف",no+" — "+name+" ← "+accLabel(acc)); }catch(_){}
+      toast("تم حفظ البند","ok");
+    }
+    paintPage("expenseItems");
+  }catch(e){ b.disabled=false; stEl("eiStatus",e.code==="23505"?"رقم البند مستخدم بالفعل":("تعذر الحفظ: "+(e.message||e)+hint(e.message)),true); }
+}
+function bindItems(c){
+  const g=id=>$(id);
+  if(g("eiSave")) g("eiSave").onclick=saveItem;
+  if(g("eiCancel")) g("eiCancel").onclick=()=>{ S2.itemEdit=null; paintPage("expenseItems"); };
+  g("eiRefresh").onclick=()=>{ S2.itemEdit=null; page("expenseItems",c); };
+  c.querySelectorAll("[data-ei-edit]").forEach(b=>b.onclick=()=>{ S2.itemEdit=b.dataset.eiEdit; paintPage("expenseItems"); window.scrollTo({top:0,behavior:"smooth"}); });
+  c.querySelectorAll("[data-ei-toggle]").forEach(b=>b.onclick=async()=>{
+    const it=item(b.dataset.eiToggle); if(!it||!can("expenseItems","edit")) return;
+    const on=it.is_active===false;
+    const q=await sb.from("custody_expense_items").update({is_active:on,updated_at:new Date().toISOString()}).eq("id",it.id);
+    if(q.error) return toast(q.error.message,"err"); it.is_active=on; try{ audit(on?"تفعيل بند مصروف":"إيقاف بند مصروف",it.item_no); }catch(_){} paintPage("expenseItems");
+  });
+  c.querySelectorAll("[data-ei-del]").forEach(b=>b.onclick=async()=>{
+    const it=item(b.dataset.eiDel); if(!it||!can("expenseItems","delete")) return;
+    if(custodyCache.entries.some(r=>String(r.expense_item_id||"")===String(it.id))) return toast("البند مستخدم في حركات — أوقفه بدل الحذف","err");
+    if(!await askConfirm("حذف البند "+it.item_name+" نهائيًا؟")) return;
+    const q=await sb.from("custody_expense_items").delete().eq("id",it.id);
+    if(q.error) return toast("تعذر الحذف: "+q.error.message,"err");
+    K.items=K.items.filter(x=>x.id!==it.id); try{ audit("حذف بند مصروف",it.item_no); }catch(_){} paintPage("expenseItems");
+  });
+}
+
+function paintPage(name){
+  if(typeof currentPage!=="undefined"&&currentPage!==name) return;
+  const c=$("content"); if(!c) return;
+  ensureDatalist();
+  c.innerHTML=name==="custodyCodes"?codesView():itemsView();
+  if(name==="custodyCodes") bindCodes(c); else bindItems(c);
+}
+async function page(name,c){
+  c.innerHTML='<div class="empty"><div class="ic">💼</div><h3>جاري التحميل…</h3></div>';
+  try{ await Promise.all([custodyLoad(),loadAccounts(true)]); }
+  catch(e){ if(currentPage!==name) return; c.innerHTML='<div class="empty"><div class="ic">⚠️</div><h3>تعذر التحميل</h3><p>'+E(e.message||e)+'</p><button class="btn" onclick="go(\''+name+'\')">إعادة المحاولة</button></div>'; return; }
+  if(currentPage!==name) return;
+  paintPage(name);
+}
+
+window.CGL={
+  K,E,money,loadAccounts,loadItems,ensureDatalist,parseAcc,accOf,accLabel,rowAccLabel,item,activeItems,isLeaf,
+  v2:()=>K.v2!==false, v2known:()=>K.v2!==null,
+  plan,viewEntry,postOpen,unpost,canPost,page,
+  setRefresh:f=>{ K.refresh=f; }
+};
+})();
+</script>
 <script id="cgx-script">
 /* ===== العهد (نمط الموبايل) =====
    منقول من شاشة العهد في نسخة index_1 (كروت اليوم، وارد/منصرف، تقفيل، نافذة التقرير) على جداول
@@ -27017,7 +27514,7 @@ const pad=n=>("0"+n).slice(-2);
 const todayStr=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());};
 const monthStart=()=>todayStr().slice(0,8)+"01";
 const d10=d=>String(d==null?"":d).slice(0,10);
-const S={showIn:false,showOut:false,editing:null,repAcc:null,vw:{imgs:[],name:"",nameAr:""},rSel:"",rRows:null};
+const S={f:{emp:"",type:"",st:"",from:"",to:"",q:""},showLocked:false,limit:200,editing:null,repAcc:null,vw:{imgs:[],name:"",nameAr:""},rSel:"",rRows:null};
 const adm=()=>{try{return !!isAdmin();}catch(e){return false;}};
 
 /* ---------- الحسابات اللي المستخدم يقدر يشوفها ---------- */
@@ -27025,11 +27522,10 @@ function myAccounts(){
   const act=custodyCache.accounts.filter(a=>a.is_active!==false);
   if(adm()) return act;
   const u=(typeof curU==="function"&&curU())||{}, names=[u.name,u.username].map(norm).filter(Boolean);
-  return act.filter(a=>names.indexOf(norm(a.owner_name))>-1);
+  return act.filter(a=>(a.user_no!=null&&a.user_no!==""&&u.no!=null&&String(a.user_no)===String(u.no))||names.indexOf(norm(a.owner_name))>-1);
 }
 function current(){
-  const mine=myAccounts();
-  const a=mine.find(x=>String(x.id)===String(custodyCache.selected))||mine[0]||null;
+  const s=scopeAccounts(), a=s.length===1?s[0]:null;
   if(a) custodyCache.selected=a.id;
   return a;
 }
@@ -27048,91 +27544,195 @@ function projectNames(a){
 function setStatus(msg,err){ const el=document.getElementById("cgxStatus"); if(el){ el.textContent=msg||""; el.className="cgx-status"+(err?" err":""); } }
 function ownerLabel(a,all){ const dup=all.filter(x=>norm(x.owner_name)===norm(a.owner_name)).length>1; return a.owner_name+(dup?" — "+a.code:""); }
 
-/* ---------- شاشة العهد ---------- */
+/* ---------- شاشة العهد (يومية العهد) ---------- */
+const NOTE_SQL="شغّل ملف custody_gl_upgrade.sql في Supabase أولاً";
+function empValue(){
+  const mine=myAccounts(); let v=S.f.emp;
+  if(v&&v!=="*"&&!mine.some(a=>String(a.id)===String(v))) v="";
+  if(!v) v=mine.length===1?String(mine[0].id):(mine.length?"*":"");
+  S.f.emp=v; return v;
+}
+function scopeAccounts(){ const mine=myAccounts(), v=empValue(); return v==="*"?mine:mine.filter(a=>String(a.id)===String(v)); }
+function viewRows(){
+  const accs=scopeAccounts(), F=S.f, q=norm(F.q), out=[];
+  accs.forEach(a=>{
+    let run=0;
+    sortedRows(a).forEach(r=>{
+      run+=(r.entry_type==="in"?1:-1)*(+r.amount||0);
+      const d=d10(r.entry_date);
+      if(F.type&&r.entry_type!==F.type) return;
+      if(F.st==="posted"&&!r.gl_entry_id) return;
+      if(F.st==="draft"&&r.gl_entry_id) return;
+      if(F.from&&d<F.from) return;
+      if(F.to&&d>F.to) return;
+      if(!S.showLocked&&isLocked(a,d)) return;
+      if(q){ const hay=norm([r.description,r.project,r.expense_item_name,r.expense_item_no,r.gl_account_code,r.gl_account_name,a.owner_name,a.code,r.gl_entry_no].join(" ")); if(hay.indexOf(q)<0) return; }
+      out.push({a,r,run});
+    });
+  });
+  out.sort((x,y)=>(d10(y.r.entry_date)+String(y.r.created_at||"")).localeCompare(d10(x.r.entry_date)+String(x.r.created_at||"")));
+  return out;
+}
+function cardsHtml(){
+  const accs=scopeAccounts(), td=todayStr(); let tin=0,tout=0,total=0,unp=0;
+  accs.forEach(a=>custodyRows(a.id).forEach(r=>{ const v=+r.amount||0, inn=r.entry_type==="in"; total+=inn?v:-v; if(d10(r.entry_date)===td){ if(inn)tin+=v; else tout+=v; } if(!r.gl_entry_id) unp++; }));
+  return '<div class="cgx-card in">وارد اليوم<b>'+num(tin)+'</b></div><div class="cgx-card out">منصرف اليوم<b>'+num(tout)+'</b></div><div class="cgx-card'+(total<0?" neg":"")+'">الرصيد<b>'+num(total)+'</b></div><div class="cgx-card">غير مُرحّل<b>'+unp+'</b></div>';
+}
+function acctCell(r){
+  const l=CGL.rowAccLabel(r); if(!l) return '<span class="cgx-nolink">—</span>';
+  const parts=l.split(" — "); return '<span dir="ltr">'+E(parts[0])+'</span>'+(parts[1]?'<small>'+E(parts.slice(1).join(" — "))+'</small>':"");
+}
+function rowTr(x,multi,single,canEdit,canDel,canPost){
+  const {a,r,run}=x, inn=r.entry_type==="in", locked=isLocked(a,r.entry_date), posted=!!r.gl_entry_id;
+  const ncol=9+(multi?1:0)+(single?1:0);
+  if(String(S.editing)===String(r.id)) return '<tr class="cgx-editrow"><td colspan="'+ncol+'">'+draftHtml(r.entry_type,r)+'</td></tr>';
+  let act='<button type="button" class="cgx-tb" data-cgx-view="'+E(r.id)+'">عرض الحركة</button>';
+  if(!posted){
+    if(canPost&&!locked) act+='<button type="button" class="cgx-tb post" data-cgx-post="'+E(r.id)+'">ترحيل الحركة</button>';
+    if(!locked&&canEdit) act+='<button type="button" class="cgx-tb" data-cgx-edit="'+E(r.id)+'">تعديل</button>';
+    if(!locked&&canDel) act+='<button type="button" class="cgx-tb del" data-cgx-del="'+E(r.id)+'">حذف</button>';
+  }else if(canPost&&!locked) act+='<button type="button" class="cgx-tb unpost" data-cgx-unpost="'+E(r.id)+'">إلغاء الترحيل</button>';
+  const st=posted?'<span class="cgx-st ok">✔ مُرحّل <b dir="ltr">'+E(r.gl_entry_no||"")+'</b></span>':'<span class="cgx-st dr">غير مُرحّل</span>';
+  return '<tr class="'+(locked?"locked":"")+'"><td data-l="التاريخ" dir="ltr">'+E(d10(r.entry_date))+'</td>'+
+    (multi?'<td data-l="الموظف">'+E(a.owner_name)+'<small dir="ltr">'+E(a.code)+'</small></td>':"")+
+    '<td data-l="النوع"><span class="cgx-tp '+(inn?"in":"out")+'">'+(inn?"وارد":"منصرف")+'</span></td>'+
+    '<td data-l="البيان" class="c-desc">'+E(r.description)+(r.project?'<small class="cgx-proj">🏷 '+E(r.project)+'</small>':"")+'</td>'+
+    '<td data-l="البند">'+(r.expense_item_name?E(r.expense_item_name)+'<small dir="ltr">'+E(r.expense_item_no||"")+'</small>':'<span class="cgx-nolink">—</span>')+'</td>'+
+    '<td data-l="الحساب">'+acctCell(r)+'</td>'+
+    '<td data-l="وارد" class="in">'+(inn?num(r.amount):"—")+'</td><td data-l="منصرف" class="out">'+(!inn?num(r.amount):"—")+'</td>'+
+    (single?'<td data-l="الرصيد"><b>'+num(run)+'</b></td>':"")+
+    '<td data-l="الحالة">'+st+'</td><td class="c-act"><div class="cgx-acts">'+act+'</div></td></tr>';
+}
+function listHtml(){
+  const rows=viewRows(), accs=scopeAccounts(), multi=accs.length!==1, single=!multi;
+  const canEdit=custodyCan("edit"), canDel=custodyCan("delete"), canPost=CGL.canPost();
+  let sin=0,sout=0; rows.forEach(x=>{ const v=+x.r.amount||0; if(x.r.entry_type==="in") sin+=v; else sout+=v; });
+  const show=rows.slice(0,S.limit), ncol=9+(multi?1:0)+(single?1:0);
+  let h='<div class="cgx-tblwrap"><table class="cgx-tbl"><thead><tr><th>التاريخ</th>'+(multi?'<th>الموظف</th>':"")+'<th>النوع</th><th>البيان</th><th>البند</th><th>الحساب</th><th>وارد</th><th>منصرف</th>'+(single?'<th>الرصيد</th>':"")+'<th>الحالة</th><th>إجراءات</th></tr></thead><tbody>';
+  h+=show.map(x=>rowTr(x,multi,single,canEdit,canDel,canPost)).join("")||'<tr><td colspan="'+ncol+'" class="cgx-empty">لا توجد حركات مطابقة</td></tr>';
+  h+='</tbody>'+(rows.length?'<tfoot><tr><td colspan="'+(5+(multi?1:0))+'">إجمالي المعروض ('+rows.length+' حركة)</td><td class="in">'+num(sin)+'</td><td class="out">'+num(sout)+'</td>'+(single?'<td></td>':"")+'<td colspan="2"></td></tr></tfoot>':"")+'</table></div>';
+  if(rows.length>show.length) h+='<button type="button" class="cgx-more" data-cgx-more="1">عرض المزيد ('+(rows.length-show.length)+' حركة متبقية)</button>';
+  return h;
+}
 function ledgerView(){
-  const admin=adm(), mine=myAccounts(), a=current();
-  const canAdd=custodyCan("add"), canEdit=custodyCan("edit"), canDel=custodyCan("delete");
-  let h='<div class="cgx"><h2 class="cgx-title">العهد</h2>';
-  if(admin) h+='<div class="cgx-emp"><label for="cgxEmp">اختر الموظف</label><select id="cgxEmp">'+mine.map(x=>'<option value="'+E(x.id)+'"'+(a&&String(a.id)===String(x.id)?" selected":"")+'>'+E(ownerLabel(x,mine))+'</option>').join("")+'</select></div>';
-  if(!a){
-    h+='<div class="empty"><div class="ic">💼</div><h3>'+(admin?"لا توجد عهد مسجلة بعد":"مفيش خزنة عهدة مسجلة باسمك")+'</h3><p>'+(admin?"أنشئ عهدة جديدة من الأسفل.":"اطلب من الأدمن يسجّل لك خزنة عهدة بنفس اسمك.")+'</p></div>';
-  }else{
-    const rows=sortedRows(a), td=todayStr(); let tin=0,tout=0,total=0;
-    rows.forEach(r=>{ const v=+r.amount||0, inn=r.entry_type==="in"; total+=inn?v:-v; if(d10(r.entry_date)===td){ if(inn)tin+=v; else tout+=v; } });
-    h+='<div class="cgx-top"><button type="button" class="cgx-rep" id="cgxRepBtn">📄 تقرير</button><div class="cgx-who">🔒 خزنة: '+E(a.owner_name)+'</div></div>';
-    h+='<div class="cgx-cards"><div class="cgx-card in">وارد اليوم<b>'+num(tin)+'</b></div><div class="cgx-card out">منصرف اليوم<b>'+num(tout)+'</b></div><div class="cgx-card'+(total<0?" neg":"")+'">الرصيد<b>'+num(total)+'</b></div></div>';
-    h+='<div id="cgxStatus" class="cgx-status"></div>';
-    if(a.lock_date) h+='<div class="cgx-lockmsg">✅ تم تقفيل العهدة بتاريخ '+E(d10(a.lock_date))+'</div>';
-    h+=section(a,rows,"in",canAdd,canEdit,canDel)+section(a,rows,"out",canAdd,canEdit,canDel);
-    h+='<datalist id="cgxProjs">'+projectNames(null).map(p=>'<option value="'+E(p)+'">').join("")+'</datalist>';
+  const admin=adm(), mine=myAccounts(), v=empValue(), F=S.f;
+  let h='<div class="cgx cgx-wide"><h2 class="cgx-title">العهد</h2>';
+  if(!mine.length){
+    return h+'<div class="empty"><div class="ic">💼</div><h3>'+(admin?"لا توجد عهد مسجلة بعد":"مفيش خزنة عهدة مسجلة باسمك")+'</h3><p>'+(admin?"كوّد عهدة جديدة من شاشة «تكويد العهد».":"اطلب من الأدمن يكوّد لك عهدة بنفس اسمك.")+'</p></div>'+
+      (admin&&canView("custodyCodes")?'<div style="text-align:center;margin-top:8px"><button type="button" class="cgx-rep" data-cgx-go="custodyCodes">🔖 تكويد العهد</button></div>':"")+'</div>';
   }
-  if(admin&&custodyCan("add")) h+='<details class="cgx-new"><summary>＋ إنشاء عهدة جديدة</summary><div class="grid"><input id="caNewCode" placeholder="كود العهدة (CUS-001)" maxlength="40"><input id="caNewOwner" placeholder="اسم صاحب العهدة" maxlength="160"><input id="caNewNotes" placeholder="ملاحظات (اختياري)" style="grid-column:1/-1"></div><div style="margin-top:8px"><button type="button" class="btn" id="caCreate">حفظ العهدة</button> <span id="caCreateStatus" class="cgx-status" style="display:inline"></span></div></details>';
+  const a=current(), anyLock=mine.some(x=>x.lock_date), canAdd=custodyCan("add");
+  h+='<div class="cgx-top">'+(a?'<button type="button" class="cgx-rep" id="cgxRepBtn">📄 تقرير</button>':'<span></span>')+'<div class="cgx-who">'+(a?'🔒 خزنة: '+E(a.owner_name)+' — '+E(a.code):'كل العهد')+'</div>'+(canView("custodyCodes")?'<button type="button" class="cgx-rep alt" data-cgx-go="custodyCodes">🔖 تكويد العهد</button>':"")+'</div>';
+  if(!CGL.v2()) h+='<div class="cgx-lockmsg" style="color:var(--danger)">⚠ '+NOTE_SQL+' — لحد ما يتشغّل، الحركات بتتسجل بدون بند/حساب ومش هتتحول لقيود.</div>';
+  if(mine.length>1) h+='<div class="cgx-fbar"><div class="fe"><label for="cgxFEmp">الموظف</label><select id="cgxFEmp"><option value="*"'+(v==="*"?" selected":"")+'>كل الموظفين</option>'+mine.map(x=>'<option value="'+E(x.id)+'"'+(String(x.id)===String(v)?" selected":"")+'>'+E(ownerLabel(x,mine))+'</option>').join("")+'</select></div>';
+  else h+='<div class="cgx-fbar"><div class="fe" style="display:none"></div>';
+  h+='<div><label for="cgxFType">النوع</label><select id="cgxFType"><option value="">الكل</option><option value="in"'+(F.type==="in"?" selected":"")+'>وارد</option><option value="out"'+(F.type==="out"?" selected":"")+'>منصرف</option></select></div>'+
+    '<div><label for="cgxFSt">الحالة</label><select id="cgxFSt"><option value="">الكل</option><option value="posted"'+(F.st==="posted"?" selected":"")+'>مُرحّل</option><option value="draft"'+(F.st==="draft"?" selected":"")+'>غير مُرحّل</option></select></div>'+
+    '<div><label for="cgxFFrom">من تاريخ</label><input type="date" id="cgxFFrom" value="'+E(F.from)+'"></div>'+
+    '<div><label for="cgxFTo">إلى تاريخ</label><input type="date" id="cgxFTo" value="'+E(F.to)+'"></div>'+
+    '<div class="fq"><label for="cgxFQ">بحث</label><input id="cgxFQ" placeholder="بيان / بند / حساب / مشروع / رقم قيد" value="'+E(F.q)+'"></div>'+
+    '<div class="fb"><button type="button" class="cgx-tb" id="cgxFClear">مسح الفلاتر</button>'+(anyLock?'<label class="cgx-showlocked"><input type="checkbox" id="cgxFLocked"'+(S.showLocked?" checked":"")+'><span>المقفلة</span></label>':"")+'</div></div>';
+  h+='<div class="cgx-cards c4" id="cgxCards">'+cardsHtml()+'</div><div id="cgxStatus" class="cgx-status"></div>';
+  if(a&&a.lock_date) h+='<div class="cgx-lockmsg">✅ تم تقفيل العهدة بتاريخ '+E(d10(a.lock_date))+'</div>';
+  if(a&&CGL.v2()&&!(a.gl_account_id||a.gl_account_code)) h+='<div class="cgx-lockmsg" style="color:var(--danger)">⚠ العهدة دي غير مربوطة بحساب من شجرة الحسابات — اربطها من «تكويد العهد» علشان الحركات تتحول لقيود.</div>';
+  if(canAdd) h+='<div class="cgx-addbar"><button type="button" class="in" data-cgx-add="in">＋ وارد</button><button type="button" class="out" data-cgx-add="out">－ منصرف</button></div><div id="cgxDraftBox"></div>';
+  h+='<div id="cgxList">'+listHtml()+'</div>';
+  h+='<datalist id="cgxProjs">'+projectNames(null).map(p=>'<option value="'+E(p)+'">').join("")+'</datalist>';
   return h+'</div>';
 }
-function rowHtml(a,r,locked,canEdit,canDel){
-  if(String(S.editing)===String(r.id)){
-    return '<div class="cgx-draft" data-cgx-editing="'+E(r.id)+'"><input class="d-bayan" maxlength="250" value="'+E(r.description)+'"><input class="d-amt" type="number" inputmode="decimal" min="0" step="0.01" value="'+(+r.amount)+'"><input class="d-proj" list="cgxProjs" placeholder="المشروع (اختياري)" value="'+E(r.project||"")+'"><input class="d-date" type="date" value="'+E(d10(r.entry_date))+'"><div class="d-btns"><button type="button" class="d-ok">✔ حفظ التعديل</button><button type="button" class="d-no">إلغاء</button></div></div>';
+function draftHtml(type,r){
+  const inn=type==="in", ed=!!r, v2=CGL.v2(), mine=myAccounts();
+  const attr=ed?'data-cgx-editing="'+E(r.id)+'"':'data-cgx-new="'+type+'"';
+  let h='<div class="cgx-draft '+type+'" '+attr+'><div class="dh">'+(ed?"✎ تعديل حركة ":"＋ ")+(inn?"وارد":"منصرف")+'</div>';
+  if(!ed&&scopeAccounts().length!==1) h+='<label class="f full"><span>الموظف / العهدة *</span><select class="d-acc"><option value="">— اختر —</option>'+mine.map(x=>'<option value="'+E(x.id)+'">'+E(ownerLabel(x,mine))+'</option>').join("")+'</select></label>';
+  h+='<label class="f full"><span>البيان *</span><input class="d-bayan" maxlength="250" value="'+E(ed?r.description:"")+'"></label>'+
+    '<label class="f"><span>القيمة *</span><input class="d-amt" type="number" inputmode="decimal" min="0" step="0.01" value="'+(ed?(+r.amount):"")+'"></label>'+
+    '<label class="f"><span>التاريخ</span><input class="d-date" type="date" value="'+E(ed?d10(r.entry_date):todayStr())+'"></label>'+
+    '<label class="f full"><span>المشروع (اختياري)</span><input class="d-proj" list="cgxProjs" value="'+E(ed?(r.project||""):"")+'"></label>';
+  if(v2){
+    if(inn){
+      h+='<label class="f full"><span>الحساب المقابل من شجرة الحسابات (خزنة / بنك / ...) *</span><input class="d-acct" list="cglAccList" autocomplete="off" placeholder="اكتب رقم أو اسم الحساب واختر من القائمة" value="'+E(ed?CGL.rowAccLabel(r):"")+'"></label>';
+    }else{
+      const items=CGL.activeItems(ed?r.expense_item_id:null), sel=ed&&r.expense_item_id?String(r.expense_item_id):"";
+      h+='<label class="f"><span>البند</span><select class="d-item"><option value="">— بدون بند (اختر حساب مباشرة) —</option>'+items.map(it=>'<option value="'+E(it.id)+'"'+(String(it.id)===sel?" selected":"")+'>'+E(it.item_no)+' — '+E(it.item_name)+'</option>').join("")+'</select></label>'+
+        '<label class="f"><span>رقم الحساب</span><input class="d-acct" list="cglAccList" autocomplete="off" placeholder="يظهر تلقائيًا لو اخترت بند"'+(sel?" disabled":"")+' value="'+E(ed?CGL.rowAccLabel(r):"")+'"></label>';
+    }
   }
-  return '<div class="cgx-row'+(locked?" locked":"")+'"><span>'+(r.project?'<em class="cgx-proj">🏷 '+E(r.project)+'</em>':"")+'<i>'+E(d10(r.entry_date))+'</i>'+E(r.description)+'</span><b>'+num(r.amount)+'</b>'+
-    (!locked&&canEdit?'<button type="button" class="cgx-edit" data-cgx-edit="'+E(r.id)+'" title="تعديل">✎</button>':"")+
-    (!locked&&canDel?'<button type="button" class="cgx-del" data-cgx-del="'+E(r.id)+'" title="حذف">✕</button>':"")+'</div>';
-}
-function section(a,rows,type,canAdd,canEdit,canDel){
-  const inn=type==="in", lk=a.lock_date, show=inn?S.showIn:S.showOut; let sum=0, list="";
-  rows.slice().reverse().forEach(r=>{
-    if(r.entry_type!==type) return;
-    const locked=isLocked(a,r.entry_date); if(locked&&!show) return;
-    sum+=+r.amount||0; list+=rowHtml(a,r,locked,canEdit,canDel);
-  });
-  const label=(inn?"＋ وارد":"－ منصرف")+(lk?'<span style="margin-inline-start:4px" title="مقفلة حتى '+E(d10(lk))+'">🔒</span>':"")+" <span>"+num(sum)+"</span>";
-  const head=canAdd?'<button type="button" class="cgx-add" data-cgx-add="'+type+'">'+label+'</button>':'<div class="cgx-add static">'+label+'</div>';
-  const chk=lk?'<label class="cgx-showlocked" title="عرض الحركات المقفلة"><input type="checkbox" data-cgx-show="'+type+'"'+(show?" checked":"")+'><span>المقفلة</span></label>':"";
-  return '<section class="cgx-sec '+type+'"><div class="cgx-head">'+head+chk+'</div><div id="cgxDraft-'+type+'"></div><div class="cgx-list">'+(list||'<div class="cgx-empty">لا توجد سطور '+(inn?"وارد":"منصرف")+'</div>')+'</div></section>';
+  return h+'<div class="d-btns"><button type="button" class="d-ok">'+(ed?"حفظ التعديل":"حفظ")+'</button><button type="button" class="d-no">إلغاء</button></div></div>';
 }
 function rerender(){
   if(typeof currentPage!=="undefined"&&currentPage!=="custodyLedger") return;
   const c=document.getElementById("content"); if(!c) return;
   c.innerHTML=ledgerView(); bindLedger();
 }
+function refreshList(){
+  const l=document.getElementById("cgxList"), k=document.getElementById("cgxCards");
+  if(l) l.innerHTML=listHtml(); if(k) k.innerHTML=cardsHtml();
+}
 function openDraft(type){
-  const box=document.getElementById("cgxDraft-"+type); if(!box) return;
-  if(box.firstChild){ box.querySelector(".d-bayan").focus(); return; }
-  box.innerHTML='<div class="cgx-draft" data-cgx-new="'+type+'"><input class="d-bayan" placeholder="البيان" maxlength="250"><input class="d-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="القيمة"><input class="d-proj" list="cgxProjs" placeholder="المشروع (اختياري)"><input class="d-date" type="date" value="'+todayStr()+'"><div class="d-btns"><button type="button" class="d-ok">✔ حفظ</button><button type="button" class="d-no">إلغاء</button></div></div>';
-  box.querySelector(".d-bayan").focus();
+  const box=document.getElementById("cgxDraftBox"); if(!box) return;
+  const cur=box.querySelector(".cgx-draft");
+  if(cur&&cur.getAttribute("data-cgx-new")===type){ cur.querySelector(".d-bayan").focus(); return; }
+  box.innerHTML=draftHtml(type,null);
+  CGL.loadAccounts().then(()=>CGL.ensureDatalist()).catch(()=>{});
+  const f=box.querySelector(".d-acc,.d-bayan"); if(f) f.focus();
+}
+async function readAcct(d,type){
+  if(!CGL.v2()) return {fields:{}};
+  try{ await CGL.loadAccounts(); CGL.ensureDatalist(); }catch(e){ return {err:"تعذر تحميل شجرة الحسابات: "+((e&&e.message)||e)}; }
+  const sel=d.querySelector(".d-item"), inp=d.querySelector(".d-acct"); let it=null, acc=null;
+  if(type==="out"&&sel&&sel.value){
+    it=CGL.item(sel.value); if(!it) return {err:"البند غير موجود"};
+    acc=CGL.accOf(it.gl_account_id,it.gl_account_code);
+    if(!acc) return {err:"البند «"+it.item_name+"» غير مربوط بحساب — اربطه من شاشة بند المصروف"};
+  }else{
+    acc=CGL.parseAcc(inp?inp.value:"");
+    if(!acc) return {err:type==="in"?"اختر الحساب المقابل من شجرة الحسابات (اكتب الرقم أو الاسم واختر من القائمة)":"اختر بندًا أو حسابًا نهائيًا من شجرة الحسابات"};
+  }
+  return {fields:{expense_item_id:it?String(it.id):null,expense_item_no:it?it.item_no:null,expense_item_name:it?it.item_name:null,gl_account_id:String(acc.id),gl_account_code:acc.account_code,gl_account_name:acc.account_name}};
 }
 async function saveNew(type,d){
-  const a=current(); if(!a) return;
+  let a=current();
+  const ds=d.querySelector(".d-acc"); if(ds){ a=custodyAccount(ds.value); if(!a){ setStatus("اختر الموظف / العهدة",true); return; } }
+  if(!a) return;
   const desc=d.querySelector(".d-bayan").value.trim(), amt=parseFloat(d.querySelector(".d-amt").value), proj=d.querySelector(".d-proj").value.trim(), date=d.querySelector(".d-date").value||todayStr();
   if(!desc||!(amt>0)){ setStatus("اكتب البيان وقيمة أكبر من صفر",true); return; }
+  if(CGL.v2()&&!(a.gl_account_id||a.gl_account_code)){ setStatus("العهدة غير مربوطة بحساب من شجرة الحسابات — اربطها من «تكويد العهد» أولاً",true); return; }
   const ok=d.querySelector(".d-ok"); ok.disabled=true;
   try{
+    const g=await readAcct(d,type); if(g.err){ setStatus(g.err,true); ok.disabled=false; return; }
     await freshLock(a);
     if(isLocked(a,date)){ setStatus(lockText(a),true); ok.disabled=false; return; }
-    const r=await sb.from(CUSTODY_TABLES.entries).insert({account_id:a.id,entry_type:type,entry_date:date,amount:amt,description:desc,project:proj,created_by:custodyUserName()}).select().single();
+    const r=await sb.from(CUSTODY_TABLES.entries).insert({account_id:a.id,entry_type:type,entry_date:date,amount:amt,description:desc,project:proj,created_by:custodyUserName(),...g.fields}).select().single();
     if(r.error) throw r.error;
     custodyCache.entries.push(r.data); try{ audit("حركة عهدة",a.code+" / "+type+" / "+amt); }catch(e){}
-    toast("تم تسجيل السطر ✓","ok"); rerender();
-  }catch(e){ ok.disabled=false; setStatus("تعذّر الحفظ: "+((e&&e.message)||e),true); }
+    toast("تم تسجيل الحركة ✓ — اضغط «ترحيل الحركة» لعمل القيد","ok"); rerender();
+  }catch(e){ ok.disabled=false; const m=(e&&e.message)||String(e); setStatus("تعذّر الحفظ: "+m+(/column|schema cache/i.test(m)?" — "+NOTE_SQL:""),true); }
 }
 async function saveEdit(d){
   const r=custodyCache.entries.find(x=>String(x.id)===String(d.getAttribute("data-cgx-editing"))), a=r&&custodyAccount(r.account_id); if(!r||!a){ S.editing=null; rerender(); return; }
+  if(r.gl_entry_id){ setStatus("الحركة مُرحّلة — ألغِ الترحيل الأول عشان تعدّلها",true); return; }
   const desc=d.querySelector(".d-bayan").value.trim(), amt=parseFloat(d.querySelector(".d-amt").value), proj=d.querySelector(".d-proj").value.trim(), date=d.querySelector(".d-date").value||d10(r.entry_date);
   if(!desc||!(amt>0)){ setStatus("اكتب البيان وقيمة أكبر من صفر",true); return; }
   const ok=d.querySelector(".d-ok"); ok.disabled=true;
   try{
+    const g=await readAcct(d,r.entry_type);
+    if(g.err){ setStatus(g.err,true); ok.disabled=false; return; }
     await freshLock(a);
     if(isLocked(a,r.entry_date)||isLocked(a,date)){ setStatus(lockText(a),true); S.editing=null; rerender(); setStatus(lockText(a),true); return; }
-    const q=await sb.from(CUSTODY_TABLES.entries).update({description:desc,amount:amt,entry_date:date,project:proj,updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",r.id);
+    const upd={description:desc,amount:amt,entry_date:date,project:proj,updated_by:custodyUserName(),updated_at:new Date().toISOString(),...g.fields};
+    const q=await sb.from(CUSTODY_TABLES.entries).update(upd).eq("id",r.id);
     if(q.error) throw q.error;
-    Object.assign(r,{description:desc,amount:amt,entry_date:date,project:proj}); try{ audit("تعديل حركة عهدة",a.code+" / "+desc); }catch(e){}
-    S.editing=null; toast("تم تعديل السطر ✓","ok"); rerender();
-  }catch(e){ ok.disabled=false; setStatus("تعذّر تعديل السطر: "+((e&&e.message)||e),true); }
+    Object.assign(r,upd); try{ audit("تعديل حركة عهدة",a.code+" / "+desc); }catch(e){}
+    S.editing=null; toast("تم تعديل الحركة ✓","ok"); rerender();
+  }catch(e){ ok.disabled=false; const m=(e&&e.message)||String(e); setStatus("تعذّر تعديل الحركة: "+m+(/column|schema cache/i.test(m)?" — "+NOTE_SQL:""),true); }
 }
 async function delRow(id){
   const r=custodyCache.entries.find(x=>String(x.id)===String(id)), a=r&&custodyAccount(r.account_id); if(!r||!a) return;
+  if(r.gl_entry_id){ setStatus("الحركة مُرحّلة — ألغِ الترحيل الأول عشان تحذفها",true); return; }
   await freshLock(a);
   if(isLocked(a,r.entry_date)){ setStatus(lockText(a),true); rerender(); setStatus(lockText(a),true); return; }
-  if(!await askConfirm("حذف السطر ده؟")) return;
+  if(!await askConfirm("حذف الحركة دي؟")) return;
   const q=await sb.from(CUSTODY_TABLES.entries).update({deleted_at:new Date().toISOString(),updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",r.id);
   if(q.error){ setStatus("تعذّر الحذف: "+q.error.message,true); return; }
   custodyCache.entries=custodyCache.entries.filter(x=>x.id!==r.id); try{ audit("حذف حركة عهدة",a.code+" / "+r.description); }catch(e){}
@@ -27140,31 +27740,37 @@ async function delRow(id){
 }
 function bindLedger(){
   const root=document.querySelector(".cgx"); if(!root) return;
-  const emp=document.getElementById("cgxEmp");
-  if(emp) emp.onchange=()=>{ custodyCache.selected=emp.value; S.editing=null; S.showIn=S.showOut=false; rerender(); };
+  CGL.setRefresh(()=>{ if(typeof currentPage!=="undefined"&&currentPage==="custodyLedger") rerender(); });
+  CGL.loadAccounts().then(()=>{ CGL.ensureDatalist(); if(typeof currentPage!=="undefined"&&currentPage==="custodyLedger"&&!root.querySelector(".cgx-draft")) refreshList(); }).catch(()=>{});
   const rb=document.getElementById("cgxRepBtn"); if(rb) rb.onclick=openRepModal;
+  const bindF=(id,key,ev)=>{ const el=document.getElementById(id); if(!el) return; el.addEventListener(ev||"change",()=>{ S.f[key]=el.value; S.limit=200; refreshList(); }); };
+  const emp=document.getElementById("cgxFEmp");
+  if(emp) emp.onchange=()=>{ S.f.emp=emp.value; S.editing=null; S.limit=200; rerender(); };
+  bindF("cgxFType","type"); bindF("cgxFSt","st"); bindF("cgxFFrom","from"); bindF("cgxFTo","to");
+  { const q=document.getElementById("cgxFQ"); if(q){ let t=null; q.addEventListener("input",()=>{ clearTimeout(t); t=setTimeout(()=>{ S.f.q=q.value; S.limit=200; refreshList(); },180); }); } }
+  const lk=document.getElementById("cgxFLocked"); if(lk) lk.onchange=()=>{ S.showLocked=lk.checked; refreshList(); };
+  const clr=document.getElementById("cgxFClear"); if(clr) clr.onclick=()=>{ S.f={emp:S.f.emp,type:"",st:"",from:"",to:"",q:""}; S.showLocked=false; S.limit=200; rerender(); };
   root.addEventListener("click",ev=>{
     const t=ev.target;
+    const go_=t.closest("[data-cgx-go]"); if(go_){ go(go_.getAttribute("data-cgx-go")); return; }
     const add=t.closest("[data-cgx-add]"); if(add){ openDraft(add.getAttribute("data-cgx-add")); return; }
-    const ed=t.closest("[data-cgx-edit]"); if(ed){ S.editing=ed.getAttribute("data-cgx-edit"); rerender(); return; }
+    const vw=t.closest("[data-cgx-view]"); if(vw){ CGL.viewEntry(vw.getAttribute("data-cgx-view")); return; }
+    const ps=t.closest("[data-cgx-post]"); if(ps){ CGL.postOpen(ps.getAttribute("data-cgx-post")); return; }
+    const up=t.closest("[data-cgx-unpost]"); if(up){ CGL.unpost(up.getAttribute("data-cgx-unpost")); return; }
+    const ed=t.closest("[data-cgx-edit]"); if(ed){ S.editing=ed.getAttribute("data-cgx-edit"); rerender(); CGL.loadAccounts().then(()=>CGL.ensureDatalist()).catch(()=>{}); return; }
     const dl=t.closest("[data-cgx-del]"); if(dl){ delRow(dl.getAttribute("data-cgx-del")); return; }
+    if(t.closest("[data-cgx-more]")){ S.limit+=200; refreshList(); return; }
     const box=t.closest(".cgx-draft"); if(!box) return;
     if(t.closest(".d-no")){ if(box.hasAttribute("data-cgx-editing")){ S.editing=null; rerender(); } else box.parentNode.innerHTML=""; return; }
     if(t.closest(".d-ok")){ if(box.hasAttribute("data-cgx-editing")) saveEdit(box); else saveNew(box.getAttribute("data-cgx-new"),box); }
   });
-  root.addEventListener("change",ev=>{ const c=ev.target.closest("[data-cgx-show]"); if(c){ if(c.getAttribute("data-cgx-show")==="in") S.showIn=c.checked; else S.showOut=c.checked; rerender(); } });
+  root.addEventListener("change",ev=>{
+    const it=ev.target.closest&&ev.target.closest(".d-item"); if(!it) return;
+    const box=it.closest(".cgx-draft"), inp=box&&box.querySelector(".d-acct"); if(!inp) return;
+    if(it.value){ const item=CGL.item(it.value), acc=item&&CGL.accOf(item.gl_account_id,item.gl_account_code); inp.value=acc?CGL.accLabel(acc):""; inp.disabled=true; }
+    else{ inp.disabled=false; inp.value=""; inp.focus(); }
+  });
   root.addEventListener("keydown",ev=>{ if(ev.key==="Enter"&&ev.target.tagName==="INPUT"&&ev.target.closest(".cgx-draft")){ ev.preventDefault(); const b=ev.target.closest(".cgx-draft"); if(b.hasAttribute("data-cgx-editing")) saveEdit(b); else saveNew(b.getAttribute("data-cgx-new"),b); } });
-  const create=document.getElementById("caCreate");
-  if(create) create.onclick=async()=>{
-    const code=document.getElementById("caNewCode").value.trim().toUpperCase(), owner=document.getElementById("caNewOwner").value.trim(), notes=document.getElementById("caNewNotes").value.trim();
-    const st=document.getElementById("caCreateStatus");
-    if(!code||!owner){ st.className="cgx-status err"; st.textContent="اكتب كود العهدة واسم صاحبها"; return; }
-    create.disabled=true; st.className="cgx-status"; st.textContent="جارٍ الحفظ…";
-    const r=await sb.from(CUSTODY_TABLES.accounts).insert({code,owner_name:owner,notes,created_by:custodyUserName()}).select().single();
-    if(r.error){ st.className="cgx-status err"; st.textContent=r.error.code==="23505"?"كود العهدة مستخدم بالفعل":r.error.message; create.disabled=false; return; }
-    custodyCache.accounts.push(r.data); custodyCache.selected=r.data.id; try{ audit("إضافة عهدة",code+" — "+owner); }catch(e){}
-    toast("تم إنشاء العهدة بنجاح","ok"); rerender();
-  };
 }
 
 /* ---------- محرك التقرير (صفحات A4 → PDF) ---------- */
@@ -27366,7 +27972,7 @@ function bindReport(){
   });
   list.addEventListener("click",ev=>{
     const b=ev.target.closest("[data-cgx-goto]"); if(!b) return; ev.preventDefault(); ev.stopPropagation();
-    custodyCache.selected=b.getAttribute("data-cgx-goto"); go("custodyLedger");
+    custodyCache.selected=b.getAttribute("data-cgx-goto"); S.f.emp=String(custodyCache.selected); S.editing=null; go("custodyLedger");
   });
   rv("cgxRPdf").onclick=()=>runReport("down"); rv("cgxRShare").onclick=()=>runReport("share"); rv("cgxROpen").onclick=()=>runReport("view"); rv("cgxRXls").onclick=reportXls;
   rv("cgxRRefresh").onclick=async()=>{ try{ rStatus("جارٍ التحديث…"); await custodyLoad(); const keep=rv("cgxRProj").value; rv("cgxRProj").innerHTML=projOptions(null); rv("cgxRProj").value=keep; if(rv("cgxRProj").value!==keep) rv("cgxRProj").value="*"; renderVaults(); rStatus("تم التحديث ✓"); }catch(e){ rStatus("تعذّر التحديث: "+((e&&e.message)||e),true); } };
