@@ -4394,14 +4394,15 @@ const navGroups = [
   { id:"fixedAssets", icon:"🏢", label:"الأصول الثابتة", items:[
     { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
     { id:"fixedAssets", tab:"dashboard", icon:"▦", label:"لوحة الأصول" },
+    { id:"fixedAssets", tab:"additions", icon:"➕", label:"إضافات وتحسينات" },
+    { id:"fixedAssets", tab:"disposals", icon:"↘", label:"استبعاد الأصول" },
+    { id:"fixedAssets", tab:"reports", icon:"📊", label:"تقارير الأصول" },
+    { sep:"البيانات الأساسية للأصول الثابتة" },
+    { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
     { id:"fixedAssets", tab:"settings", icon:"🎚", label:"مؤشرات النظام" },
     { id:"fixedAssets", tab:"orgLevels", icon:"🧱", label:"مستويات شجرة الهيكل الإداري" },
     { id:"fixedAssets", tab:"orgs", icon:"🏛", label:"شجرة الهيكل الإداري" },
-    { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" },
-    { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
-    { id:"fixedAssets", tab:"additions", icon:"➕", label:"إضافات وتحسينات" },
-    { id:"fixedAssets", tab:"disposals", icon:"↘", label:"استبعاد الأصول" },
-    { id:"fixedAssets", tab:"reports", icon:"📊", label:"تقارير الأصول" }
+    { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" }
   ]},
   { id:"gl", icon:"⚖", label:"الحسابات العامة", items:[
     { id:"gl", tab:"dashboard", icon:"📊", label:"لوحة التحليلات المالية" },
@@ -36539,10 +36540,36 @@ if(faTab==="settings"&&document.getElementById("faBody")){ try{ faRender(); }cat
     return head+entryHtml(L)+tbl;
   }
 
+  // كاش لأرقام القيود اللي مش في glState (بتتجاب من Supabase مرة واحدة)
+  if(!window.__faEntryNoCache) window.__faEntryNoCache = {};
+  async function faFetchMissingEntryNos(ids){
+    const miss = ids.filter(id=>id && !window.__faEntryNoCache[id]);
+    if(!miss.length) return;
+    try{
+      const r = await sb.from('gl_entries').select('id,entry_no').in('id', miss);
+      if(!r.error && r.data){
+        r.data.forEach(e=>{ window.__faEntryNoCache[e.id] = e.entry_no || '—'; });
+      }
+    }catch(_){}
+  }
   function runsHtml(){
     const runs=(faData.runs||[]).slice().sort((a,b)=>String(b.period_to||'').localeCompare(String(a.period_to||''))||String(b.period_from).localeCompare(String(a.period_from)));
     const ents=(typeof glState!=='undefined'&&glState&&glState.entries)||[];
-    const rows=runs.map(r=>{const en=ents.find(e=>e.id===r.gl_entry_id);return `<tr><td class="si-num">${esc(r.period_from)}</td><td class="si-num">${esc(r.period_to)}</td><td class="si-num">${money(r.total_amount)}</td><td>${esc(FA_RUNST[r.status]||r.status)}</td><td>${esc(en?en.entry_no:'—')}</td><td>${r.status==='posted'?`<button class="btn sm secondary" onclick="faRevDep('${esc(r.id)}')">عكس</button>`:''}</td></tr>`;}).join('')||'<tr><td colspan="6" class="sales-inst-empty">لا توجد تشغيلات</td></tr>';
+    const noOf = (rid)=>{
+      const en = ents.find(e=>e.id===rid);
+      if(en && en.entry_no) return en.entry_no;
+      if(window.__faEntryNoCache && window.__faEntryNoCache[rid]) return window.__faEntryNoCache[rid];
+      return null;
+    };
+    const missing = runs.map(r=>r.gl_entry_id).filter(id=>id && !noOf(id));
+    if(missing.length){
+      // جيب الأرقام الناقصة في الخلفية وأعد الرسم
+      faFetchMissingEntryNos(missing).then(()=>{
+        const host=document.getElementById('faDepRunsHost');
+        if(host) host.innerHTML = runsHtml();
+      });
+    }
+    const rows=runs.map(r=>{const num=noOf(r.gl_entry_id);return `<tr><td class="si-num">${esc(r.period_from)}</td><td class="si-num">${esc(r.period_to)}</td><td class="si-num">${money(r.total_amount)}</td><td>${esc(FA_RUNST[r.status]||r.status)}</td><td>${num?('<b style="color:#92400e">'+esc(num)+'</b>'):'—'}</td><td>${r.status==='posted'?`<button class="btn sm secondary" onclick="faRevDep('${esc(r.id)}')">عكس</button>${num?' <button class="btn sm" onclick="try{glPrintPostedEntry(\''+esc(r.gl_entry_id)+'\')}catch(e){toast(\'يتم تجهيز القيد...\',\'err\')}">🖨 طباعة</button>':''}`:''}</td></tr>`;}).join('')||'<tr><td colspan="6" class="sales-inst-empty">لا توجد تشغيلات</td></tr>';
     return `<div class="sales-inst-table-card" style="margin-top:16px"><div class="sales-inst-table-head"><h3>تشغيلات الإهلاك السابقة</h3><span class="count">${runs.length} تشغيل</span></div><div class="sales-inst-table-wrap" style="max-height:40vh"><table class="sales-inst-table" style="min-width:0"><thead><tr><th>من</th><th>إلى</th><th>الإجمالي</th><th>الحالة</th><th>رقم القيد</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
   }
 
@@ -36603,10 +36630,40 @@ if(faTab==="settings"&&document.getElementById("faBody")){ try{ faRender(); }cat
       const r=await sb.rpc('fa_run_depreciation_to',p);if(r.error)throw r.error;
       const d=r.data||{};
       DS.done=d.existing?{count:L.count,total:L.total,from:L.from,to:L.to,entry_id:null}:d;DS.last=null;DS.key='';
-      await faRefreshAll();
-      toast(d.existing?'العملية اتنفذت قبل كده (نفس المفتاح)':'✓ تم ترحيل الإهلاك','ok');
-      // طباعة القيد تلقائياً بعد الترحيل (اختار المستخدم "طباعة وترحيل")
+      // ارجع الوضع للمعاينة فقط منعاً للترحيل الخطأ
+      DS.mode='print';
+      // سحب القيد المرحّل + أسطره + أساسيات المحاسبة لو مش موجودة محلياً
+      // (glLoad بتخرج لو مش في صفحة gl، فنجيب الداتا يدوياً)
       const eid = d && d.entry_id;
+      if(eid){
+        try{
+          // تأكد إن glState فيها الأساسيات (حسابات، يوميات) علشان الطباعة تطلع كاملة
+          if(typeof glState==='undefined' || !glState || !(glState.accounts||[]).length){
+            window.glState = window.glState || {entries:[],lines:[],accounts:[],journals:[],centers:[],sources:[]};
+            try{ const a=await sb.from('gl_accounts').select('*'); if(!a.error) glState.accounts = a.data||[]; }catch(_){}
+            try{ const jj=await sb.from('gl_journals').select('*'); if(!jj.error) glState.journals = jj.data||[]; }catch(_){}
+          }
+          glState.entries = glState.entries || [];
+          glState.lines = glState.lines || [];
+          // جيب القيد
+          const er = await sb.from('gl_entries').select('*').eq('id', eid).maybeSingle();
+          if(!er.error && er.data){
+            // أضف أو حدّث في glState
+            const idx = glState.entries.findIndex(x=>String(x.id)===String(eid));
+            if(idx>=0) glState.entries[idx] = er.data; else glState.entries.push(er.data);
+          }
+          // جيب أسطر القيد
+          const lr = await sb.from('gl_entry_lines').select('*').eq('entry_id', eid).order('line_no',{ascending:true});
+          if(!lr.error && lr.data){
+            glState.lines = glState.lines.filter(x=>String(x.entry_id)!==String(eid)).concat(lr.data);
+          }
+        }catch(ex){ console.warn('تعذر تحميل القيد المحلي:', ex); }
+      }
+      await faRefreshAll();
+      // أعد رسم شاشة الفلتر علشان الراديو يرجع على "طباعة (معاينة فقط)"
+      try{ const h=document.getElementById('faDepFilterHost'); if(h) h.innerHTML=filterHtml(); }catch(_){}
+      toast(d.existing?'العملية اتنفذت قبل كده (نفس المفتاح)':'✓ تم ترحيل الإهلاك — رجع الوضع لمعاينة فقط','ok');
+      // طباعة القيد تلقائياً بعد الترحيل (اختار المستخدم "طباعة وترحيل")
       if(eid && typeof glPrintPostedEntry === 'function'){
         setTimeout(function(){ try{ glPrintPostedEntry(eid); }catch(e){ console.warn('تعذر طباعة القيد تلقائياً:', e); } }, 600);
       }
