@@ -4386,7 +4386,7 @@ const navGroups = [
   { id:"fixedAssets", icon:"🏢", label:"الأصول الثابتة", items:[
     { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
     { id:"fixedAssets", tab:"dashboard", icon:"▦", label:"لوحة الأصول" },
-    { id:"fixedAssets", tab:"settings", icon:"⚙", label:"إعدادات الأصول والهياكل" },
+    { id:"fixedAssets", tab:"settings", icon:"🎚", label:"مؤشرات النظام" },
     { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" },
     { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
     { id:"fixedAssets", tab:"additions", icon:"➕", label:"إضافات وتحسينات" },
@@ -28318,7 +28318,7 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
   }
   function mapFormHtml(c){
     const orgs=faData.orgs||[],m=ST.mapEdit?(faData.mappings||[]).find(x=>x.id===ST.mapEdit):null;
-    if(!orgs.length)return `<div class="fa2-empty" style="padding:16px">لا توجد هياكل إدارية. أضفها أولاً من تاب «الإعدادات» ثم ارجع هنا. <br><button class="btn sm" style="margin-top:8px" onclick="faSetTab('settings')">فتح الإعدادات</button></div>`;
+    if(!orgs.length)return `<div class="fa2-empty" style="padding:16px">لا توجد هياكل إدارية. أضفها أولاً من «شجرة الهيكل الإداري» أسفل هذه الشاشة ثم ارجع هنا.</div>`;
     return `<div class="fa2-grid" style="margin-top:12px">
       <div class="fa2-f"><label>الهيكل الإداري *</label><select class="inp" id="fa2MapOrg">${orgs.map(o=>`<option value="${esc(o.id)}"${m&&m.orgId===o.id?' selected':''}>${esc(o.code+' — '+o.name)}</option>`).join('')}</select></div>
     </div>
@@ -30069,11 +30069,36 @@ async function faDbLoad(){
   faData.events=e.data||[];faData.runs=r.data||[];faData.settingsRow=s.data||null;faData.settings={...(faData.settings||{}),...(s.data||{})};if(glErr)faDbError=glErr;faDbReady=true;await faLoadPerms();
  }catch(err){faDbError=faDbMsg(err);throw err;}finally{faDbLoading=false;}
 }
+function faSettingsHtml(){
+  const f=(l,c)=>`<div class="fa2-f"><label>${l}</label>${c}</div>`;
+  return `<div class="fa2-panel"><div class="fa2-ph"><span>🎚 مؤشرات نظام الأصول الثابتة</span></div><div class="fa2-pb">
+    <div class="fa2-sec"><h4>الإهلاك والأرصدة</h4><div><div class="fa2-grid">
+      ${f('طريقة الإهلاك الافتراضية','<select class="inp" id="faMethod"><option value="straight">القسط الثابت فقط</option></select>')}
+      ${f('الأرصدة الافتتاحية','<select class="inp" id="faOpening"><option value="detail">تفصيلي لكل أصل</option></select>')}
+      ${f('بداية تشغيل النظام','<input class="inp" id="faStart" type="date" value="'+faEsc(faSetVal('start'))+'">')}
+    </div></div></div>
+    <div class="fa2-sec"><h4>اليوميات</h4><div><div class="fa2-grid">
+      ${f('يومية شراء الأصول','<select class="inp" id="faJournalBuy">'+faJrOpts('buy')+'</select>')}
+      ${f('يومية الإهلاك','<select class="inp" id="faJournalDep">'+faJrOpts('dep')+'</select>')}
+    </div></div></div>
+    <div class="fa2-actions"><button class="btn primary" onclick="faSaveSettings()">حفظ الإعدادات</button></div>
+  </div></div>`;
+}
 const faOldRender=faRender;
-faRender=function(){try{faOldRender();const b=document.getElementById('faBody');if(!b)return;if(faDbError)b.insertAdjacentHTML('afterbegin',`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${faEsc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`);if(faTab==='settings'){
+faRender=function(){try{faOldRender();const b=document.getElementById('faBody');if(!b)return;if(faDbError)b.insertAdjacentHTML('afterbegin',`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${faEsc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`);if(faTab==='settings'){b.innerHTML=faSettingsHtml();}
+if(faTab==='categories'){
  const accs=(glState?.accounts||[]).filter(x=>x.is_active&&!x.is_group&&x.allow_posting);
  const orgs=faData.orgs||[];
- b.insertAdjacentHTML('beforeend',`<hr><h3>شجرة الهيكل الإداري</h3><div class="fgrid"><label>كود الهيكل<input id="faOrgCode"></label><label>اسم الهيكل<input id="faOrgName"></label><label>الأب<select id="faOrgParent"><option value="">رئيسي</option>${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label></div><button class="btn primary" onclick="faDbAddOrg()">إضافة الهيكل</button><div class="tbl-wrap"><table><thead><tr><th>الكود</th><th>الهيكل</th><th>الأب</th></tr></thead><tbody>${orgs.map(x=>`<tr><td>${faEsc(x.code)}</td><td>${faEsc(x.name)}</td><td>${faEsc(x.parent||'—')}</td></tr>`).join('')||'<tr><td colspan="3">لا توجد هياكل</td></tr>'}</tbody></table></div><hr><h3>ربط نوع الأصل بالهيكل الإداري والحسابات</h3><p class="muted">الحسابات المرتبطة تُختار من دليل الحسابات الفعلي في الأستاذ العام.</p><div class="fgrid"><label>النوع النهائي<select id="faMapCatId">${faData.categories.filter(x=>x.leaf).map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label><label>الهيكل الإداري<select id="faMapOrgId">${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></label>${[['faMapAssetId','حساب الأصل'],['faMapAccumId','حساب مجمع الإهلاك'],['faMapExpenseId','حساب مصروف الإهلاك']].map(([id,label])=>`<label>${label}<select id="${id}"><option value="">اختر حساباً</option>${accs.map(x=>`<option value="${x.id}">${faEsc(x.account_code+' — '+x.account_name)}</option>`).join('')}</select></label>`).join('')}</div><button class="btn primary" onclick="faDbAddMapping()">حفظ ربط الحسابات</button><div class="tbl-wrap"><table><thead><tr><th>نوع الأصل</th><th>الهيكل</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>${(faData.mappings||[]).map(m=>`<tr><td>${faEsc(m.cat)}</td><td>${faEsc(m.org)}</td><td>${faEsc(faAccLbl(m.assetId))}</td><td>${faEsc(faAccLbl(m.accumId))}</td><td>${faEsc(faAccLbl(m.expenseId))}</td></tr>`).join('')||'<tr><td colspan="5">لا توجد روابط مسجلة</td></tr>'}</tbody></table></div>`);
+ b.insertAdjacentHTML('beforeend',`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;margin-top:14px;align-items:start">
+<div class="fa2-panel"><div class="fa2-ph"><span>🏛 شجرة الهيكل الإداري</span></div><div class="fa2-pb">
+<div class="fa2-grid"><div class="fa2-f"><label>كود الهيكل</label><input class="inp" id="faOrgCode"></div><div class="fa2-f"><label>اسم الهيكل</label><input class="inp" id="faOrgName"></div><div class="fa2-f"><label>الأب</label><select class="inp" id="faOrgParent"><option value="">رئيسي</option>${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div></div>
+<div class="fa2-actions"><button class="btn primary" onclick="faDbAddOrg()">إضافة الهيكل</button></div>
+<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>الكود</th><th>الهيكل</th><th>الأب</th></tr></thead><tbody>${orgs.map(x=>`<tr><td>${faEsc(x.code)}</td><td>${faEsc(x.name)}</td><td>${faEsc(x.parent||'—')}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">لا توجد هياكل</td></tr>'}</tbody></table></div></div></div>
+<div class="fa2-panel"><div class="fa2-ph"><span>🔗 ربط نوع الأصل بالهيكل الإداري والحسابات</span></div><div class="fa2-pb">
+<p class="muted" style="margin:0 0 10px">الحسابات المرتبطة تُختار من دليل الحسابات الفعلي في الأستاذ العام.</p>
+<div class="fa2-grid"><div class="fa2-f"><label>النوع النهائي</label><select class="inp" id="faMapCatId">${faData.categories.filter(x=>x.leaf).map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div><div class="fa2-f"><label>الهيكل الإداري</label><select class="inp" id="faMapOrgId">${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div>${[['faMapAssetId','حساب الأصل'],['faMapAccumId','حساب مجمع الإهلاك'],['faMapExpenseId','حساب مصروف الإهلاك']].map(([id,label])=>`<div class="fa2-f"><label>${label}</label><select class="inp" id="${id}"><option value="">اختر حساباً</option>${accs.map(x=>`<option value="${x.id}">${faEsc(x.account_code+' — '+x.account_name)}</option>`).join('')}</select></div>`).join('')}</div>
+<div class="fa2-actions"><button class="btn primary" onclick="faDbAddMapping()">حفظ ربط الحسابات</button></div>
+<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>نوع الأصل</th><th>الهيكل</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>${(faData.mappings||[]).map(m=>`<tr><td>${faEsc(m.cat)}</td><td>${faEsc(m.org)}</td><td>${faEsc(faAccLbl(m.assetId))}</td><td>${faEsc(faAccLbl(m.accumId))}</td><td>${faEsc(faAccLbl(m.expenseId))}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">لا توجد روابط مسجلة</td></tr>'}</tbody></table></div></div></div></div>`);
  }
  if(faTab==='depreciation'){const r=b.querySelector('#faRuns');if(r)r.innerHTML=faRunsHtml();}
  if(faTab==='assets'){b.insertAdjacentHTML('beforeend',faDraftsHtml());}
