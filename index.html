@@ -3692,7 +3692,7 @@ function permsGrant(p, scr, acts){
   return p;
 }
 // بنود قائمة "+ جديد" في الشريط العلوي (كل بند يحتاج صلاحية "إضافة" في شاشته + السماح له من نموذج المستخدم)
-const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","txGo('receipts',txQuickScope());txNew('in')"],["↑","دفعة","payments","txGo('payments',txQuickScope());txNew('out')"]];
+const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","txGo('receipts',txQuickScope());txNew('in')"],["↑","دفعة","payments","txGo('payments',txQuickScope());txNew('out')"],["💼","تسجيل عهدة","custodyLedger","cgOpenMine()"]];
 const quickOn=(p,id)=>!p||!p.quick||typeof p.quick!=="object"||p.quick[id]!==false;
 // ---------- صلاحيات الإشعارات الخارجية (أيقونات شمال شاشة الدخول) ----------
 // كل أيقونة مرتبطة بشاشة (أو أكثر): لو الأدمن ما حددش صلاحية الأيقونة للمستخدم، بتتبع صلاحية مشاهدة الشاشة المرتبطة.
@@ -7365,6 +7365,7 @@ function glRenderEntries(){
  ${glCan("add")?`<button class="btn primary" onclick="glAddEntry()">＋ سجل جديد</button>`:""}
  <div class="gl-record-search" style="display:flex;gap:5px;align-items:center;min-width:min(100%,250px);flex:1"><input id="glEntryQuickSearch" class="input" style="min-width:150px;max-width:260px" type="search" placeholder="بحث برقم القيد أو البيان…" onkeydown="if(event.key==='Enter')glEntrySearchRecord(this.value)"><button class="btn" onclick="glEntrySearchRecord(document.getElementById('glEntryQuickSearch')?.value)">⌕ بحث</button></div>
  <button class="btn" onclick="glEntryMoveRecord(-1)" ${!ordered.length?'disabled':''} title="السجل السابق (Alt + ←)">◀ السابق</button><button class="btn" onclick="glEntryMoveRecord(1)" ${!ordered.length?'disabled':''} title="السجل التالي (Alt + →)">التالي ▶</button>
+ <button class="btn" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border:0;font-weight:800" onclick="glPostCheckedEntries()" ${!_chkN||!glCan("post")?'disabled':''} title="ترحيل كل القيود المحددة دفعة واحدة مع اختيار اليومية">📥 ترحيل المحدد${_chkN?' ('+_chkN+')':''}</button>
  <button class="btn danger" onclick="glDeleteCheckedEntries()" ${(!_chkN&&(!selected||selected.status!=="draft"))||!glCan("edit")?'disabled':''}>${_chkN?'حذف المحدد ('+_chkN+')':'حذف المسودة'}</button>
  <span style="flex:1"></span><span class="gl-record-indicator" style="font-size:12px;font-weight:700;color:var(--text-muted)">${selected?'السجل '+(ordered.findIndex(e=>e.id===selected.id)+1)+' من '+ordered.length+'  •  '+glEsc(selected.entry_no||selected.id.slice(0,8))+'  •  '+(selected.status==='draft'?'مسودة':'مُرحّل'):'لا توجد قيود محفوظة'} </span></div>
  <div class="muted" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:11px"><span>اختصارات: <b>Ctrl + N</b> سجل جديد</span><span><b>Ctrl + F</b> بحث</span><span><b>Alt + ← / →</b> السابق / التالي</span><span>الحذف للمسودات فقط</span></div>
@@ -7413,6 +7414,47 @@ async function glDeleteCheckedEntries(){
   }catch(err){toast('تعذر حذف القيود: '+(err.message||err),'err');}
 }
 async function glDeleteSelectedEntry(){ if(!glSelectedEntryId) return toast('اختر القيد أولاً','err'); return glDeleteDraftEntry(glSelectedEntryId); }
+
+// ترحيل القيود المحددة مع ديالوج اختيار اليومية
+async function glPostCheckedEntries(){
+  if(!glCan('post')) return toast('لا تملك صلاحية الترحيل','err');
+  const ids=[...(window.glChecked||[])];
+  if(!ids.length) return toast('حدد القيود اللي عايز ترحلها من checkboxes','err');
+  const targets=ids.map(id=>glState.entries.find(x=>x.id===id)).filter(e=>e&&e.status==='draft');
+  if(!targets.length) return toast('مفيش مسودات في المحدد — الترحيل للمسودات فقط','err');
+  // استخدم نفس ديالوج اختيار اليومية من شاشة الترحيل المجمع
+  if(typeof glBulkPickJournal !== 'function') return toast('ديالوج اختيار اليومية غير متاح','err');
+  const pick = await glBulkPickJournal(targets);
+  if(!pick) return;
+  const targetJournalId = pick.journalId;
+  const jName = targetJournalId ? (function(){
+    const jj=(glState.journals||[]).find(x=>String(x.id)===String(targetJournalId));
+    return jj ? (jj.journal_code+" — "+(jj.journal_name||"")) : "اليومية المختارة";
+  })() : "اليومية الأصلية لكل قيد";
+  const tot=targets.reduce((s,e)=>s+(Number(e.total_debit)||0),0);
+  const okc=await askConfirm(`هيتم ترحيل ${targets.length} قيد مسودة بإجمالي ${glNum(tot)} على: \n\n📘 ${jName}\n\nبعد الترحيل لا يُسمح بالتعديل أو الحذف. هل تريد المتابعة؟`,{title:"ترحيل القيود المحددة",ok:"نعم، رحّل",cancel:"رجوع"});
+  if(!okc) return;
+  let okN=0, failN=0, errors=[];
+  for(let i=0;i<targets.length;i++){
+    const e=targets[i];
+    try{
+      if(targetJournalId && String(e.journal_id) !== String(targetJournalId)){
+        const upd=await sb.from("gl_entries").update({journal_id: targetJournalId}).eq("id",e.id).eq("status","draft");
+        if(upd.error) throw new Error("تعذر تغيير اليومية: "+upd.error.message);
+      }
+      const r=await sb.rpc("gl_post_entry_authorized",{p_entry_id:e.id});
+      if(r.error) throw r.error;
+      const chk=await sb.from("gl_entries").select("status").eq("id",e.id).maybeSingle();
+      if(chk.data && chk.data.status!=="posted") throw new Error("الترحيل لم يكتمل");
+      okN++;
+    }catch(err){ failN++; errors.push({entryNo:e.entry_no, msg:(err.message||String(err))}); }
+  }
+  window.glChecked.clear();
+  await glLoad();
+  const summary=`انتهى الترحيل — تم ${okN} / فشل ${failN}`;
+  toast(summary, failN?"err":"ok");
+  if(failN){ try{ _igDialog({title:"أخطاء في الترحيل", msg:summary+"\n\n"+errors.slice(0,10).map(x=>(x.entryNo||"؟")+" — "+x.msg).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""), ok:"حسنًا",single:true}); }catch(_){} }
+}
 
 function glSourceForEntry(e){return glState.sources.filter(x=>String(x.entry_id||x.gl_entry_id||'')===String(e.id));}
 function glEntryJournal(e){return (glState.journals||[]).find(x=>String(x.id)===String(e.journal_id))||null;}
@@ -30858,21 +30900,15 @@ function chqCfg(){
   const s=state.settings||{}, f=(k,d)=>s[k]===undefined?d:!!s[k];
   return { nrAcc:s.chqNrAccId||"", npAcc:s.chqNpAccId||"", cycleIn:f("chqCycleIn",true), cycleOut:f("chqCycleOut",true), stmtNR:f("chqStmtNR",false), stmtUC:f("chqStmtUC",false), stmtNP:f("chqStmtNP",false) };
 }
-/* ========== مؤشرات النظام (الخزينة فقط) — مؤشرات البنوك اتنقلت لنظام البنوك ========== */
+/* ========== مؤشرات النظام (الخزينة فقط) — فلاجات دورة الشيكات ومؤشرات البنوك اتنقلت لنظام البنوك ========== */
 function chqSysIndView(tabsHtml){
-  const c=chqCfg(), s=state.settings||{};
-  const cb=(id,label,on)=>`<label class="chq-flag"><input type="checkbox" id="${id}" ${on?"checked":""}><span>${label}</span></label>`;
+  const s=state.settings||{};
   const jrSel=(id,key)=>`<select class="inp" id="${id}" style="width:100%"><option value="">— اختر اليومية —</option>${s[key]?`<option value="${escapeAttr(String(s[key]))}" selected>${escapeHtml(String(s[key]))}</option>`:""}</select>`;
   return `<div class="page-head"><h2>مؤشرات النظام — الخزينة</h2></div>
   <div style="max-width:820px">
 
     <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #92400e;border-radius:12px;background:linear-gradient(180deg,#fffaf0,#fffdf6)">
       <div style="font-weight:900;color:#92400e;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #e6c46b">💰 مؤشرات الخزينة</div>
-
-      <div class="chq-ind-card"><h4>⚙ فلاجات الدورة</h4><p>معلّم = دورة كاملة بالحسابات الوسيطة (استلام ← تحصيل ← قيد عكسي). غير معلّم = تأثير مباشر على العميل/المورد وقت الاستلام أو الإصدار.</p>
-        ${cb("chqCycleIn","احتساب دورة أوراق القبض على العميل",c.cycleIn)}
-        ${cb("chqCycleOut","احتساب دورة أوراق الدفع على المورد",c.cycleOut)}
-      </div>
 
       <div class="chq-ind-card"><h4>📒 الخزينة — يوميات الترحيل التلقائي</h4><p>اليومية اللي بيترحّل عليها كل تحصيل وكل دفعة <b>نقدية</b> في شاشة «ترحيل التحصيلات والمدفوعات» (الخزن النقدية).</p>
         <div class="chq-grid" style="grid-template-columns:1fr 1fr">
@@ -30888,7 +30924,7 @@ function chqSysIndView(tabsHtml){
       </div>
     </div>
 
-    <p style="font-size:12px;color:var(--text-dim)">🏦 <b>مؤشرات البنوك</b> (الحسابان الوسيطان للشيكات + يوميات ترحيل البنوك) اتنقلت لـ: <b>نظام البنوك ← البيانات الأساسية للبنوك ← مؤشرات البنوك</b>.</p>
+    <p style="font-size:12px;color:var(--text-dim)">🏦 <b>مؤشرات البنوك</b> (الحسابان الوسيطان للشيكات + يوميات ترحيل البنوك + <b>فلاجات دورة أوراق القبض/الدفع</b>) اتنقلت لـ: <b>نظام البنوك ← البيانات الأساسية للبنوك ← مؤشرات البنوك</b>.</p>
     <button class="btn" onclick="chqSysIndSave()">حفظ مؤشرات الخزينة</button>
   </div>`;
 }
@@ -30896,12 +30932,18 @@ function chqSysIndView(tabsHtml){
 /* ========== مؤشرات البنوك (الجديدة — جوه نظام البنوك) ========== */
 function chqBankIndView(tabsHtml){
   const c=chqCfg(), s=state.settings||{};
+  const cb=(id,label,on)=>`<label class="chq-flag"><input type="checkbox" id="${id}" ${on?"checked":""}><span>${label}</span></label>`;
   const jrSel=(id,key)=>`<select class="inp" id="${id}" style="width:100%"><option value="">— اختر اليومية —</option>${s[key]?`<option value="${escapeAttr(String(s[key]))}" selected>${escapeHtml(String(s[key]))}</option>`:""}</select>`;
   return `<div class="page-head"><h2>مؤشرات البنوك</h2></div>
   <div style="max-width:820px">
 
     <div class="chq-ind-section" style="margin-bottom:20px;padding:14px;border:2px solid #1f4e8c;border-radius:12px;background:linear-gradient(180deg,#f0f6ff,#fafcff)">
       <div style="font-weight:900;color:#1f4e8c;font-size:15px;margin-bottom:12px;padding-bottom:8px;border-bottom:2px dashed #cfdcee">🏦 مؤشرات البنوك</div>
+
+      <div class="chq-ind-card"><h4>⚙ فلاجات الدورة</h4><p>معلّم = دورة كاملة بالحسابات الوسيطة (استلام ← تحصيل ← قيد عكسي). غير معلّم = تأثير مباشر على العميل/المورد وقت الاستلام أو الإصدار.</p>
+        ${cb("chqCycleIn","احتساب دورة أوراق القبض على العميل",c.cycleIn)}
+        ${cb("chqCycleOut","احتساب دورة أوراق الدفع على المورد",c.cycleOut)}
+      </div>
 
       <div class="chq-ind-card"><h4>🎚 الحسابان الوسيطان للشيكات</h4><p>بيتختاروا من الحسابات النهائية في دليل الحسابات، وبيُستخدموا في دورة ترحيل الشيكات على البنوك.</p>
         <div class="chq-grid" style="grid-template-columns:1fr 1fr">
@@ -30919,27 +30961,27 @@ function chqBankIndView(tabsHtml){
       </div>
     </div>
 
-    <p style="font-size:12px;color:var(--text-dim)">بنكا «أوراق قبض» و«أوراق دفع» موجودان في تبويب <b>البنوك</b> — اربط كل واحد بحسابه من هناك. <br>💰 <b>فلاجات دورة الشيكات ويوميات الخزينة النقدية</b> موجودين في: <b>مؤشرات النظام (الخزينة)</b>.</p>
+    <p style="font-size:12px;color:var(--text-dim)">بنكا «أوراق قبض» و«أوراق دفع» موجودان في تبويب <b>البنوك</b> — اربط كل واحد بحسابه من هناك. <br>💰 <b>يوميات الخزينة النقدية والعهد</b> موجودين في: <b>مؤشرات النظام (الخزينة)</b>.</p>
     <button class="btn" onclick="chqBankIndSave()">حفظ مؤشرات البنوك</button>
   </div>`;
 }
 
-/* حفظ مؤشرات الخزينة (الفلاجات + يوميات الخزينة النقدية) */
+/* حفظ مؤشرات الخزينة (يوميات الخزينة النقدية + العهد فقط — فلاجات الدورة اتنقلت للبنوك) */
 function chqSysIndSave(){
   if(!can("master","edit")) return toast("لا تملك صلاحية تعديل البيانات الأساسية","err");
   const s=state.settings;
-  const ci=document.getElementById("chqCycleIn"), co=document.getElementById("chqCycleOut");
-  if(ci) s.chqCycleIn=!!ci.checked; if(co) s.chqCycleOut=!!co.checked;
   const _ji=document.getElementById("sysJrIn"), _jo=document.getElementById("sysJrOut");
   if(_ji) s.txJournalIn=_ji.value; if(_jo) s.txJournalOut=_jo.value;
   const _jc=document.getElementById("sysJrCustody"); if(_jc) s.custodyJournal=_jc.value;
   saveState(); toast("✓ تم حفظ مؤشرات الخزينة","ok");
 }
 
-/* حفظ مؤشرات البنوك (الحسابان الوسيطان + يوميات البنوك) */
+/* حفظ مؤشرات البنوك (فلاجات الدورة + الحسابان الوسيطان + يوميات البنوك) */
 function chqBankIndSave(){
   if(!can("master","edit")) return toast("لا تملك صلاحية تعديل البيانات الأساسية","err");
   const s=state.settings;
+  const ci=document.getElementById("chqCycleIn"), co=document.getElementById("chqCycleOut");
+  if(ci) s.chqCycleIn=!!ci.checked; if(co) s.chqCycleOut=!!co.checked;
   const a=mdAccRead("chqNr"), b=mdAccRead("chqNp");
   s.chqNrAccId=a.accountId; s.chqNrAccCode=a.accountCode; s.chqNrAccName=a.accountName;
   s.chqNpAccId=b.accountId; s.chqNpAccCode=b.accountCode; s.chqNpAccName=b.accountName;
