@@ -12244,6 +12244,55 @@ function viewSettings(){
           </div>
           <p style="color:#6b7280;font-size:11.5px;margin:10px 0 0;line-height:1.7">💡 لازم تدي المتصفح إذن ظهور الإشعارات. على iOS لازم تضيف التطبيق للـHome Screen الأول.</p>
         </div>
+      </div>
+
+      <!-- ============ 💬 إعدادات تيليجرام ============ -->
+      <div class="card" style="margin-top:16px;border:2px solid #0088cc">
+        <div class="head" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe)">
+          <h3>💬 إشعارات تيليجرام (ارسل تقاريرك كـPDF)</h3>
+        </div>
+        <div class="body">
+          <p style="color:#6b7280;font-size:13px;line-height:1.8;margin:0 0 14px">
+            اضبط بوت تيليجرام وجروباتك، وبعدين من أي تقرير في "الاشعارات بره" تضغط
+            <b style="color:#0088cc">📤 ارسل للتيليجرام</b> يتبعت كـPDF احترافي للجروبات المختارة.
+          </p>
+
+          <!-- Bot Token -->
+          <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:9px;padding:12px;margin-bottom:14px">
+            <label style="font-weight:800;font-size:12.5px;margin-bottom:6px;display:block">🔑 Bot Token (من BotFather)</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="tgBotTokenInp" class="inp" placeholder="7123456789:AAE..." style="flex:1;font-family:monospace">
+              <button type="button" class="btn ghost sm" onclick="tgTokEye()" id="tgTokEyeBtn">👁</button>
+            </div>
+          </div>
+
+          <!-- Chats list -->
+          <h4 style="margin:0 0 8px;color:#0088cc">📋 الجروبات/المحادثات</h4>
+          <div id="tgChatsListBox" style="margin-bottom:12px">
+            <div class="empty" style="padding:16px;text-align:center;color:#64748b">...</div>
+          </div>
+
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <button type="button" class="btn" onclick="tgCfgAdd()" style="background:linear-gradient(135deg,#0088cc,#00a2ff);color:#fff">➕ إضافة جروب</button>
+            <button type="button" class="btn" onclick="tgCfgSave()">💾 حفظ الإعدادات</button>
+            <button type="button" class="btn ghost" onclick="tgCfgTest()">📤 اختبار إرسال</button>
+          </div>
+          <div id="tgCfgStatus" style="margin-top:10px;min-height:20px;font-size:12.5px"></div>
+
+          <details style="margin-top:14px">
+            <summary style="cursor:pointer;font-weight:700;color:#0088cc;font-size:12.5px">ℹ️ خطوات إنشاء بوت وجروب تيليجرام (اضغط)</summary>
+            <div style="padding:10px 0;font-size:12px;line-height:1.8;color:#475569">
+              <b>1)</b> افتح Telegram وابحث عن <code>@BotFather</code> (الرسمي عليه ✓ زرقاء)<br>
+              <b>2)</b> ابعتله <code>/newbot</code> وسمّي البوت واختار username ينتهي بـbot<br>
+              <b>3)</b> احفظ الـ<b>Token</b> اللي بيبعتهولك وحطه فوق<br>
+              <b>4)</b> اعمل جروب جديد في Telegram وضيف البوت فيه + ضيفه Admin<br>
+              <b>5)</b> ابعت في الجروب أي رسالة مثلاً <code>/start@اسم_البوت</code><br>
+              <b>6)</b> افتح اللينك ده في المتصفح (بدّل TOKEN بالتوكن):<br>
+              &nbsp;&nbsp;<code style="direction:ltr;unicode-bidi:plaintext;font-size:11px">https://api.telegram.org/botTOKEN/getUpdates</code><br>
+              <b>7)</b> هتلاقي <code>"chat":{"id":-100123..}</code> — ده الـ<b>Chat ID</b>
+            </div>
+          </details>
+        </div>
       </div>`:""}
 
       <div class="card" style="margin-top:16px">
@@ -22030,6 +22079,7 @@ async function openMfaSetup(){
     <div class="qs-actions">
       <button type="button" class="qs-btn pri" id="qsPdf">⬇ تحميل PDF</button>
       <button type="button" class="qs-btn sec" id="qsShare">↗ مشاركة PDF</button>
+      <button type="button" class="qs-btn" id="qsTg" style="background:#0088cc;color:#fff;border:0;border-radius:9px;padding:10px 18px;font-weight:800;cursor:pointer">📤 ارسل للتيليجرام</button>
     </div>
   </div>
 </div>
@@ -22294,6 +22344,282 @@ async function openMfaSetup(){
     if(h&&typeof openReportPreview==="function"&&document.querySelector("#qsBody tbody tr td:not([colspan])")){ openReportPreview(h,qsTitlePlain()); return; }
     toast("مفيش بيانات للتصدير دلوقتي","ok");
   });
+
+  // ========== 📤 إرسال التقرير لتيليجرام ==========
+  document.getElementById("qsTg").addEventListener("click", async function(){
+    var btn = this;
+    try{
+      // 1) جيب الـHTML بتاع التقرير الحالي
+      var html, title;
+      if(currentId === "loginInstallmentsBtn"){
+        var rows = qsiFiltered();
+        if(!rows.length){ toast("مفيش بيانات للإرسال دلوقتي","err"); return; }
+        html = qsiPdfHtml(); title = "الأقساط والمستحقات";
+      } else {
+        html = qsGenericPdf(); title = qsTitlePlain();
+        if(!html || !document.querySelector("#qsBody tbody tr td:not([colspan])")){
+          toast("مفيش بيانات للإرسال دلوقتي","err"); return;
+        }
+      }
+      // 2) ابعت للتيليجرام
+      btn.disabled = true; var oldText = btn.textContent; btn.textContent = "⏳ جاري الإرسال...";
+      await tgSendReportPdf(html, title);
+      btn.textContent = "✓ تم الإرسال"; setTimeout(function(){ btn.textContent = oldText; btn.disabled = false; }, 2500);
+    }catch(e){
+      btn.textContent = "📤 ارسل للتيليجرام"; btn.disabled = false;
+      toast("فشل الإرسال: " + (e.message || e), "err");
+    }
+  });
+})();
+
+/* ============================================================
+   📤 Telegram PDF Sender
+   يبني PDF من HTML ويرفعه كـdocument على Telegram
+============================================================ */
+async function tgSendReportPdf(html, title){
+  // 1) جيب إعدادات التيليجرام من localStorage أو Supabase
+  var cfg = await tgGetConfig();
+  if(!cfg || !cfg.bot_token || !cfg.chats || !cfg.chats.length){
+    throw new Error("إعدادات التيليجرام غير مضبوطة — روح الإعدادات → النظام → كارت تيليجرام");
+  }
+
+  // 2) ابني PDF من الـHTML باستخدام html2canvas + jsPDF
+  if(!window.html2canvas || !window.jspdf || !window.jspdf.jsPDF){
+    throw new Error("مكتبة PDF غير متاحة");
+  }
+
+  // تاريخ عربي: الموافق يوم السبت 22 نوفمبر 2026
+  var today = new Date();
+  var dayNames = {sunday:"الأحد",monday:"الاثنين",tuesday:"الثلاثاء",wednesday:"الأربعاء",thursday:"الخميس",friday:"الجمعة",saturday:"السبت"};
+  var monthNames = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+  var dayKey = today.toLocaleDateString("en-US",{weekday:"long"}).toLowerCase();
+  var dayName = dayNames[dayKey] || "";
+  var arDate = "الموافق يوم " + dayName + " " + today.getDate() + " " + monthNames[today.getMonth()] + " " + today.getFullYear();
+
+  // أدخل الـheader في الـhtml بعد <body>
+  var dateBanner = '<div style="direction:rtl;text-align:center;padding:12px;background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;font-family:Cairo,Tahoma,Arial;font-size:14px;font-weight:800;border-bottom:3px solid #d4a017;margin-bottom:10px">🗓 ' + arDate + '</div>';
+  html = html.replace(/<body([^>]*)>/i, '<body$1>' + dateBanner);
+
+  // ارسم الـHTML في iframe خفي علشان html2canvas
+  var iframe = document.createElement("iframe");
+  iframe.style.cssText = "position:fixed;left:-20000px;top:0;width:900px;height:1200px;border:0;z-index:-1;visibility:hidden";
+  document.body.appendChild(iframe);
+  iframe.srcdoc = html;
+  await new Promise(function(res){ iframe.addEventListener("load", function(){ setTimeout(res, 500); }, {once:true}); });
+
+  var doc = iframe.contentDocument;
+  var target = doc.body;
+  if(!target){ document.body.removeChild(iframe); throw new Error("فشل تحميل التقرير"); }
+
+  // اضبط عرض ثابت علشان الجودة
+  target.style.width = "900px";
+  target.style.minHeight = "1200px";
+
+  var canvas = await html2canvas(target, {scale:2, backgroundColor:"#ffffff", useCORS:true, windowWidth:900, windowHeight:target.scrollHeight});
+  document.body.removeChild(iframe);
+
+  // حوّل لـPDF
+  var pdf = new window.jspdf.jsPDF("p","mm","a4");
+  var pageW = 210, pageH = 297, margin = 5, usableW = pageW - 2*margin;
+  var imgW = usableW;
+  var imgH = (canvas.height * imgW) / canvas.width;
+  var pageImgH = pageH - 2*margin;
+  var y = margin;
+  if(imgH <= pageImgH){
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", margin, y, imgW, imgH);
+  } else {
+    // قسم على صفحات
+    var slicePx = Math.floor(canvas.width * pageImgH / imgW);
+    var pc = document.createElement("canvas"); var ctx = pc.getContext("2d");
+    var sy = 0, first = true;
+    while(sy < canvas.height){
+      var h = Math.min(slicePx, canvas.height - sy);
+      pc.width = canvas.width; pc.height = h;
+      ctx.fillStyle = "#fff"; ctx.fillRect(0,0,pc.width,h);
+      ctx.drawImage(canvas, 0, sy, canvas.width, h, 0, 0, canvas.width, h);
+      if(!first) pdf.addPage();
+      first = false;
+      pdf.addImage(pc.toDataURL("image/jpeg", 0.92), "JPEG", margin, margin, imgW, h*imgW/canvas.width);
+      sy += slicePx;
+    }
+  }
+
+  // اسم الملف
+  var fileName = (title || "report") + "_" + today.toISOString().slice(0,10) + ".pdf";
+  var pdfBlob = pdf.output("blob");
+
+  // 3) ابعت لكل chat_id مفعّل
+  var sent = 0, failed = 0, errors = [];
+  for(var i=0; i<cfg.chats.length; i++){
+    var chat = cfg.chats[i];
+    if(!chat.is_active) continue;
+    try{
+      var fd = new FormData();
+      fd.append("chat_id", chat.chat_id);
+      fd.append("document", pdfBlob, fileName);
+      fd.append("caption", "📊 *" + (title || "تقرير") + "*\n🗓 " + arDate + "\n\n_IRON GATE SUPPLIES — h²m+ ERP Systems_");
+      fd.append("parse_mode", "Markdown");
+      var r = await fetch("https://api.telegram.org/bot" + cfg.bot_token + "/sendDocument", {method:"POST", body:fd});
+      var j = await r.json();
+      if(j.ok) sent++;
+      else{ failed++; errors.push(chat.name + ": " + (j.description||"خطأ")); }
+    }catch(e){
+      failed++; errors.push(chat.name + ": " + (e.message||e));
+    }
+  }
+
+  if(sent === 0 && failed > 0) throw new Error(errors[0] || "فشل الإرسال لكل الجروبات");
+  toast("✓ اتبعت لـ" + sent + " جروب" + (failed ? " · فشل " + failed : ""), failed ? "err" : "ok");
+}
+
+// جيب إعدادات التيليجرام (من localStorage أو Supabase)
+async function tgGetConfig(){
+  // الأولوية للإعدادات في localStorage (أسرع)
+  try{
+    var local = localStorage.getItem("ig_tg_config");
+    if(local){
+      var p = JSON.parse(local);
+      if(p && p.bot_token && p.chats && p.chats.length) return p;
+    }
+  }catch(e){}
+  // fallback: جيب من سبابيز
+  try{
+    if(typeof sb !== "undefined" && sb.from){
+      var r = await sb.from("telegram_notify_config").select("*").eq("is_active", true);
+      if(!r.error && r.data && r.data.length){
+        var firstToken = r.data[0].bot_token;
+        var chats = r.data.map(function(x){ return {name:x.name, chat_id:x.chat_id, is_active:x.is_active, events:x.events||[]}; });
+        return {bot_token:firstToken, chats:chats};
+      }
+    }
+  }catch(e){}
+  return null;
+}
+// احفظ الإعدادات في localStorage
+function tgSaveConfig(cfg){
+  try{ localStorage.setItem("ig_tg_config", JSON.stringify(cfg)); }catch(e){}
+}
+
+/* ============================================================
+   💬 Telegram Config UI (في شاشة الإعدادات)
+============================================================ */
+window.tgCfg = window.tgCfg || { bot_token:"", chats:[], loaded:false };
+
+function tgTokEye(){
+  var i = document.getElementById("tgBotTokenInp"), b = document.getElementById("tgTokEyeBtn");
+  if(!i) return;
+  if(i.type === "password"){ i.type = "text"; if(b) b.textContent = "🙈"; }
+  else{ i.type = "password"; if(b) b.textContent = "👁"; }
+}
+function tgCfgStatus(msg, kind){
+  var el = document.getElementById("tgCfgStatus"); if(!el) return;
+  var c = kind === "err" ? "#b91c1c" : kind === "ok" ? "#166534" : "#1f4e8c";
+  el.innerHTML = msg ? '<span style="color:'+c+';font-weight:700">'+msg+'</span>' : "";
+  if(msg && kind === "ok") setTimeout(function(){ tgCfgStatus(""); }, 4000);
+}
+async function tgCfgLoad(){
+  if(window.tgCfg.loaded) { tgCfgRender(); return; }
+  try{
+    var cfg = await tgGetConfig();
+    if(cfg){ window.tgCfg.bot_token = cfg.bot_token; window.tgCfg.chats = cfg.chats || []; }
+    window.tgCfg.loaded = true;
+    var tok = document.getElementById("tgBotTokenInp"); if(tok) tok.value = window.tgCfg.bot_token || "";
+    tgCfgRender();
+  }catch(e){ tgCfgStatus("❌ تعذر التحميل: " + (e.message||e), "err"); }
+}
+function tgCfgRender(){
+  var box = document.getElementById("tgChatsListBox"); if(!box) return;
+  var chats = window.tgCfg.chats || [];
+  if(!chats.length){
+    box.innerHTML = '<div class="empty" style="padding:14px;text-align:center;color:#64748b;border:1px dashed #cbd5e1;border-radius:9px"><p>مفيش جروبات مضافة — اضغط "➕ إضافة جروب" تحت</p></div>';
+    return;
+  }
+  var rows = chats.map(function(c, idx){
+    return '<div style="display:grid;grid-template-columns:auto 1fr 1.3fr auto;gap:8px;align-items:center;padding:10px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px">'+
+      '<input type="checkbox" '+(c.is_active?'checked':'')+' onchange="tgCfgField('+idx+',\'is_active\',this.checked)" title="تفعيل">'+
+      '<input type="text" value="'+escapeAttr(c.name||'')+'" placeholder="اسم الجروب (مثل: الإدارة)" class="inp" oninput="tgCfgField('+idx+',\'name\',this.value)">'+
+      '<input type="text" value="'+escapeAttr(c.chat_id||'')+'" placeholder="Chat ID (مثل: -100123456)" class="inp" style="font-family:monospace" oninput="tgCfgField('+idx+',\'chat_id\',this.value)">'+
+      '<button type="button" class="btn ghost sm" onclick="tgCfgDel('+idx+')" style="color:#b91c1c;border-color:#fecaca" title="حذف">🗑</button>'+
+    '</div>';
+  }).join("");
+  box.innerHTML = rows;
+}
+function tgCfgField(idx, field, value){
+  if(!window.tgCfg.chats[idx]) return;
+  window.tgCfg.chats[idx][field] = value;
+}
+function tgCfgAdd(){
+  window.tgCfg.chats.push({name:"", chat_id:"", is_active:true, events:["due_cheques","overdue_cheques","installments"]});
+  tgCfgRender();
+}
+function tgCfgDel(idx){
+  if(!confirm("تأكيد حذف الجروب؟")) return;
+  window.tgCfg.chats.splice(idx, 1);
+  tgCfgRender();
+}
+async function tgCfgSave(){
+  var tok = (document.getElementById("tgBotTokenInp")||{}).value || "";
+  tok = tok.trim();
+  if(!tok){ tgCfgStatus("❌ ادخل Bot Token أولاً","err"); return; }
+  var chats = (window.tgCfg.chats||[]).filter(function(c){ return c.name && c.chat_id; });
+  if(!chats.length){ tgCfgStatus("❌ محتاج جروب واحد على الأقل باسم وChat ID","err"); return; }
+  window.tgCfg.bot_token = tok;
+  window.tgCfg.chats = chats;
+  // احفظ في localStorage
+  tgSaveConfig({bot_token:tok, chats:chats});
+  // جرّب احفظ في سبابيز لو موجود
+  try{
+    if(typeof sb !== "undefined" && sb.from){
+      // امسح القديم وأدخل الجديد
+      await sb.from("telegram_notify_config").delete().neq("id","00000000-0000-0000-0000-000000000000");
+      for(var i=0; i<chats.length; i++){
+        var c = chats[i];
+        await sb.from("telegram_notify_config").insert({
+          name:c.name, bot_token:tok, chat_id:c.chat_id,
+          events:c.events||["due_cheques","overdue_cheques","installments"],
+          is_active:!!c.is_active
+        });
+      }
+    }
+  }catch(e){ /* لو مش موجود الجدول في سبابيز، مفيش مشكلة — localStorage كافي */ }
+  tgCfgStatus("✓ تم الحفظ — "+chats.length+" جروب", "ok");
+}
+async function tgCfgTest(){
+  var tok = (document.getElementById("tgBotTokenInp")||{}).value || "";
+  tok = tok.trim();
+  if(!tok){ tgCfgStatus("❌ ادخل Bot Token أولاً","err"); return; }
+  var chats = (window.tgCfg.chats||[]).filter(function(c){ return c.is_active && c.name && c.chat_id; });
+  if(!chats.length){ tgCfgStatus("❌ محتاج جروب واحد مفعّل على الأقل","err"); return; }
+  tgCfgStatus("⏳ جاري الإرسال...", "info");
+  var sent=0, failed=0, errs=[];
+  var msg = "🔔 *رسالة اختبار من IRON GATE SUPPLIES*\n\nالوقت: "+new Date().toLocaleString("ar-EG")+"\n\nلو وصلتك الرسالة دي يبقى الإعداد شغّال ✅\n\n_h²m+ ERP Systems_";
+  for(var i=0; i<chats.length; i++){
+    var c = chats[i];
+    try{
+      var r = await fetch("https://api.telegram.org/bot"+tok+"/sendMessage", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({chat_id:c.chat_id, text:msg, parse_mode:"Markdown"})
+      });
+      var j = await r.json();
+      if(j.ok) sent++;
+      else { failed++; errs.push(c.name+": "+(j.description||"خطأ")); }
+    }catch(e){ failed++; errs.push(c.name+": "+(e.message||e)); }
+  }
+  if(failed) tgCfgStatus("⚠ تم "+sent+" / فشل "+failed+" — "+(errs[0]||""), "err");
+  else tgCfgStatus("✓ اتبعت لـ"+sent+" جروب بنجاح", "ok");
+}
+
+// حمّل الإعدادات لما يفتح تبويب النظام
+(function(){
+  var _oldShow = window.settingsShow;
+  if(typeof _oldShow === "function"){
+    window.settingsShow = function(id){
+      _oldShow.apply(this, arguments);
+      if(id === "system"){
+        setTimeout(function(){ if(document.getElementById("tgBotTokenInp")) tgCfgLoad(); }, 300);
+      }
+    };
+  }
 })();
 </script>
 <script>
