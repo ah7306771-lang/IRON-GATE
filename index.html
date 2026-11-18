@@ -31915,7 +31915,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
 #fa3Assets .tx-filters .inp.tx-f-q{flex:2 1 0;min-width:190px}
 #fa3Assets.tx-page .tbl-wrap{max-height:calc(100vh - 330px);min-height:240px}
 #content:has(.tx-kpis) #fa3Assets .tbl-wrap table[data-rs-key^="treasury-"] tbody tr.dis td{color:#9ca3af!important}
-#content:has(.tx-kpis) #fa3Assets .tbl-wrap table[data-rs-key^="treasury-"] tbody tr.fa2-row{cursor:pointer}
+#content:has(.tx-kpis) #fa3Assets .tbl-wrap table[data-rs-key^="treasury-"] tbody tr.fa2-row{cursor:default}
 #content:has(.tx-kpis) #fa3Assets .tbl-wrap table[data-rs-key^="treasury-"] .fa3-bdg{display:inline-block;padding:2px 8px;font-size:10.5px}
 </style>
 <script id="fa-ui-v3">
@@ -32000,18 +32000,76 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     .fa3-warn2{background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12.5px}
     .fa3-blist{max-height:230px;overflow:auto;border:1px solid var(--line,#d9dee7);border-radius:8px;margin-top:8px}
   `;document.head.appendChild(stl);}
+  /* ---------- v6: «مُرحَّل» = طباعة قيد الشراء + رقم القيد (تلميح في الجدول / بجانب الحالة في البطاقة) ---------- */
+  if(!document.getElementById('fa3-v6-css')){const s6=document.createElement('style');s6.id='fa3-v6-css';s6.textContent=`
+    .fa2-st.fa3-jr{cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px}
+    .fa2-st.fa3-jr:hover{background:#bbf7d0}
+    .fa3-jrno{display:inline-block;margin-inline-start:8px;padding:2px 10px;border-radius:9px;background:#fff7e0;color:#7a5600;border:1px solid #d9c9a0;font-size:11.5px;font-weight:800}
+  `;document.head.appendChild(s6);}
+  const JR={no:new Map(),busy:false,tried:new Set()};
+  function fa3JrNo(a){
+    if(!a||!a.purchaseEntryId)return '';
+    const c=JR.no.get(a.purchaseEntryId);if(c)return c;
+    try{const e=((typeof glState!=='undefined'&&glState&&glState.entries)||[]).find(x=>x.id===a.purchaseEntryId);if(e)return e.entry_no||String(e.id).slice(0,8);}catch(_){}
+    return '';
+  }
+  function jrTip(a){const n=fa3JrNo(a);return n?('قيد رقم '+n+' — اضغط لطباعة القيد'):'اضغط لطباعة قيد الشراء';}
+  function jrChip(a,withNo){
+    const id=esc(a.id),n=fa3JrNo(a);
+    const chip=`<span class="fa2-st ok fa3-jr" role="button" tabindex="0" data-aid="${id}" title="${esc(jrTip(a))}" onclick="event.stopPropagation();fa3PrintJr('${id}')">مُرحَّل</span>`;
+    return withNo?chip+`<span class="fa3-jrno" data-aid="${id}">${n?'قيد رقم '+esc(n):'رقم القيد …'}</span>`:chip;
+  }
+  function jrDomRefresh(){
+    const find=id=>(faData.assets||[]).find(x=>x.id===id);
+    document.querySelectorAll('.fa3-jr[data-aid]').forEach(el=>{const a=find(el.dataset.aid);if(a)el.title=jrTip(a);});
+    document.querySelectorAll('.fa3-jrno[data-aid]').forEach(el=>{const a=find(el.dataset.aid),n=a&&fa3JrNo(a);el.textContent=n?('قيد رقم '+n):'—';});
+  }
+  async function fa3FetchJr(){
+    if(JR.busy)return;
+    const ids=[...new Set((faData.assets||[]).filter(a=>a.purchaseEntryId&&!fa3JrNo(a)&&!JR.tried.has(a.purchaseEntryId)).map(a=>a.purchaseEntryId))];
+    if(!ids.length){jrDomRefresh();return;}
+    JR.busy=true;
+    try{
+      for(let i=0;i<ids.length;i+=150){
+        const ch=ids.slice(i,i+150),r=await sb.from('gl_entries').select('id,entry_no').in('id',ch);
+        if(r.error)continue;
+        ch.forEach(x=>JR.tried.add(x));
+        (r.data||[]).forEach(e=>JR.no.set(e.id,e.entry_no||String(e.id).slice(0,8)));
+      }
+    }catch(e){}
+    JR.busy=false;jrDomRefresh();
+  }
+  window.fa3FetchJr=fa3FetchJr;
+  window.fa3PrintJr=async id=>{
+    if(!faCan('print'))return toast('لا تملك صلاحية الطباعة','err');
+    const a=(faData.assets||[]).find(x=>x.id===id);
+    if(!a||!a.purchaseEntryId)return toast('لا يوجد قيد مرتبط بهذا الأصل','err');
+    const eid=a.purchaseEntryId;
+    try{
+      const hasE=(glState.entries||[]).some(x=>x.id===eid),hasL=(glState.lines||[]).some(x=>x.entry_id===eid);
+      if(!hasE||!hasL){
+        const [er,lr]=await Promise.all([sb.from('gl_entries').select('*').eq('id',eid).maybeSingle(),sb.from('gl_entry_lines').select('*').eq('entry_id',eid).order('line_no')]);
+        if(er.error)throw er.error;if(lr.error)throw lr.error;
+        if(!er.data)return toast('القيد غير موجود','err');
+        glState.entries=[...(glState.entries||[]).filter(x=>x.id!==eid),er.data];
+        glState.lines=[...(glState.lines||[]).filter(x=>x.entry_id!==eid),...(lr.data||[])];
+      }
+    }catch(e){return toast('تعذر تحميل القيد: '+(e&&e.message||e),'err');}
+    glPrintPostedEntry(eid);
+  };
+  Object.assign(window.FA_ACT=window.FA_ACT||{},{fa3PrintJr:'print'});
   const isDraft=a=>faIsUnposted(a);
   const orgTxt=a=>{const o=(faData.orgs||[]).find(x=>x.id===a.orgId);return o?o.name:(a.org||'—');};
   const statTxt=a=>a.kind==='opening'?'افتتاحي':isDraft(a)?'مسودة':'مُرحَّل';
   const crTxt=a=>a.kind==='opening'?'—':(a.paymentAccountId?faAccLbl(a.paymentAccountId):'— لم يُحدَّد —');
-  const statCell=a=>`<td><span class="fa2-st ${a.kind==='opening'?'open':isDraft(a)?'draft':'ok'}">${statTxt(a)}</span></td>`;
+  const statCell=a=>`<td>${(a.kind!=='opening'&&!isDraft(a))?jrChip(a):`<span class="fa2-st ${a.kind==='opening'?'open':'draft'}">${statTxt(a)}</span>`}</td>`;
   const crCellTbl=a=>`<td style="white-space:nowrap${isDraft(a)&&!a.paymentAccountId?';color:#b91c1c':''}">${esc(crTxt(a))}</td>`;
   const chkCell=a=>isDraft(a)?`<input type="checkbox" class="fa3-chk" ${ST.chk.has(a.id)?'checked':''} onchange="fa3Chk('${esc(a.id)}',this.checked)">`:'';
   const actCell=a=>{
     const id=esc(a.id);
     const lnk=`<a class="fa3-lnk" role="button" tabindex="0" onclick="fa3Card('${id}')" title="فتح بطاقة الأصل والحساب المقابل">🏷 البطاقة</a>`;
     const st=isDraft(a)?`<button type="button" class="btn sm primary" onclick="fa3PostOne('${id}')" title="اعتماد وترحيل قيد الشراء">ترحيل</button>`
-      :a.kind==='opening'?'<span class="fa2-st open">افتتاحي</span>':'<span class="fa2-st ok">مُرحَّل</span>';
+      :a.kind==='opening'?'<span class="fa2-st open">افتتاحي</span>':jrChip(a);
     return `<td class="fa3-act" onclick="event.stopPropagation()">${lnk}${st}</td>`;
   };
   function bulkTargets(){
@@ -32031,7 +32089,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
   function rowsHtml(rows){
     const cs=rows.map(a=>({a,c:calc(a)}));
     const t=k=>cs.reduce((s,x)=>s+x.c[k],0);
-    const body=cs.map(({a,c},i)=>`<tr class="fa2-row${c.dis?' dis':''}" onclick="fa3Card('${esc(a.id)}')"><td onclick="event.stopPropagation()">${chkCell(a)}</td><td>${i+1}</td><td>${esc(a.no)}</td><td>${esc(a.name)} ${badge(c)}</td><td>${esc(a.categoryName||'—')}</td><td>${esc(orgTxt(a))}</td><td>${esc(ccLabel(a.costCenter)||'—')}</td><td class="n num">${money(c.cost)}</td><td>${esc(a.purchaseDate||'—')}</td><td class="n num">${money(c.period)}</td><td class="n num">${money(c.netAfterDep)}</td><td class="n num">${c.add?money(c.add):'—'}</td><td class="n num">${c.dis?money(c.disVal):'—'}</td><td class="n num fa3-final">${money(c.fin)}</td>${statCell(a)}${crCellTbl(a)}${actCell(a)}</tr>`).join('')
+    const body=cs.map(({a,c},i)=>`<tr class="fa2-row${c.dis?' dis':''}"><td onclick="event.stopPropagation()">${chkCell(a)}</td><td>${i+1}</td><td>${esc(a.no)}</td><td>${esc(a.name)} ${badge(c)}</td><td>${esc(a.categoryName||'—')}</td><td>${esc(orgTxt(a))}</td><td>${esc(ccLabel(a.costCenter)||'—')}</td><td class="n num">${money(c.cost)}</td><td>${esc(a.purchaseDate||'—')}</td><td class="n num">${money(c.period)}</td><td class="n num">${money(c.netAfterDep)}</td><td class="n num">${c.add?money(c.add):'—'}</td><td class="n num">${c.dis?money(c.disVal):'—'}</td><td class="n num fa3-final">${money(c.fin)}</td>${statCell(a)}${crCellTbl(a)}${actCell(a)}</tr>`).join('')
       ||'<tr><td colspan="17"><div class="empty" style="padding:30px"><p>لا توجد أصول مطابقة</p></div></td></tr>';
     const foot=cs.length?`<tr><td colspan="7">الإجمالي (${cs.length} أصل)</td><td class="n">${money(t('cost'))}</td><td></td><td class="n">${money(t('period'))}</td><td class="n">${money(t('netAfterDep'))}</td><td class="n">${money(t('add'))}</td><td class="n">${money(t('disVal'))}</td><td class="n fa3-final">${money(t('fin'))}</td><td></td><td></td><td></td></tr>`:'';
     return {body,foot};
@@ -32053,6 +32111,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     return p.join(' · ');
   }
   function assetsScreen(){
+    setTimeout(fa3FetchJr,0);
     const rows=filtered(),r=rowsHtml(rows),open=ST.fopen!==false;
     const sel=(id,opts,cur,w)=>`<select class="inp" id="${id}" onchange="fa3AList()">${opts.map(x=>`<option value="${esc(x[0])}"${String(cur)===String(x[0])?' selected':''}>${esc(x[1])}</option>`).join('')}</select>`;
     return `<div class="fa2-page tx-page" id="fa3Assets">
@@ -32193,22 +32252,22 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
       je=`<table class="fa3-je"><thead><tr><th>الحساب</th><th style="width:130px">مدين</th><th style="width:130px">دائن</th></tr></thead><tbody>
         <tr><td><small class="muted">حساب الأصل</small><br>${assetAcc}</td><td class="n">${money(a.cost)}</td><td class="n">—</td></tr>
         <tr><td><small class="muted">الحساب المقابل</small><br>${crCell}</td><td class="n">—</td><td class="n">${money(a.cost)}</td></tr></tbody></table>
-        <div class="fa2-kv" style="margin-top:10px">${kv('طريقة السداد',esc(FA_PAYM[a.paymentMethod]||a.paymentMethod||'—'))}${kv('المورد / المرجع',esc(a.supplier||a.cheque||'—'))}${kv('رقم قيد الشراء',esc(jrLabel(a)||(draft?'لم يُرحَّل بعد':'—')))}</div>
+        <div class="fa2-kv" style="margin-top:10px">${kv('طريقة السداد',esc(FA_PAYM[a.paymentMethod]||a.paymentMethod||'—'))}${kv('المورد / المرجع',esc(a.supplier||a.cheque||'—'))}${kv('رقم قيد الشراء',esc(jrLabel(a)||fa3JrNo(a)||(draft?'لم يُرحَّل بعد':'—')))}</div>
         ${draft&&!a.paymentAccountId?'<div class="fa3-warn2">⚠ لم يُحدَّد حساب مقابل لهذا الأصل — اختره من القائمة ثم اضغط «ترحيل».</div>':''}`;
     }
     const rate=(+a.rate>0)?+a.rate:(life>0?100/life:0);
     const lastDep=(()=>{try{const runs=new Map((faData.runs||[]).map(r=>[r.id,r]));let best='';(faData.lines||[]).filter(l=>l.asset_id===a.id).forEach(l=>{const r=runs.get(lineRun(l));if(r&&r.status==='posted'){const d=String(runEnd(r)||r.period_to||'').slice(0,10);if(d>best)best=d;}});return best;}catch(e){return '';}})();
     const fld=(l,v,cls)=>`<div class="fa3-fld ${cls||''}"><label>${l}</label><div class="fa3-box">${v}</div></div>`;
     const num=v=>`<span class="fa3-num">${v}</span>`;
-    const html=`<div class="fa2-panel fa3-card" style="margin-bottom:6px"><div class="fa2-ph"><span>🏷 ${esc(a.no)} — ${esc(a.name)}</span><span class="fa2-st ${stl[0]}">${stl[1]}</span></div><div class="fa2-pb">
+    const html=`<div class="fa2-panel fa3-card" style="margin-bottom:6px"><div class="fa2-ph"><span>🏷 ${esc(a.no)} — ${esc(a.name)}</span><span>${(!opening&&!draft)?jrChip(a,true):`<span class="fa2-st ${stl[0]}">${stl[1]}</span>`}</span></div><div class="fa2-pb">
       ${warnHtml(a,c)}
       <div class="fa3-tabs" role="tablist">
         <button type="button" class="on" data-t="info" onclick="fa3Tab(this)">معلومات الأصول</button>
         <button type="button" data-t="acc" onclick="fa3Tab(this)">حسابات الأصل</button>
-        <button type="button" data-t="tax" onclick="fa3Tab(this)">ضرائب على الأصل</button>
         <button type="button" data-t="dep" onclick="fa3Tab(this)">الإهلاكات</button>
         <button type="button" data-t="add" onclick="fa3Tab(this)">الإضافات</button>
         <button type="button" data-t="disp" onclick="fa3Tab(this)">الاستبعادات</button>
+        <button type="button" data-t="tax" onclick="fa3Tab(this)">ضرائب على الأصل</button>
       </div>
       <div class="fa3-scroll">
       <div class="fa3-pane on" data-p="info">
@@ -32236,9 +32295,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
       </div>
     </div></div>`;
     try{closeModal();}catch(e){}
-    openModal('🏷 بطاقة الأصل — '+esc(a.no),html,null);modalWide();
+    openModal('🏷 بطاقة الأصل — '+esc(a.no),html,null);modalWide();setTimeout(fa3FetchJr,0);
     const f=document.querySelector('#modalBackdrop .mfoot');
-    if(f)f.innerHTML=(draft?`<button class="btn primary" onclick="fa3PostOne('${esc(a.id)}')">✓ ترحيل قيد الشراء</button><button class="btn" onclick="fa3SaveCr('${esc(a.id)}')">💾 حفظ</button><button class="btn" onclick="fa3EditForm('${esc(a.id)}')">✎ تعديل</button><button class="btn danger" onclick="fa3DelDraft('${esc(a.id)}')">🗑 حذف المسودة</button>`:'')+'<button class="btn ghost" onclick="fa3PrintCard()">🖨 طباعة البطاقة</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>';
+    if(f)f.innerHTML=(draft?`<button class="btn primary" onclick="fa3PostOne('${esc(a.id)}')">✓ ترحيل قيد الشراء</button><button class="btn" onclick="fa3SaveCr('${esc(a.id)}')">💾 حفظ</button><button class="btn" onclick="fa3EditForm('${esc(a.id)}')">✎ تعديل</button><button class="btn danger" onclick="fa3DelDraft('${esc(a.id)}')">🗑 حذف المسودة</button>`:'')+((!opening&&!draft)?`<button class="btn ghost" onclick="fa3PrintJr('${esc(a.id)}')">🖨 طباعة القيد</button>`:'')+'<button class="btn ghost" onclick="fa3PrintCard()">🖨 طباعة البطاقة</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>';
   };
 
 
