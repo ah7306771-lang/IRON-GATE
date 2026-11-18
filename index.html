@@ -4393,6 +4393,7 @@ const navGroups = [
     { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
     { id:"fixedAssets", tab:"dashboard", icon:"▦", label:"لوحة الأصول" },
     { id:"fixedAssets", tab:"settings", icon:"🎚", label:"مؤشرات النظام" },
+    { id:"fixedAssets", tab:"orgLevels", icon:"🧱", label:"مستويات شجرة الهيكل الإداري" },
     { id:"fixedAssets", tab:"orgs", icon:"🏛", label:"شجرة الهيكل الإداري" },
     { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" },
     { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
@@ -4655,7 +4656,7 @@ function apCat(it,secT){
   if(it.id==="gl"&&/^rpt_/.test(it.tab||"")) return "التقارير";
   if(it.id==="master"||it.id==="settings") return "البيانات الأساسية";
   if(it.id==="gl"&&["accounts","centers","years","journals"].includes(it.tab)) return "البيانات الأساسية";
-  if(it.id==="fixedAssets"&&["settings","orgs","categories"].includes(it.tab)) return "البيانات الأساسية";
+  if(it.id==="fixedAssets"&&["settings","orgLevels","orgs","categories"].includes(it.tab)) return "البيانات الأساسية";
   if(/تقرير|تقارير|كشف حساب|ميزان|أرصدة|تقييم|حركة الوارد|كارت الصنف|إجمالي المتأخرات|الأقساط|لوحة/.test(it.label)) return "التقارير";
   if(/البيانات الأساسية/.test(secT)) return "البيانات الأساسية";
   if(/تقارير|التقارير/.test(secT)) return "التقارير";
@@ -31741,6 +31742,191 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
 })();
 </script>
 
+<script id="fa-org-levels">
+/* ============================================================
+   الأصول الثابتة — «تحديد مستويات شجرة الهيكل الإداري» (من الإعدادات)
+   كل مستوى له خانات محددة داخل كود الهيكل (حقل البداية → حقل النهاية)
+   مثال: 1-1 | 2-3 | 4-5 | 6-7 | 8-9  → كود من 9 خانات
+   الجدول: fa_org_levels (level_no, name_ar, name_en, end_pos) — لو مش موجود بيتحفظ مؤقتاً في المتصفح
+   ============================================================ */
+(function(){
+  if(typeof faRender!=='function'||typeof faData==='undefined')return;
+  const esc=v=>faEsc(v);
+  const MAXROWS=10,MAXLEN=30,TBL='fa_org_levels';
+  const lsKey=()=>'fa_org_levels_'+(typeof CUR_CO!=='undefined'?CUR_CO:'01');
+  let dbMissing=false,dbErr='';
+  faData.orgLevels=faData.orgLevels||[];
+
+  if(!document.getElementById('fa-lv-css')){const st=document.createElement('style');st.id='fa-lv-css';
+    st.textContent='.fa-lv-ro{background:#f1ece0!important;color:var(--text-dim);text-align:center}.fa-lv-bad{border-color:var(--danger)!important;background:#fff1f1!important}#faLvTbl input.inp{width:100%;min-width:90px}#faLvTbl td{padding:4px 6px}#faLvTbl th{text-align:center}.fa-lv-sum{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}.fa-lv-sum>div{flex:1;min-width:160px;background:var(--bg-3,#fdf9ee);border:1px solid var(--line);border-radius:10px;padding:8px 12px}.fa-lv-sum small{display:block;color:var(--text-dim);font-size:11px}.fa-lv-sum b{font-size:15px;color:var(--gold-text);direction:ltr;unicode-bidi:embed}';
+    document.head.appendChild(st);}
+
+  /* ---------- منطق المستويات (بيتشارك مع شاشة الهيكل) ---------- */
+  function buildSegs(list){
+    const out=[];let prev=0;
+    (list||[]).slice().sort((a,b)=>a.no-b.no).forEach(l=>{
+      const e=+l.end;if(!(e>prev))return;
+      out.push({no:out.length+1,start:prev+1,end:e,len:e-prev,nameAr:l.nameAr||'',nameEn:l.nameEn||''});prev=e;
+    });
+    return out;
+  }
+  const segs=()=>buildSegs(faData.orgLevels);
+  const totalOf=S=>S.length?S[S.length-1].end:0;
+  function lvOf(code,S){
+    code=String(code||'');
+    if(!S.length||!/^\d+$/.test(code)||code.length!==totalOf(S))return 0;
+    const nz=s=>/[1-9]/.test(code.slice(s.start-1,s.end));
+    let lv=0;S.forEach((s,i)=>{if(nz(s))lv=i+1;});
+    for(let i=0;i<lv;i++)if(!nz(S[i]))return 0;
+    return lv;
+  }
+  function parentOf(code,lv,S){const s=S[lv-1];return code.slice(0,s.start-1)+'0'.repeat(s.len)+code.slice(s.end);}
+  function conforms(o,S,all){
+    const lv=lvOf(o.code,S);if(!lv)return false;
+    if(lv===1)return !o.parentId;
+    const par=o.parentId&&all.find(x=>x.id===o.parentId);
+    return !!par&&String(par.code)===parentOf(String(o.code),lv,S);
+  }
+  function mask(S){return S.map(s=>'9'.repeat(s.len)).join(' | ');}
+  function exampleCodes(S){
+    if(!S.length)return['',''];
+    const T=totalOf(S),z='0'.repeat(T);
+    const put=(c,s,n)=>c.slice(0,s.start-1)+String(n).padStart(s.len,'0')+c.slice(s.end);
+    const root=put(z,S[0],1);
+    return [root,S[1]?put(root,S[1],1):''];
+  }
+  window.faOrgLv={
+    active:()=>segs().length>0,
+    count:()=>segs().length,
+    total:()=>totalOf(segs()),
+    nameOf:no=>{const s=segs()[no-1];return s?s.nameAr:'';},
+    levelOfCode:code=>lvOf(code,segs()),
+    hint(){const S=segs();return S.length?`شكل الكود: ${mask(S)} — إجمالي ${totalOf(S)} خانة، ${S.length} مستويات.`:'';},
+    validate(code,parent){
+      const S=segs();if(!S.length)return'';
+      code=String(code||'').trim();
+      if(!/^\d+$/.test(code)||code.length!==totalOf(S))return `كود الهيكل لازم يكون أرقام فقط وبطول ${totalOf(S)} خانة (${mask(S)})`;
+      const lv=lvOf(code,S);
+      if(!lv)return 'كود الهيكل لا يوافق المستويات: كل مستوى حتى مستوى الهيكل لازم يحتوي رقماً غير صفري، وما بعده أصفار';
+      if(lv===1)return parent?'هيكل المستوى الأول لا يتبع هيكلاً آخر':'';
+      const exp=parentOf(code,lv,S);
+      if(!parent)return `الكود ده في المستوى ${lv} (${S[lv-1].nameAr}) ولازم يتبع الهيكل ${exp}`;
+      if(String(parent.code)!==exp)return `الأب المطابق لهذا الكود هو ${exp} وليس ${parent.code}`;
+      return '';
+    },
+    nextCode(parent,all){
+      const S=segs();if(!S.length)return{code:''};
+      const T=totalOf(S),lvP=parent?lvOf(parent.code,S):0;
+      if(parent&&!lvP)return{error:'كود الهيكل الأب لا يوافق تعريف المستويات — صحّحه أولاً'};
+      const lv=lvP+1;
+      if(lv>S.length)return{error:`لا يمكن الإضافة أسفل «${parent.name}»: آخر مستوى معرّف هو المستوى ${S.length} (${S[S.length-1].nameAr})`};
+      const s=S[lv-1],pc=parent?String(parent.code):'0'.repeat(T);
+      let mx=0;
+      (all||[]).forEach(o=>{
+        const c=String(o.code);
+        if(lvOf(c,S)===lv&&(lv===1||parentOf(c,lv,S)===pc)){const n=parseInt(c.slice(s.start-1,s.end),10);if(n>mx)mx=n;}
+      });
+      const n=mx+1;
+      if(String(n).length>s.len)return{error:`امتلأ المستوى ${lv} (${s.len} خانة) — غيّر المستويات من الإعدادات`};
+      return{code:pc.slice(0,s.start-1)+String(n).padStart(s.len,'0')+pc.slice(s.end)};
+    }
+  };
+
+  /* ---------- تحميل المستويات مع باقي بيانات الأصول ---------- */
+  const norm=x=>({no:+(x.level_no??x.no),nameAr:x.name_ar??x.nameAr??'',nameEn:x.name_en??x.nameEn??'',end:+(x.end_pos??x.end)});
+  async function lvLoad(){
+    let rows=null;dbErr='';
+    try{const r=await sb.from(TBL).select('*').order('level_no');if(r.error)throw r.error;rows=r.data||[];dbMissing=false;}
+    catch(e){dbMissing=true;dbErr=faDbMsg(e);try{rows=JSON.parse(localStorage.getItem(lsKey())||'[]');}catch(_){rows=[];}}
+    faData.orgLevels=(rows||[]).map(norm).filter(l=>l.no>0&&l.end>0).sort((a,b)=>a.no-b.no);
+  }
+  if(typeof faDbLoad==='function'&&!faDbLoad.__lv){
+    const orig=faDbLoad;
+    faDbLoad=async function(){try{await orig.apply(this,arguments);}finally{try{await lvLoad();}catch(e){console.warn('org levels',e);}}};
+    faDbLoad.__lv=1;
+  }
+
+  /* ---------- الشاشة ---------- */
+  function screenHtml(){
+    const L=(faData.orgLevels||[]).slice().sort((a,b)=>a.no-b.no);
+    let rows='';
+    for(let i=1;i<=MAXROWS;i++){
+      const l=L[i-1]||{};
+      rows+=`<tr><td style="text-align:center;font-weight:800">${i}</td>
+        <td><input class="inp" id="faLvAr${i}" value="${esc(l.nameAr||'')}" autocomplete="off"></td>
+        <td><input class="inp" id="faLvEn${i}" value="${esc(l.nameEn||'')}" style="direction:ltr;text-align:left" autocomplete="off"></td>
+        <td><input class="inp fa-lv-ro" id="faLvSt${i}" readonly tabindex="-1"></td>
+        <td><input class="inp" id="faLvEnd${i}" type="number" min="1" max="${MAXLEN}" value="${l.end||''}" oninput="faOrgLvCalc()" style="text-align:center"></td>
+        <td><input class="inp fa-lv-ro" id="faLvLn${i}" readonly tabindex="-1"></td></tr>`;
+    }
+    const warn=dbMissing?`<div class="alert danger" style="margin-bottom:12px">جدول ${TBL} غير متاح (${esc(dbErr)}) — المستويات هتتحفظ في هذا المتصفح فقط لحد ما تنفّذ ملف fa_org_levels.sql في Supabase.</div>`:'';
+    return `<div class="fa2-panel"><div class="fa2-ph"><span>🧱 تحديد مستويات شجرة الهيكل الإداري</span></div><div class="fa2-pb">${warn}
+      <p class="muted" style="margin:0 0 10px">كود الهيكل رقمي بطول ثابت، وكل مستوى له خانات محددة داخل الكود. أدخل «حقل النهاية» لكل مستوى فقط، والبداية والطول بيتحسبوا تلقائياً.</p>
+      <div class="tbl-wrap"><table id="faLvTbl"><thead><tr><th style="width:80px">رقم المستوى</th><th>اسم المستوى عربي</th><th>اسم المستوى لاتيني</th><th style="width:110px">حقل البداية</th><th style="width:110px">حقل النهاية</th><th style="width:110px">الطول</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="fa-lv-sum"><div><small>إجمالي طول الكود</small><b id="faLvTotal">0</b></div><div><small>عدد المستويات</small><b id="faLvCount">0</b></div><div><small>شكل الكود</small><b id="faLvMask">—</b></div><div><small>مثال (مستوى 1 / مستوى 2)</small><b id="faLvEx">—</b></div></div>
+      <div class="fa2-actions"><button class="btn primary" onclick="faOrgLvSave()">حفظ المستويات</button><button class="btn secondary" onclick="faSetTab('orgs')">فتح شجرة الهيكل الإداري</button></div>
+    </div></div>`;
+  }
+  const $=id=>document.getElementById(id);
+  window.faOrgLvCalc=function(){
+    let prev=0,ok=true,n=0;const parts=[];
+    for(let i=1;i<=MAXROWS;i++){
+      const e=$('faLvEnd'+i),st=$('faLvSt'+i),ln=$('faLvLn'+i);if(!e)continue;
+      const raw=e.value.trim(),v=parseInt(raw,10);
+      if(ok&&raw!==''&&Number.isInteger(v)&&v>prev&&v<=MAXLEN){st.value=prev+1;ln.value=v-prev;parts.push(v-prev);prev=v;n++;e.classList.remove('fa-lv-bad');}
+      else{st.value='';ln.value='';e.classList.toggle('fa-lv-bad',raw!=='');ok=false;}
+    }
+    const S=buildSegs(parts.map((_,i)=>({no:i+1,end:parts.slice(0,i+1).reduce((a,b)=>a+b,0)})));
+    const ex=exampleCodes(S);
+    $('faLvTotal').textContent=prev;$('faLvCount').textContent=n;
+    $('faLvMask').textContent=S.length?mask(S):'—';
+    $('faLvEx').textContent=S.length?(ex[0]+(ex[1]?' / '+ex[1]:'')):'—';
+  };
+  const errMsg=e=>{const m=faDbMsg(e);return /row-level security/i.test(m)?'قاعدة البيانات رفضت الحفظ (RLS) على '+TBL+' — نفّذ ملف fa_org_levels.sql. ('+m+')':m;};
+
+  async function saveImpl(){
+    if(!faCan('manage'))return toast('لا تملك صلاحية لهذا الإجراء','err');
+    try{
+      const levels=[];let prev=0,ok=true;
+      for(let i=1;i<=MAXROWS;i++){
+        const raw=$('faLvEnd'+i).value.trim(),ar=$('faLvAr'+i).value.trim(),en=$('faLvEn'+i).value.trim();
+        if(raw===''){ok=false;continue;}
+        const v=parseInt(raw,10);
+        if(!ok||!Number.isInteger(v)||v<=prev||v>MAXLEN)throw new Error(`راجع «حقل النهاية» للمستوى ${i}: لازم رقم أكبر من نهاية المستوى السابق (وأقل من ${MAXLEN+1}) وبدون ترك مستوى فاضي قبله`);
+        if(!ar)throw new Error(`أدخل اسم المستوى بالعربي للمستوى ${i}`);
+        levels.push({no:levels.length+1,nameAr:ar,nameEn:en,end:v});prev=v;
+      }
+      if(!levels.length)throw new Error('عرّف مستوى واحد على الأقل');
+      const S=buildSegs(levels),orgs=faData.orgs||[],bad=orgs.filter(o=>!conforms(o,S,orgs));
+      if(bad.length&&!await askConfirm(`يوجد ${bad.length} هيكل حالي أكواده لا توافق التعريف الجديد (مثال: ${bad[0].code}). هيفضلوا ظاهرين، لكن لن تتمكن من حفظ أي تعديل عليهم قبل تصحيح كودهم. متابعة؟`))return;
+      if(dbMissing){
+        localStorage.setItem(lsKey(),JSON.stringify(levels));
+        toast('تم الحفظ في هذا المتصفح فقط — نفّذ fa_org_levels.sql لحفظها في قاعدة البيانات','ok');
+      }else{
+        const rows=levels.map(l=>({level_no:l.no,name_ar:l.nameAr,name_en:l.nameEn,end_pos:l.end}));
+        let r=await sb.from(TBL).upsert(rows,{onConflict:'level_no'});if(r.error)throw r.error;
+        r=await sb.from(TBL).delete().gt('level_no',levels.length);if(r.error)throw r.error;
+        toast('تم حفظ مستويات الهيكل الإداري','ok');
+      }
+      await faDbLoad();faRender();
+    }catch(e){toast(errMsg(e),'err');}
+  }
+  window.faOrgLvSave=()=>faGuard(saveImpl);
+  window.FA_ACT=Object.assign(window.FA_ACT||{},{faOrgLvSave:'manage'});
+
+  const prevRender=faRender;
+  faRender=function(){
+    if(faTab!=='orgLevels'||(typeof faSkelOn!=='undefined'&&faSkelOn))return prevRender();
+    try{
+      const b=$('faBody');if(!b)return;
+      const err=faDbError?`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${esc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`:'';
+      b.innerHTML=err+screenHtml();faOrgLvCalc();faApplyPerms();
+    }catch(e){console.error(e);}
+  };
+})();
+
+</script>
+
 <script id="fa-org-screen">
 /* ============================================================
    الأصول الثابتة — شاشة «شجرة الهيكل الإداري» (منفصلة عن شجرة أنواع الأصول)
@@ -31750,6 +31936,10 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
   if(typeof faRender!=='function'||typeof faData==='undefined')return;
   const esc=v=>faEsc(v);
   const OS={sel:null,draft:null,q:'',collapsed:new Set()};
+  const LV=()=>window.faOrgLv&&window.faOrgLv.active()?window.faOrgLv:null;
+  if(!document.getElementById('fa-org-css')){const st=document.createElement('style');st.id='fa-org-css';
+    st.textContent='.fa-org-split{grid-template-columns:minmax(420px,600px) 1fr}.fa-org-split .fa2-tree{max-height:74vh}@media(max-width:1000px){.fa-org-split{grid-template-columns:1fr}}';
+    document.head.appendChild(st);}
   const orgs=()=>faData.orgs||[];
   const org=id=>orgs().find(o=>o.id===id);
   const cmp=(a,b)=>String(a.code||'').localeCompare(String(b.code||''),'en',{numeric:true});
@@ -31806,20 +31996,21 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
     let h=`<div class="fa2-panel"><div class="fa2-ph"><span>${d?'➕ إضافة هيكل':'📝 بيانات الهيكل'}</span><span class="sp"></span></div><div class="fa2-pb">
       <div class="fa2-crumb">المسار: <b>${esc(crumb)}</b></div>
       <div class="fa2-grid">
-        <div class="fa2-f"><label>كود الهيكل *</label><input class="inp" id="faOrgCode" value="${esc(code)}" style="direction:ltr;text-align:right"></div>
+        <div class="fa2-f"><label>كود الهيكل *</label><input class="inp" id="faOrgCode" value="${esc(code)}" style="direction:ltr;text-align:right"${LV()?` maxlength="${LV().total()}" inputmode="numeric"`:''}></div>
         <div class="fa2-f"><label>اسم الهيكل *</label><input class="inp" id="faOrgName" value="${esc(name)}"></div>
         <div class="fa2-f"><label>الأب</label><select class="inp" id="faOrgParent"><option value="">— رئيسي —</option>${opts}</select></div>
-        <div class="fa2-f"><label>المستوى</label><input class="inp ro" readonly value="${lvl}"></div>
+        <div class="fa2-f"><label>المستوى</label><input class="inp ro" readonly value="${lvl}${LV()&&LV().nameOf(lvl)?' — '+esc(LV().nameOf(lvl)):''}"></div>
       </div>
+      ${LV()?`<div class="muted" style="margin-top:8px">${esc(LV().hint())}</div>`:''}
       <div class="fa2-actions"><button class="btn primary" onclick="faOrgSave()">حفظ</button>
-        ${o?`<button class="btn secondary" onclick="faOrgNew('${esc(o.id)}')">＋ هيكل فرعي</button>`:''}
+        ${o&&!(LV()&&lvl>=LV().count())?`<button class="btn secondary" onclick="faOrgNew('${esc(o.id)}')">＋ هيكل فرعي</button>`:''}
         ${d?'<button class="btn secondary" onclick="faOrgCancel()">إلغاء</button>':''}
         ${o?`<button class="btn secondary" style="color:var(--danger)" onclick="faOrgDel('${esc(o.id)}')">حذف</button>`:''}</div></div></div>`;
     if(o)h+=linksHtml(o);
     return h;
   }
   function screen(){
-    return `<div class="fa2-split">
+    return `<div class="fa2-split fa-org-split">
       <div class="fa2-panel"><div class="fa2-ph"><span>🏛 شجرة الهيكل الإداري</span></div><div class="fa2-pb">
         <div class="fa2-bar"><input class="inp" placeholder="بحث بالكود أو الاسم..." value="${esc(OS.q)}" oninput="faOrgSearch(this.value)" autocomplete="off"></div>
         <div class="fa2-bar"><button class="btn sm primary" onclick="faOrgNew('')">＋ هيكل رئيسي</button><button class="btn sm secondary" onclick="faOrgExpand(true)">فتح الكل</button><button class="btn sm secondary" onclick="faOrgExpand(false)">طي الكل</button></div>
@@ -31833,7 +32024,7 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
   window.faOrgTog=id=>{if(OS.collapsed.has(id))OS.collapsed.delete(id);else OS.collapsed.add(id);refreshTree();};
   window.faOrgExpand=open=>{OS.collapsed.clear();if(!open)orgs().forEach(o=>{if(hasKids(o.id))OS.collapsed.add(o.id);});refreshTree();};
   window.faOrgPick=id=>{OS.sel=id;OS.draft=null;redraw();};
-  window.faOrgNew=pid=>{if(pid)OS.collapsed.delete(pid);OS.draft={parentId:pid||'',code:nextCode(pid||'')};redraw();};
+  window.faOrgNew=pid=>{let code;const lv=LV();if(lv){const r=lv.nextCode(pid?org(pid):null,orgs());if(r.error)return toast(r.error,'err');code=r.code;}else code=nextCode(pid||'');if(pid)OS.collapsed.delete(pid);OS.draft={parentId:pid||'',code};redraw();};
   window.faOrgCancel=()=>{OS.draft=null;redraw();};
   async function reload(){await faDbLoad();redraw();}
   // رسالة أوضح لو الرفض من سياسة الأمان في قاعدة البيانات
@@ -31846,6 +32037,7 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
       if(!code||!name)throw new Error('أدخل الكود والاسم');
       const selfId=OS.draft?null:OS.sel;
       if(orgs().some(o=>o.id!==selfId&&String(o.code).trim().toLowerCase()===code.toLowerCase()))throw new Error('كود الهيكل مستخدم بالفعل');
+      if(LV()){const ve=LV().validate(code,parent?org(parent):null);if(ve)throw new Error(ve);}
       if(selfId&&parent&&new Set(descIds(selfId)).has(parent))throw new Error('لا يمكن جعل الهيكل تابعاً لنفسه أو لأحد فروعه');
       if(OS.draft){
         const r=await sb.from(FA_DB.org).insert({unit_code:code,unit_name:name,parent_id:parent}).select().single();
