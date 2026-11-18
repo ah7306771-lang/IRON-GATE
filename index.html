@@ -4393,6 +4393,7 @@ const navGroups = [
     { id:"fixedAssets", tab:"assets", icon:"🏷", label:"بطاقات الأصول" },
     { id:"fixedAssets", tab:"dashboard", icon:"▦", label:"لوحة الأصول" },
     { id:"fixedAssets", tab:"settings", icon:"🎚", label:"مؤشرات النظام" },
+    { id:"fixedAssets", tab:"orgs", icon:"🏛", label:"شجرة الهيكل الإداري" },
     { id:"fixedAssets", tab:"categories", icon:"🌳", label:"شجرة أنواع الأصول" },
     { id:"fixedAssets", tab:"depreciation", icon:"📉", label:"احتساب وترحيل الإهلاك" },
     { id:"fixedAssets", tab:"additions", icon:"➕", label:"إضافات وتحسينات" },
@@ -4654,7 +4655,7 @@ function apCat(it,secT){
   if(it.id==="gl"&&/^rpt_/.test(it.tab||"")) return "التقارير";
   if(it.id==="master"||it.id==="settings") return "البيانات الأساسية";
   if(it.id==="gl"&&["accounts","centers","years","journals"].includes(it.tab)) return "البيانات الأساسية";
-  if(it.id==="fixedAssets"&&["settings","categories"].includes(it.tab)) return "البيانات الأساسية";
+  if(it.id==="fixedAssets"&&["settings","orgs","categories"].includes(it.tab)) return "البيانات الأساسية";
   if(/تقرير|تقارير|كشف حساب|ميزان|أرصدة|تقييم|حركة الوارد|كارت الصنف|إجمالي المتأخرات|الأقساط|لوحة/.test(it.label)) return "التقارير";
   if(/البيانات الأساسية/.test(secT)) return "البيانات الأساسية";
   if(/تقارير|التقارير/.test(secT)) return "التقارير";
@@ -28926,7 +28927,7 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
   }
   function mapFormHtml(c){
     const orgs=faData.orgs||[],m=ST.mapEdit?(faData.mappings||[]).find(x=>x.id===ST.mapEdit):null;
-    if(!orgs.length)return `<div class="fa2-empty" style="padding:16px">لا توجد هياكل إدارية. أضفها أولاً من «شجرة الهيكل الإداري» أسفل هذه الشاشة ثم ارجع هنا.</div>`;
+    if(!orgs.length)return `<div class="fa2-empty" style="padding:16px">لا توجد هياكل إدارية. أضفها أولاً من شاشة «شجرة الهيكل الإداري» ثم ارجع هنا.<br><button class=\"btn sm primary\" style=\"margin-top:10px\" onclick=\"faSetTab('orgs')\">فتح شجرة الهيكل الإداري</button></div>`;
     return `<div class="fa2-grid" style="margin-top:12px">
       <div class="fa2-f"><label>الهيكل الإداري *</label><select class="inp" id="fa2MapOrg">${orgs.map(o=>`<option value="${esc(o.id)}"${m&&m.orgId===o.id?' selected':''}>${esc(o.code+' — '+o.name)}</option>`).join('')}</select></div>
     </div>
@@ -30694,20 +30695,6 @@ function faSettingsHtml(){
 }
 const faOldRender=faRender;
 faRender=function(){try{faOldRender();const b=document.getElementById('faBody');if(!b)return;if(faDbError)b.insertAdjacentHTML('afterbegin',`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${faEsc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`);if(faTab==='settings'){b.innerHTML=faSettingsHtml();}
-if(faTab==='categories'){
- const accs=(glState?.accounts||[]).filter(x=>x.is_active&&!x.is_group&&x.allow_posting);
- const orgs=faData.orgs||[];
- b.insertAdjacentHTML('beforeend',`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;margin-top:14px;align-items:start">
-<div class="fa2-panel"><div class="fa2-ph"><span>🏛 شجرة الهيكل الإداري</span></div><div class="fa2-pb">
-<div class="fa2-grid"><div class="fa2-f"><label>كود الهيكل</label><input class="inp" id="faOrgCode"></div><div class="fa2-f"><label>اسم الهيكل</label><input class="inp" id="faOrgName"></div><div class="fa2-f"><label>الأب</label><select class="inp" id="faOrgParent"><option value="">رئيسي</option>${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div></div>
-<div class="fa2-actions"><button class="btn primary" onclick="faDbAddOrg()">إضافة الهيكل</button></div>
-<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>الكود</th><th>الهيكل</th><th>الأب</th></tr></thead><tbody>${orgs.map(x=>`<tr><td>${faEsc(x.code)}</td><td>${faEsc(x.name)}</td><td>${faEsc(x.parent||'—')}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">لا توجد هياكل</td></tr>'}</tbody></table></div></div></div>
-<div class="fa2-panel"><div class="fa2-ph"><span>🔗 ربط نوع الأصل بالهيكل الإداري والحسابات</span></div><div class="fa2-pb">
-<p class="muted" style="margin:0 0 10px">الحسابات المرتبطة تُختار من دليل الحسابات الفعلي في الأستاذ العام.</p>
-<div class="fa2-grid"><div class="fa2-f"><label>النوع النهائي</label><select class="inp" id="faMapCatId">${faData.categories.filter(x=>x.leaf).map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div><div class="fa2-f"><label>الهيكل الإداري</label><select class="inp" id="faMapOrgId">${orgs.map(x=>`<option value="${x.id}">${faEsc(x.code+' — '+x.name)}</option>`).join('')}</select></div>${[['faMapAssetId','حساب الأصل'],['faMapAccumId','حساب مجمع الإهلاك'],['faMapExpenseId','حساب مصروف الإهلاك']].map(([id,label])=>`<div class="fa2-f"><label>${label}</label><select class="inp" id="${id}"><option value="">اختر حساباً</option>${accs.map(x=>`<option value="${x.id}">${faEsc(x.account_code+' — '+x.account_name)}</option>`).join('')}</select></div>`).join('')}</div>
-<div class="fa2-actions"><button class="btn primary" onclick="faDbAddMapping()">حفظ ربط الحسابات</button></div>
-<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>نوع الأصل</th><th>الهيكل</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>${(faData.mappings||[]).map(m=>`<tr><td>${faEsc(m.cat)}</td><td>${faEsc(m.org)}</td><td>${faEsc(faAccLbl(m.assetId))}</td><td>${faEsc(faAccLbl(m.accumId))}</td><td>${faEsc(faAccLbl(m.expenseId))}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">لا توجد روابط مسجلة</td></tr>'}</tbody></table></div></div></div></div>`);
- }
  if(faTab==='depreciation'){const r=b.querySelector('#faRuns');if(r)r.innerHTML=faRunsHtml();}
  if(faTab==='assets'){b.insertAdjacentHTML('beforeend',faDraftsHtml());}
  if(faTab==='additions'||faTab==='disposals'){b.innerHTML=faEventsHtml(faTab);}
@@ -31752,6 +31739,160 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
   };
   if(['assets','reports','dashboard'].includes(faTab)&&document.getElementById('faBody')){try{faRender();}catch(e){}}
 })();
+</script>
+
+<script id="fa-org-screen">
+/* ============================================================
+   الأصول الثابتة — شاشة «شجرة الهيكل الإداري» (منفصلة عن شجرة أنواع الأصول)
+   جدول fa_org_units: unit_code / unit_name / parent_id
+   ============================================================ */
+(function(){
+  if(typeof faRender!=='function'||typeof faData==='undefined')return;
+  const esc=v=>faEsc(v);
+  const OS={sel:null,draft:null,q:'',collapsed:new Set()};
+  const orgs=()=>faData.orgs||[];
+  const org=id=>orgs().find(o=>o.id===id);
+  const cmp=(a,b)=>String(a.code||'').localeCompare(String(b.code||''),'en',{numeric:true});
+  const kids=pid=>orgs().filter(o=>(o.parentId||'')===(pid||'')).sort(cmp);
+  const hasKids=id=>orgs().some(o=>o.parentId===id);
+  const level=o=>{let n=1,g=0;while(o&&o.parentId&&g++<50){o=org(o.parentId);if(o)n++;}return n;};
+  const pathOf=o=>{const p=[];let g=0;while(o&&g++<50){p.unshift(o.name);o=o.parentId?org(o.parentId):null;}return p.join(' › ');};
+  const descIds=id=>{const out=[id];kids(id).forEach(k=>out.push(...descIds(k.id)));return out;};
+  const assetCount=id=>{const s=new Set(descIds(id));return (faData.assets||[]).filter(a=>s.has(a.orgId)).length;};
+  const matches=(o,q)=>[o.code,o.name].some(v=>String(v||'').toLowerCase().includes(q));
+  function nextCode(pid){
+    const ks=kids(pid),par=pid?org(pid):null;
+    if(!par){const mx=Math.max(0,...ks.map(k=>parseInt(k.code,10)||0));return String(mx+1);}
+    const pre=String(par.code||'');let mx=0;
+    ks.forEach(k=>{const c=String(k.code||'');if(c.startsWith(pre)){const n=parseInt(c.slice(pre.length),10);if(Number.isFinite(n)&&n>mx)mx=n;}});
+    return pre+String(mx+1).padStart(2,'0');
+  }
+  function visibleSet(q){
+    if(!q)return null;const keep=new Set();
+    orgs().forEach(o=>{if(matches(o,q)){let x=o,g=0;while(x&&g++<50){keep.add(x.id);x=x.parentId?org(x.parentId):null;}}});
+    return keep;
+  }
+  function nodesHtml(pid,vis,q){
+    return kids(pid).map(o=>{
+      if(vis&&!vis.has(o.id))return'';
+      const hk=hasKids(o.id),open=q?true:!OS.collapsed.has(o.id),sel=(!OS.draft&&OS.sel===o.id),hit=q&&matches(o,q);
+      const tg=hk?`<button type="button" class="fa2-tg" onclick="event.stopPropagation();faOrgTog('${esc(o.id)}')">${open?'▾':'▸'}</button>`:`<span class="fa2-dot">•</span>`;
+      const n=assetCount(o.id);
+      return `<div class="fa2-node${sel?' sel':''}${hit?' hit':''}" onclick="faOrgPick('${esc(o.id)}')">${tg}<span>🏛</span><span class="fa2-nm">${esc(o.name)}</span><span class="fa2-cd">${esc(o.code)}</span>${n?`<span class="fa2-ct" title="عدد الأصول">${n}</span>`:''}</div>`
+        +(hk&&open?`<div class="fa2-ch">${nodesHtml(o.id,vis,q)}</div>`:'');
+    }).join('');
+  }
+  function treeHtml(){
+    const q=String(OS.q||'').trim().toLowerCase(),vis=visibleSet(q),h=nodesHtml('',vis,q);
+    return h||`<div class="fa2-empty">${q?'لا توجد نتائج مطابقة.':'لا توجد هياكل بعد — اضغط «＋ هيكل رئيسي».'}</div>`;
+  }
+  function linksHtml(o){
+    const ms=(faData.mappings||[]).filter(m=>m.orgId===o.id);
+    const t=id=>(faData.categories||[]).find(c=>c.id===id);
+    return `<div class="fa2-panel" style="margin-top:14px"><div class="fa2-ph"><span>🔗 أنواع الأصول المرتبطة بهذا الهيكل</span></div><div class="fa2-pb">
+      <p class="muted" style="margin:0 0 8px">الربط وحسابات كل نوع تُدار من شاشة «شجرة أنواع الأصول».</p>
+      <div class="tbl-wrap"><table><thead><tr><th>نوع الأصل</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th></tr></thead><tbody>${ms.map(m=>{const c=t(m.catId);return `<tr><td>${esc(c?c.code+' — '+c.name:m.cat)}</td><td>${esc(faAccLbl(m.assetId))}</td><td>${esc(faAccLbl(m.accumId))}</td><td>${esc(faAccLbl(m.expenseId))}</td></tr>`;}).join('')||'<tr><td colspan="4" class="muted">لا توجد أنواع مرتبطة بعد</td></tr>'}</tbody></table></div>
+      <div class="fa2-actions"><button class="btn sm secondary" onclick="faSetTab('categories')">فتح شجرة أنواع الأصول</button></div></div></div>`;
+  }
+  function detailHtml(){
+    const d=OS.draft,o=d?null:org(OS.sel);
+    if(!d&&!o)return `<div class="fa2-panel"><div class="fa2-empty">اختر هيكلاً من الشجرة لعرض بياناته،<br>أو أضف هيكلاً رئيسياً جديداً.</div></div>`;
+    const pid=o?(o.parentId||''):(d.parentId||''),parent=pid?org(pid):null;
+    const lvl=o?level(o):(parent?level(parent)+1:1);
+    const code=o?o.code:d.code,name=o?o.name:'';
+    const crumb=o?pathOf(o):(parent?pathOf(parent)+' › (جديد)':'(هيكل رئيسي جديد)');
+    const banned=o?new Set(descIds(o.id)):new Set();
+    const opts=orgs().filter(x=>!banned.has(x.id)).sort(cmp).map(x=>`<option value="${esc(x.id)}"${x.id===pid?' selected':''}>${esc(x.code+' — '+x.name)}</option>`).join('');
+    let h=`<div class="fa2-panel"><div class="fa2-ph"><span>${d?'➕ إضافة هيكل':'📝 بيانات الهيكل'}</span><span class="sp"></span></div><div class="fa2-pb">
+      <div class="fa2-crumb">المسار: <b>${esc(crumb)}</b></div>
+      <div class="fa2-grid">
+        <div class="fa2-f"><label>كود الهيكل *</label><input class="inp" id="faOrgCode" value="${esc(code)}" style="direction:ltr;text-align:right"></div>
+        <div class="fa2-f"><label>اسم الهيكل *</label><input class="inp" id="faOrgName" value="${esc(name)}"></div>
+        <div class="fa2-f"><label>الأب</label><select class="inp" id="faOrgParent"><option value="">— رئيسي —</option>${opts}</select></div>
+        <div class="fa2-f"><label>المستوى</label><input class="inp ro" readonly value="${lvl}"></div>
+      </div>
+      <div class="fa2-actions"><button class="btn primary" onclick="faOrgSave()">حفظ</button>
+        ${o?`<button class="btn secondary" onclick="faOrgNew('${esc(o.id)}')">＋ هيكل فرعي</button>`:''}
+        ${d?'<button class="btn secondary" onclick="faOrgCancel()">إلغاء</button>':''}
+        ${o?`<button class="btn secondary" style="color:var(--danger)" onclick="faOrgDel('${esc(o.id)}')">حذف</button>`:''}</div></div></div>`;
+    if(o)h+=linksHtml(o);
+    return h;
+  }
+  function screen(){
+    return `<div class="fa2-split">
+      <div class="fa2-panel"><div class="fa2-ph"><span>🏛 شجرة الهيكل الإداري</span></div><div class="fa2-pb">
+        <div class="fa2-bar"><input class="inp" placeholder="بحث بالكود أو الاسم..." value="${esc(OS.q)}" oninput="faOrgSearch(this.value)" autocomplete="off"></div>
+        <div class="fa2-bar"><button class="btn sm primary" onclick="faOrgNew('')">＋ هيكل رئيسي</button><button class="btn sm secondary" onclick="faOrgExpand(true)">فتح الكل</button><button class="btn sm secondary" onclick="faOrgExpand(false)">طي الكل</button></div>
+        <div class="fa2-tree" id="faOrgTree">${treeHtml()}</div></div></div>
+      <div id="faOrgDetail">${detailHtml()}</div></div>`;
+  }
+
+  const redraw=()=>faRender();
+  const refreshTree=()=>{const t=document.getElementById('faOrgTree');if(t)t.innerHTML=treeHtml();};
+  window.faOrgSearch=v=>{OS.q=v;refreshTree();};
+  window.faOrgTog=id=>{if(OS.collapsed.has(id))OS.collapsed.delete(id);else OS.collapsed.add(id);refreshTree();};
+  window.faOrgExpand=open=>{OS.collapsed.clear();if(!open)orgs().forEach(o=>{if(hasKids(o.id))OS.collapsed.add(o.id);});refreshTree();};
+  window.faOrgPick=id=>{OS.sel=id;OS.draft=null;redraw();};
+  window.faOrgNew=pid=>{if(pid)OS.collapsed.delete(pid);OS.draft={parentId:pid||'',code:nextCode(pid||'')};redraw();};
+  window.faOrgCancel=()=>{OS.draft=null;redraw();};
+  async function reload(){await faDbLoad();redraw();}
+  // رسالة أوضح لو الرفض من سياسة الأمان في قاعدة البيانات
+  const errMsg=e=>{const m=faDbMsg(e);return /row-level security/i.test(m)?'قاعدة البيانات رفضت الحفظ بسبب سياسة الأمان (RLS) على جدول fa_org_units — نفّذ ملف fa_org_units_rls.sql في Supabase. ('+m+')':m;};
+
+  async function saveImpl(){
+    if(!faCan('manage'))return toast('لا تملك صلاحية لهذا الإجراء','err');
+    try{
+      const code=document.getElementById('faOrgCode').value.trim(),name=document.getElementById('faOrgName').value.trim(),parent=document.getElementById('faOrgParent').value||null;
+      if(!code||!name)throw new Error('أدخل الكود والاسم');
+      const selfId=OS.draft?null:OS.sel;
+      if(orgs().some(o=>o.id!==selfId&&String(o.code).trim().toLowerCase()===code.toLowerCase()))throw new Error('كود الهيكل مستخدم بالفعل');
+      if(selfId&&parent&&new Set(descIds(selfId)).has(parent))throw new Error('لا يمكن جعل الهيكل تابعاً لنفسه أو لأحد فروعه');
+      if(OS.draft){
+        const r=await sb.from(FA_DB.org).insert({unit_code:code,unit_name:name,parent_id:parent}).select().single();
+        if(r.error)throw r.error;
+        OS.sel=r.data.id;OS.draft=null;
+      }else{
+        if(!org(selfId))throw new Error('الهيكل غير موجود');
+        const r=await sb.from(FA_DB.org).update({unit_code:code,unit_name:name,parent_id:parent}).eq('id',selfId).select();
+        if(r.error)throw r.error;
+        if(!r.data||!r.data.length)throw new Error('لم يتم التحديث — غالباً سياسة الأمان (RLS) تمنع التعديل على fa_org_units');
+      }
+      await reload();toast('تم حفظ الهيكل','ok');
+    }catch(e){toast(errMsg(e),'err');}
+  }
+  async function delImpl(id){
+    if(!faCan('manage'))return toast('لا تملك صلاحية لهذا الإجراء','err');
+    const o=org(id);if(!o)return;
+    if(hasKids(id))return toast('لا يمكن الحذف: به هياكل فرعية','err');
+    if((faData.assets||[]).some(a=>a.orgId===id))return toast('لا يمكن الحذف: عليه أصول مسجلة','err');
+    const hasMaps=(faData.mappings||[]).some(m=>m.orgId===id);
+    if(!await askConfirm(hasMaps?`حذف «${o.name}» وروابط أنواع الأصول المرتبطة به نهائياً؟`:`حذف «${o.name}» نهائياً؟`))return;
+    try{
+      if(hasMaps){const r0=await sb.from(FA_DB.map).delete().eq('org_unit_id',id);if(r0.error)throw r0.error;}
+      const r=await sb.from(FA_DB.org).delete().eq('id',id).select();
+      if(r.error)throw r.error;
+      if(!r.data||!r.data.length)throw new Error('لم يتم الحذف — غالباً سياسة الأمان (RLS) تمنع الحذف من fa_org_units');
+      OS.sel=o.parentId||null;OS.draft=null;await reload();toast('تم الحذف','ok');
+    }catch(e){toast(errMsg(e),'err');}
+  }
+  window.faOrgSave=()=>faGuard(saveImpl);
+  window.faOrgDel=id=>faGuard(()=>delImpl(id));
+  window.FA_ACT=Object.assign(window.FA_ACT||{},{faOrgSave:'manage',faOrgDel:'manage',faOrgNew:'manage'});
+
+  const prev=faRender;
+  faRender=function(){
+    if(faTab!=='orgs'||(typeof faSkelOn!=='undefined'&&faSkelOn))return prev();
+    try{
+      const b=document.getElementById('faBody');if(!b)return;
+      const err=faDbError?`<div class="alert danger">تعذر الاتصال ببيانات الأصول: ${esc(faDbError)} <button class="btn sm" onclick="faReloadDb()">إعادة المحاولة</button></div>`:'';
+      if(!OS.sel&&!OS.draft){const r=kids('')[0];if(r)OS.sel=r.id;}
+      if(OS.sel&&!org(OS.sel))OS.sel=null;
+      b.innerHTML=err+screen();
+      faApplyPerms();
+    }catch(e){console.error(e);}
+  };
+})();
+
 </script>
 
 <style id="igTxCompact">
