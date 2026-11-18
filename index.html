@@ -4765,10 +4765,37 @@ function adBuild(gid){
       t:adTable("أرصدة العهد",["الحساب","الرصيد"],Object.entries(by).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10).map(([id,v])=>[nm(id),adN(v)]),"go('custodyReport')")};
   }
   if(gid==="fixedAssets"){
-    const A=(faData&&faData.assets)||[], cost=A.reduce((t,a)=>t+(+a.cost||0),0), ac=A.reduce((t,a)=>t+(+a.accum||0),0), by={};
-    A.forEach(a=>{ const c=by[a.categoryName||"—"]||(by[a.categoryName||"—"]={n:0,c:0,a:0}); c.n++; c.c+=+a.cost||0; c.a+=+a.accum||0; });
-    return {k:adK("🏷","عدد الأصول",A.length,"أصل مسجل","b","faSetTab('assets')")+adK("▦","إجمالي التكلفة",val(cost),"","n","faSetTab('dashboard')")+adK("📉","مجمع الإهلاك",val(ac),"","r","faSetTab('depreciation')")+adK("⚖","صافي القيمة الدفترية",val(cost-ac),"","g"),
-      t:adTable("الأصول حسب النوع",["النوع","العدد","التكلفة","صافي القيمة"],Object.entries(by).sort((a,b)=>b[1].c-a[1].c).slice(0,10).map(([n,v])=>[n,v.n,adN(v.c),adN(v.c-v.a)]),"faSetTab('assets')")};
+    const A=(faData&&faData.assets)||[], EV=(faData&&faData.events)||[], RUNS=(faData&&faData.runs)||[], E_=v=>faEsc(v);
+    const isDr=a=>a.kind==="new"&&!a.purchaseEntryId;
+    const rowsA=A.map(a=>{ const ev=EV.filter(e=>e.asset_id===a.id&&e.status==="posted"), add=ev.filter(e=>e.event_type!=="disposal").reduce((t,e)=>t+(+e.amount||0),0), dis=ev.some(e=>e.event_type==="disposal"), c=(+a.cost||0)+add, ac=+a.accum||0; return {a,dr:isDr(a),dis,cost:c,ac,net:dis?0:c-ac}; });
+    const live=rowsA.filter(r=>!r.dis), dr=rowsA.filter(r=>r.dr), nOpen=A.filter(a=>a.kind==="opening").length, nPost=A.length-dr.length-nOpen;
+    const S=(rs,k)=>rs.reduce((t,r)=>t+r[k],0), cost=S(live,"cost"), ac=S(live,"ac"), net=S(live,"net"), drCost=S(dr,"cost"), pct=cost>0?ac/cost*100:0;
+    const posted=RUNS.filter(r=>r.status==="posted").sort((x,y)=>String(y.period_to||y.period_end||"").localeCompare(String(x.period_to||x.period_end||""))), last=posted[0];
+    const lastEnd=last?String(last.period_to||last.period_end||"").slice(0,10):"", lastAmt=last?(+last.total_amount||0):0;
+    const full=live.filter(r=>r.cost>0&&r.net<=1.005&&!r.dr).length;
+    const noReady=A.filter(a=>!a.readyDate).length, noLife=A.filter(a=>!(+a.life>0)).length, noCC=A.filter(a=>!a.costCenter).length, drNoCr=dr.filter(r=>!r.a.paymentAccountId).length;
+    const k=adK("🏷","عدد الأصول",A.length,nPost+" مُرحَّل · "+dr.length+" مسودة · "+nOpen+" افتتاحي","b","faSetTab('assets')")
+      +adK("▦","إجمالي التكلفة",val(cost),dr.length?("منها مسودات غير مرحّلة: "+val(drCost)):"كل الأصول مُرحَّلة","n","faSetTab('assets')")
+      +adK("📉","مجمع الإهلاك",val(ac),pct.toFixed(1)+"% من التكلفة","r","faSetTab('depreciation')")
+      +adK("⚖","صافي القيمة الدفترية",val(net),"التكلفة − مجمع الإهلاك","g","faSetTab('reports')")
+      +adK("⏳","مسودات بانتظار الترحيل",dr.length,dr.length?("بقيمة "+val(drCost)):"لا توجد مسودات",dr.length?"r":"g","faSetTab('assets')")
+      +adK("🗓","آخر تشغيل إهلاك",last?val(lastAmt):"—",last?("حتى "+lastEnd):"لم يُرحَّل إهلاك بعد",last?"b":"r","faSetTab('depreciation')")
+      +adK("✔","أصول مهلكة بالكامل",full,"القيمة الدفترية 1 جنيه أو أقل","n","faSetTab('reports')")
+      +adK("🏢","أنواع الأصول",new Set(A.map(a=>a.categoryName||"—")).size,"نوع نهائي مستخدم","n","faSetTab('categories')");
+    const by={}; rowsA.forEach(r=>{ const n=r.a.categoryName||"—", c=by[n]||(by[n]={n:0,d:0,c:0,a:0,t:0}); c.n++; if(r.dr)c.d++; c.c+=r.cost; c.a+=r.ac; c.t+=r.net; });
+    const ent=Object.entries(by).sort((x,y)=>y[1].c-x[1].c), mx=Math.max(1,...ent.map(e=>e[1].c)), allC=ent.reduce((t,e)=>t+e[1].c,0)||1;
+    const tbl=ent.length?`<div class="ad-tw"><table><thead><tr><th>النوع</th><th>العدد</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>الصافي</th><th>التوزيع</th><th>النسبة</th></tr></thead><tbody>${ent.slice(0,12).map(([n,v])=>`<tr><td><b>${E_(n)}</b>${v.d?` <span class="ad-bd y">${v.d} مسودة</span>`:""}</td><td>${v.n}</td><td>${adN(v.c)}</td><td>${adN(v.a)}</td><td><b>${adN(v.t)}</b></td><td><div class="fah-bar"><i style="width:${Math.max(3,v.c/mx*100)}%"><b style="width:${v.c>0?Math.min(100,v.a/v.c*100):0}%"></b></i></div></td><td>${(v.c/allC*100).toFixed(1)}%</td></tr>`).join("")}</tbody><tfoot><tr><td>الإجمالي</td><td>${A.length}</td><td>${adN(S(rowsA,"cost"))}</td><td>${adN(S(rowsA,"ac"))}</td><td>${adN(S(rowsA,"net"))}</td><td colspan="2"></td></tr></tfoot></table></div><div class="fah-lg"><span><b class="g"></b>مجمع الإهلاك</span><span><b></b>التكلفة</span></div>`:`<div class="ad-empty">لا توجد أصول مسجلة حاليًا</div>`;
+    const c=`<div class="ad-card"><h3>الأصول حسب النوع<a onclick="faSetTab('reports')">التقارير ‹</a></h3>${tbl}</div>`;
+    const it=(label,n,go_,warn)=>`<button class="fah-it" onclick="${go_}"><i class="fah-dot ${n?(warn||"w"):"ok"}"></i><span class="fah-l">${label}</span><b class="${n?"":"z"}">${n?n:"✓"}</b><em>‹</em></button>`;
+    const t=`<div class="ad-card"><h3>تحتاج انتباه</h3><div class="fah-att">
+      ${it("مسودات شراء بانتظار الترحيل",dr.length,"faSetTab('assets')","r")}
+      ${it("مسودات بدون حساب مقابل",drNoCr,"faSetTab('assets')","r")}
+      ${it("أصول بدون تاريخ جاهزية (لا تُهلَّك)",noReady,"faSetTab('assets')")}
+      ${it("أصول بدون عمر إنتاجي (لا تُهلَّك)",noLife,"faSetTab('assets')")}
+      ${it("أصول بدون مركز تكلفة",noCC,"faSetTab('assets')")}
+      ${it(last?("آخر إهلاك مُرحَّل حتى "+lastEnd):"لم يُرحَّل إهلاك بعد",last?0:1,"faSetTab('depreciation')")}
+    </div></div>`;
+    return {k,c,t};
   }
   if(gid==="master") return {k:adK("♙","العملاء",adA("customers").length,"عميل","b","currentTab='customers';go('master')")+adK("♧","الموردون",adA("suppliers").length,"مورد","g","currentTab='suppliers';go('master')")+adK("🗄","الخزائن",adA("safes").length,"خزينة","n","currentTab='safes';go('master')")+adK("🔐","المستخدمون",adA("users").length,"حساب","n","go('users')")};
   return {k:""};
@@ -31747,6 +31774,21 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
 })();
 </script>
 
+<style id="fa-home-css">
+.fah-bar{height:8px;min-width:110px;background:#eef1f6;border-radius:6px;overflow:hidden}
+.fah-bar i{display:block;height:100%;background:#1f2d4a;border-radius:6px;position:relative}
+.fah-bar i b{position:absolute;top:0;bottom:0;inset-inline-start:0;background:#d4a017;display:block}
+.fah-lg{display:flex;gap:16px;justify-content:center;margin-top:10px;font-size:12px;color:#5a6a82}
+.fah-lg span{display:flex;align-items:center;gap:6px}.fah-lg b{width:11px;height:11px;border-radius:3px;background:#1f2d4a;display:inline-block}.fah-lg b.g{background:#d4a017}
+.ad tfoot td{font-weight:800;background:#f6f8fb;border-top:2px solid #d4a017;color:#0f2a52}
+.fah-att{display:flex;flex-direction:column;gap:8px}
+.fah-it{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e8edf4;border-radius:10px;background:#fafbfd;cursor:pointer;font:inherit;text-align:right;width:100%}
+.fah-it:hover{border-color:#D4A017;background:#fff8e1}
+.fah-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:#f59e0b}.fah-dot.ok{background:#1f8a52}.fah-dot.r{background:#d6403a}
+.fah-l{flex:1;font-size:13px;font-weight:700;color:#1a2a44}
+.fah-it b{min-width:30px;text-align:center;padding:2px 9px;border-radius:9px;background:#fdf1d6;color:#8e6715;font-size:12px}.fah-it b.z{background:#e3f5ea;color:#1f8a52}
+.fah-it em{font-style:normal;color:#9aa7bb}
+</style>
 <style id="fa3-css">
 .fa3-tbl td,.fa3-tbl th{white-space:nowrap}
 .fa3-tbl td.n{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}
@@ -31998,7 +32040,26 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
   const mapFor=a=>(faData.mappings||[]).find(m=>m.catId===a.categoryId&&m.orgId===a.orgId);
   const orgFor=a=>(faData.orgs||[]).find(o=>o.id===a.orgId);
   const jrLabel=a=>{const e=((typeof glState!=='undefined'&&glState&&glState.entries)||[]).find(x=>x.id===a.purchaseEntryId);return e?(e.entry_no||String(e.id).slice(0,8)):'';};
-  const modalWide=()=>{const m=document.querySelector('#modalBackdrop .modal');if(m){m.style.width='980px';m.style.maxWidth='96vw';}};
+  const modalWide=()=>{const m=document.querySelector('#modalBackdrop .modal');if(m){m.style.setProperty('width','min(1280px,99vw)','important');m.style.setProperty('max-width','99vw','important');}const b=document.querySelector('#modalBackdrop .mbody');if(b)b.style.overflowX='auto';};
+  window.fa3Tab=btn=>{const root=btn.closest('.fa3-card');if(!root)return;root.querySelectorAll('.fa3-tabs button').forEach(b=>b.classList.toggle('on',b===btn));root.querySelectorAll('.fa3-pane').forEach(p=>p.classList.toggle('on',p.dataset.p===btn.dataset.t));};
+  if(!document.getElementById('fa3-tabs-css')){const st=document.createElement('style');st.id='fa3-tabs-css';st.textContent=`
+    .fa3-tabs{display:flex;gap:4px;border-bottom:2px solid #c9a24a;margin:8px 0 12px;overflow-x:auto;white-space:nowrap}
+    .fa3-tabs button{border:1px solid #d9c9a0;border-bottom:0;background:#f4ecd6;color:#6b5314;padding:8px 20px;font-weight:800;font-size:13px;border-radius:9px 9px 0 0;cursor:pointer;flex:none}
+    .fa3-tabs button:hover{background:#fbf3dc}
+    .fa3-tabs button.on{background:#b8860b;color:#fff;border-color:#b8860b}
+    .fa3-scroll{overflow-x:auto;padding-bottom:6px}
+    .fa3-pane{display:none;min-width:760px}.fa3-pane.on{display:block}
+    .fa3-fs{border:1px solid #d9c9a0;border-radius:10px;margin:0 0 14px;padding:12px 14px 14px;background:#fffdf7}
+    .fa3-fs legend{padding:0 10px;font-weight:900;font-size:13px;color:#8a6508}
+    .fa3-fg{display:grid;grid-template-columns:repeat(3,minmax(200px,1fr));gap:12px 16px}
+    .fa3-fld label{display:block;font-size:12px;font-weight:700;color:#6b7280;margin-bottom:4px}
+    .fa3-box{min-height:36px;display:flex;align-items:center;padding:7px 11px;border:1px solid #cdbf98;border-radius:7px;background:#fff;font-weight:700;font-size:13.5px;color:#1f2937;box-shadow:inset 0 1px 2px rgba(0,0,0,.05);word-break:break-word}
+    .fa3-fld.hl .fa3-box{background:#fdf3d0;border-color:#b8860b;color:#7a5600}
+    .fa3-num{direction:ltr;font-variant-numeric:tabular-nums}
+    .fa3-je{min-width:640px}
+    @media(max-width:900px){.fa3-fg{grid-template-columns:repeat(2,minmax(180px,1fr))}}
+    @media print{.fa3-tabs{display:none}.fa3-pane{display:block!important;min-width:0}}
+  `;document.head.appendChild(st);}
   window.fa3Card=id=>{
     const a=(faData.assets||[]).find(x=>x.id===id);if(!a)return;
     const c=calc(a),m=mapFor(a),o=orgFor(a),draft=isDraft(a),opening=a.kind==='opening';
@@ -32017,25 +32078,45 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
         <div class="fa2-kv" style="margin-top:10px">${kv('طريقة السداد',esc(FA_PAYM[a.paymentMethod]||a.paymentMethod||'—'))}${kv('المورد / المرجع',esc(a.supplier||a.cheque||'—'))}${kv('رقم قيد الشراء',esc(jrLabel(a)||(draft?'لم يُرحَّل بعد':'—')))}</div>
         ${draft&&!a.paymentAccountId?'<div class="fa3-warn2">⚠ لم يُحدَّد حساب مقابل لهذا الأصل — اختره من القائمة ثم اضغط «ترحيل».</div>':''}`;
     }
-    const html=`<div class="fa2-panel" style="margin-bottom:6px"><div class="fa2-ph"><span>🏷 ${esc(a.no)} — ${esc(a.name)}</span><span class="fa2-st ${stl[0]}">${stl[1]}</span></div><div class="fa2-pb">
+    const fld=(l,v,cls)=>`<div class="fa3-fld ${cls||''}"><label>${l}</label><div class="fa3-box">${v}</div></div>`;
+    const num=v=>`<span class="fa3-num">${v}</span>`;
+    const html=`<div class="fa2-panel fa3-card" style="margin-bottom:6px"><div class="fa2-ph"><span>🏷 ${esc(a.no)} — ${esc(a.name)}</span><span class="fa2-st ${stl[0]}">${stl[1]}</span></div><div class="fa2-pb">
       ${warnHtml(a,c)}
-      <div class="fa2-sec"><h4>بيانات الأصل</h4><div class="fa2-kv">
-        ${kv('رقم الأصل',esc(a.no))}${kv('اسم الأصل',esc(a.name))}${kv('نوع الأصل',esc(a.categoryName||'—'))}${kv('الهيكل الإداري',esc(o?o.code+' — '+o.name:(a.org||'—')))}
-        ${kv('مركز التكلفة',esc(ccLabel(a.costCenter)||'—'))}${kv('الشرح',esc(a.description||'—'))}</div></div>
-      <div class="fa2-sec"><h4>التواريخ والقيم</h4><div class="fa2-kv">
-        ${kv('تاريخ الشراء',esc(a.purchaseDate||'—'))}${kv('تاريخ الجاهزية',esc(a.readyDate||'—'))}
-        ${kv('قيمة الشراء',money(c.cost))}${kv('مجمع الإهلاك',money(c.acc))}${kv('القيمة التخريدية',money(a.residual))}${kv('الصافي بعد الإهلاك',money(c.netAfterDep))}
-        ${kv('الإضافات',money(c.add))}${kv('الاستبعاد',c.dis?money(c.disVal):'—')}${kv('الصافي النهائي',money(c.fin))}
-        ${kv('العمر الإنتاجي (سنة)',life||'—')}${kv('الإهلاك السنوي',money(annual))}${kv('الإهلاك الشهري',money(annual/12))}</div></div>
-      <div class="fa2-sec"><h4>القيد المحاسبي والحساب المقابل</h4><div>${je}
-        ${m?`<div style="margin-top:10px"><small class="muted">حسابات الإهلاك:</small> <span class="fa2-chip">المجمع <b>${esc(faAccLbl(m.accumId))}</b></span> <span class="fa2-chip">المصروف <b>${esc(faAccLbl(m.expenseId))}</b></span></div>`:''}</div></div>
-      <div class="fa2-sec"><h4>سجل الإهلاك</h4><div>${depHistHtml(a)}</div></div>
-      <div class="fa2-sec"><h4>سجل الإضافات والاستبعاد</h4><div>${evHistHtml(a)}</div></div>
+      <div class="fa3-tabs" role="tablist">
+        <button type="button" class="on" data-t="info" onclick="fa3Tab(this)">معلومات الأصول</button>
+        <button type="button" data-t="acc" onclick="fa3Tab(this)">حسابات الأصل</button>
+        <button type="button" data-t="dep" onclick="fa3Tab(this)">الإهلاكات</button>
+        <button type="button" data-t="add" onclick="fa3Tab(this)">الإضافات</button>
+        <button type="button" data-t="disp" onclick="fa3Tab(this)">الاستبعادات</button>
+      </div>
+      <div class="fa3-scroll">
+      <div class="fa3-pane on" data-p="info">
+        <fieldset class="fa3-fs"><legend>بيانات الأصل</legend><div class="fa3-fg">
+          ${fld('رقم الأصل',num(esc(a.no)))}${fld('اسم الأصل',esc(a.name))}${fld('نوع الأصل',esc(a.categoryName||'—'))}
+          ${fld('الهيكل الإداري',esc(o?o.code+' — '+o.name:(a.org||'—')))}${fld('مركز التكلفة',esc(ccLabel(a.costCenter)||'—'))}${fld('الشرح',esc(a.description||'—'))}
+        </div></fieldset>
+        <fieldset class="fa3-fs"><legend>التواريخ</legend><div class="fa3-fg">
+          ${fld('تاريخ الشراء',num(esc(a.purchaseDate||'—')))}${fld('تاريخ الجاهزية',num(esc(a.readyDate||'—')))}${fld('العمر الإنتاجي (سنة)',num(life||'—'))}
+        </div></fieldset>
+        <fieldset class="fa3-fs"><legend>القيم والإهلاك</legend><div class="fa3-fg">
+          ${fld('قيمة الشراء',num(money(c.cost)))}${fld('مجمع الإهلاك',num(money(c.acc)))}${fld('القيمة التخريدية',num(money(a.residual)))}
+          ${fld('الإضافات',num(money(c.add)))}${fld('الاستبعاد',num(c.dis?money(c.disVal):'—'))}${fld('الصافي بعد الإهلاك',num(money(c.netAfterDep)))}
+          ${fld('الإهلاك السنوي',num(money(annual)))}${fld('الإهلاك الشهري',num(money(annual/12)))}${fld('الصافي النهائي',num(money(c.fin)),'hl')}
+        </div></fieldset>
+      </div>
+      <div class="fa3-pane" data-p="acc">
+        <fieldset class="fa3-fs"><legend>القيد المحاسبي والحساب المقابل</legend>${je}
+        ${m?`<div style="margin-top:10px"><small class="muted">حسابات الإهلاك:</small> <span class="fa2-chip">المجمع <b>${esc(faAccLbl(m.accumId))}</b></span> <span class="fa2-chip">المصروف <b>${esc(faAccLbl(m.expenseId))}</b></span></div>`:''}</fieldset>
+      </div>
+      <div class="fa3-pane" data-p="dep"><fieldset class="fa3-fs"><legend>سجل الإهلاك</legend>${depHistHtml(a)}</fieldset></div>
+      <div class="fa3-pane" data-p="add"><fieldset class="fa3-fs"><legend>سجل الإضافات والتحسينات</legend>${evHistHtml(a,'add')}</fieldset></div>
+      <div class="fa3-pane" data-p="disp"><fieldset class="fa3-fs"><legend>سجل الاستبعاد</legend>${evHistHtml(a,'disposal')}</fieldset></div>
+      </div>
     </div></div>`;
     try{closeModal();}catch(e){}
     openModal('🏷 بطاقة الأصل — '+esc(a.no),html,null);modalWide();
     const f=document.querySelector('#modalBackdrop .mfoot');
-    if(f)f.innerHTML=(draft?`<button class="btn primary" onclick="fa3PostOne('${esc(a.id)}')">✓ ترحيل قيد الشراء</button><button class="btn" onclick="fa3SaveCr('${esc(a.id)}')">💾 حفظ الحساب المقابل</button><button class="btn" onclick="fa3EditForm('${esc(a.id)}')">✎ تعديل</button><button class="btn danger" onclick="fa3DelDraft('${esc(a.id)}')">🗑 حذف المسودة</button>`:'')+'<button class="btn ghost" onclick="fa3PrintCard()">🖨 طباعة البطاقة</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>';
+    if(f)f.innerHTML=(draft?`<button class="btn primary" onclick="fa3PostOne('${esc(a.id)}')">✓ ترحيل قيد الشراء</button><button class="btn" onclick="fa3SaveCr('${esc(a.id)}')">💾 حفظ</button><button class="btn" onclick="fa3EditForm('${esc(a.id)}')">✎ تعديل</button><button class="btn danger" onclick="fa3DelDraft('${esc(a.id)}')">🗑 حذف المسودة</button>`:'')+'<button class="btn ghost" onclick="fa3PrintCard()">🖨 طباعة البطاقة</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>';
   };
 
 
@@ -32050,9 +32131,9 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     if(c&&c.dis)w.push('أصل مُستبعد');
     return w.length?`<div class="fa3-warn2"><b>⚠ تنبيهات:</b><br>${w.map(x=>'• '+esc(x)).join('<br>')}</div>`:'';
   }
-  function evHistHtml(a){
-    const evs=(faData.events||[]).filter(e=>e.asset_id===a.id).sort((x,y)=>String(y.event_date||'').localeCompare(String(x.event_date||'')));
-    if(!evs.length)return '<p class="muted" style="margin:6px 0">لا توجد إضافات أو استبعاد على هذا الأصل.</p>';
+  function evHistHtml(a,only){
+    const evs=(faData.events||[]).filter(e=>e.asset_id===a.id&&(!only||(only==='disposal')===(e.event_type==='disposal'))).sort((x,y)=>String(y.event_date||'').localeCompare(String(x.event_date||'')));
+    if(!evs.length)return '<p class="muted" style="margin:6px 0">'+(only==='disposal'?'لا يوجد استبعاد على هذا الأصل.':only==='add'?'لا توجد إضافات على هذا الأصل.':'لا توجد إضافات أو استبعاد على هذا الأصل.')+'</p>';
     const ents=((typeof glState!=='undefined'&&glState&&glState.entries)||[]);
     return `<table class="fa3-je"><thead><tr><th>النوع</th><th>التاريخ</th><th style="width:130px">القيمة</th><th>الحالة</th><th>رقم القيد</th></tr></thead><tbody>${evs.map(e=>{const d=e.event_type==='disposal',en=ents.find(x=>x.id===e.gl_entry_id);return `<tr><td>${esc(FA_EVT[e.event_type]||e.event_type)}</td><td>${esc(e.event_date||'—')}</td><td class="n">${money(d?e.proceeds_amount:e.amount)}</td><td>${esc(FA_EVST[e.status]||e.status||'—')}</td><td>${esc(en?en.entry_no:'—')}</td></tr>`;}).join('')}</tbody></table>${evs.some(e=>e.event_type==='disposal')?'<p class="muted" style="margin:4px 0">قيمة الاستبعاد = المتحصلات.</p>':''}`;
   }
@@ -32123,6 +32204,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
       @page{size:A4 portrait;margin:12mm}body{font-family:Tahoma,Arial,sans-serif;color:#111;font-size:12px}
       h2{text-align:center;margin:0 0 10px;font-size:17px}.fa2-ph{display:flex;gap:10px;align-items:center;font-weight:bold;font-size:14px;border-bottom:2px solid #2e75b6;padding-bottom:6px;margin-bottom:8px}
       .fa2-sec{margin:10px 0;page-break-inside:avoid}.fa2-sec h4{margin:0 0 6px;background:#eef3f9;padding:4px 8px;border-right:4px solid #2e75b6;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .fa3-tabs{display:none}.fa3-fs{border:1px solid #888;margin:8px 0;padding:6px 10px;page-break-inside:avoid}.fa3-fg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 12px}.fa3-fld label{font-size:10px;color:#555;display:block}.fa3-box{border:1px solid #999;padding:3px 6px;min-height:18px;font-weight:bold}.fa3-num{direction:ltr}
       .fa2-kv{display:grid;grid-template-columns:1fr 1fr;gap:4px 18px}.fa2-kv div{display:flex;justify-content:space-between;border-bottom:1px dashed #999;padding:3px 0}.fa2-kv span{color:#555}
       table{width:100%;border-collapse:collapse}th,td{border:1px solid #888;padding:4px 6px;text-align:right}th{background:#eef3f9;-webkit-print-color-adjust:exact;print-color-adjust:exact}td.n{direction:ltr;text-align:left}
       .fa3-warn2{border:1px solid #d97706;background:#fef3c7;padding:6px 10px;margin:6px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.fa2-chip{margin-inline-end:8px}.muted{color:#555}small{color:#555}
