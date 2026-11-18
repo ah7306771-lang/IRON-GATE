@@ -22355,6 +22355,27 @@ async function openMfaSetup(){
         var rows = qsiFiltered();
         if(!rows.length){ toast("مفيش بيانات للإرسال دلوقتي","err"); return; }
         html = qsiPdfHtml(); title = "الأقساط والمستحقات";
+      } else if(currentId === "loginPartiesBtn"){
+        // اسأل المستخدم: عملاء بس / موردين بس / الاتنين
+        var choice = await qsPartiesPickSection();
+        if(!choice) return; // كنسل
+        var tables = document.querySelectorAll("#qsBody table.qs-table");
+        var tags = document.querySelectorAll("#qsBody .qs-tag");
+        // رتّب: كل .qs-tag بيلحقه table
+        btn.disabled = true; var oldText = btn.textContent; btn.textContent = "⏳ جاري الإرسال...";
+        var results = [];
+        if(choice === "clients" || choice === "both"){
+          results.push({html: qsPartiesSectionPdf(0), title: "أرصدة العملاء"});
+        }
+        if(choice === "suppliers" || choice === "both"){
+          results.push({html: qsPartiesSectionPdf(1), title: "أرصدة الموردين"});
+        }
+        for(var k=0; k<results.length; k++){
+          btn.textContent = "⏳ " + (k+1) + "/" + results.length;
+          await tgSendReportPdf(results[k].html, results[k].title);
+        }
+        btn.textContent = "✓ تم الإرسال"; setTimeout(function(){ btn.textContent = oldText; btn.disabled = false; }, 2500);
+        return;
       } else {
         html = qsGenericPdf(); title = qsTitlePlain();
         if(!html || !document.querySelector("#qsBody tbody tr td:not([colspan])")){
@@ -22362,14 +22383,72 @@ async function openMfaSetup(){
         }
       }
       // 2) ابعت للتيليجرام
-      btn.disabled = true; var oldText = btn.textContent; btn.textContent = "⏳ جاري الإرسال...";
+      btn.disabled = true; var oldText2 = btn.textContent; btn.textContent = "⏳ جاري الإرسال...";
       await tgSendReportPdf(html, title);
-      btn.textContent = "✓ تم الإرسال"; setTimeout(function(){ btn.textContent = oldText; btn.disabled = false; }, 2500);
+      btn.textContent = "✓ تم الإرسال"; setTimeout(function(){ btn.textContent = oldText2; btn.disabled = false; }, 2500);
     }catch(e){
       btn.textContent = "📤 ارسل للتيليجرام"; btn.disabled = false;
       toast("فشل الإرسال: " + (e.message || e), "err");
     }
   });
+
+  // ديالوج اختيار القسم (عملاء / موردين / الاتنين)
+  function qsPartiesPickSection(){
+    return new Promise(function(resolve){
+      var ov = document.createElement("div");
+      ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:999999;display:flex;align-items:center;justify-content:center";
+      ov.innerHTML = '<div style="background:#fff;border-radius:14px;padding:22px 20px;max-width:360px;width:90%;direction:rtl;font-family:Cairo,Tahoma,Arial;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+        +'<h3 style="margin:0 0 14px;font-size:16px;color:#0a1a35;text-align:center">📤 اختار اللي عايز تبعته</h3>'
+        +'<div style="display:flex;flex-direction:column;gap:8px">'
+        +'<button data-v="clients" style="padding:12px;background:#dbeafe;border:2px solid #2563eb;color:#1e3a8a;border-radius:9px;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px">🧑‍💼 أرصدة العملاء فقط</button>'
+        +'<button data-v="suppliers" style="padding:12px;background:#fef3c7;border:2px solid #d4a017;color:#92400e;border-radius:9px;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px">🏭 أرصدة الموردين فقط</button>'
+        +'<button data-v="both" style="padding:12px;background:#dcfce7;border:2px solid #16a34a;color:#166534;border-radius:9px;font-weight:800;cursor:pointer;font-family:inherit;font-size:13px">🤝 الاتنين (ملفين منفصلين)</button>'
+        +'<button data-v="" style="padding:10px;background:#f3f4f6;border:1px solid #d1d5db;color:#475569;border-radius:9px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;margin-top:4px">إلغاء</button>'
+        +'</div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function(e){
+        if(e.target === ov){ document.body.removeChild(ov); resolve(null); return; }
+        var v = e.target.getAttribute("data-v");
+        if(v === null) return;
+        document.body.removeChild(ov);
+        resolve(v || null);
+      });
+    });
+  }
+
+  // ابني PDF لقسم واحد من تقرير الأرصدة (0=عملاء, 1=موردين)
+  function qsPartiesSectionPdf(idx){
+    var tables = document.querySelectorAll("#qsBody table.qs-table");
+    var tags = document.querySelectorAll("#qsBody .qs-tag");
+    if(!tables[idx]) return "";
+    var tbl = tables[idx];
+    var tag = tags[idx] ? tags[idx].textContent : (idx===0?"🧑‍💼 أرصدة العملاء":"🏭 أرصدة الموردين");
+    var title = idx===0 ? "أرصدة العملاء" : "أرصدة الموردين";
+    var titleEn = idx===0 ? "CUSTOMERS BALANCES" : "SUPPLIERS BALANCES";
+    var emoji = idx===0 ? "🧑‍💼" : "🏭";
+    // جيب الصفوف وعدّ المدين/الدائن
+    var bodyRows = tbl.querySelectorAll("tbody tr");
+    var total = 0, cnt = 0;
+    var trs = [];
+    bodyRows.forEach(function(tr){
+      var tds = tr.querySelectorAll("td");
+      if(tds.length < 3) return;
+      var num = Number(String(tds[2].textContent||"0").replace(/[^\d.\-]/g,""))||0;
+      total += num; cnt++;
+      var neg = num < 0;
+      trs.push('<tr'+(neg?' style="background:#fef2f2;color:#b91c1c;font-weight:700"':'')+'><td>'+esc(tds[0].textContent)+'</td><td>'+esc(tds[1].textContent)+'</td><td class="n">'+esc(tds[2].textContent)+'</td></tr>');
+    });
+    var tableHtml = '<table class="rprt-tbl"><thead><tr><th>#</th><th>الاسم</th><th>الرصيد</th></tr></thead><tbody>'
+      + (trs.join("") || '<tr><td colspan="3" style="padding:20px;color:#9ca3af">لا توجد بيانات</td></tr>')
+      + '</tbody><tfoot><tr><td colspan="2">الإجمالي</td><td class="n">'+n2(total)+'</td></tr></tfoot></table>';
+    if(typeof igProReportHtml === "function"){
+      return igProReportHtml({emoji:emoji, title:title, titleEn:titleEn, sub:cnt+" "+(idx===0?"عميل":"مورد"),
+        kpis:[{lbl:"عدد", val:String(cnt), color:"#64748b"},
+              {lbl:"صافي الرصيد", val:n2(total), sub:"ج.م", color: total<0?"#dc2626":"#16a34a"}],
+        tableHtml: tableHtml});
+    }
+    return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>'+title+'</title></head><body>'+tableHtml+'</body></html>';
+  }
 })();
 
 /* ============================================================
@@ -22396,9 +22475,17 @@ async function tgSendReportPdf(html, title){
   var dayName = dayNames[dayKey] || "";
   var arDate = "الموافق يوم " + dayName + " " + today.getDate() + " " + monthNames[today.getMonth()] + " " + today.getFullYear();
 
-  // أدخل الـheader في الـhtml بعد <body>
-  var dateBanner = '<div style="direction:rtl;text-align:center;padding:12px;background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;font-family:Cairo,Tahoma,Arial;font-size:14px;font-weight:800;border-bottom:3px solid #d4a017;margin-bottom:10px">🗓 ' + arDate + '</div>';
-  html = html.replace(/<body([^>]*)>/i, '<body$1>' + dateBanner);
+  // أدخل بانر التاريخ داخل .rprt-hdr (تحت العنوان مباشرة) علشان العنوان يفضل في الأول
+  var dateBannerInline = '<div class="rprt-date-banner" style="width:100%;direction:rtl;text-align:center;padding:6px 10px;background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;font-family:Cairo,Tahoma,Arial;font-size:12px;font-weight:800;border-radius:6px;margin-top:4px">🗓 ' + arDate + '</div>';
+  // لو فيه .rprt-hdr اضيف البانر داخله في النهاية، غير كده احطه في اول body
+  if(/class="[^"]*rprt-hdr[^"]*"/i.test(html)){
+    html = html.replace(/(<div[^>]*class="[^"]*rprt-hdr[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/i, function(m, open, inner, close){
+      return open + inner + dateBannerInline + close;
+    });
+  } else {
+    var fallbackBanner = '<div style="direction:rtl;text-align:center;padding:10px;background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;font-family:Cairo,Tahoma,Arial;font-size:14px;font-weight:800;border-bottom:3px solid #d4a017">🗓 ' + arDate + '</div>';
+    html = html.replace(/<body([^>]*)>/i, '<body$1>' + fallbackBanner);
+  }
 
   // ارسم الـHTML في iframe خفي علشان html2canvas
   var iframe = document.createElement("iframe");
