@@ -34557,6 +34557,333 @@ curShow(); setTimeout(curShow,800);
   body .cgx.cgm .cgx-draft .d-btns button{min-height:30px;padding:3px;font-size:12px;border-radius:8px}
 }
 </style>
+<script id="fa-import-script">
+/* ===================================================================
+   بطاقات الأصول — استيراد من Excel + قالب الاستيراد
+   - الحسابات الثلاثة (حساب الأصل / مجمع الإهلاك / مصروف الإهلاك) بتنزل تلقائي من ربط (نوع الأصل × الهيكل الإداري)
+     المسجّل في «شجرة أنواع الأصول» (fa_account_mappings) — نفس اللي بيستخدمه نموذج «أصل جديد».
+   - التسجيل بنفس دوال قاعدة البيانات: fa_register_new_asset (مسودة شراء) / fa_register_opening_asset (افتتاحي بدون قيد).
+   =================================================================== */
+(function(){
+"use strict";
+if(window.__faImportLoaded) return; window.__faImportLoaded=1;
+const E=v=>faEsc(v);
+const money=n=>(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const nz=s=>String(s==null?"":s).replace(/[\u064B-\u065F\u0670\u0640]/g,"").replace(/[أإآٱ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه").replace(/ؤ/g,"و").replace(/ئ/g,"ي").replace(/[^\u0621-\u064Aa-zA-Z0-9 ]/g," ").replace(/\s+/g," ").trim().toLowerCase();
+function dice(a,b){
+  a=nz(a).replace(/ /g,""); b=nz(b).replace(/ /g,"");
+  if(!a||!b) return 0; if(a===b) return 1; if(a.length<2||b.length<2) return 0;
+  const g=s=>{ const m=new Map(); for(let i=0;i<s.length-1;i++){ const k=s.substr(i,2); m.set(k,(m.get(k)||0)+1); } return m; };
+  const A=g(a),B=g(b); let n=0; A.forEach((v,k)=>{ if(B.has(k)) n+=Math.min(v,B.get(k)); });
+  return 2*n/(a.length+b.length-2);
+}
+const AD="٠١٢٣٤٥٦٧٨٩";
+function toNum(v){
+  if(typeof v==="number") return isFinite(v)?v:NaN;
+  let s=String(v==null?"":v).replace(/[٠-٩]/g,d=>AD.indexOf(d)).replace(/[,٬\s]/g,"").replace(/٫/g,".").replace(/%$/,"");
+  if(s==="") return NaN; const n=parseFloat(s); return isFinite(n)?n:NaN;
+}
+const pad=n=>("0"+n).slice(-2);
+function ymd(y,m,d){ return y+"-"+pad(m)+"-"+pad(d); }
+
+/* ---------- العناوين المقبولة لكل عمود ---------- */
+const ALIAS={
+  org:["الهيكل","الهيكل الاداري","الهيكل الإداري","الاداره","الادارة"],
+  orgCode:["كود الهيكل","كود الهيكل الاداري"],
+  catName:["نوع الاصل","نوع الأصل","النوع","نوع الاصل الثابت"],
+  catCode:["كود النوع","كود نوع الاصل","كود نوع الأصل"],
+  assetNo:["رقم الاصل","رقم الأصل","كود الاصل","كود الأصل"],
+  name:["البيان","اسم الاصل","اسم الأصل","الاسم"],
+  date:["تاريخ الشراء"],
+  ready:["تاريخ الجاهزيه","تاريخ الجاهزية","تاريخ التشغيل","تاريخ بدء الاهلاك"],
+  cost:["قيمه الشراء","قيمة الشراء","تكلفه الشراء","تكلفة الشراء","التكلفه","التكلفة","القيمه","قيمه الاصل"],
+  rate:["معدل الاهلاك","معدل الإهلاك","معدل الاهلاك %","نسبه الاهلاك"],
+  life:["العمر الانتاجي","العمر الإنتاجي","العمر الافتراضي","العمر بالسنوات"],
+  residual:["القيمه التخريديه","القيمة التخريدية","قيمه الخرده"],
+  accum:["استهلاك اول المده","استهلاك أول المدة","مجمع الاهلاك","مجمع اهلاك اول المده","اهلاك اول المده"],
+  counter:["الحساب المقابل","حساب السداد","الحساب الدائن"],
+  cc:["مركز التكلفه","مركز التكلفة","كود مركز التكلفه"]
+};
+const ROLE_OF={}; Object.keys(ALIAS).forEach(r=>ALIAS[r].forEach(h=>{ ROLE_OF[nz(h)]=r; }));
+const EXAMPLE_MARK="مثال - احذف هذا الصف";
+
+/* ---------- قراءة الخلايا (التاريخ يُقرأ من تنسيق الخلية لا من الرقم) ---------- */
+function cellInfo(ws,r,c){
+  const x=ws[XLSX.utils.encode_cell({r:r,c:c})];
+  if(!x||x.v===undefined||x.v===null||x.v==="") return {empty:true};
+  if(x.t==="d"&&x.v instanceof Date){ const d=x.v; return {v:d,isDate:true,ymd:ymd(d.getFullYear(),d.getMonth()+1,d.getDate())}; }
+  if(x.t==="n"){
+    let isD=false; try{ isD=!!(x.z&&XLSX.SSF.is_date(x.z)); }catch(e){}
+    if(isD){ const p=XLSX.SSF.parse_date_code(x.v); if(p) return {v:x.v,isDate:true,ymd:ymd(p.y,p.m,p.d)}; }
+    return {v:x.v,isDate:false,num:x.v};
+  }
+  const s=String(x.v).trim(); if(!s) return {empty:true};
+  let m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/); if(m) return {v:s,isDate:true,ymd:ymd(+m[1],+m[2],+m[3])};
+  m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})/); if(m) return {v:s,isDate:true,ymd:ymd(+m[3],+m[2],+m[1])};
+  return {v:s,isDate:false,text:s};
+}
+function parseSheet(ws){
+  const ref=ws["!ref"]; if(!ref) throw new Error("الشيت فاضي");
+  const rg=XLSX.utils.decode_range(ref);
+  // صف العناوين: أول صف (من أول 12) فيه 3 عناوين معروفة على الأقل
+  let hr=-1, heads=null;
+  for(let r=rg.s.r;r<=Math.min(rg.e.r,rg.s.r+11);r++){
+    const hs=[]; let hit=0;
+    for(let c=rg.s.c;c<=rg.e.c;c++){ const ci=cellInfo(ws,r,c); const t=ci.empty?"":String(ci.v!=null?ci.v:""); const role=ROLE_OF[nz(t)]||null; if(role) hit++; hs.push({c:c,role:role}); }
+    if(hit>=3){ hr=r; heads=hs; break; }
+  }
+  if(hr<0) throw new Error("مش لاقي صف العناوين — استخدم «قالب الاستيراد» أو تأكد من أسماء الأعمدة (الهيكل / نوع الأصل / البيان / تاريخ الشراء / معدل الإهلاك ...)");
+  // تحديد الأعمدة — وعمود «تاريخ الشراء» المكرر: التاريخ = اللي قيمه تواريخ، والتاني (أرقام) = قيمة الشراء
+  const col={}, dupDate=[];
+  heads.forEach(h=>{ if(!h.role) return; if(h.role==="date"){ dupDate.push(h.c); return; } if(col[h.role]==null) col[h.role]=h.c; });
+  const kindOf=c=>{ for(let r=hr+1;r<=rg.e.r;r++){ const ci=cellInfo(ws,r,c); if(!ci.empty) return ci.isDate?"d":(ci.num!=null||isFinite(toNum(ci.v))?"n":"t"); } return "t"; };
+  dupDate.forEach(c=>{ const k=kindOf(c); if(k==="d"&&col.date==null) col.date=c; else if(k==="n"&&col.cost==null) col.cost=c; else if(col.date==null) col.date=c; });
+  ["name","cost"].forEach(k=>{ if(col[k]==null) throw new Error("عمود ناقص في الشيت: "+(k==="name"?"البيان / اسم الأصل":"قيمة الشراء")); });
+  if(col.org==null&&col.orgCode==null) throw new Error("عمود ناقص في الشيت: الهيكل الإداري");
+  if(col.catName==null&&col.catCode==null) throw new Error("عمود ناقص في الشيت: نوع الأصل / كود النوع");
+  if(col.date==null) throw new Error("عمود ناقص في الشيت: تاريخ الشراء");
+  const g=(r,k)=>col[k]==null?{empty:true}:cellInfo(ws,r,col[k]);
+  const txt=(r,k)=>{ const x=g(r,k); if(x.empty) return ""; if(x.isDate) return x.ymd; return String(x.v).trim(); };
+  const rows=[];
+  for(let r=hr+1;r<=rg.e.r;r++){
+    const name=txt(r,"name"), cost=g(r,"cost");
+    const any=["org","orgCode","catName","catCode","name","cost","date"].some(k=>!g(r,k).empty);
+    if(!any) continue;
+    if(nz(name).indexOf(nz(EXAMPLE_MARK))===0) continue;
+    const dt=g(r,"date"), rd=g(r,"ready");
+    const num=k=>{ const x=g(r,k); return x.empty?NaN:(x.num!=null?x.num:toNum(x.v)); };
+    rows.push({
+      line:r+1, orgName:txt(r,"org"), orgCode:txt(r,"orgCode"), catName:txt(r,"catName"), catCode:txt(r,"catCode"),
+      assetNo:txt(r,"assetNo"), name:name, date:dt.empty?"":(dt.isDate?dt.ymd:""), dateRaw:dt.empty?"":String(dt.v),
+      ready:rd.empty?"":(rd.isDate?rd.ymd:""), cost:cost.empty?NaN:(cost.num!=null?cost.num:toNum(cost.v)),
+      rate:num("rate"), life:num("life"), residual:num("residual"), accum:num("accum"),
+      counter:txt(r,"counter"), cc:txt(r,"cc")
+    });
+  }
+  if(!rows.length) throw new Error("مفيش صفوف أصول تحت العناوين");
+  return rows;
+}
+
+/* ---------- المطابقة مع بيانات النظام ---------- */
+const accOf=id=>((typeof glState!=="undefined"&&glState&&glState.accounts)||[]).find(x=>String(x.id)===String(id));
+const accByCode=code=>{ const c=String(code||"").trim(); return c?((typeof glState!=="undefined"&&glState&&glState.accounts)||[]).find(x=>String(x.account_code).trim()===c):null; };
+const ccByCode=code=>{ const c=String(code||"").trim(); return c?((typeof glState!=="undefined"&&glState&&glState.centers)||[]).find(x=>String(x.center_code).trim()===c||nz(x.center_name)===nz(c)):null; };
+const leafCats=()=>{ const all=faData.categories||[], lf=all.filter(c=>c.leaf); return lf.length?lf:all; };
+const hasMap=id=>(faData.mappings||[]).some(m=>String(m.orgId)===String(id));
+function guessOrg(name,code){
+  const orgs=faData.orgs||[]; if(!orgs.length) return "";
+  if(code){ const o=orgs.find(x=>String(x.code).trim()===String(code).trim()); if(o) return o.id; }
+  let best=null,bs=0;
+  orgs.forEach(o=>{ let s=dice(name,o.name); if(s>0&&hasMap(o.id)) s+=0.02; if(s>bs){ bs=s; best=o; } });
+  return best&&bs>=0.6?best.id:"";
+}
+function guessCat(name,code){
+  const cs=leafCats(); if(code){ const c=cs.find(x=>String(x.code).trim()===String(code).trim()); if(c) return c.id; }
+  let best=null,bs=0; cs.forEach(c=>{ const s=dice(name,c.name); if(s>bs){ bs=s; best=c; } });
+  return best&&bs>=0.7?best.id:"";
+}
+/* المفتاح بالاسم أولاً: عمود «كود الهيكل» ساعات بيكون رقم الأصل مش كود هيكل حقيقي، فمينفعش نجمّع بيه */
+const orgKey=r=>r.orgName?("n:"+nz(r.orgName)):("c:"+r.orgCode);
+const catKey=r=>"n:"+nz(r.catName)+"|"+String(r.catCode||"");
+
+const IM={rows:[],orgMap:{},catMap:{},kindOpt:"auto",busy:false,file:"",done:null};
+
+function evalRow(r){
+  const out={status:"ok",msg:"",kind:"",m:null,cat:null,org:null,counter:null,cc:null,life:NaN,resid:NaN,ready:"",accum:0};
+  const err=m=>{ out.status="err"; out.msg=m; return out; };
+  const orgId=IM.orgMap[orgKey(r)], catId=IM.catMap[catKey(r)];
+  if(!r.name) return err("البيان / اسم الأصل فاضي");
+  if(!(r.cost>0)) return err("قيمة الشراء لازم تكون أكبر من صفر");
+  if(!r.date) return err("تاريخ الشراء ناقص أو مش مفهوم");
+  if(!catId) return err("نوع الأصل مش متطابق مع النظام — اختاره من الجدول اللي فوق");
+  if(!orgId) return err("الهيكل الإداري مش متطابق مع النظام — اختاره من الجدول اللي فوق");
+  out.cat=(faData.categories||[]).find(x=>String(x.id)===String(catId));
+  out.org=(faData.orgs||[]).find(x=>String(x.id)===String(orgId));
+  if(!out.cat||!out.cat.leaf) return err("نوع الأصل لازم يكون نوع نهائي");
+  out.m=(faData.mappings||[]).find(x=>String(x.catId)===String(catId)&&String(x.orgId)===String(orgId));
+  if(!out.m) return err("مفيش ربط حسابات للنوع «"+out.cat.name+"» مع الهيكل «"+out.org.name+"» — اربطه من «شجرة أنواع الأصول»");
+  out.life=r.life>0?r.life:(r.rate>0?Math.round(10000*100/r.rate)/10000:NaN);
+  if(!(out.life>0)) return err("معدل الإهلاك (أو العمر الإنتاجي) ناقص");
+  out.resid=isNaN(r.residual)?1:r.residual;
+  out.accum=isNaN(r.accum)?0:r.accum;
+  out.ready=r.ready||r.date;
+  if(out.resid>r.cost) return err("القيمة التخريدية أكبر من قيمة الشراء");
+  if(out.accum>r.cost) return err("استهلاك أول المدة أكبر من قيمة الشراء");
+  if(r.cc){ out.cc=ccByCode(r.cc); if(!out.cc) return err("مركز التكلفة «"+r.cc+"» غير موجود"); }
+  const hasCounter=!!String(r.counter||"").trim();
+  out.kind=IM.kindOpt==="new"?"new":IM.kindOpt==="opening"?"opening":((out.accum>0||!hasCounter)?"opening":"new");
+  if(out.kind==="new"){
+    if(out.accum>0) return err("الشراء الجديد ما بيقبلش استهلاك أول المدة — سجّله «افتتاحي»");
+    if(!hasCounter) return err("الحساب المقابل ناقص (مطلوب للشراء الجديد)");
+    out.counter=accByCode(r.counter); if(!out.counter) return err("الحساب المقابل «"+r.counter+"» مش موجود في دليل الحسابات");
+  }
+  const key=x=>[x.orgId,x.categoryId,nz(x.name),+(+x.cost).toFixed(2),String(x.purchaseDate||"").slice(0,10)].join("|");
+  const mine=key({orgId:orgId,categoryId:catId,name:r.name,cost:r.cost,purchaseDate:r.date});
+  if((faData.assets||[]).some(a=>key(a)===mine)){ out.status="dup"; out.msg="موجود قبل كده — هيتخطّى"; }
+  return out;
+}
+
+/* ---------- الواجهة ---------- */
+const sel=(id,cur,opts)=>`<select class="inp" data-fi="${id}" style="min-width:170px;max-width:100%">${opts.map(o=>`<option value="${E(o[0])}"${String(cur)===String(o[0])?" selected":""}>${E(o[1])}</option>`).join("")}</select>`;
+function mapPanel(){
+  const oo=[["","— اختر —"],...(faData.orgs||[]).map(o=>[o.id,o.code+" — "+o.name+(hasMap(o.id)?"":" (بدون ربط)")])];
+  const co=[["","— اختر —"],...leafCats().map(c=>[c.id,c.code+" — "+c.name])];
+  const cnt=(keyFn,k)=>IM.rows.filter(r=>keyFn(r)===k).length;
+  const oSeen={},cSeen={},oRows=[],cRows=[];
+  IM.rows.forEach(r=>{ const k=orgKey(r); if(!oSeen[k]){ oSeen[k]=1; oRows.push([k,r.orgName||r.orgCode||"—"]); } const c=catKey(r); if(!cSeen[c]){ cSeen[c]=1; cRows.push([c,(r.catCode?r.catCode+" — ":"")+(r.catName||"—")]); } });
+  const line=(kind,k,label,n,cur,opts)=>`<tr><td>${E(label)}</td><td class="n">${n}</td><td>${sel(kind+"|"+k,cur,opts)}</td><td>${cur?'<span style="color:var(--ok);font-weight:800">✓</span>':'<span style="color:var(--danger);font-weight:800">⚠ اختار</span>'}</td></tr>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px;margin:10px 0">
+   <div class="tbl-wrap"><table><thead><tr><th>الهيكل في الشيت</th><th>عدد</th><th>الهيكل في النظام</th><th></th></tr></thead><tbody>${oRows.map(([k,l])=>line("org",k,l,cnt(orgKey,k),IM.orgMap[k]||"",oo)).join("")}</tbody></table></div>
+   <div class="tbl-wrap"><table><thead><tr><th>نوع الأصل في الشيت</th><th>عدد</th><th>النوع في النظام</th><th></th></tr></thead><tbody>${cRows.map(([k,l])=>line("cat",k,l,cnt(catKey,k),IM.catMap[k]||"",co)).join("")}</tbody></table></div></div>`;
+}
+function acc(id){ const a=accOf(id); return a?`<span title="${E(a.account_name)}">${E(a.account_code)}</span>`:"—"; }
+function render(){
+  const box=document.getElementById("faImpOut"); if(!box) return;
+  if(!IM.rows.length){ box.innerHTML=""; setGo(); return; }
+  const ev=IM.rows.map(evalRow); IM.ev=ev;
+  const ok=ev.filter(x=>x.status==="ok").length, dup=ev.filter(x=>x.status==="dup").length, bad=ev.filter(x=>x.status==="err").length;
+  const body=IM.rows.map((r,i)=>{
+    const e=ev[i], m=e.m, col=e.status==="ok"?"var(--ok)":e.status==="dup"?"var(--warn,#b7791f)":"var(--danger)";
+    const st=e.status==="ok"?(e.kind==="new"?"جاهز — شراء جديد (مسودة)":"جاهز — افتتاحي"):E(e.msg);
+    return `<tr><td>${i+1}</td><td>${E(e.org?e.org.name:(r.orgName||"—"))}</td><td>${E(e.cat?e.cat.name:(r.catName||"—"))}</td><td>${E(r.name)}</td><td dir="ltr">${E(r.date||r.dateRaw||"—")}</td><td class="n num">${isNaN(r.cost)?"—":money(r.cost)}</td><td class="n">${isNaN(e.life)?"—":e.life}</td><td>${m?acc(m.assetId):"—"}</td><td>${m?acc(m.accumId):"—"}</td><td>${m?acc(m.expenseId):"—"}</td><td>${e.counter?acc(e.counter.id):(E(r.counter)||"—")}</td><td style="color:${col};font-weight:700;white-space:normal;min-width:150px">${st}</td></tr>`;
+  }).join("");
+  box.innerHTML=`<div style="margin:8px 0;font-weight:800">${E(IM.file)} — ${IM.rows.length} صف · <span style="color:var(--ok)">جاهز ${ok}</span> · <span style="color:var(--warn,#b7791f)">مكرر ${dup}</span> · <span style="color:var(--danger)">فيه مشكلة ${bad}</span></div>
+   ${mapPanel()}
+   <div class="tbl-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>م</th><th>الهيكل</th><th>النوع</th><th>البيان</th><th>تاريخ الشراء</th><th>قيمة الشراء</th><th>العمر (سنة)</th><th>حساب الأصل</th><th>مجمع الإهلاك</th><th>مصروف الإهلاك</th><th>المقابل</th><th>الحالة</th></tr></thead><tbody>${body}</tbody></table></div>
+   <p class="muted" style="margin-top:6px">الحسابات الثلاثة (الأصل / المجمع / المصروف) بتتسحب تلقائي من ربط النوع بالهيكل الإداري. رقم الأصل بيتولّد من النظام عند الحفظ.</p>`;
+  setGo();
+}
+function setGo(){
+  const b=document.getElementById("faImpGo"); if(!b) return;
+  const n=(IM.ev||[]).filter(x=>x.status==="ok").length;
+  b.disabled=IM.busy||!n; b.textContent=IM.busy?"جارٍ الرفع…":("⬆ رفع "+n+" أصل");
+}
+function bindOut(){
+  const box=document.getElementById("faImpOut"); if(!box||box._fiBound) return; box._fiBound=1;
+  box.addEventListener("change",e=>{
+    const t=e.target.closest&&e.target.closest("select[data-fi]"); if(!t) return;
+    const [kind,k]=[t.dataset.fi.split("|")[0],t.dataset.fi.slice(t.dataset.fi.indexOf("|")+1)];
+    (kind==="org"?IM.orgMap:IM.catMap)[k]=t.value; render();
+  });
+}
+function openModalWide(){
+  try{ closeModal(); }catch(e){}
+  openModal("⬆ استيراد أصول من Excel",`
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+      <label style="flex:1 1 260px">ملف Excel (.xlsx / .xls / .csv)<input class="inp" type="file" id="faImpFile" accept=".xlsx,.xls,.xlsm,.csv" style="width:100%"></label>
+      <label style="flex:0 0 250px">نوع التسجيل
+        <select class="inp" id="faImpKind" style="width:100%"><option value="auto">تلقائي حسب الشيت</option><option value="new">كله شراء جديد (مسودة بانتظار الاعتماد)</option><option value="opening">كله افتتاحي (بدون قيد)</option></select></label>
+      <button type="button" class="btn ghost" onclick="faImpTemplate()">⬇ قالب الاستيراد</button>
+    </div>
+    <p class="muted" style="margin:6px 0">التلقائي: لو الصف فيه استهلاك أول المدة ← افتتاحي، ولو فيه «الحساب المقابل» ← شراء جديد (مسودة بتتعتمد وتترحّل من أسفل الشاشة)، غير كده ← افتتاحي. القيمة التخريدية الافتراضية 1 جنيه وتاريخ الجاهزية الافتراضي = تاريخ الشراء.</p>
+    <div id="faImpMsg"></div><div id="faImpOut"></div>`,null);
+  const m=document.querySelector("#modalBackdrop .modal"); if(m){ m.style.width="1180px"; m.style.maxWidth="97vw"; }
+  const f=document.querySelector("#modalBackdrop .mfoot");
+  if(f) f.innerHTML='<button class="btn primary" id="faImpGo" onclick="faImpGo()" disabled>⬆ رفع</button><button class="btn ghost" onclick="closeModal()">إغلاق</button>';
+  document.getElementById("faImpFile").addEventListener("change",onFile);
+  document.getElementById("faImpKind").addEventListener("change",e=>{ IM.kindOpt=e.target.value; render(); });
+  bindOut();
+}
+function msg(t,bad){ const el=document.getElementById("faImpMsg"); if(el) el.innerHTML=t?`<div class="alert ${bad?"danger":""}" style="margin:6px 0">${t}</div>`:""; }
+async function onFile(ev){
+  const f=ev.target.files&&ev.target.files[0]; if(!f) return;
+  IM.rows=[];IM.ev=[];IM.done=null;IM.orgMap={};IM.catMap={};IM.file=f.name; msg("جارٍ قراءة الملف…"); render();
+  try{
+    if(typeof XLSX==="undefined") throw new Error("مكتبة Excel غير محمّلة — تأكد من الاتصال بالإنترنت");
+    if(!faDbReady&&typeof faDbLoad==="function") await faDbLoad();
+    if(!(faData.mappings||[]).length) throw new Error("مفيش ربط حسابات للأنواع والهياكل — اربطها الأول من «شجرة أنواع الأصول»");
+    const buf=await f.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array",cellNF:true});
+    let rows=null,lastErr=null;
+    for(const n of wb.SheetNames){ try{ rows=parseSheet(wb.Sheets[n]); if(rows) break; }catch(e){ lastErr=e; } }
+    if(!rows) throw lastErr||new Error("مفيش صفوف");
+    IM.rows=rows;
+    rows.forEach(r=>{ const ok=orgKey(r),ck=catKey(r); if(IM.orgMap[ok]==null) IM.orgMap[ok]=guessOrg(r.orgName,r.orgCode); if(IM.catMap[ck]==null) IM.catMap[ck]=guessCat(r.catName,r.catCode); });
+    msg(""); render();
+  }catch(e){ console.error(e); msg(E(e.message||e),true); IM.rows=[]; render(); }
+}
+async function go(){
+  if(IM.busy) return;
+  if(!faCan("add")) return toast("لا تملك صلاحية إضافة أصول","err");
+  const todo=IM.rows.map((r,i)=>({r:r,e:IM.ev[i]})).filter(x=>x.e&&x.e.status==="ok");
+  if(!todo.length) return;
+  let okc=0; const fails=[]; IM.busy=true; setGo();
+  for(let i=0;i<todo.length;i++){
+    const {r,e}=todo[i]; msg("جارٍ الرفع… "+(i+1)+" / "+todo.length);
+    try{
+      let res;
+      const base={p_category_id:e.cat.id,p_org_unit_id:e.org.id,p_asset_name:r.name,p_description:null,p_purchase_date:r.date,p_ready_date:e.ready,p_cost:r.cost,p_residual:e.resid,p_life:e.life,p_cost_center_id:e.cc?e.cc.id:null};
+      if(e.kind==="opening") res=await sb.rpc("fa_register_opening_asset",{p_category_id:base.p_category_id,p_org_unit_id:base.p_org_unit_id,p_asset_name:base.p_asset_name,p_description:null,p_purchase_date:base.p_purchase_date,p_ready_date:base.p_ready_date,p_cost:base.p_cost,p_opening_accum:e.accum,p_residual:base.p_residual,p_life:base.p_life,p_cost_center_id:base.p_cost_center_id});
+      else res=await sb.rpc("fa_register_new_asset",Object.assign({},base,{p_payment_method:"accounts",p_payment_account_id:e.counter.id,p_supplier_name:null,p_bank_code:null,p_safe_code:null,p_cheque_ref:null}));
+      if(res.error) throw res.error; okc++;
+    }catch(x){ fails.push({line:r.line,name:r.name,msg:faDbMsg(x)}); }
+  }
+  IM.busy=false;
+  try{ await faReloadDb(); }catch(x){ console.warn(x); }
+  IM.rows=[];IM.ev=[]; render();
+  msg(`<b>تم رفع ${okc} أصل</b>${fails.length?` — فشل ${fails.length}:<br>`+fails.map(f=>`صف ${f.line} (${E(f.name)}): ${E(f.msg)}`).join("<br>"):""}${okc?"<br>الأصول الجديدة اتسجلت «مسودة شراء» وبتتعتمد وتترحّل من جدول «مسودات الشراء بانتظار الاعتماد» أسفل الشاشة (الحساب الدائن متحدد من «الحساب المقابل»).":""}`,fails.length>0);
+  toast(fails.length?("اتسجّل "+okc+" وفشل "+fails.length):("تم رفع "+okc+" أصل"),fails.length?"err":"ok");
+  const fi=document.getElementById("faImpFile"); if(fi) fi.value="";
+  setGo();
+}
+
+/* ---------- قالب الاستيراد ---------- */
+function template(){
+  if(typeof XLSX==="undefined") return toast("مكتبة Excel غير محمّلة","err");
+  const H=["الهيكل الإداري","كود الهيكل","نوع الأصل","كود النوع","رقم الأصل","البيان","تاريخ الشراء","تاريخ الجاهزية","قيمة الشراء","معدل الإهلاك %","القيمة التخريدية","استهلاك أول المدة","الحساب المقابل","مركز التكلفة"];
+  const m0=(faData.mappings||[])[0]||{}, o0=(faData.orgs||[]).find(x=>String(x.id)===String(m0.orgId))||{}, c0=(faData.categories||[]).find(x=>String(x.id)===String(m0.catId))||{};
+  const today=new Date(), td=ymd(today.getFullYear(),today.getMonth()+1,today.getDate());
+  const ex=[o0.name||"الإدارة العامة",o0.code||"",c0.name||"أثاث ومفروشات",c0.code||"","",EXAMPLE_MARK+" — مكتب خشب",td,td,10000,25,1,0,"",""];
+  const wsA=XLSX.utils.aoa_to_sheet([H,ex]);
+  wsA["!cols"]=[22,12,22,10,14,34,14,14,14,14,14,16,18,14].map(w=>({wch:w}));
+  const guide=[["تعليمات رفع الأصول"],[""],
+    ["1) الأعمدة المطلوبة: الهيكل الإداري (أو كود الهيكل) · نوع الأصل (أو كود النوع) · البيان · تاريخ الشراء · قيمة الشراء · معدل الإهلاك %"],
+    ["2) الحسابات الثلاثة (حساب الأصل / مجمع الإهلاك / مصروف الإهلاك) بتنزل تلقائي من ربط النوع بالهيكل — ما تكتبهاش في الشيت"],
+    ["3) الحساب المقابل (كود الحساب من دليل الحسابات): مطلوب للشراء الجديد — هو الحساب الدائن في قيد الشراء"],
+    ["4) لو فيه استهلاك أول المدة > 0 الأصل بيتسجّل افتتاحي (بدون قيد). غير كده مع وجود حساب مقابل بيتسجّل شراء جديد (مسودة)"],
+    ["5) تاريخ الجاهزية اختياري (الافتراضي = تاريخ الشراء) · القيمة التخريدية اختيارية (الافتراضي 1 جنيه) · مركز التكلفة اختياري (كوده)"],
+    ["6) رقم الأصل اختياري ومش بيتستخدم — النظام بيولّده عند الحفظ"],
+    ["7) التاريخ بصيغة YYYY-MM-DD أو تاريخ Excel عادي"],
+    ["8) امسح صف المثال (البيان بيبدأ بـ «"+EXAMPLE_MARK+"») — وهو أصلاً بيتتجاهل عند الرفع"],
+    ["9) الشيت التالي «الهياكل والأنواع» فيه الأسماء والأكواد الصحيحة والحسابات المربوطة بكل نوع وهيكل"]];
+  const wsG=XLSX.utils.aoa_to_sheet(guide); wsG["!cols"]=[{wch:120}];
+  const refRows=[["كود الهيكل","الهيكل الإداري","كود النوع","نوع الأصل","حساب الأصل","مجمع الإهلاك","مصروف الإهلاك"]];
+  const al=id=>{ const a=accOf(id); return a?a.account_code+" — "+a.account_name:""; };
+  (faData.mappings||[]).forEach(m=>{ const o=(faData.orgs||[]).find(x=>String(x.id)===String(m.orgId))||{}, c=(faData.categories||[]).find(x=>String(x.id)===String(m.catId))||{}; refRows.push([o.code||"",o.name||"",c.code||"",c.name||"",al(m.assetId),al(m.accumId),al(m.expenseId)]); });
+  const wsR=XLSX.utils.aoa_to_sheet(refRows); wsR["!cols"]=[12,26,12,26,34,34,34].map(w=>({wch:w}));
+  const wb=XLSX.utils.book_new(); wb.Workbook={Views:[{RTL:true}]};
+  XLSX.utils.book_append_sheet(wb,wsA,"الأصول"); XLSX.utils.book_append_sheet(wb,wsG,"تعليمات"); XLSX.utils.book_append_sheet(wb,wsR,"الهياكل والأنواع");
+  XLSX.writeFile(wb,"قالب_استيراد_الأصول.xlsx");
+}
+
+window.faImpOpen=function(){
+  if(!faCan("add")) return toast("لا تملك صلاحية إضافة أصول","err");
+  IM.rows=[];IM.ev=[];IM.orgMap={};IM.catMap={};IM.kindOpt="auto";IM.file="";
+  openModalWide();
+};
+window.faImpTemplate=template;
+window.faImpGo=go;
+window.__faImp={nz:nz,dice:dice,parseSheet:parseSheet,toNum:toNum,IM:IM,evalRow:evalRow,guessOrg:guessOrg,guessCat:guessCat,orgKey:orgKey,catKey:catKey};
+
+/* ---------- أزرار الشاشة ---------- */
+function addBtns(){
+  if(document.getElementById("faImpBtns")) return;
+  const html='<span id="faImpBtns" style="display:inline-flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn ghost" onclick="faImpOpen()" title="استيراد أصول من ملف Excel">⬆ استيراد من Excel</button><button type="button" class="btn ghost" onclick="faImpTemplate()" title="تحميل قالب الاستيراد">⬇ قالب الاستيراد</button></span>';
+  const top=document.getElementById("faNewTop");
+  if(top){ top.insertAdjacentHTML("beforeend",html); return; }
+  const tx=document.querySelector("#fa3Assets .tx-actions"); if(tx) tx.insertAdjacentHTML("afterbegin",html);
+}
+const prevRender=faRender;
+faRender=function(){
+  const r=prevRender.apply(this,arguments);
+  try{ if(faTab==="assets") addBtns(); }catch(e){ console.error(e); }
+  return r;
+};
+if(typeof window.fa3ClearF==="function"){ const c=window.fa3ClearF; window.fa3ClearF=function(){ const r=c.apply(this,arguments); try{ addBtns(); }catch(e){} return r; }; }
+if(faTab==="assets"&&document.getElementById("faBody")){ try{ faRender(); }catch(e){} }
+})();
+
+</script>
 <script id="igMobileMenusJs">
 /* فتح/قفل قوائم الشريط العلوي على الموبايل بالضغط */
 (function(){
