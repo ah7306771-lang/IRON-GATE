@@ -6661,7 +6661,132 @@ function glCollapseAllAccounts(){glState.accounts.forEach(a=>{if(glState.account
 function glSearchAccounts(){const q=prompt('ابحث بكود الحساب أو اسمه:');if(q===null)return;const a=glState.accounts.find(x=>String(x.account_code).includes(q.trim())||String(x.account_name).includes(q.trim()));if(!a)return toast('لا يوجد حساب مطابق','err');let p=a;while(p.parent_id){glCollapsedNodes.delete(p.parent_id);p=glState.accounts.find(x=>x.id===p.parent_id)||{};if(!p.id)break;}glSelectedAccountId=a.id;glRender();setTimeout(()=>document.querySelector(`[onclick="glSelectAccount('${a.id}')"]`)?.scrollIntoView({behavior:'smooth',block:'center'}),50);}
 function glRenderCenters(){const rows=glState.centers.map(a=>`<tr><td>${a.dimension_no}</td><td dir="ltr">${glEsc(a.center_code)}</td><td>${glEsc(a.center_name)}</td><td>${a.is_group?"تجميعي":"تفصيلي"}</td><td>${a.is_active?"نشط":"موقوف"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddCenter()">إضافة مركز تكلفة</button>`:""}${glTable(["البُعد","الكود","الاسم","التصنيف","الحالة"],rows)}`;}
 function glRenderYears(){const yr=glState.years.map(y=>`<tr><td>${glEsc(y.year_code)}</td><td>${glEsc(y.year_name)}</td><td>${y.start_date}</td><td>${y.end_date}</td><td>${glEsc(y.status)}</td></tr>`).join("");const pr=glState.periods.map(p=>`<tr><td>${glEsc((glState.years.find(y=>y.id===p.fiscal_year_id)||{}).year_code||"")}</td><td>${p.period_no}</td><td>${glEsc(p.period_name)}</td><td>${p.start_date}</td><td>${p.end_date}</td><td>${glEsc(p.status)}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddYear()">إضافة سنة مالية</button> <button class="btn" onclick="glAddPeriod()">إضافة فترة</button>`:""}<h3>السنوات المالية</h3>${glTable(["الكود","الاسم","من","إلى","الحالة"],yr)}<h3 style="margin-top:18px">الفترات</h3>${glTable(["السنة","رقم","اسم الفترة","من","إلى","الحالة"],pr)}`;}
-function glRenderJournals(){const rows=glState.journals.map(j=>`<tr><td dir="ltr">${glEsc(j.journal_code)}</td><td>${glEsc(j.journal_name)}</td><td>${glEsc(j.description)}</td><td>${j.is_active?"نشطة":"موقوفة"}</td></tr>`).join("");return `${glCan("manage")?`<button class="btn primary" onclick="glAddJournal()">إضافة يومية</button>`:""}${glTable(["الكود","اسم اليومية","الوصف","الحالة"],rows)}`;}
+function glRenderJournals(){
+  const canM=glCan("manage");
+  const rows=glState.journals.map(j=>{
+    const actions = canM
+      ? `<button class="btn ghost sm" style="font-size:11.5px;padding:4px 10px" onclick="glEditJournal('${glEsc(String(j.id))}')">✏️ تعديل</button>
+         <button class="btn ghost sm" style="font-size:11.5px;padding:4px 10px;color:${j.is_active?'#92400e':'#166534'};border-color:${j.is_active?'#fde68a':'#bbf7d0'}" onclick="glToggleJournal('${glEsc(String(j.id))}')">${j.is_active?'⏸ إيقاف':'▶ تفعيل'}</button>
+         <button class="btn ghost sm" style="font-size:11.5px;padding:4px 10px;color:#b91c1c;border-color:#fecaca" onclick="glDeleteJournal('${glEsc(String(j.id))}')">🗑 حذف</button>`
+      : '';
+    const stChip = j.is_active
+      ? '<span style="background:#dcfce7;color:#166534;padding:2px 10px;border-radius:999px;font-weight:800;font-size:11px">نشطة ✓</span>'
+      : '<span style="background:#fee2e2;color:#b91c1c;padding:2px 10px;border-radius:999px;font-weight:800;font-size:11px">موقوفة</span>';
+    return `<tr><td dir="ltr" style="font-weight:800;color:#92400e">${glEsc(j.journal_code)}</td><td style="font-weight:700">${glEsc(j.journal_name)}</td><td style="color:#64748b">${glEsc(j.description||'—')}</td><td>${stChip}</td>${canM?`<td style="white-space:nowrap">${actions}</td>`:''}</tr>`;
+  }).join("");
+  const headers = canM ? ["الكود","اسم اليومية","الوصف","الحالة","إجراءات"] : ["الكود","اسم اليومية","الوصف","الحالة"];
+  return `${canM?`<button class="btn primary" onclick="glAddJournal()" style="margin-bottom:10px">➕ إضافة يومية</button>`:""}${glTable(headers,rows)}`;
+}
+
+// تعديل يومية
+async function glEditJournal(id){
+  if(!glCan("manage")) return toast("لا تملك صلاحية التعديل","err");
+  const j=(glState.journals||[]).find(x=>String(x.id)===String(id));
+  if(!j) return toast("اليومية غير موجودة","err");
+  const res = await glJournalEditDialog(j);
+  if(!res) return;
+  try{
+    const payload={};
+    if(res.code!==j.journal_code) payload.journal_code = res.code;
+    if(res.name!==j.journal_name) payload.journal_name = res.name;
+    if((res.desc||"")!==(j.description||"")) payload.description = res.desc || null;
+    if(res.is_active!==j.is_active) payload.is_active = res.is_active;
+    if(!Object.keys(payload).length){ toast("مفيش تغييرات","err"); return; }
+    const r=await sb.from("gl_journals").update(payload).eq("id",id);
+    if(r.error) throw r.error;
+    toast("تم تحديث اليومية","ok");
+    await glLoad();
+  }catch(e){
+    toast("تعذر التحديث: "+(e.message||e),"err");
+  }
+}
+
+// تفعيل/إيقاف يومية
+async function glToggleJournal(id){
+  if(!glCan("manage")) return toast("لا تملك صلاحية التعديل","err");
+  const j=(glState.journals||[]).find(x=>String(x.id)===String(id));
+  if(!j) return;
+  try{
+    const r=await sb.from("gl_journals").update({is_active: !j.is_active}).eq("id",id);
+    if(r.error) throw r.error;
+    toast(j.is_active?"تم إيقاف اليومية":"تم تفعيل اليومية","ok");
+    await glLoad();
+  }catch(e){
+    toast("تعذر التحديث: "+(e.message||e),"err");
+  }
+}
+
+// حذف يومية (مع فحص إنها مش مستخدمة)
+async function glDeleteJournal(id){
+  if(!glCan("manage")) return toast("لا تملك صلاحية الحذف","err");
+  const j=(glState.journals||[]).find(x=>String(x.id)===String(id));
+  if(!j) return toast("اليومية غير موجودة","err");
+  // فحص إن مفيش قيود عليها
+  try{
+    const cnt=await sb.from("gl_entries").select("id",{count:"exact",head:true}).eq("journal_id",id);
+    if(cnt.error) throw cnt.error;
+    const n = cnt.count||0;
+    if(n>0){
+      return toast("⛔ مش ممكن تحذف اليومية — عليها "+n+" قيد. تقدر توقّفها بدل الحذف.","err");
+    }
+  }catch(e){
+    return toast("تعذر فحص القيود: "+(e.message||e),"err");
+  }
+  const ok=await askConfirm(`حذف اليومية "${j.journal_code} — ${j.journal_name}" نهائياً؟\n\nده إجراء لا يمكن التراجع عنه.`,{title:"حذف يومية",ok:"نعم، احذف",danger:true,cancel:"إلغاء"});
+  if(!ok) return;
+  try{
+    const r=await sb.from("gl_journals").delete().eq("id",id);
+    if(r.error) throw r.error;
+    toast("تم حذف اليومية","ok");
+    await glLoad();
+  }catch(e){
+    toast("تعذر الحذف: "+(e.message||e),"err");
+  }
+}
+
+// ديالوج تعديل يومية
+function glJournalEditDialog(j){
+  return new Promise(function(resolve){
+    const ov=document.createElement("div");
+    ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999999;display:flex;align-items:center;justify-content:center;padding:18px";
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;direction:rtl;font-family:Cairo,Tahoma,Arial;box-shadow:0 10px 50px rgba(0,0,0,.4);overflow:hidden">'+
+      '<div style="background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;padding:16px 20px;border-bottom:3px solid #d4a017">'+
+        '<h3 style="margin:0;font-size:16px;font-weight:900">✏️ تعديل يومية</h3>'+
+      '</div>'+
+      '<div style="padding:18px 20px;display:grid;gap:12px">'+
+        '<div><label style="font-weight:800;font-size:12px;color:#0a1a35;display:block;margin-bottom:5px">كود اليومية</label>'+
+          '<input id="glJE_code" class="inp" style="width:100%;font-family:monospace;direction:ltr;text-align:left;font-weight:800" value="'+glEsc(j.journal_code||'')+'"></div>'+
+        '<div><label style="font-weight:800;font-size:12px;color:#0a1a35;display:block;margin-bottom:5px">اسم اليومية</label>'+
+          '<input id="glJE_name" class="inp" style="width:100%;font-weight:700" value="'+glEsc(j.journal_name||'')+'"></div>'+
+        '<div><label style="font-weight:800;font-size:12px;color:#0a1a35;display:block;margin-bottom:5px">الوصف (اختياري)</label>'+
+          '<textarea id="glJE_desc" class="inp" rows="2" style="width:100%">'+glEsc(j.description||'')+'</textarea></div>'+
+        '<div><label style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:12.5px;color:#0a1a35;cursor:pointer;padding:8px 12px;background:#fffbea;border:1.5px solid #fde68a;border-radius:8px">'+
+          '<input type="checkbox" id="glJE_act" '+(j.is_active?'checked':'')+' style="width:16px;height:16px;accent-color:#d4a017"> اليومية نشطة</label></div>'+
+      '</div>'+
+      '<div style="padding:14px 20px;background:#f8fafc;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end">'+
+        '<button data-act="cancel" class="btn ghost">إلغاء</button>'+
+        '<button data-act="ok" class="btn" style="background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;font-weight:900">💾 حفظ التعديلات</button>'+
+      '</div>'+
+    '</div>';
+    document.body.appendChild(ov);
+    function done(r){ try{ document.body.removeChild(ov); }catch(_){} resolve(r); }
+    ov.addEventListener("click",function(e){
+      if(e.target===ov){ done(null); return; }
+      const act=e.target.getAttribute&&e.target.getAttribute("data-act");
+      if(act==="cancel") done(null);
+      else if(act==="ok"){
+        const code=(document.getElementById("glJE_code").value||"").trim();
+        const name=(document.getElementById("glJE_name").value||"").trim();
+        const desc=(document.getElementById("glJE_desc").value||"").trim();
+        const act2=document.getElementById("glJE_act").checked;
+        if(!code){ toast("ادخل كود اليومية","err"); return; }
+        if(!name){ toast("ادخل اسم اليومية","err"); return; }
+        done({code:code, name:name, desc:desc, is_active:act2});
+      }
+    });
+    setTimeout(function(){ const n=document.getElementById("glJE_name"); if(n){ n.focus(); n.select(); } }, 60);
+  });
+}
 /* ============================================================
    📥 استيراد قيود من Excel
    أعمدة الملف (بالترتيب أو بالاسم):
@@ -7044,7 +7169,17 @@ async function glBulkPost(){
     ? list.filter(e=>sel[e.id]&&e.status==="draft")
     : list.filter(e=>e.status==="draft");
   if(!targets.length) return toast("مفيش مسودات للترحيل","err");
-  const okc=await askConfirm(`هيتم ترحيل ${targets.length} قيد من المسودات. بعد الترحيل لا يُسمح بالتعديل أو الحذف. هل تريد المتابعة؟`,{title:"ترحيل مجمع",ok:"نعم، رحّل",cancel:"رجوع"});
+
+  // اختار اليومية الهدف قبل الترحيل
+  const pick = await glBulkPickJournal(targets);
+  if(!pick) return; // المستخدم ألغى
+  const targetJournalId = pick.journalId; // null = خلي كل قيد على يوميته الأصلية
+  const jName = targetJournalId ? (function(){
+    const jj=(glState.journals||[]).find(x=>String(x.id)===String(targetJournalId));
+    return jj ? (jj.journal_code+" — "+(jj.journal_name||"")) : "اليومية المختارة";
+  })() : "اليومية الأصلية لكل قيد";
+
+  const okc=await askConfirm(`هيتم ترحيل ${targets.length} قيد من المسودات على: \n\n📘 ${jName}\n\nبعد الترحيل لا يُسمح بالتعديل أو الحذف. هل تريد المتابعة؟`,{title:"ترحيل مجمع",ok:"نعم، رحّل",cancel:"رجوع"});
   if(!okc) return;
   B.busy=true; glRender();
   let okN=0, failN=0, errors=[];
@@ -7053,6 +7188,11 @@ async function glBulkPost(){
     const e=targets[i]; B.prog=`ترحيل ${i+1} / ${targets.length} — ${e.entry_no||""}`;
     const ep=pe(); if(ep) ep.textContent=B.prog;
     try{
+      // لو المستخدم اختار يومية جديدة، نحدث القيد الأول
+      if(targetJournalId && String(e.journal_id) !== String(targetJournalId)){
+        const upd=await sb.from("gl_entries").update({journal_id: targetJournalId}).eq("id", e.id).eq("status","draft");
+        if(upd.error) throw new Error("تعذر تغيير اليومية: "+upd.error.message);
+      }
       const r=await sb.rpc("gl_post_entry_authorized",{p_entry_id:e.id});
       if(r.error) throw r.error;
       // تأكد إن القيد اتحدث فعلاً لـposted
@@ -7066,6 +7206,58 @@ async function glBulkPost(){
   const summary=`انتهى الترحيل — تم ${okN} / فشل ${failN}`;
   toast(summary, failN?"err":"ok");
   if(failN){ try{ _igDialog({title:"أخطاء في الترحيل", msg:summary+"\n\n"+errors.slice(0,10).map(x=>(x.entryNo||"؟")+" — "+x.msg).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""), ok:"حسنًا",single:true}); }catch(_){} }
+}
+
+// ديالوج اختيار اليومية قبل الترحيل المجمع
+function glBulkPickJournal(targets){
+  return new Promise(function(resolve){
+    const journals=(glState.journals||[]).filter(j=>j.is_active);
+    if(!journals.length){ resolve({journalId:null}); return; }
+    // احسب اليوميات اللي القيود دلوقتي عليها (لعرضها كاختيار سريع)
+    const curByJ={};
+    targets.forEach(function(e){ const k=String(e.journal_id||""); curByJ[k]=(curByJ[k]||0)+1; });
+    const curKeys=Object.keys(curByJ).filter(Boolean);
+    // اختيار افتراضي: لو كل القيود على نفس اليومية، نقترحها; غير كده أول يومية نشطة
+    let defaultId = curKeys.length===1 ? curKeys[0] : String(journals[0].id);
+    const opts = journals.map(function(j){
+      const cnt = curByJ[String(j.id)]||0;
+      return '<option value="'+glEsc(String(j.id))+'" '+(String(j.id)===defaultId?'selected':'')+'>'+glEsc(j.journal_code)+' — '+glEsc(j.journal_name||'')+(cnt?' ('+cnt+' قيد حالياً)':'')+'</option>';
+    }).join("");
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999999;display:flex;align-items:center;justify-content:center;padding:18px";
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;direction:rtl;font-family:Cairo,Tahoma,Arial;box-shadow:0 10px 50px rgba(0,0,0,.4);overflow:hidden">'+
+      '<div style="background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;padding:16px 20px;border-bottom:3px solid #d4a017">'+
+        '<h3 style="margin:0;font-size:16px;font-weight:900">📘 اختار اليومية اللي هترحل عليها</h3>'+
+        '<p style="margin:6px 0 0;font-size:12px;color:#fde68a;font-weight:600">عدد القيود: '+targets.length+' قيد</p>'+
+      '</div>'+
+      '<div style="padding:18px 20px">'+
+        '<label style="font-weight:800;font-size:12.5px;color:#0a1a35;display:block;margin-bottom:6px">اليومية الهدف</label>'+
+        '<select id="glBulkJPick" class="inp" style="width:100%;font-weight:700">'+opts+'</select>'+
+        '<div style="margin-top:12px;padding:10px;background:#fffbea;border:1px dashed #d4a017;border-radius:8px;font-size:11.5px;color:#92400e;line-height:1.7">'+
+          '💡 لو اخترت يومية غير اللي القيد عليها حالياً، البرنامج هيحدّث القيد المسودة ويرحلها على اليومية الجديدة. '+
+          '<b>«خلي كل قيد على يوميته الأصلية»</b> يرحل كل قيد زي ما هو.'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:14px 20px;background:#f8fafc;border-top:1px solid #e5e7eb;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button data-act="cancel" class="btn ghost" style="font-weight:700">إلغاء</button>'+
+        '<button data-act="keep" class="btn ghost" style="font-weight:700;background:#f3f4f6">🔁 خلي كل قيد على يوميته الأصلية</button>'+
+        '<button data-act="ok" class="btn" style="background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;font-weight:900">✓ تأكيد وترحيل</button>'+
+      '</div>'+
+    '</div>';
+    document.body.appendChild(ov);
+    function done(result){ try{ document.body.removeChild(ov); }catch(_){} resolve(result); }
+    ov.addEventListener("click", function(e){
+      if(e.target === ov){ done(null); return; }
+      const act = e.target.getAttribute && e.target.getAttribute("data-act");
+      if(!act) return;
+      if(act === "cancel") done(null);
+      else if(act === "keep") done({journalId:null});
+      else if(act === "ok"){
+        const sel = document.getElementById("glBulkJPick");
+        done({journalId: sel ? sel.value : null});
+      }
+    });
+  });
 }
 
 async function glBulkUnpost(){
@@ -12547,6 +12739,78 @@ function viewSettings(){
             <button type="button" class="btn ghost" onclick="tgCfgTest()">📤 اختبار إرسال</button>
           </div>
           <div id="tgCfgStatus" style="margin-top:10px;min-height:20px;font-size:12.5px"></div>
+
+          <!-- 📊 قائمة التقارير اللي بتترسل -->
+          <div style="margin-top:18px;background:#f0f9ff;border:2px solid #0088cc;border-radius:11px;padding:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <h4 style="margin:0;color:#0a1a35;font-size:14px">📊 التقارير المتاحة للإرسال</h4>
+              <button type="button" class="btn" id="tgSendAllBtn" onclick="tgSendAllReports()" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;font-weight:800">🚀 ارسل الكل دفعة واحدة</button>
+            </div>
+            <div id="tgReportsList" style="display:grid;gap:7px"></div>
+            <div id="tgSendAllStatus" style="margin-top:10px;min-height:18px;font-size:12px;color:#475569"></div>
+          </div>
+
+          <!-- 🧪 تقارير مخصصة (SQL Pro) -->
+          <div style="margin-top:18px;background:#fef3c7;border:2px dashed #d4a017;border-radius:11px;padding:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <h4 style="margin:0;color:#7a3e00;font-size:14px">🧪 صمّم تقرير / اشعار جديد (SQL Pro)</h4>
+              <button type="button" class="btn" onclick="tgCustomOpen()" style="background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;font-weight:800">➕ تقرير جديد</button>
+            </div>
+            <div style="font-size:11.5px;color:#7a3e00;margin-bottom:10px;line-height:1.7">
+              هنا بتصمم تقرير بنفسك بـSELECT من قاعدة البيانات، وبتتحكم في العنوان والأعمدة والـemoji والـKPIs.
+              التقارير اللي بتصممها بتظهر في القائمة فوق مع الزرار "ارسل حالياً" وكمان في "ارسل الكل".
+              <b>مسموح SELECT بس</b> — أي UPDATE/DELETE/INSERT مرفوض.
+            </div>
+            <div id="tgCustomList" style="display:grid;gap:7px"></div>
+          </div>
+
+          <!-- Modal: تصميم/تعديل تقرير مخصص -->
+          <div id="tgCustomModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999998;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+            <div style="background:#fff;border-radius:14px;padding:22px;max-width:760px;width:100%;direction:rtl;font-family:Cairo,Tahoma,Arial;margin:auto;box-shadow:0 10px 50px rgba(0,0,0,.4)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:2px solid #d4a017;padding-bottom:10px">
+                <h3 id="tgCustomModalTitle" style="margin:0;color:#0a1a35;font-size:16px">➕ تقرير جديد</h3>
+                <button type="button" onclick="tgCustomClose()" class="btn ghost sm" style="font-size:18px">✕</button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                <div>
+                  <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">اسم التقرير</label>
+                  <input type="text" id="tgcName" class="inp" placeholder="مثال: أكبر 10 عملاء عليهم مستحقات">
+                </div>
+                <div>
+                  <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">Emoji / أيقونة</label>
+                  <input type="text" id="tgcEmoji" class="inp" placeholder="💰" value="📊" maxlength="4">
+                </div>
+              </div>
+              <div style="margin-bottom:10px">
+                <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">عنوان بالإنجليزي (اختياري — بيظهر تحت العنوان الرئيسي)</label>
+                <input type="text" id="tgcTitleEn" class="inp" placeholder="TOP CUSTOMERS" style="font-family:monospace">
+              </div>
+              <div style="margin-bottom:10px">
+                <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">نوع الإرسال</label>
+                <select id="tgcKind" class="inp" onchange="tgCustomToggleKind()">
+                  <option value="pdf">📄 تقرير PDF (جدول كامل)</option>
+                  <option value="text">💬 رسالة نصية (template لكل صف)</option>
+                </select>
+              </div>
+              <div style="margin-bottom:10px">
+                <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">SQL Query <span style="color:#b91c1c;font-weight:700">(SELECT فقط)</span></label>
+                <textarea id="tgcSql" class="inp" rows="6" placeholder="SELECT name, balance FROM clients WHERE balance > 0 ORDER BY balance DESC LIMIT 10" style="font-family:monospace;direction:ltr;text-align:left;font-size:12px"></textarea>
+                <div style="font-size:10.5px;color:#6b7280;margin-top:3px">ممنوع: UPDATE · DELETE · INSERT · DROP · ALTER · CREATE · TRUNCATE</div>
+              </div>
+              <div id="tgcTextOpts" style="display:none;margin-bottom:10px">
+                <label style="font-weight:800;font-size:11.5px;display:block;margin-bottom:4px">Template الرسالة (استخدم <code>{{column_name}}</code>)</label>
+                <textarea id="tgcTemplate" class="inp" rows="3" placeholder="📌 {{name}} — {{balance}} ج.م" style="font-family:monospace;font-size:12px"></textarea>
+                <div style="font-size:10.5px;color:#6b7280;margin-top:3px">فلاتر: <code>{{amount|number}}</code> للأرقام · <code>{{date|date}}</code> للتاريخ</div>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;justify-content:flex-end">
+                <button type="button" class="btn ghost" onclick="tgCustomClose()">إلغاء</button>
+                <button type="button" class="btn" onclick="tgCustomTest()" style="background:#f3f4f6">🧪 اختبار (معاينة)</button>
+                <button type="button" class="btn" onclick="tgCustomSave()" style="background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;font-weight:800">💾 حفظ</button>
+              </div>
+              <div id="tgcStatus" style="margin-top:10px;min-height:20px;font-size:12px"></div>
+              <pre id="tgcPreview" style="display:none;margin-top:10px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:10px;max-height:240px;overflow:auto;font-size:11px;direction:ltr;text-align:left;white-space:pre-wrap"></pre>
+            </div>
+          </div>
 
           <details style="margin-top:14px">
             <summary style="cursor:pointer;font-weight:700;color:#0088cc;font-size:12.5px">ℹ️ خطوات إنشاء بوت وجروب تيليجرام (اضغط)</summary>
@@ -22913,6 +23177,16 @@ async function openMfaSetup(){
     }
     return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>'+title+'</title></head><body>'+tableHtml+'</body></html>';
   }
+  // اكشف الدوال اللي محتاجينها من برا (شاشة إعدادات التيليجرام)
+  try{
+    window.openR = openR;
+    window.closeR = closeR;
+    window.qsGenericPdf = qsGenericPdf;
+    window.qsiPdfHtml = typeof qsiPdfHtml === "function" ? qsiPdfHtml : null;
+    window.qsiFiltered = typeof qsiFiltered === "function" ? qsiFiltered : null;
+    window.qsPartiesSectionPdf = qsPartiesSectionPdf;
+    window.REPORTS = REPORTS;
+  }catch(_){}
 })();
 
 /* ============================================================
@@ -23008,7 +23282,7 @@ async function tgSendReportPdf(html, title){
       var fd = new FormData();
       fd.append("chat_id", chat.chat_id);
       fd.append("document", pdfBlob, fileName);
-      fd.append("caption", "📊 *" + (title || "تقرير") + "*\n🗓 " + arDate + "\n\n_IRON GATE SUPPLIES — h²m+ ERP Systems_");
+      fd.append("caption", "📊 *" + (title || "تقرير") + "*\n🗓 " + arDate);
       fd.append("parse_mode", "Markdown");
       var r = await fetch("https://api.telegram.org/bot" + cfg.bot_token + "/sendDocument", {method:"POST", body:fd});
       var j = await r.json();
@@ -23083,18 +23357,412 @@ function tgCfgRender(){
   var chats = window.tgCfg.chats || [];
   if(!chats.length){
     box.innerHTML = '<div class="empty" style="padding:14px;text-align:center;color:#64748b;border:1px dashed #cbd5e1;border-radius:9px"><p>مفيش جروبات مضافة — اضغط "➕ إضافة جروب" تحت</p></div>';
-    return;
+  } else {
+    var rows = chats.map(function(c, idx){
+      return '<div style="display:grid;grid-template-columns:auto 1fr 1.3fr auto;gap:8px;align-items:center;padding:10px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px">'+
+        '<input type="checkbox" '+(c.is_active?'checked':'')+' onchange="tgCfgField('+idx+',\'is_active\',this.checked)" title="تفعيل">'+
+        '<input type="text" value="'+escapeAttr(c.name||'')+'" placeholder="اسم الجروب (مثل: الإدارة)" class="inp" oninput="tgCfgField('+idx+',\'name\',this.value)">'+
+        '<input type="text" value="'+escapeAttr(c.chat_id||'')+'" placeholder="Chat ID (مثل: -100123456)" class="inp" style="font-family:monospace" oninput="tgCfgField('+idx+',\'chat_id\',this.value)">'+
+        '<button type="button" class="btn ghost sm" onclick="tgCfgDel('+idx+')" style="color:#b91c1c;border-color:#fecaca" title="حذف">🗑</button>'+
+      '</div>';
+    }).join("");
+    box.innerHTML = rows;
   }
-  var rows = chats.map(function(c, idx){
-    return '<div style="display:grid;grid-template-columns:auto 1fr 1.3fr auto;gap:8px;align-items:center;padding:10px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px">'+
-      '<input type="checkbox" '+(c.is_active?'checked':'')+' onchange="tgCfgField('+idx+',\'is_active\',this.checked)" title="تفعيل">'+
-      '<input type="text" value="'+escapeAttr(c.name||'')+'" placeholder="اسم الجروب (مثل: الإدارة)" class="inp" oninput="tgCfgField('+idx+',\'name\',this.value)">'+
-      '<input type="text" value="'+escapeAttr(c.chat_id||'')+'" placeholder="Chat ID (مثل: -100123456)" class="inp" style="font-family:monospace" oninput="tgCfgField('+idx+',\'chat_id\',this.value)">'+
-      '<button type="button" class="btn ghost sm" onclick="tgCfgDel('+idx+')" style="color:#b91c1c;border-color:#fecaca" title="حذف">🗑</button>'+
+  // رندر قائمة التقارير + المخصصة
+  tgRenderReportsList();
+  if(typeof tgCustomRenderList === "function") tgCustomRenderList();
+}
+
+/* ==========================================================
+   📊 قائمة التقارير + ارسل الكل
+========================================================== */
+function tgReportsCatalog(){
+  var built = [
+    {id:"loginChecksBtn",          label:"🧾 كل الشيكات (اوراق القبض)", emoji:"🧾"},
+    {id:"loginChecksAgainstUsBtn", label:"📝 الشيكات الصادرة علينا (اوراق الدفع)", emoji:"📝"},
+    {id:"loginPartiesClients",     label:"🧑‍💼 أرصدة العملاء",        emoji:"🧑‍💼", parties:"clients"},
+    {id:"loginPartiesSuppliers",   label:"🏭 أرصدة الموردين",          emoji:"🏭",    parties:"suppliers"},
+    {id:"loginOverdueBtn",         label:"📉 اجمالي المتأخرات",         emoji:"📉"},
+    {id:"loginInstallmentsBtn",    label:"💳 الأقساط والمستحقات",        emoji:"💳"},
+    {id:"loginLastPricesBtn",      label:"🏷 اخر سعر شراء وبيع",         emoji:"🏷"},
+    {id:"loginCustodyBtn",         label:"💼 العهد",                   emoji:"💼"}
+  ];
+  // ضم التقارير المخصصة
+  var custom = tgCustomGetAll();
+  custom.forEach(function(c){
+    built.push({id: "custom:" + c.id, label: (c.emoji||"📊") + " " + c.name + "  ·  مخصص", emoji: c.emoji||"📊", custom: c});
+  });
+  return built;
+}
+function tgRenderReportsList(){
+  var box = document.getElementById("tgReportsList"); if(!box) return;
+  var cat = tgReportsCatalog();
+  box.innerHTML = cat.map(function(r){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:#fff;border:1px solid #cbd5e1;border-radius:8px">'+
+      '<span style="font-weight:700;color:#0a1a35;font-size:12.5px">'+r.label+'</span>'+
+      '<button type="button" class="btn sm" data-tg-rep="'+r.id+'" onclick="tgSendOneReport(\''+r.id+'\',this)" style="background:#0088cc;color:#fff;font-weight:800;font-size:11.5px;padding:6px 14px">📤 ارسل حالياً</button>'+
     '</div>';
   }).join("");
-  box.innerHTML = rows;
 }
+async function tgSendOneReport(repId, btnEl){
+  var cat = tgReportsCatalog();
+  var item = cat.find(function(x){ return x.id === repId; });
+  if(!item){ toast("التقرير غير معروف","err"); return; }
+  var btn = btnEl || document.querySelector('[data-tg-rep="'+repId+'"]');
+  var oldTxt = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "⏳..."; }
+  try{
+    await tgBuildAndSend(item);
+    if(btn){ btn.textContent = "✓ اتبعت"; setTimeout(function(){ btn.textContent = oldTxt; btn.disabled = false; }, 2500); }
+  }catch(e){
+    if(btn){ btn.textContent = "❌ فشل"; setTimeout(function(){ btn.textContent = oldTxt; btn.disabled = false; }, 3000); }
+    toast("فشل: " + (e.message||e), "err");
+  }
+}
+async function tgSendAllReports(){
+  var cat = tgReportsCatalog();
+  var btn = document.getElementById("tgSendAllBtn");
+  var status = document.getElementById("tgSendAllStatus");
+  var oldTxt = btn ? btn.textContent : "";
+  var sent=0, skipped=0, failed=0;
+  if(btn) btn.disabled = true;
+  for(var i=0; i<cat.length; i++){
+    var it = cat[i];
+    if(btn) btn.textContent = "⏳ " + (i+1) + "/" + cat.length;
+    if(status) status.textContent = "جاري إرسال: " + it.label;
+    try{
+      var ok = await tgBuildAndSend(it, {silent:true});
+      if(ok === "empty") skipped++; else sent++;
+    }catch(e){
+      failed++;
+      console.warn("tgSendAll: " + it.id, e);
+    }
+    // تاخير بسيط بين الطلبات
+    await new Promise(function(r){ setTimeout(r, 400); });
+  }
+  if(btn){ btn.textContent = oldTxt; btn.disabled = false; }
+  if(status) status.innerHTML = '<span style="color:#166534;font-weight:800">✓ اتبعت '+sent+'</span> · <span style="color:#92400e">متجاهل (فاضي) '+skipped+'</span>' + (failed? ' · <span style="color:#b91c1c">فشل '+failed+'</span>' : '');
+  toast("انتهى: اتبعت "+sent+" · فاضي "+skipped+(failed?" · فشل "+failed:""), failed?"err":"ok");
+}
+// يبني HTML التقرير بدون ما يفتح المودال، ويبعته
+async function tgBuildAndSend(item, opts){
+  opts = opts || {};
+  // لو custom: نفذ SQL وابعت
+  if(item.custom){
+    var res = await tgCustomExecute(item.custom);
+    if(!res || !res.rows || !res.rows.length){
+      if(!opts.silent) toast("مفيش بيانات: " + item.label, "err");
+      return "empty";
+    }
+    if(item.custom.kind === "text"){
+      var msg = tgCustomBuildText(item.custom, res.rows);
+      await tgSendTextMessage(msg);
+    } else {
+      var html = tgCustomBuildPdfHtml(item.custom, res.rows);
+      await tgSendReportPdf(html, item.custom.name);
+    }
+    return "ok";
+  }
+  // لازم فتح المودال خفية (علشان qsGenericPdf يقرأ #qsBody)
+  var modalOverlay = document.getElementById("qsOverlay");
+  if(!modalOverlay){ throw new Error("شاشة التقارير مش موجودة"); }
+  var prevDisplay = modalOverlay.style.display;
+  var prevVisibility = modalOverlay.style.visibility;
+  // اخفيه بصريا لكن افتحه
+  modalOverlay.style.visibility = "hidden";
+  try{
+    var reportId = item.parties ? "loginPartiesBtn" : item.id;
+    // لو تقرير العهد، نحمله لو مش محمل
+    if(reportId === "loginCustodyBtn" && typeof custodyLoad === "function"){
+      try{ await custodyLoad(); }catch(_){}
+    }
+    // افتح التقرير برمجياً
+    if(typeof openR === "function"){
+      openR(reportId);
+    } else {
+      throw new Error("دالة فتح التقارير غير متاحة");
+    }
+    // استنى تحميل لمعة
+    await new Promise(function(r){ setTimeout(r, 350); });
+
+    var html = "", title = "";
+    if(item.parties){
+      // استخدم القسم المحدد (عملاء أو موردين)
+      var idx = item.parties === "clients" ? 0 : 1;
+      if(typeof qsPartiesSectionPdf === "function"){
+        html = qsPartiesSectionPdf(idx);
+        title = item.parties === "clients" ? "أرصدة العملاء" : "أرصدة الموردين";
+      } else {
+        throw new Error("قسم الأرصدة مش جاهز");
+      }
+    } else if(reportId === "loginInstallmentsBtn"){
+      if(typeof qsiFiltered === "function" && typeof qsiPdfHtml === "function"){
+        var rows = qsiFiltered();
+        if(!rows.length){ if(!opts.silent) toast("مفيش بيانات: " + item.label, "err"); return "empty"; }
+        html = qsiPdfHtml();
+        title = "الأقساط والمستحقات";
+      } else { throw new Error("تقرير الأقساط مش جاهز"); }
+    } else {
+      // تقارير عادية
+      var hasData = document.querySelector("#qsBody tbody tr td:not([colspan])");
+      if(!hasData){ if(!opts.silent) toast("مفيش بيانات: " + item.label, "err"); return "empty"; }
+      if(typeof qsGenericPdf === "function"){
+        html = qsGenericPdf();
+        var cfg = (typeof REPORTS !== "undefined" && REPORTS[reportId]) || null;
+        title = cfg ? String(cfg.title).replace(/^[^؀-ۿA-Za-z0-9]+/,"") : item.label;
+      } else { throw new Error("مولد الـPDF غير متاح"); }
+    }
+    if(!html) { if(!opts.silent) toast("مفيش محتوى: " + item.label, "err"); return "empty"; }
+    await tgSendReportPdf(html, title);
+    return "ok";
+  } finally {
+    // ارجّع المودال لحالته
+    try{
+      if(typeof closeR === "function") closeR();
+      modalOverlay.style.visibility = prevVisibility || "";
+      if(prevDisplay !== "flex") modalOverlay.style.display = prevDisplay || "none";
+    }catch(_){}
+  }
+}
+
+/* ==========================================================
+   🧪 Custom Reports (SQL Pro) — تصميم اشعار/تقرير جديد
+========================================================== */
+var TG_CUSTOM_KEY = "ig_tg_custom_reports";
+function tgCustomGetAll(){
+  try{ var v = localStorage.getItem(TG_CUSTOM_KEY); return v ? JSON.parse(v) : []; }catch(_){ return []; }
+}
+function tgCustomSaveAll(arr){
+  try{ localStorage.setItem(TG_CUSTOM_KEY, JSON.stringify(arr||[])); }catch(_){}
+}
+function tgCustomRenderList(){
+  var box = document.getElementById("tgCustomList"); if(!box) return;
+  var list = tgCustomGetAll();
+  if(!list.length){
+    box.innerHTML = '<div style="padding:12px;text-align:center;color:#92400e;font-size:12px;background:#fffbea;border:1px dashed #fde68a;border-radius:8px">مفيش تقارير مخصصة لسه — اضغط "➕ تقرير جديد" فوق</div>';
+    return;
+  }
+  box.innerHTML = list.map(function(c){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px;background:#fff;border:1px solid #fde68a;border-radius:8px;gap:8px;flex-wrap:wrap">'+
+      '<span style="font-weight:700;color:#7a3e00;font-size:12.5px">'+esc(c.emoji||"📊")+' '+esc(c.name)+' <span style="color:#9ca3af;font-size:10.5px">('+(c.kind==="text"?"نصي":"PDF")+')</span></span>'+
+      '<span style="display:flex;gap:5px;flex-wrap:wrap">'+
+        '<button type="button" class="btn sm" onclick="tgCustomSendNow(\''+c.id+'\',this)" style="background:#0088cc;color:#fff;font-weight:700;font-size:11px">📤 ارسل</button>'+
+        '<button type="button" class="btn ghost sm" onclick="tgCustomEdit(\''+c.id+'\')" style="font-size:11px">✏️ تعديل</button>'+
+        '<button type="button" class="btn ghost sm" onclick="tgCustomDelete(\''+c.id+'\')" style="color:#b91c1c;border-color:#fecaca;font-size:11px">🗑</button>'+
+      '</span></div>';
+  }).join("");
+}
+function tgCustomOpen(editId){
+  var m = document.getElementById("tgCustomModal"); if(!m) return;
+  // إعادة ضبط
+  document.getElementById("tgcName").value = "";
+  document.getElementById("tgcEmoji").value = "📊";
+  document.getElementById("tgcTitleEn").value = "";
+  document.getElementById("tgcKind").value = "pdf";
+  document.getElementById("tgcSql").value = "";
+  document.getElementById("tgcTemplate").value = "";
+  document.getElementById("tgcStatus").innerHTML = "";
+  document.getElementById("tgcPreview").style.display = "none";
+  document.getElementById("tgCustomModalTitle").textContent = "➕ تقرير جديد";
+  m._editingId = null;
+  if(editId){
+    var all = tgCustomGetAll();
+    var rec = all.find(function(x){ return x.id === editId; });
+    if(rec){
+      m._editingId = editId;
+      document.getElementById("tgCustomModalTitle").textContent = "✏️ تعديل تقرير";
+      document.getElementById("tgcName").value = rec.name||"";
+      document.getElementById("tgcEmoji").value = rec.emoji||"📊";
+      document.getElementById("tgcTitleEn").value = rec.titleEn||"";
+      document.getElementById("tgcKind").value = rec.kind||"pdf";
+      document.getElementById("tgcSql").value = rec.sql||"";
+      document.getElementById("tgcTemplate").value = rec.template||"";
+    }
+  }
+  tgCustomToggleKind();
+  m.style.display = "flex";
+}
+function tgCustomClose(){ var m=document.getElementById("tgCustomModal"); if(m) m.style.display = "none"; }
+function tgCustomEdit(id){ tgCustomOpen(id); }
+function tgCustomDelete(id){
+  if(!confirm("تأكيد حذف هذا التقرير؟")) return;
+  var all = tgCustomGetAll().filter(function(x){ return x.id !== id; });
+  tgCustomSaveAll(all);
+  tgCustomRenderList();
+  tgRenderReportsList();
+}
+function tgCustomToggleKind(){
+  var k = (document.getElementById("tgcKind")||{}).value;
+  var el = document.getElementById("tgcTextOpts");
+  if(el) el.style.display = (k === "text") ? "block" : "none";
+}
+function tgCustomStatus(msg, kind){
+  var el = document.getElementById("tgcStatus"); if(!el) return;
+  var c = kind === "err" ? "#b91c1c" : kind === "ok" ? "#166534" : "#1f4e8c";
+  el.innerHTML = msg ? '<span style="color:'+c+';font-weight:700">'+msg+'</span>' : "";
+}
+// فحص أمان الـSQL — SELECT فقط
+function tgCustomValidateSql(sql){
+  if(!sql || !sql.trim()) return {ok:false, err:"ادخل SQL أولاً"};
+  var s = sql.trim().replace(/;+\s*$/,"");
+  // منع تعليقات
+  if(/--|\/\*|\*\//.test(s)) return {ok:false, err:"ممنوع استخدام التعليقات"};
+  // لازم يبدأ بـSELECT أو WITH
+  if(!/^\s*(SELECT|WITH)\b/i.test(s)) return {ok:false, err:"مسموح SELECT أو WITH فقط"};
+  // منع كلمات خطرة
+  var banned = /\b(UPDATE|DELETE|INSERT|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|EXECUTE|CALL)\b/i;
+  if(banned.test(s)) return {ok:false, err:"ممنوع: UPDATE/DELETE/INSERT/DROP/ALTER/CREATE/TRUNCATE"};
+  // منع فاصلة منقوطة في النص (علشان مش يدخل statement تاني)
+  if(/;/.test(s)) return {ok:false, err:"ممنوع الفاصلة المنقوطة داخل الـquery"};
+  return {ok:true, sql:s};
+}
+function tgCustomSave(){
+  var name = (document.getElementById("tgcName").value||"").trim();
+  var emoji = (document.getElementById("tgcEmoji").value||"📊").trim();
+  var titleEn = (document.getElementById("tgcTitleEn").value||"").trim();
+  var kind = (document.getElementById("tgcKind").value||"pdf");
+  var sql = (document.getElementById("tgcSql").value||"").trim();
+  var template = (document.getElementById("tgcTemplate").value||"").trim();
+  if(!name){ tgCustomStatus("❌ ادخل اسم التقرير","err"); return; }
+  var v = tgCustomValidateSql(sql);
+  if(!v.ok){ tgCustomStatus("❌ " + v.err, "err"); return; }
+  if(kind === "text" && !template){ tgCustomStatus("❌ محتاج template للرسالة النصية","err"); return; }
+  var m = document.getElementById("tgCustomModal");
+  var all = tgCustomGetAll();
+  var id = m._editingId || ("cr_" + Date.now() + "_" + Math.random().toString(36).slice(2,7));
+  var rec = {id:id, name:name, emoji:emoji, titleEn:titleEn, kind:kind, sql:v.sql, template:template, created_at: new Date().toISOString()};
+  if(m._editingId){
+    all = all.map(function(x){ return x.id === id ? rec : x; });
+  } else {
+    all.push(rec);
+  }
+  tgCustomSaveAll(all);
+  tgCustomStatus("✓ اتحفظ · هتلاقيه في القائمة", "ok");
+  tgCustomRenderList();
+  tgRenderReportsList();
+  setTimeout(tgCustomClose, 900);
+}
+async function tgCustomTest(){
+  var sql = (document.getElementById("tgcSql").value||"").trim();
+  var v = tgCustomValidateSql(sql);
+  if(!v.ok){ tgCustomStatus("❌ " + v.err, "err"); return; }
+  tgCustomStatus("⏳ جاري تنفيذ الـquery...", "info");
+  try{
+    var res = await tgCustomExecute({sql:v.sql});
+    var pre = document.getElementById("tgcPreview");
+    pre.style.display = "block";
+    pre.textContent = "✓ الـquery رجّع " + res.rows.length + " صف\n\n" + JSON.stringify(res.rows.slice(0,8), null, 2);
+    tgCustomStatus("✓ ناجحة · " + res.rows.length + " صف", "ok");
+  }catch(e){
+    tgCustomStatus("❌ فشل: " + (e.message||e), "err");
+  }
+}
+async function tgCustomSendNow(id, btn){
+  var all = tgCustomGetAll();
+  var rec = all.find(function(x){ return x.id === id; });
+  if(!rec){ toast("التقرير غير موجود","err"); return; }
+  var oldTxt = btn ? btn.textContent : "";
+  if(btn){ btn.disabled = true; btn.textContent = "⏳..."; }
+  try{
+    var item = {id:"custom:"+id, label:rec.emoji+" "+rec.name, custom:rec};
+    await tgBuildAndSend(item);
+    if(btn){ btn.textContent = "✓ اتبعت"; setTimeout(function(){ btn.textContent = oldTxt; btn.disabled = false; }, 2500); }
+  }catch(e){
+    if(btn){ btn.textContent = "❌ فشل"; setTimeout(function(){ btn.textContent = oldTxt; btn.disabled = false; }, 3000); }
+    toast("فشل: " + (e.message||e), "err");
+  }
+}
+// تنفيذ SQL آمن عبر supabase rpc exec_safe_select أو fallback
+async function tgCustomExecute(rec){
+  if(typeof sb === "undefined" || !sb.rpc){
+    throw new Error("Supabase غير متصل");
+  }
+  // جرّب RPC الآمنة
+  try{
+    var r = await sb.rpc("exec_safe_select", { q: rec.sql, max_rows: 1000 });
+    if(!r.error && r.data){
+      if(r.data.ok === false) throw new Error(r.data.error || "رفضها الـvalidator");
+      return { rows: Array.isArray(r.data.rows) ? r.data.rows : (Array.isArray(r.data)?r.data:[]) };
+    }
+    if(r.error && !/function exec_safe_select/i.test(r.error.message||"")){
+      throw new Error(r.error.message);
+    }
+    // fallback: المستخدم لسه معملش RPC — نجرب PostgREST مباشرة (محدود)
+  }catch(e){
+    if(!/function exec_safe_select/i.test(String(e.message||e))) throw e;
+  }
+  throw new Error("لازم تعمل الـRPC exec_safe_select في Supabase الأول — ابعتلي أعملك الـSQL");
+}
+function tgCustomRenderValue(v, fn){
+  if(v === null || v === undefined) return "—";
+  if(fn === "number"){ var n = parseFloat(v); return isFinite(n) ? n.toLocaleString("en-US",{maximumFractionDigits:2}) : String(v); }
+  if(fn === "date"){ return String(v).slice(0,10); }
+  if(fn === "upper") return String(v).toUpperCase();
+  if(fn === "lower") return String(v).toLowerCase();
+  return String(v);
+}
+function tgCustomRenderTemplate(tpl, row){
+  return String(tpl||"").replace(/\{\{\s*([a-zA-Z0-9_]+)(\s*\|\s*(\w+))?\s*\}\}/g, function(_m, key, _p, fn){
+    return tgCustomRenderValue(row[key], fn);
+  });
+}
+function tgCustomBuildText(rec, rows){
+  var lines = [];
+  lines.push("*" + (rec.emoji||"📊") + " " + rec.name + "*");
+  lines.push("🗓 " + new Date().toLocaleDateString("ar-EG"));
+  lines.push("📊 عدد النتائج: " + rows.length);
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  rows.slice(0, 50).forEach(function(r){ lines.push(tgCustomRenderTemplate(rec.template, r)); });
+  if(rows.length > 50) lines.push("\n... و " + (rows.length-50) + " نتيجة أخرى");
+  return lines.join("\n");
+}
+function tgCustomBuildPdfHtml(rec, rows){
+  // بناء جدول من أعمدة الصف الأول
+  var cols = rows.length ? Object.keys(rows[0]) : [];
+  var thead = '<tr>' + cols.map(function(c){ return '<th>'+esc(c)+'</th>'; }).join("") + '</tr>';
+  var tbody = rows.map(function(r){
+    return '<tr>' + cols.map(function(c){
+      var v = r[c];
+      var isNum = typeof v === "number" || (!isNaN(parseFloat(v)) && isFinite(v) && typeof v !== "boolean");
+      return '<td'+(isNum?' class="n"':'')+'>' + esc(isNum ? Number(v).toLocaleString("en-US",{maximumFractionDigits:2}) : (v==null?"—":String(v))) + '</td>';
+    }).join("") + '</tr>';
+  }).join("");
+  var tableHtml = '<table class="rprt-tbl"><thead>'+thead+'</thead><tbody>'+(tbody||'<tr><td colspan="'+cols.length+'" style="padding:20px;color:#9ca3af">لا توجد بيانات</td></tr>')+'</tbody></table>';
+  if(typeof igProReportHtml === "function"){
+    return igProReportHtml({
+      emoji: rec.emoji||"📊",
+      title: rec.name,
+      titleEn: rec.titleEn || "CUSTOM REPORT",
+      sub: rows.length + " صف",
+      kpis: [{lbl:"عدد الصفوف", val: String(rows.length), color:"#64748b"}],
+      tableHtml: tableHtml
+    });
+  }
+  return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>'+esc(rec.name)+'</title></head><body>'+tableHtml+'</body></html>';
+}
+// دالة بسيطة لإرسال رسالة نصية (للـtext kind)
+async function tgSendTextMessage(text){
+  var cfg = await tgGetConfig();
+  if(!cfg || !cfg.bot_token || !cfg.chats || !cfg.chats.length){
+    throw new Error("إعدادات التيليجرام غير مضبوطة");
+  }
+  var sent = 0, failed = 0, errors = [];
+  for(var i=0; i<cfg.chats.length; i++){
+    var chat = cfg.chats[i];
+    if(!chat.is_active) continue;
+    try{
+      var r = await fetch("https://api.telegram.org/bot"+cfg.bot_token+"/sendMessage", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({chat_id: chat.chat_id, text: text, parse_mode:"Markdown", disable_web_page_preview:true})
+      });
+      var j = await r.json();
+      if(j.ok) sent++; else { failed++; errors.push(chat.name+": "+(j.description||"خطأ")); }
+    }catch(e){ failed++; errors.push(chat.name+": "+(e.message||e)); }
+  }
+  if(sent === 0 && failed > 0) throw new Error(errors[0] || "فشل");
+  toast("✓ اتبعت لـ"+sent+" جروب"+(failed?" · فشل "+failed:""), failed?"err":"ok");
+}
+
 function tgCfgField(idx, field, value){
   if(!window.tgCfg.chats[idx]) return;
   window.tgCfg.chats[idx][field] = value;
@@ -23143,7 +23811,7 @@ async function tgCfgTest(){
   if(!chats.length){ tgCfgStatus("❌ محتاج جروب واحد مفعّل على الأقل","err"); return; }
   tgCfgStatus("⏳ جاري الإرسال...", "info");
   var sent=0, failed=0, errs=[];
-  var msg = "🔔 *رسالة اختبار من IRON GATE SUPPLIES*\n\nالوقت: "+new Date().toLocaleString("ar-EG")+"\n\nلو وصلتك الرسالة دي يبقى الإعداد شغّال ✅\n\n_h²m+ ERP Systems_";
+  var msg = "🔔 *رسالة اختبار*\n\nالوقت: "+new Date().toLocaleString("ar-EG")+"\n\nلو وصلتك الرسالة دي يبقى الإعداد شغّال ✅";
   for(var i=0; i<chats.length; i++){
     var c = chats[i];
     try{
@@ -35545,37 +36213,48 @@ if(faTab==="settings"&&document.getElementById("faBody")){ try{ faRender(); }cat
     const b=basis();
     const dl=(id,list)=>`<datalist id="${id}">${leafList(list).map(x=>`<option value="${esc(x.code)}">${esc(x.name)}</option>`).join('')}</datalist>`;
     return `<style>
-      .fdep{background:#c3e0e0;border:1px solid #b2d2d2;border-radius:4px;padding:34px 24px 24px;font-family:Tahoma,Cairo,sans-serif;color:#000;direction:rtl}
-      .fdep .fdr{display:flex;align-items:center;gap:6px;margin-bottom:9px}
-      .fdep .fdr label{width:118px;flex:none;font-weight:700;font-size:13px}
-      .fdep .fdi{width:140px;flex:none;height:26px;border:1px solid #7f9db9;background:#fff;padding:0 6px;font-size:13px;box-sizing:border-box}
-      .fdep .fdi:focus{background:#ff0;outline:none}
-      .fdep .fdb{width:22px;height:26px;flex:none;border:1px solid #7f9db9;background:#dfe9f0;cursor:pointer;font-weight:700;padding:0}
-      .fdep .fdd{flex:1;min-width:80px;height:26px;border:1px solid #a9bdc9;background:#bdbdbd;padding:0 6px;font-size:13px;box-sizing:border-box}
-      .fdep .fdopts{display:flex;gap:40px;align-items:center;flex-wrap:wrap;margin:22px 0 14px;font-weight:700;font-size:13px}
-      .fdep .fdopts label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
-      .fdep .fdbtns{display:flex;gap:60px;margin-top:18px}
-      .fdep .fdbtn{flex:1;height:28px;border:1px solid #7a7a7a;border-radius:2px;background:linear-gradient(#d4d4d4,#b9b9b9);font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}
-      .fdep .fdbtn:hover{background:linear-gradient(#e0e0e0,#c4c4c4)}
-      .fdep .fdbtn:disabled{opacity:.55;cursor:not-allowed}
-      .fdep .fdnote{font-size:11px;color:#305050;margin:-4px 0 9px 0;padding-right:124px}
-      @media(max-width:700px){.fdep{padding:18px 12px}.fdep .fdr{flex-wrap:wrap}.fdep .fdd{flex-basis:100%}.fdep .fdbtns{gap:12px}}
+      .fdep{background:linear-gradient(135deg,#fffbea 0%,#fff 50%,#fef3c7 100%);border:2px solid #d4a017;border-radius:14px;padding:26px 22px 22px;font-family:"Cairo","Tahoma",Arial,sans-serif;color:#0a1a35;direction:rtl;box-shadow:0 4px 18px rgba(212,160,23,.15)}
+      .fdep::before{content:"📉 شاشة ترحيل الإهلاك";display:block;font-weight:900;font-size:15px;color:#92400e;padding:0 0 14px;margin-bottom:16px;border-bottom:2px dashed #d4a017;text-align:center;letter-spacing:.3px}
+      .fdep .fdr{display:flex;align-items:center;gap:8px;margin-bottom:11px}
+      .fdep .fdr label{width:130px;flex:none;font-weight:800;font-size:13px;color:#0a1a35}
+      .fdep .fdi{width:160px;flex:none;height:34px;border:1.5px solid #d4a017;background:#fff;padding:0 10px;font-size:13px;box-sizing:border-box;border-radius:8px;font-family:inherit;color:#0a1a35;font-weight:700;transition:all .15s}
+      .fdep .fdi:focus{background:#fffbea;outline:none;border-color:#92400e;box-shadow:0 0 0 3px rgba(212,160,23,.2)}
+      .fdep .fdb{width:34px;height:34px;flex:none;border:1.5px solid #d4a017;background:linear-gradient(135deg,#fef3c7,#fde68a);cursor:pointer;font-weight:900;padding:0;border-radius:8px;color:#92400e;font-size:14px;transition:all .15s}
+      .fdep .fdb:hover{background:linear-gradient(135deg,#fde68a,#fcd34d);transform:scale(1.05)}
+      .fdep .fdd{flex:1;min-width:80px;height:34px;border:1.5px solid #e7d3a1;background:#f8fafc;padding:0 10px;font-size:13px;box-sizing:border-box;border-radius:8px;font-family:inherit;color:#334155;font-weight:600}
+      .fdep .fdopts{display:flex;gap:28px;align-items:center;flex-wrap:wrap;margin:18px 0 12px;font-weight:800;font-size:13px;color:#0a1a35}
+      .fdep .fdopts label{display:inline-flex;align-items:center;gap:7px;cursor:pointer;padding:8px 14px;background:#fff;border:1.5px solid #e7d3a1;border-radius:9px;transition:all .15s}
+      .fdep .fdopts label:hover{border-color:#d4a017;background:#fffbea}
+      .fdep .fdopts input[type="radio"],.fdep .fdopts input[type="checkbox"]{accent-color:#d4a017;width:16px;height:16px;cursor:pointer}
+      .fdep .fdsep{display:flex;align-items:center;gap:10px;margin:18px 0 10px;color:#92400e;font-weight:900;font-size:13px}
+      .fdep .fdsep::before,.fdep .fdsep::after{content:"";flex:1;height:2px;background:linear-gradient(90deg,transparent,#d4a017,transparent)}
+      .fdep .fdbtns{display:flex;gap:14px;margin-top:22px;padding-top:16px;border-top:2px dashed #d4a017}
+      .fdep .fdbtn{flex:1;height:42px;border:0;border-radius:10px;background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;font-weight:900;font-size:14px;cursor:pointer;font-family:inherit;box-shadow:0 3px 10px rgba(212,160,23,.3);transition:all .15s;letter-spacing:.3px}
+      .fdep .fdbtn:hover{background:linear-gradient(135deg,#b8890f,#d97706);transform:translateY(-1px);box-shadow:0 5px 14px rgba(212,160,23,.4)}
+      .fdep .fdbtn.ghost{background:linear-gradient(135deg,#f3f4f6,#e5e7eb);color:#475569;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+      .fdep .fdbtn.ghost:hover{background:linear-gradient(135deg,#e5e7eb,#d1d5db)}
+      .fdep .fdbtn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+      .fdep .fdnote{font-size:11.5px;color:#92400e;margin:-6px 0 11px 138px;padding:6px 10px;background:#fef9c3;border-right:3px solid #d4a017;border-radius:0 6px 6px 0;font-weight:700}
+      .fdep .fdnote a{color:#0a1a35;font-weight:900;text-decoration:underline}
+      @media(max-width:700px){.fdep{padding:18px 14px}.fdep .fdr{flex-wrap:wrap}.fdep .fdr label{width:100%}.fdep .fdi{width:100%}.fdep .fdd{flex-basis:100%}.fdep .fdbtns{flex-direction:column;gap:10px}.fdep .fdnote{margin:-6px 0 11px 0}}
     </style>
     <div class="fdep">
-      <div class="fdr"><label>التاريخ المطلوب</label><input class="fdi" type="date" value="${esc(DS.date)}" onchange="faDepSet('date',this.value)"></div>
-      ${b!=='daily'?`<div class="fdnote">أساس الإهلاك ${BASIS_AR[b]||b}: لازم التاريخ يكون آخر يوم في الشهر — <a href="#" onclick="event.preventDefault();faDepEom()" style="color:#0b4a8a;font-weight:700">اضبطه على آخر الشهر</a></div>`:''}
+      <div class="fdr"><label>📅 التاريخ المطلوب</label><input class="fdi" type="date" value="${esc(DS.date)}" onchange="faDepSet('date',this.value)"></div>
+      ${b!=='daily'?`<div class="fdnote">⚠ أساس الإهلاك ${BASIS_AR[b]||b}: لازم التاريخ يكون آخر يوم في الشهر — <a href="#" onclick="event.preventDefault();faDepEom()">اضبطه على آخر الشهر</a></div>`:''}
+      <div class="fdsep">🏛 الهيكل الإداري</div>
       ${codeRow('من هيكل اداري','o1',faData.orgs,'fdl_org')}
       ${codeRow('الى هيكل اداري','o2',faData.orgs,'fdl_org')}
-      <div class="fdopts" style="margin:16px 0 14px;justify-content:center"><label><input type="radio" checked> أصل</label></div>
+      <div class="fdsep">📦 نوع الأصل</div>
       ${codeRow('من نوع أصل','c1',faData.categories,'fdl_cat')}
       ${codeRow('الى نوع أصل','c2',faData.categories,'fdl_cat')}
       ${dl('fdl_org',faData.orgs)}${dl('fdl_cat',faData.categories)}
+      <div class="fdsep">⚙️ خيارات التنفيذ</div>
       <div class="fdopts">
-        <label><input type="radio" name="faDepMode" value="print"${DS.mode==='print'?' checked':''} onchange="faDepSet('mode','print')"> طباعه (معاينة فقط)</label>
-        <label><input type="radio" name="faDepMode" value="post"${DS.mode==='post'?' checked':''} onchange="faDepSet('mode','post')"> طباعه وترحيل</label>
+        <label><input type="radio" name="faDepMode" value="print"${DS.mode==='print'?' checked':''} onchange="faDepSet('mode','print')"> 👁 طباعة (معاينة فقط)</label>
+        <label><input type="radio" name="faDepMode" value="post"${DS.mode==='post'?' checked':''} onchange="faDepSet('mode','post')"> 📝 طباعة وترحيل</label>
       </div>
-      <div class="fdopts" style="margin:0 0 4px"><label><input type="checkbox"${DS.cons?' checked':''} onchange="faDepSet('cons',this.checked)"> قيد واحد مجمع</label></div>
-      <div class="fdbtns"><button type="button" class="fdbtn" onclick="faDepExecute()">تنفيذ</button><button type="button" class="fdbtn" onclick="faSetTab('dashboard')">خروج</button></div>
+      <div class="fdopts" style="margin:4px 0"><label><input type="checkbox"${DS.cons?' checked':''} onchange="faDepSet('cons',this.checked)"> 📎 قيد واحد مجمع</label></div>
+      <div class="fdbtns"><button type="button" class="fdbtn" onclick="faDepExecute()">✓ تنفيذ</button><button type="button" class="fdbtn ghost" onclick="faSetTab('dashboard')">✕ خروج</button></div>
     </div>`;
   }
 
