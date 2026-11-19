@@ -2421,6 +2421,32 @@ html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollba
 .mth-ts{background:#d9f1f2;color:#0e5560;border-color:#80c6cc}
 @media print{.mth{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style>
+<style id="dx-print-style">
+/* ===== طباعة لوحة التحكم بنفس شكلها (تتفعّل فقط من زر 🖨 في الرئيسية) ===== */
+.dx-print-head{display:none}
+@media print{
+ html.dx-printing,body.dx-printing{height:auto!important;overflow:visible!important;background:#fff!important;color:#1d2433!important}
+ body.dx-printing,body.dx-printing *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;animation:none!important;transition:none!important}
+ body.dx-printing #app,body.dx-printing .layout{display:block!important;height:auto!important;overflow:visible!important}
+ body.dx-printing aside,body.dx-printing .topbar,body.dx-printing #mobileTabs,body.dx-printing #cmdk,body.dx-printing .ig-devbar,
+ body.dx-printing .skip-link,body.dx-printing .custody-notice-btn,body.dx-printing .dx-periods,body.dx-printing .dx-mgmt-btn,
+ body.dx-printing .dx-stamp button,body.dx-printing .dx-link,body.dx-printing .dxa-go{display:none!important}
+ body.dx-printing main{display:block!important;overflow:visible!important;background:#fff!important}
+ body.dx-printing #content{display:block!important;overflow:visible!important;padding:0!important;width:100%!important;max-width:none!important;background:#fff!important;zoom:.85}
+ body.dx-printing .dx{width:100%!important}
+ body.dx-printing .dx-print-head{display:flex!important;align-items:center;gap:14px;padding:0 0 10px;margin:0 0 14px;border-bottom:3px solid #D4A017}
+ body.dx-printing .dx-print-head img{width:56px;height:56px;object-fit:contain;border-radius:50%}
+ body.dx-printing .dx-print-head .ph-t{flex:1}
+ body.dx-printing .dx-print-head .ph-t h1{margin:0;font-size:22px;font-weight:800;color:#0b1d3a}
+ body.dx-printing .dx-print-head .ph-t small{display:block;margin-top:2px;font-size:11px;color:#6b7587;letter-spacing:2px}
+ body.dx-printing .dx-print-head .ph-m{text-align:left;font-size:11.5px;line-height:1.8;color:#475569}
+ body.dx-printing .dx-print-head .ph-m b{color:#0b1d3a}
+ body.dx-printing .dx-bar{justify-content:flex-end}
+ body.dx-printing .dx-kpi,body.dx-printing .dx-card,body.dx-printing .dxa,body.dx-printing .dxa-c,
+ body.dx-printing .dx-flow,body.dx-printing .dx-sum,body.dx-printing .dx-list li,body.dx-printing .dx-tbl tr{break-inside:avoid;page-break-inside:avoid}
+ body.dx-printing .dx-list{overflow:visible!important;max-height:none!important}
+}
+</style>
 </head>
 <body>
 
@@ -9841,6 +9867,25 @@ function dxTopGreeting(){
     if(c) c.textContent=lbl;
   }catch(e){}
 }
+function dxPrint(){
+  const root=document.querySelector("#content .dx"); if(!root) return;
+  if(document.querySelector(".dx-print-head")) return;
+  const body=document.body, html=document.documentElement, theme=body.getAttribute("data-theme");
+  const per=((document.querySelector(".dx-periods button.on")||{}).textContent||"").trim();
+  const logo=(document.getElementById("igSidebarLogo")||{}).src||"";
+  let uName=""; try{ const u=curU(); uName=u.name||u.username||""; }catch(e){}
+  const when=new Intl.DateTimeFormat("ar-EG-u-nu-latn",{weekday:"long",day:"numeric",month:"long",year:"numeric",hour:"numeric",minute:"2-digit"}).format(new Date());
+  const head=document.createElement("div"); head.className="dx-print-head";
+  head.innerHTML=(logo?`<img src="${logo}" alt="">`:"")+`<div class="ph-t"><h1>لوحة التحكم</h1><small>IRON GATE SUPPLIES</small></div><div class="ph-m">${per?`<div>الفترة: <b>${escapeHtml(per)}</b></div>`:""}${uName?`<div>المستخدم: <b>${escapeHtml(String(uName))}</b></div>`:""}<div>تاريخ الطباعة: <b>${when}</b></div></div>`;
+  root.insertBefore(head,root.firstChild);
+  const pg=document.createElement("style"); pg.id="dxPageStyle"; pg.textContent="@page{size:A4 landscape;margin:8mm}"; document.head.appendChild(pg);
+  body.classList.add("dx-printing"); html.classList.add("dx-printing"); if(theme) body.removeAttribute("data-theme");
+  const done=()=>{ window.removeEventListener("afterprint",done);
+    body.classList.remove("dx-printing"); html.classList.remove("dx-printing"); if(theme) body.setAttribute("data-theme",theme);
+    head.remove(); pg.remove(); };
+  window.addEventListener("afterprint",done);
+  setTimeout(()=>{ try{ window.print(); }catch(e){ done(); } },200);
+}
 function dxRefresh(){ try{ navBadges(true); renderNav(); }catch(e){} _dxTrCache=null; dxRerender(); toast("تم تحديث الرئيسية","ok"); }
 // ينقل المستخدم للشاشة مع تطبيق الفلتر المناسب — النبضات في البنر الرئيسي
 // معيار "التحصيل الفعلي" الوحيد: مستخدم في كارت لوحة التحكم وفي فلتر شاشة التحصيلات عند الضغط على الكارت (علشان الرقمين يتطابقوا دايمًا)
@@ -10295,7 +10340,7 @@ function viewDashboard(){
     <div class="dx-bar">
       ${canMoney?`<div class="dx-periods" role="group" aria-label="الفترة">${DASH_PERIODS.map(p=>`<button type="button" class="${p.k===P.k?'on':''}" onclick="dxSetPeriod('${p.k}')">${p.l}</button>`).join("")}</div>`:""}
       ${safe(()=>canView("managementReports"),false)?`<button type="button" class="dx-mgmt-btn" onclick="go('managementReports')" title="فتح تقارير الإدارة والرقابة">📈 تقارير الإدارة والرقابة</button>`:""}
-      <div class="dx-stamp"><span>آخر تحديث: <b>${stamp}</b></span><button type="button" onclick="dxRefresh()" aria-label="تحديث البيانات" title="تحديث">↻</button></div>
+      <div class="dx-stamp"><span>آخر تحديث: <b>${stamp}</b></span><button type="button" class="dx-print-btn" onclick="dxPrint()" aria-label="طباعة لوحة التحكم" title="طباعة لوحة التحكم">🖨</button><button type="button" onclick="dxRefresh()" aria-label="تحديث البيانات" title="تحديث">↻</button></div>
     </div>
 
     ${d30Html}
@@ -17126,10 +17171,11 @@ async function supEnsurePostMap(force){
     const changed=JSON.stringify(m)!==JSON.stringify(window.supPostMap);
     window.supPostMap=m;window.supPostIds=mi;
     if(changed&&currentPage==="supply")go("supply");
+    else if(changed&&currentPage==="supplyBulkPost"&&typeof renderSupplyBulk==="function")renderSupplyBulk();
   }catch(e){}
 }
 // ================= ترحيل جماعي لبيانات التوريد (مشتريات 502 + مبيعات 503) =================
-window.supBulk=window.supBulk||{from:"",to:"",ofrom:"",oto:"",res:null,busy:false,prog:""};
+window.supBulk=window.supBulk||{from:"",to:"",ofrom:"",oto:"",res:null,busy:false,prog:"",status:"all",sel:new Set()};
 const _sbCmp=(a,b)=>String(a).localeCompare(String(b),"en",{numeric:true});
 // الأوامر اللي فيها بوليصة تاريخ توريدها داخل النطاق، مرتبة تصاعديًا برقم أمر البيع
 function supBulkList(){
@@ -17141,8 +17187,22 @@ function supBulkList(){
     if((!B.from||(s.date&&s.date>=B.from))&&(!B.to||(s.date&&s.date<=B.to))) x.inRange=true;
     if(!x.orderNo){const so=s.saleOrderId&&(state.saleOrders||[]).find(o=>o.id===s.saleOrderId);x.orderNo=String((so&&so.orderNo)||s.saleOrderNo||"");}
   });
-  return [...g.values()].filter(x=>x.inRange&&x.orderNo&&(!B.ofrom||_sbCmp(x.orderNo,B.ofrom)>=0)&&(!B.oto||_sbCmp(x.orderNo,B.oto)<=0)).sort((a,b)=>_sbCmp(a.orderNo,b.orderNo));
+  return [...g.values()].filter(x=>x.inRange&&x.orderNo&&(!B.ofrom||_sbCmp(x.orderNo,B.ofrom)>=0)&&(!B.oto||_sbCmp(x.orderNo,B.oto)<=0)&&(!B.status||B.status==="all"||supBulkState(x)===B.status)).sort((a,b)=>_sbCmp(a.orderNo,b.orderNo));
 }
+// حالة ترحيل الأمر: none = غير مرحّل، partial = مرحّل جزئيًا (مشتريات أو مبيعات فقط)، done = مرحّل بالكامل
+function supBulkState(o){
+  const m=window.supPostMap||{}, p=!!m[o.orderNo+"|purchase"], q=!!m[o.orderNo+"|sales"];
+  return p&&q?"done":(p||q?"partial":"none");
+}
+// الأوامر المستهدفة: المحدد (لو فيه تحديد) وإلا كل الأوامر الظاهرة حسب الفلتر
+function supBulkTargets(){
+  const B=window.supBulk; if(!(B.sel instanceof Set)) B.sel=new Set();
+  const list=supBulkList(), sel=list.filter(o=>B.sel.has(o.key));
+  return {list,targets:sel.length?sel:list,selected:sel.length>0};
+}
+function supBulkSel(key,on){ const B=window.supBulk; if(!(B.sel instanceof Set)) B.sel=new Set(); if(on) B.sel.add(key); else B.sel.delete(key); renderSupplyBulk(); }
+function supBulkSelAll(on){ const B=window.supBulk; if(!(B.sel instanceof Set)) B.sel=new Set(); supBulkList().forEach(o=>{ if(on) B.sel.add(o.key); else B.sel.delete(o.key); }); renderSupplyBulk(); }
+function supBulkClearSel(){ const B=window.supBulk; B.sel=new Set(); renderSupplyBulk(); }
 async function supBulkShared(){
   await glIndicatorsSync(true);
   const [a,j,y,p]=await Promise.all([sb.from("gl_accounts").select("*"),sb.from("gl_journals").select("*"),sb.from("gl_fiscal_years").select("*").eq("status","open"),sb.from("gl_periods").select("*").eq("status","open")]);
@@ -17183,8 +17243,8 @@ function supBulkPrepare(key,kind,sh){
 async function supBulkRun(){
   const B=window.supBulk; if(B.busy) return;
   if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
-  const list=supBulkList(); if(!list.length) return toast("لا توجد أوامر في النطاق","err");
-  const ok=await askConfirm(`ترحيل مشتريات ومبيعات ${list.length} أمر بيع (تاريخ التوريد ${B.from||"…"} ← ${B.to||"…"})؟\n\nالأوامر المترحّلة قبل كده بتتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل بيانات التوريد",ok:"ابدأ الترحيل",cancel:"إلغاء"});
+  const T=supBulkTargets(), list=T.targets; if(!list.length) return toast("لا توجد أوامر في النطاق","err");
+  const ok=await askConfirm(`ترحيل مشتريات ومبيعات ${list.length} أمر بيع ${T.selected?"محدد":""} (تاريخ التوريد ${B.from||"…"} ← ${B.to||"…"})؟\n\nالأوامر المترحّلة قبل كده بتتخطى، والأخطاء بتتسجل ويكمل الترحيل.`,{title:"ترحيل بيانات التوريد",ok:"ابدأ الترحيل",cancel:"إلغاء"});
   if(!ok) return;
   B.busy=true; B.res=null; renderSupplyBulk();
   const res={pur:0,sal:0,err:0,skip:0,errors:[]};
@@ -17207,7 +17267,7 @@ async function supBulkRun(){
       if(bad) res.err++;
     }
   }catch(e){ toast("تعذر الترحيل الجماعي: "+(e.message||e),"err"); }
-  B.busy=false; B.res=res; window._supPostMapAt=0; await supEnsurePostMap(true); renderSupplyBulk();
+  B.busy=false; B.res=res; B.sel=new Set(); window._supPostMapAt=0; await supEnsurePostMap(true); renderSupplyBulk();
   toast(`انتهى الترحيل — مشتريات ${res.pur} / مبيعات ${res.sal} / أخطاء ${res.err}`,res.err?"err":"ok");
 }
 function viewSupplyBulk(){
@@ -17218,6 +17278,7 @@ function viewSupplyBulk(){
     <label>إلى <input class="inp" type="date" value="${escapeAttr(B.to)}" onchange="supBulk.to=this.value;renderSupplyBulk()"></label>
     <label>من أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.ofrom)}" oninput="supBulk.ofrom=this.value.trim();renderSupplyBulk()"></label>
     <label>إلى أمر بيع رقم <input class="inp" style="width:110px" value="${escapeAttr(B.oto)}" oninput="supBulk.oto=this.value.trim();renderSupplyBulk()"></label>
+    <label>الحالة <select class="inp" onchange="supBulk.status=this.value;renderSupplyBulk()"><option value="all"${B.status==="all"?" selected":""}>الكل</option><option value="none"${B.status==="none"?" selected":""}>غير مرحّل فقط</option><option value="partial"${B.status==="partial"?" selected":""}>مرحّل جزئيًا</option><option value="done"${B.status==="done"?" selected":""}>مرحّل بالكامل</option></select></label>
     <button id="sbPost" type="button" class="btn" onclick="supBulkRun()">📥 ترحيل</button>
     <button id="sbUnpost" type="button" class="btn ghost" style="border-color:#dc2626;color:#b91c1c" onclick="supBulkUnpost()" title="إلغاء ترحيل كل المشتريات والمبيعات المُرحّلة للأوامر في النطاق">↶ إلغاء الترحيل المجمع</button>
     <span id="sbProg" style="font-weight:800;color:var(--gold-text)"></span></div></div><div id="sbBody"></div>`;
@@ -17251,7 +17312,7 @@ async function supBulkUnpost(){
   const B=window.supBulk; if(B.busy) return;
   if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
   await supEnsurePostMap(true);
-  const list=supBulkList();
+  const list=supBulkTargets().targets;
   // ابني قايمة الأوامر المُرحّلة (مشتريات + مبيعات بشكل منفصل)
   const todo=[];
   list.forEach(o=>{
@@ -17275,7 +17336,7 @@ async function supBulkUnpost(){
     if(r.ok) okN++;
     else{ errN++; errors.push({orderNo:t.orderNo, msg:(t.kind==="purchase"?"مشتريات: ":"مبيعات: ")+(r.msg||"فشل")}); }
   }
-  B.busy=false; if(pe) pe.textContent="";
+  B.busy=false; B.sel=new Set(); if(pe) pe.textContent="";
   window._supPostMapAt=0; await supEnsurePostMap(true);
   renderSupplyBulk();
   const summary=`انتهى إلغاء الترحيل — تم إلغاء ${okN} / فشل ${errN}`;
@@ -17288,15 +17349,17 @@ async function supBulkUnpost(){
 }
 function renderSupplyBulk(){
   const B=window.supBulk, box=document.getElementById("sbBody"); if(!box) return;
-  const list=supBulkList(), r=B.res, can_=can("supply","post");
+  const T=supBulkTargets(), list=T.list, r=B.res, can_=can("supply","post"), nSel=T.selected?T.targets.length:0;
   const st=(o,k)=>window.supPostMap[o.orderNo+"|"+k]?'<span class="chip ok">مُرحّل ✓</span>':'<span class="muted">—</span>';
+  const stChip=o=>{const k=supBulkState(o); return k==="done"?'<span class="chip ok">مرحّل بالكامل</span>':(k==="partial"?'<span class="chip warn">مرحّل جزئيًا</span>':'<span class="chip">غير مرحّل</span>');};
   const rows=list.map((o,i)=>{const ds=[...o.dates].sort(), d=ds.length?(ds[0]===ds[ds.length-1]?ds[0]:ds[0]+" ← "+ds[ds.length-1]):"—";
-    return `<tr><td class="num">${i+1}</td><td><strong style="color:var(--gold-text)">${escapeHtml(o.orderNo)}</strong></td><td>${escapeHtml(d)}</td><td>${escapeHtml(o.supplier||"—")}</td><td>${escapeHtml(o.customer||"—")}</td><td>${st(o,"purchase")}</td><td>${st(o,"sales")}</td></tr>`;}).join("");
-  const pb=document.getElementById("sbPost"); if(pb){pb.style.display=can_?"":"none";pb.disabled=B.busy||!list.length;pb.textContent=B.busy==="unpost"?"⏳":B.busy?"جارٍ الترحيل…":"📥 ترحيل";}
-  const ub=document.getElementById("sbUnpost"); if(ub){ub.style.display=can_?"":"none"; const anyPosted=list.some(o=>window.supPostMap[o.orderNo+"|purchase"]||window.supPostMap[o.orderNo+"|sales"]); ub.disabled=B.busy||!anyPosted; ub.textContent=B.busy==="unpost"?"جارٍ الإلغاء…":"↶ إلغاء الترحيل المجمع";}
+    return `<tr><td style="width:34px;text-align:center"><input type="checkbox" ${B.sel.has(o.key)?"checked":""} ${B.busy?"disabled":""} onchange="supBulkSel(decodeURIComponent('${encodeURIComponent(o.key)}'),this.checked)" aria-label="تحديد الأمر ${escapeAttr(o.orderNo)}"></td><td class="num">${i+1}</td><td><strong style="color:var(--gold-text)">${escapeHtml(o.orderNo)}</strong></td><td>${escapeHtml(d)}</td><td>${escapeHtml(o.supplier||"—")}</td><td>${escapeHtml(o.customer||"—")}</td><td>${st(o,"purchase")}</td><td>${st(o,"sales")}</td><td>${stChip(o)}</td></tr>`;}).join("");
+  const pb=document.getElementById("sbPost"); if(pb){pb.style.display=can_?"":"none";pb.disabled=B.busy||!list.length;pb.textContent=B.busy==="unpost"?"⏳":B.busy?"جارٍ الترحيل…":(nSel?"📥 ترحيل المحدد ("+nSel+")":"📥 ترحيل");}
+  const ub=document.getElementById("sbUnpost"); if(ub){ub.style.display=can_?"":"none"; const anyPosted=T.targets.some(o=>window.supPostMap[o.orderNo+"|purchase"]||window.supPostMap[o.orderNo+"|sales"]); ub.disabled=B.busy||!anyPosted; ub.textContent=B.busy==="unpost"?"جارٍ الإلغاء…":(nSel?"↶ إلغاء ترحيل المحدد ("+nSel+")":"↶ إلغاء الترحيل المجمع");}
   const cnt=r?`<div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0">${[["ترحيل مشتريات",r.pur,"var(--ok)"],["ترحيل مبيعات",r.sal,"var(--ok)"],["أوامر فيها أخطاء",r.err,r.err?"var(--danger)":"var(--ok)"],["أوامر مترحّلة سابقًا (تخطّت)",r.skip,"var(--text-dim)"]].map(x=>`<div class="card" style="padding:10px 16px;min-width:150px"><div style="font-size:12px;color:var(--text-dim)">${x[0]}</div><div style="font-size:22px;font-weight:800;color:${x[2]}">${x[1]}</div></div>`).join("")}</div>`:"";
   const err=r&&r.errors.length?`<div class="card" style="padding:12px;margin-top:6px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><strong style="color:var(--danger)">تقرير الأخطاء (${r.errors.length})</strong><button type="button" class="btn ghost" onclick="supBulkErrPdf()">⬇ تصدير PDF</button></div><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>رقم أمر البيع</th><th>نوع الخطأ</th></tr></thead><tbody>${r.errors.map(e=>`<tr><td><strong>${escapeHtml(e.orderNo)}</strong></td><td style="color:var(--danger)">${escapeHtml(e.msg)}</td></tr>`).join("")}</tbody></table></div></div>`:"";
-  box.innerHTML=`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th>#</th><th>أمر البيع</th><th>تاريخ التوريد</th><th>المورد</th><th>العميل</th><th>مشتريات</th><th>مبيعات</th></tr></thead><tbody>${rows||'<tr><td colspan="7" style="text-align:center;padding:18px" class="muted">لا توجد أوامر في النطاق</td></tr>'}</tbody></table></div><div style="padding:8px 12px;font-weight:700">عدد الأوامر: ${list.length}</div></div>${cnt}${err}`;
+  box.innerHTML=`<div class="card" style="margin-top:12px"><div class="tbl-wrap"><table style="width:100%"><thead><tr><th style="width:34px;text-align:center"><input type="checkbox" id="sbAll" ${B.busy?"disabled":""} onchange="supBulkSelAll(this.checked)" aria-label="تحديد الكل" title="تحديد/إلغاء تحديد كل الأوامر الظاهرة"></th><th>#</th><th>أمر البيع</th><th>تاريخ التوريد</th><th>المورد</th><th>العميل</th><th>مشتريات</th><th>مبيعات</th><th>الحالة</th></tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;padding:18px" class="muted">لا توجد أوامر في النطاق</td></tr>'}</tbody></table></div><div style="padding:8px 12px;font-weight:700;display:flex;gap:14px;flex-wrap:wrap;align-items:center"><span>عدد الأوامر: ${list.length}</span>${nSel?`<span style="color:var(--gold-text)">المحدد: ${nSel}</span><button type="button" class="btn ghost sm" onclick="supBulkClearSel()">إلغاء التحديد</button>`:`<span class="muted" style="font-weight:400">لو مفيش تحديد، الترحيل بيشمل كل الأوامر الظاهرة</span>`}</div></div>${cnt}${err}`;
+  const ca=document.getElementById("sbAll"); if(ca){ const n=list.filter(o=>B.sel.has(o.key)).length; ca.checked=list.length>0&&n===list.length; ca.indeterminate=n>0&&n<list.length; }
 }
 async function supBulkErrPdf(){
   const r=window.supBulk.res; if(!r||!r.errors.length) return toast("لا توجد أخطاء للتصدير","err");
