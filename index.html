@@ -23123,10 +23123,29 @@ function saveUserForm(){
     const before=JSON.parse(JSON.stringify(u.perms)), oldRole=u.role, oldName=u.name;
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, name, role, perms } });
-      if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+(await fnErrMsg(r)),"err"); return; }
+      const fnFailed=!!(r.error||(r.data&&r.data.error));
+      const fnMsg=fnFailed?await fnErrMsg(r):"";
+      // الفشل على مستوى الشبكة/الدالة (الدالة مش منشورة أو CORS أو الـ Edge Function واقعة) — مش رفض من السيرفر
+      const fnDown=fnFailed&&!!r.error&&(r.error.name==="FunctionsFetchError"||r.error.name==="FunctionsRelayError"||/Failed to send|Failed to fetch|NetworkError/i.test(r.error.message||""));
+      if(fnFailed&&!fnDown){ toast("تعذر الحفظ: "+fnMsg,"err"); return; }
+      // حفظ مباشر في جدول profiles (الأدمن مسموحله) — بيتستخدم لو الدالة واقعة، أو لو الدالة شالت قايمة الموردين
+      const saveDirect=async()=>{ const d=await sb.from("profiles").update({name,role,perms}).eq("user_no",u.no).select("perms").maybeSingle(); if(d.error) return {ok:false,msg:d.error.message}; if(!d.data) return {ok:false,msg:"ما اتعدّلش أي صف (غالبًا سياسة RLS بتمنع التعديل المباشر)"}; return {ok:true}; };
+      if(fnDown){
+        const d=await saveDirect();
+        if(!d.ok){ toast("تعذر الحفظ: الدالة smart-task مش بترد على Supabase والحفظ المباشر فشل — "+d.msg,"err"); return; }
+        console.warn("smart-task unreachable, saved directly to profiles:",fnMsg);
+        toast("الدالة smart-task مش بترد — الصلاحيات اتحفظت مباشرة. راجع نشر الدالة على Supabase.","err");
+      }
       { const st=state.settings=state.settings||{}; if(st.supExtra&&st.supExtra[u.no]){ st.supExtra=Object.assign({},st.supExtra); delete st.supExtra[u.no]; } }
       u.name=name; u.role=role; u.perms=perms; saveState(); try{ if(currentUser&&u.no===currentUser.no) extNotifCacheSave(u.no,null); }catch(e){}
-      if(perms.supScope){ try{ const chk=await sb.from("profiles").select("perms").eq("user_no",u.no).maybeSingle(); const got=chk&&chk.data&&chk.data.perms&&chk.data.perms.supScope; if(!got||got.mode!=="selected") toast("تنبيه: السيرفر ما حفظش قايمة الموردين المسموحين — الدالة smart-task على Supabase بتشيل الحقول الجديدة من الصلاحيات","err"); }catch(e){} }
+      if(perms.supScope&&!fnDown){
+        const readSc=async()=>{ try{ const chk=await sb.from("profiles").select("perms").eq("user_no",u.no).maybeSingle(); const got=chk&&chk.data&&chk.data.perms&&chk.data.perms.supScope; return !!(got&&got.mode==="selected"); }catch(e){ return false; } };
+        if(!(await readSc())){
+          // الدالة شالت supScope من الصلاحيات — نكتبها مباشرة ونتأكد
+          const d=await saveDirect();
+          if(!d.ok||!(await readSc())) toast("تنبيه: السيرفر ما حفظش قايمة الموردين المسموحين — الدالة smart-task بتشيل الحقول الجديدة، والحفظ المباشر فشل"+(d.ok?"":" ("+d.msg+")"),"err");
+        }
+      }
       const d=permDiff(before,perms);
       audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
       toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser();
