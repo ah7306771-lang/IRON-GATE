@@ -10227,11 +10227,7 @@ function viewDashboard(){
       ${kpi('k-green','↓','تحصيلات '+P.s,money(collMonth)+' <em>'+cur+'</em>',(delta(collMonth,collPrev)===null?'بدون مقارنة':chip(delta(collMonth,collPrev))+' عن '+cmpLbl),periodGo('receipts'))}
       ${kpi('k-blue','▥','إجمالي الأقساط غير المسددة',money(dueTotal)+' <em>'+cur+'</em>',dues.length+' قسط · منها '+late.length+' متأخر · '+next7+' خلال 7 أيام · '+laterRows.length+' لاحقًا',"dxPulseGoto('salesInstallments',{status:['متأخر','قادم','بدون تاريخ']})",'مجموع المتبقي من كل قسط لم يُسدَّد بالكامل:\nمتأخر: '+money(lateTotal)+' '+cur+' ('+late.length+' قسط)\nخلال 7 أيام: '+money(next7Total)+' '+cur+' ('+next7+' قسط)\nلاحقًا أو بدون تاريخ: '+money(laterTotal)+' '+cur+' ('+laterRows.length+' قسط)')}
       ${kpi(lateTotal>0?'k-red dx-kpi-late':'k-red','!','متأخرات',money(lateTotal)+' <em>'+cur+'</em>',late.length+' قسط متأخر من الإجمالي'+(lateTop.length?' · أطول تأخير '+lateTop[0].days+' يوم':''),"overdueSummary",'اضغط لفتح تقرير إجمالي المتأخرات')}
-      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}
-      ${(_dxPartyBalances.c!==null&&safe(()=>canView("clientTB"),false))?kpi(_dxPartyBalances.c<0?'k-red':'k-blue','👥','رصيد العملاء',money(_dxPartyBalances.c)+' <em>'+cur+'</em>','صافي أرصدة جميع العملاء حتى الآن · اضغط لميزان العملاء','clientTB','الرصيد الصافي للعملاء من ميزان مراجعة العملاء، شامل الأرصدة الافتتاحية والحركات المسجلة'):''}
-      ${(_dxPartyBalances.v!==null&&safe(()=>canView("supplierTB"),false))?kpi(_dxPartyBalances.v<0?'k-red':'k-green','🏭','رصيد الموردين',money(_dxPartyBalances.v)+' <em>'+cur+'</em>','صافي أرصدة جميع الموردين حتى الآن · اضغط لميزان الموردين','supplierTB','الرصيد الصافي للموردين من ميزان مراجعة الموردين، شامل الأرصدة الافتتاحية والحركات المسجلة'): ''}
-      ${(!_mine&&!_ops&&safe(()=>canView('bankStatement'),false))?kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+dxTrCell('bank').val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+dxTrCell('bank').sub+'</span>','bankStatement','إجمالي أرصدة كل البنوك الحالية (نفس منطق كشف حساب البنك)'):''}
-      ${(!_mine&&!_ops&&safe(()=>canView('safeStatement'),false))?kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+dxTrCell('safe').val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+dxTrCell('safe').sub+'</span>','safeStatement','إجمالي أرصدة كل الخزن الحالية (نفس منطق كشف حساب الخزينة)'):''}` :
+      ${kpi('k-slate','▭','شيكات تحت التحصيل',money(chequeSum)+' <em>'+cur+'</em>',chequeN+' شيك · '+chqRows.length+' مستحق خلال 7 أيام أو فات ميعاده ('+money(chqFollowTotal)+')','chequeRegister')}` :
     `${kpi('k-gold','▤','أوامر البيع',counts.orders,counts.openOrders+' أمر مفتوح','saleOrder')}${kpi('k-green','▣','البوالص',counts.shipments,'إجمالي البوالص','shipments')}${kpi('k-blue','♙','العملاء',counts.customers,'عميل مسجل',"currentTab='customers';go('master')")}${kpi('k-slate','♧','الموردون',counts.suppliers,'مورد مسجل',"currentTab='suppliers';go('master')")}`;
 
   const lateList = lateTop.map(r=>`<tr style="cursor:pointer" title="فتح أقساط ${escapeAttr(r.customer)} المتأخرة" onclick="dxPulseGoto('salesInstallments',{customer:${escapeAttr(JSON.stringify(r.customer))},status:'متأخر'})"><td><b>${escapeHtml(r.customer)}</b><small>${escapeHtml(String(r.orderNo))} · ${escapeHtml(r.label)}</small></td><td class="num">${money(r.remaining)}</td><td><span class="dx-pill red">${r.days} يوم</span></td></tr>`).join("");
@@ -10242,6 +10238,17 @@ function viewDashboard(){
   const custodyOpenRows=custodyCache.loaded?custodyCache.accounts.filter(a=>a.is_active!==false).map(a=>({a,b:custodyAccountBalance(a.id)})).filter(x=>Math.abs(x.b)>.004).sort((a,b)=>Math.abs(b.b)-Math.abs(a.b)):[];
   const custodyOpenTotal=custodyOpenRows.reduce((n,x)=>n+x.b,0);
   const custodyAlertRows=custodyOpenRows.slice(0,6).map(x=>`<tr><td><b>${escapeHtml(x.a.owner_name||"—")}</b><small>${escapeHtml(x.a.code||"")}</small></td><td class="num">${money(x.b)}</td><td><span class="dx-pill ${x.b<0?'red':'amber'}">${x.b<0?'رصيد بالسالب':'تحتاج تسوية'}</span></td></tr>`).join("");
+
+  // --- صف الأرصدة (السطر الثالث): العملاء ← الموردين ← البنوك ← الخزن ← العهد
+  const _balCards=[
+    (_dxPartyBalances.c!==null&&safe(()=>canView("clientTB"),false))?kpi(_dxPartyBalances.c<0?'k-red':'k-blue','👥','رصيد العملاء',money(_dxPartyBalances.c)+' <em>'+cur+'</em>','صافي أرصدة جميع العملاء حتى الآن · اضغط لميزان العملاء','clientTB','الرصيد الصافي للعملاء من ميزان مراجعة العملاء، شامل الأرصدة الافتتاحية والحركات المسجلة'):'',
+    (_dxPartyBalances.v!==null&&safe(()=>canView("supplierTB"),false))?kpi(_dxPartyBalances.v<0?'k-red':'k-green','🏭','رصيد الموردين',money(_dxPartyBalances.v)+' <em>'+cur+'</em>','صافي أرصدة جميع الموردين حتى الآن · اضغط لميزان الموردين','supplierTB','الرصيد الصافي للموردين من ميزان مراجعة الموردين، شامل الأرصدة الافتتاحية والحركات المسجلة'): '',
+    (!_mine&&!_ops&&safe(()=>canView('bankStatement'),false))?kpi('k-blue','🏦','رصيد البنوك','<span id="dxBankVal">'+dxTrCell('bank').val+'</span> <em>'+cur+'</em>','<span id="dxBankSub">'+dxTrCell('bank').sub+'</span>','bankStatement','إجمالي أرصدة كل البنوك الحالية (نفس منطق كشف حساب البنك)'):'',
+    (!_mine&&!_ops&&safe(()=>canView('safeStatement'),false))?kpi('k-green','🗄','رصيد الخزن','<span id="dxSafeVal">'+dxTrCell('safe').val+'</span> <em>'+cur+'</em>','<span id="dxSafeSub">'+dxTrCell('safe').sub+'</span>','safeStatement','إجمالي أرصدة كل الخزن الحالية (نفس منطق كشف حساب الخزينة)'):'',
+    (!_mine&&!_ops&&custodyAllowed)?kpi(custodyOpenTotal<0?'k-red':'k-slate','💼','رصيد العهد',(custodyCache.loaded?money(custodyOpenTotal)+' <em>'+cur+'</em>':'<span class="ig-skb" style="display:inline-block;width:80px;height:20px;vertical-align:middle"></span>'),(custodyCache.loaded?custodyOpenRows.length+' عهدة برصيد غير صفري · اضغط لتقرير العهد':'جاري تحميل العهد…'),'custodyReport','صافي أرصدة العهد النشطة (الوارد − المنصرف) لكل العهد'):''
+  ].filter(Boolean);
+  if(canMoney&&custodyAllowed&&!custodyCache.loaded&&!window._dxCL){ window._dxCL=1; setTimeout(()=>{ try{ custodyLoad().then(()=>{ try{ if(currentPage==="dashboard") dxRerender(); }catch(e){} }).catch(()=>{}); }catch(e){} },80); }
+  const _balHtml=(canMoney&&_balCards.length)?`<div class="dx-kpis dx-bal-row" style="--n:${_balCards.length}">${_balCards.join("")}</div>`:"";
 
   // --- Pulse Strip insights (شريط النبض اللحظي) ---
   const _pendPol = safe(()=>_sc.mode==="finance"?[]:arr("policies"),[]);
@@ -10293,6 +10300,7 @@ function viewDashboard(){
 
     ${d30Html}
     <div class="dx-kpis dx-two-row-grid">${moneyKpis}</div>
+    ${_balHtml}
     ${canMoney?`<div class="dx-note">المبيعات والتحصيلات حسب الفترة المختارة، أما الأقساط المستحقة والمتأخرات والشيكات فتعكس الوضع الحالي.</div>
     `:""}
 
@@ -11638,6 +11646,7 @@ async function invRepricePreview(){
   }catch(e){
     var msg=String((e&&e.message)||e||"");
     if(msg.indexOf("FY_CLOSED")>=0){ await askConfirm("الفترة مغلقة أو جزء من النطاق خارج فترة محاسبية مفتوحة. افتح الفترة من \"السنة المالية\" ثم أعد المحاولة.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"}); }
+    else if(invRepriceFnMissing_(e)) toast("فشل: "+INV_REPRICE_FIX_MSG,"err");
     else toast("فشل: "+msg,"err");
   }
 }
@@ -11665,7 +11674,7 @@ async function invRepriceExecute(){
   }catch(e){
     var msg=String((e&&e.message)||e||"");
     if(msg.indexOf("FY_CLOSED")>=0){ await askConfirm("الفترة مغلقة. فيه تاريخ في النطاق خارج أي فترة محاسبية مفتوحة، فالتعديل اتوقف.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"}); }
-    else await askConfirm("فشل التنفيذ: "+msg,{title:"⚠ خطأ",ok:"حسنًا",cancel:"إغلاق",danger:true});
+    else await askConfirm("فشل التنفيذ: "+(invRepriceFnMissing_(e)?INV_REPRICE_FIX_MSG:msg),{title:"⚠ خطأ",ok:"حسنًا",cancel:"إغلاق",danger:true});
   }
 }
 
@@ -12519,9 +12528,9 @@ function itemsMasterHtml(tabs){
   igList().forEach(g=>{
     const its=igItemsOf(g.id);
     rows+=`<tr style="background:rgba(212,160,23,.07);font-weight:700">
-      <td><strong>${escapeHtml(g.name||"")}</strong> <span class="wh-badge" style="font-size:10px;padding:1px 7px;border-radius:9px;background:rgba(212,160,23,.14);color:var(--gold-text)">مجموعة · ${its.length} صنف</span></td>
+      <td><strong>${escapeHtml(g.name||"")}</strong> <span class="wh-badge" style="font-size:10px;padding:1px 7px;border-radius:9px;background:rgba(212,160,23,.14);color:var(--gold-text)">مجموعة · ${its.length} صنف</span> ${guSummary(g.id)}</td>
       <td style="font-weight:400">${accCell(g,1)}</td><td style="font-weight:400">${accCell(g,2)}</td>
-      <td style="width:210px"><div class="td-actions">${canA?`<button onclick="itAdd('${escapeAttr(g.id)}')">＋ صنف</button>`:""}${canE?`<button onclick="igEdit('${escapeAttr(g.id)}')">تعديل</button>`:""}${canD?`<button class="del" onclick="igDel('${escapeAttr(g.id)}')">حذف</button>`:""}</div></td></tr>`+itemRows(g.id);
+      <td style="width:300px"><div class="td-actions">${canA?`<button onclick="itAdd('${escapeAttr(g.id)}')">＋ صنف</button>`:""}${canE?`<button onclick="igUnits('${escapeAttr(g.id)}')">وحدات القياس</button><button onclick="igEdit('${escapeAttr(g.id)}')">تعديل</button>`:""}${canD?`<button class="del" onclick="igDel('${escapeAttr(g.id)}')">حذف</button>`:""}</div></td></tr>`+itemRows(g.id);
   });
   const orphans=igItemsOf("");
   if(orphans.length) rows+=`<tr style="background:rgba(120,120,120,.08);font-weight:700"><td colspan="3">بدون مجموعة <span style="font-weight:400;color:var(--text-dim);font-size:12px">(${orphans.length} صنف — عدّل الصنف وانقله لمجموعة)</span></td><td></td></tr>`+itemRows("");
@@ -12570,7 +12579,7 @@ async function igDel(id){
   const g=igById(id); if(!g) return;
   if(igItemsOf(id).length){ toast("المجموعة فيها أصناف — انقلها لمجموعة تانية أو احذفها الأول","err"); return; }
   if(!await askConfirm(`حذف المجموعة "${g.name}" ؟`)) return;
-  state.itemGroups=igList().filter(x=>x.id!==id); saveState(); go(currentPage==="inventory"?"inventory":"master"); toast("تم الحذف","ok");
+  state.itemGroups=igList().filter(x=>x.id!==id); try{ delete guStore()[id]; }catch(e){} saveState(); go(currentPage==="inventory"?"inventory":"master"); toast("تم الحذف","ok");
 }
 function itGroupSelect(sel){
   return `<select class="inp" id="it_group"><option value="">— بدون مجموعة —</option>${igList().map(g=>`<option value="${escapeAttr(g.id)}" ${g.id===sel?"selected":""}>${escapeHtml(g.name)}</option>`).join("")}</select>`;
@@ -12579,17 +12588,17 @@ function itAdd(gid){
   openModal("إضافة أصناف", `<div style="display:grid;gap:12px">
     <div class="fld"><label>المجموعة</label>${itGroupSelect(gid||"")}</div>
     <div class="fld"><label>الأصناف * <span style="color:var(--text-dim);font-weight:400">(سطر لكل صنف)</span></label><textarea class="inp" id="it_names" rows="5" placeholder="مثال:&#10;10&#10;12&#10;16"></textarea></div>
-    <div class="fld"><label>وحدة القياس الأساسية</label><select class="inp" id="it_unit"><option value="">— بدون —</option>${unitsList().map((u,k)=>`<option value="${escapeAttr(u.no)}"${k===0?" selected":""}>${escapeHtml(u.name)}</option>`).join("")}</select></div></div>`, ()=>{
+    <div class="fld"><label>وحدة القياس الأساسية</label><div id="it_unit_note" style="display:none;font-size:12.5px;color:var(--gold-text);line-height:1.8;margin-bottom:6px"></div><select class="inp" id="it_unit"><option value="">— بدون —</option>${unitsList().map((u,k)=>`<option value="${escapeAttr(u.no)}"${k===0?" selected":""}>${escapeHtml(u.name)}</option>`).join("")}</select></div></div>`, ()=>{
     const names=(document.getElementById("it_names")?.value||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
     const grp=document.getElementById("it_group")?.value||"";
     if(!names.length){ toast("اكتب صنف واحد على الأقل","err"); return false; }
     const seen=new Set(), exist=new Set(state.diameters||[]);
     for(const n of names){ if(exist.has(n)||seen.has(n)){ toast(`الصنف "${n}" موجود بالفعل`,"err"); return false; } seen.add(n); }
     const _u=document.getElementById("it_unit")?.value||"";
-    names.forEach(n=>{ state.diameters.push(n); if(grp) igMap()[n]=grp; if(_u) iuStore()[n]=[{unitNo:_u,factor:1,base:true,used:true,bcIn:"",bcIntl:""}]; });
+    names.forEach(n=>{ state.diameters.push(n); if(grp) igMap()[n]=grp; if(!(grp&&iuInherit(n,grp))&&_u) iuStore()[n]=[{unitNo:_u,factor:1,base:true,used:true,bcIn:"",bcIntl:""}]; });
     saveState(); go(currentPage==="inventory"?"inventory":"master"); toast(`تمت إضافة ${names.length} صنف`,"ok"); return true;
   });
-  setTimeout(()=>document.getElementById("it_names")?.focus(),50);
+  setTimeout(()=>{ document.getElementById("it_names")?.focus(); const gs=document.getElementById("it_group"); if(gs){ gs.addEventListener("change",guItNote); guItNote(); } },50);
 }
 function itEdit(idx){
   const old=state.diameters[idx]; if(old===undefined) return;
@@ -12599,7 +12608,7 @@ function itEdit(idx){
     const n=(document.getElementById("it_name")?.value||"").trim(), grp=document.getElementById("it_group")?.value||"";
     if(!n){ toast("يجب إدخال اسم","err"); return false; }
     if(state.diameters.some((x,i)=>x===n&&i!==idx)){ toast("هذا الصنف موجود بالفعل","err"); return false; }
-    const m=igMap(); delete m[old]; state.diameters[idx]=n; if(grp) m[n]=grp; iuRename(old,n);
+    const m=igMap(), oldGrp=m[old]||""; delete m[old]; state.diameters[idx]=n; if(grp) m[n]=grp; iuRename(old,n); if(grp&&grp!==oldGrp){ try{ iuInherit(n,grp); }catch(e){} }
     saveState(); go(currentPage==="inventory"?"inventory":"master"); toast("تم التعديل","ok"); return true;
   });
   setTimeout(()=>{ const el=document.getElementById("it_name"); if(el){ el.focus(); el.select(); } },50);
@@ -15471,6 +15480,9 @@ function saveShipment(){
 }
 
 // ---------- ربط تلقائي: إعادة تسعير عند تغيير buyPrice في بوليصة مرحّلة ----------
+// الدالة مش موجودة/مختلفة التوقيع على Supabase (PGRST202) أو الـ schema cache قديم
+function invRepriceFnMissing_(e){ var m=String((e&&e.message)||e||"")+" "+String((e&&e.code)||""); return /PGRST202|Could not find the function|schema cache/i.test(m); }
+const INV_REPRICE_FIX_MSG="دالة inventory_reprice_authorized مش موجودة (أو توقيعها مختلف) على Supabase. شغّل في SQL Editor:  NOTIFY pgrst, 'reload schema';  ولو لسه، الدالة محتاجة تتنشر من جديد.";
 function invAutoRepriceChanged_(oldR,newR){
   // بنعمل map للسعر القديم بمفتاح القطر|النوع، وبنقارن بالجديد
   var map={};
@@ -15517,6 +15529,9 @@ async function invAutoRepriceOnBuyPriceChange_(rec,oldRec){
     var msg=String((e&&e.message)||e||"");
     if(msg.indexOf("FY_CLOSED")>=0){
       await askConfirm("تم حفظ البوليصة بالسعر الجديد، لكن المزامنة التلقائية اتوقفت لأن تاريخ البوليصة في فترة محاسبية مغلقة. افتح الفترة من \"السنة المالية\" ثم اعمل إعادة تسعير يدوياً.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"});
+    }else if(invRepriceFnMissing_(e)){
+      console.error("auto-reprice: rpc missing",e);
+      toast("✓ البوليصة اتحفظت. المزامنة التلقائية للمخزون اتخطّت: "+INV_REPRICE_FIX_MSG,"warn");
     }else{
       console.error("auto-reprice failed",e);
       toast("تم حفظ البوليصة لكن فشلت المزامنة التلقائية: "+msg,"warn");
@@ -33824,6 +33839,14 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
  #content .dx .dx-kpis.dx-two-row-grid:not(#_) .dx-kpi strong:not(#_){font-size:clamp(17px,1.35vw,22px)!important}
  #content .dx .dx-kpis.dx-two-row-grid:not(#_) .dx-kpi small:not(#_){font-size:10.5px!important;line-height:1.4!important;max-height:3em!important}
 }
+/* لوحة التحكم: صف الأرصدة (عملاء ← موردين ← بنوك ← خزن ← عهد) جنب بعض في سطر واحد */
+@media (min-width:1000px){
+ #content .dx .dx-kpis.dx-bal-row:not(#_){display:grid!important;grid-template-columns:repeat(var(--n,5),minmax(0,1fr))!important;gap:10px!important;margin:0 0 10px!important}
+ #content .dx .dx-kpis.dx-bal-row:not(#_)>.dx-kpi:not(#_){grid-column:auto!important;min-width:0!important;min-height:94px!important;padding:12px 14px!important;gap:6px 10px!important;align-content:center}
+ #content .dx .dx-kpis.dx-bal-row:not(#_) .dx-kpi-lbl:not(#_){font-size:12px!important;line-height:1.4!important}
+ #content .dx .dx-kpis.dx-bal-row:not(#_) .dx-kpi strong:not(#_){font-size:clamp(17px,1.35vw,22px)!important}
+ #content .dx .dx-kpis.dx-bal-row:not(#_) .dx-kpi small:not(#_){font-size:10.5px!important;line-height:1.4!important;max-height:3em!important}
+}
 </style>
 <script>
 (function(){
@@ -38975,8 +38998,8 @@ function iuRow(r,i){
   <td><select class="inp" onchange="iuSet(${i},'unitNo',this.value)" style="min-width:140px">${iuUnitOpts(r.unitNo)}</select></td>
   <td><input class="inp" type="number" step="any" min="0" value="${a(r.factor)}" ${r.base?"readonly":""} oninput="iuSet(${i},'factor',this.value)" style="width:110px;direction:ltr;text-align:center${r.base?";background:var(--bg-3)":""}"></td>
   <td><input class="inp" id="iuM${i}" readonly tabindex="-1" value="${a(iuMain(r.factor))}" style="width:110px;direction:ltr;text-align:center;background:var(--bg-3)"></td>
-  <td><input class="inp" value="${a(r.bcIn)}" oninput="iuSet(${i},'bcIn',this.value)" style="width:140px;direction:ltr"></td>
-  <td><input class="inp" value="${a(r.bcIntl)}" oninput="iuSet(${i},'bcIntl',this.value)" style="width:140px;direction:ltr"></td>
+  ${IU&&IU.group?"":`<td><input class="inp" value="${a(r.bcIn)}" oninput="iuSet(${i},'bcIn',this.value)" style="width:140px;direction:ltr"></td>
+  <td><input class="inp" value="${a(r.bcIntl)}" oninput="iuSet(${i},'bcIntl',this.value)" style="width:140px;direction:ltr"></td>`}
   <td style="text-align:center"><input type="checkbox" ${r.used?"checked":""} onchange="iuSet(${i},'used',this.checked)" style="width:18px;height:18px"></td>
   <td style="text-align:center"><input type="checkbox" ${r.base?"checked":""} onchange="iuSetBase(${i})" style="width:18px;height:18px"></td>
   <td><button type="button" class="btn ghost sm" style="color:var(--danger)" onclick="iuDel(${i})">✕</button></td></tr>`;
@@ -39009,6 +39032,7 @@ function iuDel(i){
   IU.rows.splice(i,1); iuPaint();
 }
 function iuSave(){
+  if(IU&&IU.group) return iuSaveGroup();
   const rows=IU.rows.filter(r=>r.unitNo!==""||r.factor!==""||r.bcIn||r.bcIntl);
   if(!rows.length){ toast("أضف وحدة واحدة على الأقل","err"); return false; }
   const seen=new Set(), bcs=new Set(); let nb=0;
@@ -39027,6 +39051,59 @@ function iuSave(){
   saveState(); go(currentPage==="inventory"?"inventory":"master"); toast("تم حفظ وحدات الصنف","ok"); return true;
 }
 
+/* ================= وحدات قياس المجموعة — الصنف الجديد تحت المجموعة بياخد نسخة منها تلقائي ================= */
+function guStore(){ const s=state.settings=state.settings||{}; if(!s.groupUnits||typeof s.groupUnits!=="object"||Array.isArray(s.groupUnits)) s.groupUnits={}; return s.groupUnits; }
+function guOf(gid){ const a=guStore()[gid]; return Array.isArray(a)?a:[]; }
+function guClone(gid){ return guOf(gid).map(r=>({unitNo:r.unitNo,factor:Number(r.factor),base:!!r.base,used:r.used!==false,bcIn:"",bcIntl:""})); }
+// ينسخ وحدات المجموعة للصنف لو الصنف مالوش وحدات (الباركود بيتساب فاضي لأنه مميز لكل صنف). بيرجع true لو نسخ.
+function iuInherit(item,gid){ const a=guClone(gid); if(!a.length||iuOf(item).length) return false; iuStore()[item]=a; return true; }
+function guSummary(gid){
+  const a=guOf(gid); if(!a.length) return `<span style="color:var(--text-dim);font-size:11px;font-weight:400">بدون وحدات للمجموعة</span>`;
+  const b=a.find(x=>x.base);
+  return `<span class="wh-badge" style="font-size:10.5px;padding:1px 8px;border-radius:9px;background:rgba(40,160,90,.14);color:var(--ok,#15803d)">وحدات المجموعة: ${escapeHtml(b?iuUnitName(b.unitNo):"—")} (أساسية) · ${a.length} وحدة</span>`;
+}
+function guItNote(){
+  const gid=document.getElementById("it_group")?.value||"", note=document.getElementById("it_unit_note"), sel=document.getElementById("it_unit"); if(!note||!sel) return;
+  const a=gid?guOf(gid):[];
+  if(a.length){ note.style.display="block"; note.textContent="هتتنسخ وحدات المجموعة تلقائي: "+a.map(x=>iuUnitName(x.unitNo)+(x.base?" (أساسية)":" × "+x.factor)).join(" ، "); sel.style.display="none"; }
+  else { note.style.display="none"; sel.style.display=""; }
+}
+function igUnits(gid){
+  const g=igById(gid); if(!g) return;
+  if(!unitsList().length) return toast("أضف الوحدات الأول من المخازن ← البيانات الأساسية ← الوحدات","err");
+  IU={item:null,group:gid,rows:JSON.parse(JSON.stringify(guOf(gid)))}; if(!IU.rows.length) IU.rows.push(iuNew(true));
+  openModal("وحدات قياس المجموعة — "+escapeHtml(g.name||""),
+   `<div style="overflow-x:auto"><table><thead><tr><th>رقم الوحدة</th><th>اسم الوحدة</th><th title="كم وحدة أساسية في هذه الوحدة">التحويل</th><th>الوحدات الرئيسية</th><th>مستخدم</th><th>أساسية</th><th></th></tr></thead><tbody id="iuBody">${iuBodyHtml()}</tbody></table></div>
+    <div style="margin-top:10px"><button type="button" class="btn ghost" onclick="iuAdd()">＋ وحدة</button></div>
+    <p style="margin-top:10px;color:var(--text-dim);font-size:12px;line-height:1.8">أي صنف جديد يتضاف تحت المجموعة دي (أو يتنقل ليها وهو مالوش وحدات) بياخد نسخة من الوحدات دي تلقائي. الباركود بيتحدد لكل صنف لوحده. تعديل وحدات المجموعة مبيغيّرش الأصناف اللي عندها وحدات بالفعل.</p>`,
+   iuSave);
+  setTimeout(()=>{ const m=document.querySelector("#modalBackdrop .modal"); if(m){ m.style.maxWidth="820px"; m.style.width="96vw"; } },0);
+}
+function iuSaveGroup(){
+  const gid=IU.group, rows=IU.rows.filter(r=>r.unitNo!==""||r.factor!=="");
+  if(!rows.length){ toast("أضف وحدة واحدة على الأقل","err"); return false; }
+  const seen=new Set(); let nb=0;
+  for(const r of rows){
+    if(r.unitNo===""){ toast("اختر اسم الوحدة في كل سطر","err"); return false; }
+    if(seen.has(String(r.unitNo))){ toast("الوحدة «"+iuUnitName(r.unitNo)+"» مكررة","err"); return false; } seen.add(String(r.unitNo));
+    if(!(Number(r.factor)>0)){ toast("التحويل لازم يكون أكبر من صفر (وحدة «"+iuUnitName(r.unitNo)+"»)","err"); return false; }
+    if(r.base){ nb++; if(Number(r.factor)!==1){ toast("التحويل للوحدة الأساسية لازم يكون 1","err"); return false; } }
+  }
+  if(nb!==1){ toast("لازم تحدد وحدة أساسية واحدة بالظبط","err"); return false; }
+  guStore()[gid]=rows.map(r=>({unitNo:r.unitNo,factor:Number(r.factor),base:!!r.base,used:r.used!==false}));
+  saveState();
+  const pend=igItemsOf(gid).map(x=>x.n).filter(n=>!iuOf(n).length);
+  const refresh=()=>go(currentPage==="inventory"?"inventory":"master");
+  if(pend.length){
+    (async()=>{
+      if(await askConfirm("تطبيق وحدات المجموعة على "+pend.length+" صنف تحتها مالهاش وحدات حاليًا؟")){ pend.forEach(n=>iuInherit(n,gid)); saveState(); toast("تم حفظ وحدات المجموعة وتطبيقها على "+pend.length+" صنف","ok"); }
+      else toast("تم حفظ وحدات المجموعة","ok");
+      refresh();
+    })();
+  } else { refresh(); toast("تم حفظ وحدات المجموعة","ok"); }
+  return true;
+}
+
 /* تطبيق وحدات (كيلو أساسية + طن = 1000 كيلو) على كل الأصناف اللي لسه مالهاش وحدات */
 async function iuApplyDefaults(){
   if(!can(currentPage==="inventory"?"inventory":"master","edit")) return toast("مفيش صلاحية تعديل","err");
@@ -39036,7 +39113,7 @@ async function iuApplyDefaults(){
   if(!todo.length) return toast("كل الأصناف عندها وحدات بالفعل","ok");
   if(!await askConfirm("تطبيق الوحدات (كيلو أساسية + طن) على "+todo.length+" صنف مالهاش وحدات؟")) return;
   const us=PLAN.map(p=>{ let u=unitsList().find(x=>x.name===p.name); if(!u){ const no=unitsNextNo(); u={no,name:p.name}; unitsList().push(u); state.settings.unitsSeq=no; } return u; });
-  todo.forEach(n=>{ store[n]=PLAN.map((p,k)=>({unitNo:us[k].no,factor:p.factor,base:!!p.base,used:true,bcIn:"",bcIntl:""})); });
+  todo.forEach(n=>{ const g=igMap()[n]; if(g&&guOf(g).length) store[n]=guClone(g); else store[n]=PLAN.map((p,k)=>({unitNo:us[k].no,factor:p.factor,base:!!p.base,used:true,bcIn:"",bcIntl:""})); });
   saveState(); go(currentPage==="inventory"?"inventory":"master"); toast("تم تطبيق الوحدات على "+todo.length+" صنف","ok");
 }
 </script>
