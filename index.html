@@ -2521,7 +2521,7 @@ html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollba
   </div>
 
   <!-- AI Chat FAB (Telegram-style, white+navy, always collapsed) -->
-  <button type="button" id="loginChatBtn" onclick="aiChatOpen()" aria-label="اسأل الذكاء الاصطناعي" title="اسأل الذكاء الاصطناعي"
+  <button type="button" id="loginChatBtn" onclick="aiChatOpen()" aria-label="Ask AI" title="Ask AI"
     style="position:fixed;bottom:24px;right:20px;z-index:101;width:60px;height:60px;border-radius:50%;
            background:#ffffff;color:#14213d;border:none;
            box-shadow:0 6px 20px rgba(0,0,0,.35),0 0 0 3px #14213d;
@@ -2532,10 +2532,11 @@ html body #content::-webkit-scrollbar-track,html body .content::-webkit-scrollba
   </button>
 
   <!-- AI Chat Panel (login screen) -->
+  <style>#aiChatOv[hidden]{display:none!important}</style>
   <div id="aiChatOv" hidden onclick="if(event.target===this)aiChatClose()" onkeydown="if(event.key==='Escape')aiChatClose()" style="position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(6px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">
     <div class="aichat-card" role="dialog" aria-modal="true" aria-labelledby="aichatT" style="width:min(640px,100%);max-height:min(88vh,840px);background:linear-gradient(145deg,#1a150c,#241c10);border:1px solid rgba(204,172,119,.45);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid rgba(204,172,119,.22);background:linear-gradient(135deg,#231a0d,#2d2113)">
-        <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">🧠</span><h3 id="aichatT" style="margin:0;color:#EDD69E;font-size:16px;font-weight:800;letter-spacing:2px">اسأل الذكاء الاصطناعي</h3></div>
+        <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">🧠</span><h3 id="aichatT" style="margin:0;color:#EDD69E;font-size:16px;font-weight:800;letter-spacing:2px">Ask AI</h3></div>
         <button type="button" onclick="aiChatClose()" aria-label="إغلاق" style="background:transparent;border:1px solid rgba(204,172,119,.3);color:#EDD69E;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center">✕</button>
       </div>
       <div id="aiChatBody" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;background:#120d05;min-height:300px">
@@ -20331,6 +20332,12 @@ function openTxForm(direction, existing){
       ? ("تم الحفظ بنجاح"+(txScope!=="all"&&document.getElementById("adjView")==null?" — التسوية بتظهر في شاشة "+(isIn?"تسويات العملاء":"تسويات الموردين"):""))
       : ((!existing && isTransferSupplier) ? `✓ تم الحفظ بنجاح · تم إنشاء دفعة تلقائية للمورد "${targetSupplierVal}" في شاشة المدفوعات` : (existing?"✓ تم الحفظ بنجاح — تم تعديل السجل":"✓ تم الحفظ بنجاح — تمت الإضافة"));
     toast(msg,"ok");
+    if(window.__txSavePost){
+      // حفظ وترحيل الحركة: بعد الحفظ افتح نافذة الترحيل الموجودة لنفس الحركة
+      window.__txSavePost=false;
+      const _pid=d.id, _pdir=direction;
+      setTimeout(()=>{ try{ txPostOpen(_pid,_pdir); }catch(_pe){ console.warn(_pe); } },80);
+    } else
     if(window.__txSaveNew && !existing){
       // حفظ وإضافة جديد: افتح حركة جديدة في نفس الشاشة بعد قفل النافذة الحالية
       window.__txSaveNew=false;
@@ -20353,6 +20360,18 @@ function openTxForm(direction, existing){
       _nb.style.cssText="background:var(--ok,#1f9d55);border-color:var(--ok,#1f9d55);color:#fff";
       _nb.onclick=()=>{ window.__txSaveNew=true; try{ confirmModal(); } finally { window.__txSaveNew=false; } };
       _mf.insertBefore(_nb,_mf.children[1]||null);
+    }
+  }
+  /* زرار «حفظ وترحيل الحركة»: يحفظ الحركة ثم يفتح نافذة الترحيل مباشرة (تحصيلات/مدفوعات/بنوك/خزن) */
+  if(!adjScreen && (typeof txCanPost==="function") && txCanPost(null,direction)){
+    const _mf2=document.querySelector("#modalBackdrop .mfoot");
+    if(_mf2 && !document.getElementById("txSavePostBtn")){
+      const _pb=document.createElement("button");
+      _pb.type="button"; _pb.className="btn"; _pb.id="txSavePostBtn"; _pb.textContent="حفظ وترحيل الحركة";
+      _pb.title="يحفظ الحركة ثم يفتح نافذة الترحيل مباشرة";
+      _pb.style.cssText="background:#0f2a52;border-color:#0f2a52;color:#fff";
+      _pb.onclick=()=>{ window.__txSavePost=true; try{ confirmModal(); } finally { window.__txSavePost=false; } };
+      _mf2.appendChild(_pb);
     }
   }
   setTimeout(()=>{ txKindApply(); txToggleFields(); txSetDefaultStatus(); txRenderSettlementDetails(); txUpdateDetailsAccess(); if(adjScreen){ const _k=document.querySelector("#modalBackdrop .tx-kind"), _t=document.getElementById("tx_glTargetWrap"); if(_k) _k.style.display="none"; if(_t) _t.style.display="none"; } { const ps=document.getElementById("tx_party"); igSearchableSelect(ps); /* من غير focus تلقائي: قايمة العميل/المورد بتفتح بس لما المستخدم يضغط عليها */ } }, 50);
@@ -37917,6 +37936,7 @@ function codes(m){
   }catch(e){}
   return [];
 }
+const parentOf=code=>{ try{ return (typeof bankParentOf==="function"?bankParentOf(String(code||"").trim()):"")||""; }catch(e){ return ""; } };
 const nameOf=(m,code)=>{ const x=codes(m).find(c=>c.code===String(code||"").trim()); return x?x.name:""; };
 const curName=no=>{ const x=CUR.find(c=>c.no===Number(no)); return x?x.name:""; };
 const ccName=code=>{ const x=C.centers.find(c=>String(c.center_code)===String(code||"").trim()); return x?(x.center_name||""):""; };
@@ -37963,13 +37983,13 @@ function injectCustody(){
 }
 
 /* ---------------- المسودة ---------------- */
-const blankLine=()=>({id:null,account_code:"",voucher_no:"",currency_no:1,rate:1,amount_fc:""});
+const blankLine=()=>({id:null,account_code:"",cheque_no:"",cheque0:"",voucher_no:"",currency_no:1,rate:1,amount_fc:""});
 function nextDoc(m){ return C.masters.filter(x=>x.module===m).reduce((n,x)=>Math.max(n,Number(x.doc_no)||0),0)+1; }
 function newDraft(m){ S[m].draft={id:null,doc_no:nextDoc(m),entry_date:today(),notes:"",cost_center_code:"",gl_entry_no:"",lines:[blankLine(),blankLine(),blankLine(),blankLine(),blankLine()],removed:[]}; }
 function openDoc(m,id){
   const h=C.masters.find(x=>x.id===id); if(!h) return;
   S[m].draft={id:h.id,doc_no:h.doc_no,entry_date:String(h.entry_date).slice(0,10),notes:h.notes||"",cost_center_code:h.cost_center_code||"",gl_entry_no:h.gl_entry_no||"",removed:[],
-    lines:C.lines.filter(l=>l.master_id===id).sort((a,b)=>(a.line_no||0)-(b.line_no||0)).map(l=>({id:l.id,account_code:l.account_code,voucher_no:l.voucher_no||"",currency_no:l.currency_no||1,rate:Number(l.rate)||1,amount_fc:Number(l.amount_fc)||0}))};
+    lines:C.lines.filter(l=>l.master_id===id).sort((a,b)=>(a.line_no||0)-(b.line_no||0)).map(l=>({id:l.id,account_code:l.account_code,cheque_no:l.cheque_no||"",cheque0:l.cheque_no||"",voucher_no:l.voucher_no||"",currency_no:l.currency_no||1,rate:Number(l.rate)||1,amount_fc:Number(l.amount_fc)||0}))};
   paint(m); try{ window.scrollTo({top:0,behavior:"smooth"}); }catch(e){}
 }
 const egp=l=>r2(num(l.amount_fc)*(Number(l.rate)||0));
@@ -37989,6 +38009,7 @@ function css(){
 .ob-master .fld{display:flex;flex-direction:column;gap:5px}.ob-master label{font-size:12.5px;font-weight:700;color:var(--gold-text)}
 .ob-grid-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
 table.ob-grid{width:100%;border-collapse:collapse;min-width:1100px}
+.ob-grid-wrap table.ob-grid.bk{min-width:1350px}
 .ob-grid th{background:var(--sidebar-bg);color:var(--sidebar-text);font-size:12.5px;padding:8px 6px;border-bottom:2px solid var(--line-2);white-space:nowrap}
 .ob-grid td{padding:5px 4px;border-bottom:1px solid var(--line)}
 .ob-grid input{width:100%;min-width:70px;height:34px;padding:4px 8px;border:1px solid var(--line-2);border-radius:7px;background:#fff;color:var(--text);font-size:13.5px}
@@ -38018,6 +38039,7 @@ function lineRow(m,d,l,i){
    <td class="ix">${i+1}</td>
    <td><input list="obdl-${m}" id="obc-${m}-${i}" value="${E(l.account_code)}" oninput="OB.f('${m}',${i},'account_code',this.value)" placeholder="${E(MODS[m].codeLbl)}" autocomplete="off"></td>
    <td><input class="ro" readonly tabindex="-1" id="obn-${m}-${i}" value="${E(nm)}"></td>
+   ${m==="bank"?`<td><input class="ro" readonly tabindex="-1" id="obp-${m}-${i}" value="${E(parentOf(l.account_code))}" placeholder="—"></td><td><input value="${E(l.cheque_no)}" oninput="OB.f('${m}',${i},'cheque_no',this.value)" placeholder="اختياري" autocomplete="off"></td>`:""}
    <td><input value="${E(l.voucher_no)}" oninput="OB.f('${m}',${i},'voucher_no',this.value)" placeholder="تلقائي"></td>
    <td><input class="ro num" readonly tabindex="-1" value="${E(d.entry_date)}"></td>
    <td><input class="num" list="obcur" id="obk-${m}-${i}" value="${E(l.currency_no)}" oninput="OB.f('${m}',${i},'currency_no',this.value)" autocomplete="off"></td>
@@ -38042,9 +38064,9 @@ function formHtml(m){
    </div>
    <datalist id="obdl-${m}">${codeOpts(m)}</datalist><datalist id="obcur">${CUR.map(c=>`<option value="${c.no}">${E(c.name)}</option>`).join("")}</datalist>
    <datalist id="obdl-cc">${C.centers.map(c=>`<option value="${E(c.center_code)}">${E(c.center_name||"")}</option>`).join("")}</datalist>
-   <div class="ob-grid-wrap" style="margin-top:14px"><table class="ob-grid"><thead><tr><th>#</th><th>${E(cfg.codeLbl)}</th><th>${E(cfg.nameLbl)}</th><th>السند</th><th>التاريخ</th><th>رقم العملة</th><th>العملة</th><th>معامل التحويل</th><th>القيمة بالعملة</th><th>القيمة بالجنيه</th><th></th></tr></thead>
+   <div class="ob-grid-wrap" style="margin-top:14px"><table class="ob-grid${m==="bank"?" bk":""}"><thead><tr><th>#</th><th>${E(cfg.codeLbl)}</th><th>${E(cfg.nameLbl)}</th>${m==="bank"?"<th>البنك الأب</th><th>رقم الشيك</th>":""}<th>السند</th><th>التاريخ</th><th>رقم العملة</th><th>العملة</th><th>معامل التحويل</th><th>القيمة بالعملة</th><th>القيمة بالجنيه</th><th></th></tr></thead>
    <tbody id="obb-${m}">${d.lines.map((l,i)=>lineRow(m,d,l,i)).join("")}</tbody>
-   <tfoot><tr class="ob-foot"><td colspan="9" style="text-align:right">الإجمالي (مدين) — ${d.lines.filter(l=>l.account_code||num(l.amount_fc)).length} سطر</td><td><input class="ro num" readonly id="obt-${m}" value="${money(total(d))}" style="font-weight:800"></td><td></td></tr></tfoot></table></div>
+   <tfoot><tr class="ob-foot"><td colspan="${m==="bank"?11:9}" style="text-align:right">الإجمالي (مدين) — ${d.lines.filter(l=>l.account_code||num(l.amount_fc)).length} سطر</td><td><input class="ro num" readonly id="obt-${m}" value="${money(total(d))}" style="font-weight:800"></td><td></td></tr></tfoot></table></div>
    <div class="ob-actions" style="margin-top:12px">
      <button class="btn ghost sm" onclick="OB.addRow('${m}')">＋ إضافة سطر</button><span class="spacer"></span>
      ${canMain?`<button class="btn" id="obsave-${m}" onclick="OB.save('${m}')">💾 ${saved?"حفظ التعديلات":"حفظ المستند"}</button>`:""}
@@ -38091,7 +38113,7 @@ function recalc(m,i){
 }
 function f(m,i,k,v){
   const d=S[m].draft, l=d.lines[i]; if(!l) return; const g=id=>document.getElementById(id);
-  if(k==="account_code"){ l.account_code=String(v).trim(); const n=nameOf(m,l.account_code); if(g(`obn-${m}-${i}`)) g(`obn-${m}-${i}`).value=n; if(g(`obc-${m}-${i}`)) g(`obc-${m}-${i}`).classList.toggle("bad",!!l.account_code&&!n); return; }
+  if(k==="account_code"){ l.account_code=String(v).trim(); const n=nameOf(m,l.account_code); if(g(`obn-${m}-${i}`)) g(`obn-${m}-${i}`).value=n; if(g(`obp-${m}-${i}`)) g(`obp-${m}-${i}`).value=parentOf(l.account_code); if(g(`obc-${m}-${i}`)) g(`obc-${m}-${i}`).classList.toggle("bad",!!l.account_code&&!n); return; }
   if(k==="currency_no"){ l.currency_no=v===""?"":Number(v); if(g(`obkn-${m}-${i}`)) g(`obkn-${m}-${i}`).value=curName(l.currency_no);
     const r=g(`obr-${m}-${i}`); if(Number(l.currency_no)===1){ l.rate=1; if(r){ r.value=1; r.readOnly=true; r.classList.add("ro"); } } else if(r){ r.readOnly=false; r.classList.remove("ro"); }
     recalc(m,i); return; }
@@ -38120,10 +38142,10 @@ function validate(m,d,only){
     if(!(Number(l.rate)>0)) errs.push(p+"معامل التحويل لازم يكون أكبر من صفر");
     if(!(num(l.amount_fc)>0)) errs.push(p+"القيمة لازم تكون أكبر من صفر (الرصيد الافتتاحي مدين)");
   });
-  if(only==null){ const seen=new Set(); act.forEach(({l,i})=>{ const k=l.account_code+"|"+l.currency_no; if(l.account_code&&seen.has(k)) errs.push("سطر "+(i+1)+": "+MODS[m].codeLbl+" "+l.account_code+" مكرر بنفس العملة في المستند"); seen.add(k); }); }
+  if(only==null){ const seen=new Set(); act.forEach(({l,i})=>{ const k=l.account_code+"|"+l.currency_no+"|"+(m==="bank"?String(l.cheque_no||"").trim():""); if(l.account_code&&seen.has(k)) errs.push("سطر "+(i+1)+": "+MODS[m].codeLbl+" "+l.account_code+(m==="bank"?" بنفس رقم الشيك":"")+" مكرر بنفس العملة في المستند"); seen.add(k); }); }
   return errs;
 }
-const linePayload=(m,d,l,i,masterId)=>({master_id:masterId,line_no:i+1,account_code:String(l.account_code).trim(),account_name:nameOf(m,l.account_code),voucher_no:(l.voucher_no||"").trim()||(d.doc_no+"/"+(i+1)),currency_no:Number(l.currency_no),currency_name:curName(l.currency_no),rate:Number(l.rate),amount_fc:r2(num(l.amount_fc)),amount_egp:egp(l)});
+const linePayload=(m,d,l,i,masterId)=>({master_id:masterId,line_no:i+1,account_code:String(l.account_code).trim(),account_name:nameOf(m,l.account_code),voucher_no:(l.voucher_no||"").trim()||(d.doc_no+"/"+(i+1)),currency_no:Number(l.currency_no),currency_name:curName(l.currency_no),rate:Number(l.rate),amount_fc:r2(num(l.amount_fc)),amount_egp:egp(l),...((m==="bank"&&((l.cheque_no||"").trim()||l.cheque0))?{cheque_no:(l.cheque_no||"").trim()||null}:{})});
 const masterPayload=(m,d)=>({entry_date:d.entry_date,notes:(d.notes||"").trim()||null,cost_center_code:(d.cost_center_code||"").trim()||null,cost_center_name:ccName(d.cost_center_code)||null,gl_entry_no:(d.gl_entry_no||"").trim()||null});
 function after(m,docId){ injectCustody(); if(docId) openDoc(m,docId); else paint(m); }
 async function save(m){
@@ -38155,8 +38177,9 @@ async function save(m){
     }
     try{ audit(saved?"تعديل أرصدة افتتاحية":"إضافة أرصدة افتتاحية",MODS[m].title+" — مستند "+d.doc_no+" — "+money(total(d))); }catch(e){}
     await C_reload(); toast("تم الحفظ ✓","ok"); after(m,id);
-  }catch(e){ if(btn) btn.disabled=false; const msg=(e&&e.message)||String(e); st(m,"تعذّر الحفظ: "+msg,true); toast("تعذّر الحفظ: "+msg,"err"); }
+  }catch(e){ if(btn) btn.disabled=false; const msg=hint((e&&e.message)||String(e)); st(m,"تعذّر الحفظ: "+msg,true); toast("تعذّر الحفظ: "+msg,"err"); }
 }
+const hint=msg=>/cheque_no/.test(String(msg))?msg+" — شغّل ملف opening_balances_bank_cheque.sql في Supabase لإضافة عمود رقم الشيك":msg;
 async function C_reload(){ C.loaded=false; await load(); }
 async function saveLine(m,i){
   const d=S[m].draft, l=d.lines[i]; if(!d.id||!l) return;
@@ -38195,13 +38218,13 @@ async function delDoc(m,id,msg){
 }
 
 /* ---------------- Excel ---------------- */
-const HEAD=m=>["التاريخ (YYYY-MM-DD)",MODS[m].codeLbl,"السند","رقم العملة","معامل التحويل","القيمة بالعملة","مركز التكلفة","ملاحظات"];
+const HEAD=m=>["التاريخ (YYYY-MM-DD)",MODS[m].codeLbl,...(m==="bank"?["رقم الشيك"]:[]),"السند","رقم العملة","معامل التحويل","القيمة بالعملة","مركز التكلفة","ملاحظات"];
 function xl(){ if(typeof XLSX==="undefined"){ toast("مكتبة Excel لم تُحمَّل — تأكد من الاتصال بالإنترنت","err"); return false; } return true; }
 function tpl(m){
   if(!xl()) return;
   const wb=XLSX.utils.book_new(), cfg=MODS[m], cs=codes(m);
-  const ws=XLSX.utils.aoa_to_sheet([HEAD(m),[today(),cs[0]?cs[0].code:"",""  ,1,1,1000,"","رصيد أول المدة"]]);
-  ws["!cols"]=[{wch:20},{wch:16},{wch:14},{wch:12},{wch:14},{wch:16},{wch:14},{wch:26}];
+  const ws=XLSX.utils.aoa_to_sheet([HEAD(m),[today(),cs[0]?cs[0].code:"",...(m==="bank"?[""]:[]),""  ,1,1,1000,"","رصيد أول المدة"]]);
+  ws["!cols"]=[{wch:20},{wch:16},...(m==="bank"?[{wch:16}]:[]),{wch:14},{wch:12},{wch:14},{wch:16},{wch:14},{wch:26}];
   XLSX.utils.book_append_sheet(wb,ws,"الأرصدة");
   const w2=XLSX.utils.aoa_to_sheet([[cfg.codeLbl,cfg.nameLbl],...cs.map(c=>[c.code,c.name])]); w2["!cols"]=[{wch:18},{wch:34}]; XLSX.utils.book_append_sheet(wb,w2,"الأكواد");
   const w3=XLSX.utils.aoa_to_sheet([["رقم العملة","العملة"],...CUR.map(c=>[c.no,c.name])]); w3["!cols"]=[{wch:12},{wch:20}]; XLSX.utils.book_append_sheet(wb,w3,"العملات");
@@ -38211,7 +38234,7 @@ function tpl(m){
 function exp(m){
   if(!xl()) return; const cfg=MODS[m];
   const rows=lines(m).sort((a,b)=>String(a.entry_date).localeCompare(String(b.entry_date))||(a.doc_no-b.doc_no)||((a.line_no||0)-(b.line_no||0)));
-  const ws=XLSX.utils.aoa_to_sheet([["رقم المستند","التاريخ",cfg.codeLbl,cfg.nameLbl,"السند","رقم العملة","العملة","معامل التحويل","القيمة بالعملة","القيمة بالجنيه","قيد GL"],...rows.map(l=>[l.doc_no,l.entry_date,l.account_code,nameOf(m,l.account_code)||l.account_name||"",l.voucher_no||"",l.currency_no,l.currency_name||curName(l.currency_no),Number(l.rate),Number(l.amount_fc),Number(l.amount_egp),l.gl_entry_no||""])]);
+  const ws=XLSX.utils.aoa_to_sheet([["رقم المستند","التاريخ",cfg.codeLbl,cfg.nameLbl,...(m==="bank"?["البنك الأب","رقم الشيك"]:[]),"السند","رقم العملة","العملة","معامل التحويل","القيمة بالعملة","القيمة بالجنيه","قيد GL"],...rows.map(l=>[l.doc_no,l.entry_date,l.account_code,nameOf(m,l.account_code)||l.account_name||"",...(m==="bank"?[parentOf(l.account_code),l.cheque_no||""]:[]),l.voucher_no||"",l.currency_no,l.currency_name||curName(l.currency_no),Number(l.rate),Number(l.amount_fc),Number(l.amount_egp),l.gl_entry_no||""])]);
   const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,"أرصدة افتتاحية"); XLSX.writeFile(wb,cfg.title.replace(/\s+/g,"_")+"_"+today()+".xlsx");
 }
 function pdate(v){
@@ -38231,6 +38254,7 @@ function classify(h){
   if(/رقم.*عمل|كود.*عمل/.test(h)) return "cur";
   if(/قيم/.test(h)&&/عمل/.test(h)) return "amt";
   if(/قيم/.test(h)&&/جني/.test(h)) return "egp";
+  if(/شيك/.test(h)) return "chq";
   if(/سند/.test(h)) return "vch";
   if(/مركز/.test(h)) return "cc";
   if(/ملاحظ|بيان/.test(h)) return "notes";
@@ -38246,7 +38270,7 @@ async function imp(m,inp){
     const ws=wb.Sheets[wb.SheetNames[0]]; const aoa=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:""});
     if(aoa.length<2) return toast("الملف فاضي أو مفيهوش أسطر","err");
     const map={}; (aoa[0]||[]).forEach((h,ci)=>{ const k=classify(h); if(k&&!(k in map)) map[k]=ci; });
-    const pos={date:0,code:1,vch:2,cur:3,rate:4,amt:5,cc:6,notes:7}; Object.keys(pos).forEach(k=>{ if(!(k in map)) map[k]=pos[k]; });
+    const pos=m==="bank"?{date:0,code:1,chq:2,vch:3,cur:4,rate:5,amt:6,cc:7,notes:8}:{date:0,code:1,vch:2,cur:3,rate:4,amt:5,cc:6,notes:7}; Object.keys(pos).forEach(k=>{ if(!(k in map)) map[k]=pos[k]; });
     const defDate=(S[m].draft&&S[m].draft.entry_date)||today(); const errs=[], good=[];
     aoa.slice(1).forEach((row,ri)=>{
       if(!row||!row.some(x=>String(x).trim()!=="")) return;
@@ -38258,7 +38282,7 @@ async function imp(m,inp){
       const p=[]; if(!code) p.push("الكود فاضي"); else if(!nameOf(m,code)) p.push("الكود «"+code+"» غير موجود");
       if(!date) p.push("التاريخ غير صحيح"); if(!CUR.some(c=>c.no===curNo)) p.push("رقم العملة غير صحيح"); if(!(rate>0)) p.push("معامل التحويل مطلوب"); if(!(amt>0)) p.push("القيمة لازم تكون أكبر من صفر");
       if(p.length){ errs.push("سطر "+ln+": "+p.join("، ")); return; }
-      good.push({date,code,vch:String(g("vch")==null?"":g("vch")).trim(),cur:curNo,rate,amt,cc:String(g("cc")==null?"":g("cc")).trim(),notes:String(g("notes")==null?"":g("notes")).trim()});
+      good.push({date,code,chq:m==="bank"?String(g("chq")==null?"":g("chq")).trim():"",vch:String(g("vch")==null?"":g("vch")).trim(),cur:curNo,rate,amt,cc:String(g("cc")==null?"":g("cc")).trim(),notes:String(g("notes")==null?"":g("notes")).trim()});
     });
     if(!good.length) return toast(errs.length?errs[0]:"مفيش أسطر صالحة للاستيراد","err");
     const groups=new Map(); good.forEach(x=>{ const k=x.date+"|"+x.cc; (groups.get(k)||groups.set(k,[]).get(k)).push(x); });
@@ -38273,7 +38297,7 @@ async function imp(m,inp){
       }
       if(!h) throw new Error("تعذر حجز رقم مستند");
       const dd={doc_no:n};
-      const ins=await sb.from(T.l).insert(arr.map((x,i)=>linePayload(m,dd,{account_code:x.code,voucher_no:x.vch,currency_no:x.cur,rate:x.rate,amount_fc:x.amt},i,h.id)));
+      const ins=await sb.from(T.l).insert(arr.map((x,i)=>linePayload(m,dd,{account_code:x.code,cheque_no:x.chq,voucher_no:x.vch,currency_no:x.cur,rate:x.rate,amount_fc:x.amt},i,h.id)));
       if(ins.error){ await sb.from(T.m).delete().eq("id",h.id); throw ins.error; }
       done++; n++;
     }
@@ -38284,8 +38308,8 @@ async function imp(m,inp){
 function print(m,id){
   const h=C.masters.find(x=>x.id===id); if(!h) return; const cfg=MODS[m];
   const ls=C.lines.filter(l=>l.master_id===id).sort((a,b)=>(a.line_no||0)-(b.line_no||0)); const tot=ls.reduce((n,l)=>n+(Number(l.amount_egp)||0),0);
-  const body=ls.map((l,i)=>`<tr><td>${i+1}</td><td>${E(l.account_code)}</td><td style="text-align:right">${E(nameOf(m,l.account_code)||l.account_name||"")}</td><td>${E(l.voucher_no||"")}</td><td>${E(l.currency_name||curName(l.currency_no))}</td><td class="n">${money(l.rate)}</td><td class="n">${money(l.amount_fc)}</td><td class="n">${money(l.amount_egp)}</td></tr>`).join("");
-  const table=`<table class="rprt-tbl"><thead><tr><th>م</th><th>${E(cfg.codeLbl)}</th><th>${E(cfg.nameLbl)}</th><th>السند</th><th>العملة</th><th>معامل التحويل</th><th>القيمة بالعملة</th><th>القيمة بالجنيه (مدين)</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="7" style="text-align:right">الإجمالي</td><td class="n">${money(tot)}</td></tr></tfoot></table>`;
+  const body=ls.map((l,i)=>`<tr><td>${i+1}</td><td>${E(l.account_code)}</td><td style="text-align:right">${E(nameOf(m,l.account_code)||l.account_name||"")}</td>${m==="bank"?`<td>${E(parentOf(l.account_code))}</td><td>${E(l.cheque_no||"")}</td>`:""}<td>${E(l.voucher_no||"")}</td><td>${E(l.currency_name||curName(l.currency_no))}</td><td class="n">${money(l.rate)}</td><td class="n">${money(l.amount_fc)}</td><td class="n">${money(l.amount_egp)}</td></tr>`).join("");
+  const table=`<table class="rprt-tbl"><thead><tr><th>م</th><th>${E(cfg.codeLbl)}</th><th>${E(cfg.nameLbl)}</th>${m==="bank"?"<th>البنك الأب</th><th>رقم الشيك</th>":""}<th>السند</th><th>العملة</th><th>معامل التحويل</th><th>القيمة بالعملة</th><th>القيمة بالجنيه (مدين)</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="${m==="bank"?9:7}" style="text-align:right">الإجمالي</td><td class="n">${money(tot)}</td></tr></tfoot></table>`;
   const filters=["مستند رقم: "+h.doc_no,"التاريخ: "+String(h.entry_date).slice(0,10)]; if(h.cost_center_code) filters.push("مركز التكلفة: "+h.cost_center_code+(ccName(h.cost_center_code)?" — "+ccName(h.cost_center_code):"")); if(h.gl_entry_no) filters.push("قيد GL: "+h.gl_entry_no); if(h.notes) filters.push("البيان: "+h.notes);
   const html=igProReportHtml({emoji:cfg.emoji,title:cfg.title+" — مستند "+h.doc_no,titleEn:"OPENING BALANCES",sub:ls.length+" سطر",filters,kpis:[{lbl:"عدد الأسطر",val:String(ls.length),color:"#1e40af"},{lbl:"الإجمالي (مدين)",val:money(tot),color:"#15803d"}],tableHtml:table});
   openReportPreview(html,cfg.title+" "+h.doc_no,"opening_balances_"+m+"_"+h.doc_no);
@@ -38315,7 +38339,7 @@ window.OB={page,load,ensure,lines,codes,injectCustody,f,mf,addRow,enter,fresh,fl
       lines(m).forEach(l=>{
         if(String(l.account_code)!==String(code)) return;
         const d=l.entry_date; if((from&&d<from)||(to&&d>to)) return;
-        const desc="رصيد افتتاحي"+(l.voucher_no?" — سند "+l.voucher_no:"")+(l.currency_no&&Number(l.currency_no)!==1?" — "+money(l.amount_fc)+" "+(l.currency_name||curName(l.currency_no)):"");
+        const desc="رصيد افتتاحي"+(l.cheque_no?" — شيك "+l.cheque_no:"")+(l.voucher_no?" — سند "+l.voucher_no:"")+(l.currency_no&&Number(l.currency_no)!==1?" — "+money(l.amount_fc)+" "+(l.currency_name||curName(l.currency_no)):"");
         if(needle&&![l.doc_no,l.voucher_no,l.gl_entry_no,desc].join(" ").toLowerCase().includes(needle)) return;
         out.push({id:"ob:"+l.id,date:d,ts:1,no:l.doc_no,ref:String(l.voucher_no||""),party:"—",desc,method:"رصيد افتتاحي",amount:Number(l.amount_egp)||0,incoming:true,posted:!!l.gl_entry_no,glRef:l.gl_entry_no||"",isOb:true,source:{direction:"in",entryKind:"opening",no:l.doc_no}});
         added=true;
