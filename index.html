@@ -3671,6 +3671,7 @@ const SCREENS = [
   { id:"expenseItems", label:"بند المصروف", icon:"🏷", acts:["add","edit","delete"] },
   { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
   { id:"gl", label:"المحاسبة العامة", icon:"⚖", acts:["add","edit","post","reverse","manage","print"] },
+  { id:"botCaller", label:"منادة البوت", icon:"🤖", acts:["view"] },
   { id:"fixedAssets", label:"الأصول الثابتة", icon:"🏢", acts:["add","edit","delete","post","print","manage"] }
 ];
 const ACT_LABEL = { view:"عرض", add:"إضافة", edit:"تعديل", delete:"حذف", post:"ترحيل", reverse:"عكس قيد", manage:"إدارة الإعدادات", close:"إقفال/فتح", print:"طباعة/PDF" };
@@ -4424,6 +4425,9 @@ const navGroups = [
     { sep:"القوائم المالية" },
     { id:"gl", tab:"rpt_income", icon:"📈", label:"قائمة الدخل التفصيلية" },
     { id:"gl", tab:"rpt_balance", icon:"🏛", label:"قائمة المركز المالي" }
+  ]},
+  { id:"botCaller", icon:"🤖", label:"منادة البوت", items:[
+    { id:"botCaller", icon:"💬", label:"اسأل البوت" }
   ]}
 ];
 
@@ -5407,6 +5411,7 @@ function go(page){
   else if(page==="chequeRegister"){ c.innerHTML = viewChequeRegister(); renderChequeRegister(); }
   else if(page==="payments"){ c.innerHTML = viewTreasury("out"); renderTreasury("out"); }
   else if(page==="gl"){ c.innerHTML=viewGL(); glLoad(); }
+  else if(page==="botCaller"){ c.innerHTML=viewBotCaller(); bindBotCaller(); }
   else if(page==="custodyCodes"||page==="expenseItems"){ window.CGL.page(page,c); }
   else if(page==="custodyLedger"||page==="custodyTotal"||page==="custodyReport"){
     const _cgPaint=()=>{ window.cgPaintPage(page,c); };
@@ -5983,7 +5988,7 @@ function glFinState(){
 function glFinMoney(v){return (Math.abs(Number(v)||0)<0.005?0:Number(v)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function glFinNum(v){v=Number(v)||0;if(Math.abs(v)<0.005)return '-';const s=Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});return v<0?'('+s+')':s;}
 function glFinDmy(s){s=String(s||'').slice(0,10);const p=s.split('-');return p.length===3?p[2]+'/'+p[1]+'/'+p[0]:s;}
-function glFinCompany(){try{const b=(typeof state!=='undefined'&&state&&state.settings&&state.settings.branding)||{};const n=String(b.companyName||'').trim();if(n&&n!=='IRON GATE')return n;}catch(e){}return 'شركة ايرون جيت';}
+function glFinCompany(){try{const b=(typeof state!=='undefined'&&state&&state.settings&&state.settings.branding)||{};const n=String(b.companyName||'').trim();if(n)return n;const bn=(window.coBrandName&&window.coBrandName())||'';if(bn)return bn;}catch(e){}return 'اسم الشركة';}
 function glFinShort(a,hasKids){let c=String(a&&a.account_code||'').trim();if(hasKids&&/^\d+$/.test(c)&&c.length%2===0){const t=c.replace(/(?:00)+$/,'');if(t)return t;}return c;}
 function glFinYearOptions(f){return `<option value="" ${!f.yearId?'selected':''}>كل السنوات المالية</option>`+glState.years.map(y=>`<option value="${glEsc(y.id)}" ${f.yearId===y.id?'selected':''}>${glEsc(y.year_name||y.year_code||'')} (${String(y.start_date||'').slice(0,10)} – ${String(y.end_date||'').slice(0,10)})</option>`).join('');}
 
@@ -7732,7 +7737,7 @@ function glPostedRows(list){
  const body=rows||`<tr><td colspan="8" style="padding:30px;text-align:center;color:#9ca3af">لا توجد قيود مرحّلة مطابقة. غيّر الفلاتر أو امسحها.</td></tr>`;
  return `<div class="glp-wrap"><table class="glp-t"><thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="6">عدد القيود: ${sorted.length}</td><td class="amt">${glNum(sum)}</td><td></td></tr></tfoot></table></div>`;
 }
-function glEntryBrandName(){try{const n=window.coBrandName&&window.coBrandName();return n||'IRON GATE SUPPLIES';}catch(e){return 'IRON GATE SUPPLIES';}}
+function glEntryBrandName(){try{const n=window.coBrandName&&window.coBrandName();return n||'اسم الشركة';}catch(e){return 'اسم الشركة';}}
 function glEntryBrandCss(){return '.pbrand{text-align:right;margin:0 0 10px}.pbrand img{display:block;max-height:64px;max-width:200px;object-fit:contain;margin:0 0 5px}.pbrand .pn{font-size:16px;font-weight:800;color:inherit}.pdev{display:flex;align-items:center;justify-content:flex-start;gap:7px;direction:ltr;margin-top:14px;padding-top:8px;border-top:1px solid #d9d9d9;font-size:9.5px;letter-spacing:.6px;color:#64748b}.pdev img{height:22px;width:auto;object-fit:contain}.pdev b{color:#92400e}';}
 function glEntryDevHtml(){let s='';try{s=(typeof igDevLogoSrc==='function')?igDevLogoSrc():'';}catch(e){}return `<div class="pdev">${s?`<img src="${s}" alt="H2M+">`:''}<span>DEVELOPED BY <b>H2M+</b> ERP SYSTEMS</span></div>`;}
 function glEntryBrandHtml(){const lg=(typeof glAcLogoSrc==='function')?glAcLogoSrc():'';const n=String(glEntryBrandName()).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));return `<div class="pbrand">${lg?`<img src="${lg}" alt="">`:''}<div class="pn">${n}</div></div>`;}
@@ -13015,6 +13020,164 @@ function viewSettings(){
               <b>مسموح SELECT بس</b> — أي UPDATE/DELETE/INSERT مرفوض.
             </div>
             <div id="tgCustomList" style="display:grid;gap:7px"></div>
+          </div>
+
+          <!-- ============ 🚀 مميزات احترافية ============ -->
+
+          <!-- ⏰ الجدولة التلقائية -->
+          <details style="margin-top:14px;background:#f0fdf4;border:2px solid #16a34a;border-radius:11px;padding:12px" open>
+            <summary style="cursor:pointer;font-weight:900;color:#166534;font-size:14px">⏰ الجدولة التلقائية — إرسال كل تقرير في وقته</summary>
+            <div style="padding:10px 0 0">
+              <div style="font-size:11.5px;color:#166534;margin-bottom:10px;line-height:1.7">
+                اختار لكل تقرير: الوقت، الأيام، الجروبات. السيستم هيبعته تلقائياً بدون تدخل منك.
+              </div>
+              <div id="tgSchedulesList" style="display:grid;gap:8px"></div>
+              <div id="tgSchedulesStatus" style="margin-top:8px;font-size:11.5px;color:#166534"></div>
+            </div>
+          </details>
+
+          <!-- ☀️ ملخص الصباح -->
+          <details style="margin-top:12px;background:#fffbea;border:2px solid #d4a017;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#92400e;font-size:14px">☀️ ملخص الصباح (Morning Brief) — رسالة واحدة بكل المؤشرات</summary>
+            <div style="padding:10px 0 0">
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+                <label style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px"><input type="checkbox" id="tgMbActive"> تفعيل ملخص الصباح</label>
+                <label style="font-weight:700;font-size:12px">الوقت: <input type="time" id="tgMbTime" class="inp" value="08:00" style="width:110px"></label>
+              </div>
+              <div style="font-weight:700;font-size:12px;margin-bottom:6px">الأقسام اللي تظهر في الرسالة:</div>
+              <div id="tgMbSections" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:6px;font-size:11.5px"></div>
+              <button type="button" class="btn" onclick="tgMbSave()" style="margin-top:10px;background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;font-weight:800">💾 حفظ إعدادات ملخص الصباح</button>
+              <button type="button" class="btn ghost" onclick="tgMbSendNow()" style="margin:10px 0 0 6px">📤 ارسل دلوقتي (تجربة)</button>
+              <div id="tgMbStatus" style="margin-top:6px;font-size:11.5px;color:#92400e;min-height:16px"></div>
+            </div>
+          </details>
+
+          <!-- 🚨 التنبيهات الذكية -->
+          <details style="margin-top:12px;background:#fef2f2;border:2px solid #dc2626;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#991b1b;font-size:14px">🚨 التنبيهات الذكية — رد فعل تلقائي على الأحداث</summary>
+            <div style="padding:10px 0 0">
+              <div style="font-size:11.5px;color:#991b1b;margin-bottom:10px;line-height:1.7">
+                مثال: لو شيك متأخر 7 أيام، ابعت تنبيه. لو رصيد عميل عدى حد معين، ابعت للمدير.
+              </div>
+              <button type="button" class="btn" onclick="tgAlertOpen()" style="background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-weight:800;margin-bottom:10px">➕ قاعدة تنبيه جديدة</button>
+              <div id="tgAlertsList" style="display:grid;gap:6px"></div>
+            </div>
+          </details>
+
+          <!-- 🤖 أوامر البوت (Whitelist) -->
+          <details style="margin-top:12px;background:#f0f9ff;border:2px solid #0088cc;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#1e40af;font-size:14px">🤖 أوامر البوت — المستخدمين المصرح لهم</summary>
+            <div style="padding:10px 0 0">
+              <div style="font-size:11.5px;color:#1e40af;margin-bottom:10px;line-height:1.7">
+                ضيف Telegram User IDs (من Telegram → profile → ID) المصرح لهم استخدام أوامر البوت: <code>/balance</code>، <code>/today</code>، <code>/cheques</code>، <code>/overdue</code>، <code>/help</code>.
+              </div>
+              <button type="button" class="btn" onclick="tgBotUserOpen()" style="background:linear-gradient(135deg,#0088cc,#00a2ff);color:#fff;font-weight:800;margin-bottom:10px">➕ إضافة مستخدم</button>
+              <div id="tgBotUsersList" style="display:grid;gap:6px"></div>
+            </div>
+          </details>
+
+          <!-- 🔕 الكتم المؤقت -->
+          <details style="margin-top:12px;background:#fafafa;border:2px solid #737373;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#262626;font-size:14px">🔕 الكتم المؤقت — توقف الإشعارات مؤقتاً</summary>
+            <div style="padding:10px 0 0">
+              <div style="font-size:11.5px;color:#525252;margin-bottom:10px;line-height:1.7">
+                اوقف الإشعارات لجروب معين لفترة محددة. أو استخدم الأمر <code>/mute 2h</code> من داخل الجروب.
+              </div>
+              <div id="tgSnoozeList" style="display:grid;gap:6px"></div>
+              <div style="margin-top:10px;padding:10px;background:#fff;border:1px dashed #a3a3a3;border-radius:8px">
+                <div style="font-weight:700;font-size:12px;margin-bottom:6px">كتم جروب جديد:</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                  <select id="tgSnoozeChat" class="inp" style="flex:1;min-width:150px"></select>
+                  <select id="tgSnoozeDur" class="inp" style="width:140px">
+                    <option value="30">30 دقيقة</option>
+                    <option value="60">1 ساعة</option>
+                    <option value="120">2 ساعة</option>
+                    <option value="240">4 ساعات</option>
+                    <option value="480">8 ساعات</option>
+                    <option value="1440">يوم كامل</option>
+                  </select>
+                  <button type="button" class="btn" onclick="tgSnoozeAdd()" style="background:#737373;color:#fff">🔕 اكتم</button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- 💾 Backup تلقائي -->
+          <details style="margin-top:12px;background:#f5f3ff;border:2px solid #7c3aed;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#5b21b6;font-size:14px">💾 Backup تلقائي — نسخة احتياطية يومية على التيليجرام</summary>
+            <div style="padding:10px 0 0;font-size:11.5px;color:#5b21b6;line-height:1.7">
+              السيستم بيعمل Backup لقاعدة البيانات كل يوم ويبعته كملف SQL لجروب خاص (admin only).
+              <br><br>
+              <b>الإعداد:</b> نفّذ Edge Function <code>telegram-backup</code> وضع cron على Supabase كل يوم الساعة 11 مساءً.
+              <br>التفاصيل في <code>telegram_pro_setup.sql</code>.
+            </div>
+          </details>
+
+          <!-- 📊 سجل النشاط -->
+          <details style="margin-top:12px;background:#f8fafc;border:2px solid #475569;border-radius:11px;padding:12px">
+            <summary style="cursor:pointer;font-weight:900;color:#1e293b;font-size:14px">📊 سجل النشاط — كل الرسائل المرسلة</summary>
+            <div style="padding:10px 0 0">
+              <button type="button" class="btn ghost sm" onclick="tgActivityLoad()" style="margin-bottom:8px">🔄 تحديث</button>
+              <div id="tgActivityList" style="max-height:300px;overflow-y:auto;font-size:11.5px"></div>
+            </div>
+          </details>
+
+          <!-- Modals: Alert rule + Bot user -->
+          <div id="tgAlertModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999998;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+            <div style="background:#fff;border-radius:14px;padding:22px;max-width:620px;width:100%;direction:rtl;font-family:Cairo,Tahoma,Arial;margin:auto">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;border-bottom:2px solid #dc2626;padding-bottom:10px">
+                <h3 style="margin:0;color:#991b1b">🚨 قاعدة تنبيه ذكي</h3>
+                <button onclick="tgAlertClose()" class="btn ghost sm">✕</button>
+              </div>
+              <div style="display:grid;gap:10px">
+                <div><label style="font-weight:700;font-size:12px">اسم التنبيه</label><input id="tgaName" class="inp" placeholder="مثال: شيكات متأخرة 7 أيام"></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                  <div><label style="font-weight:700;font-size:12px">الحدث</label>
+                    <select id="tgaEvent" class="inp">
+                      <option value="cheque_overdue">🧾 شيك متأخر</option>
+                      <option value="cheque_due_today">📅 شيك مستحق اليوم</option>
+                      <option value="cheque_due_soon">⏳ شيك قرب يستحق</option>
+                      <option value="high_sale_order">💰 أمر بيع كبير</option>
+                      <option value="low_custody">💼 عهدة رصيدها قل</option>
+                      <option value="high_customer_balance">👥 رصيد عميل عدى حد</option>
+                      <option value="custom_sql">🧪 SQL مخصص</option>
+                    </select>
+                  </div>
+                  <div><label style="font-weight:700;font-size:12px">Cooldown (دقيقة)</label><input id="tgaCooldown" type="number" class="inp" value="60" min="1"></div>
+                </div>
+                <div><label style="font-weight:700;font-size:12px">الشرط (JSON)</label>
+                  <textarea id="tgaCondition" class="inp" rows="3" style="font-family:monospace;font-size:12px;direction:ltr;text-align:left" placeholder='{"days_overdue":7}'></textarea>
+                  <div style="font-size:10.5px;color:#64748b;margin-top:3px">أمثلة: <code>{"days_overdue":7}</code> · <code>{"amount":100000}</code> · <code>{"sql":"SELECT COUNT(*) as n FROM..."}</code></div>
+                </div>
+                <div><label style="font-weight:700;font-size:12px">قالب الرسالة</label>
+                  <textarea id="tgaTemplate" class="inp" rows="3" placeholder="⚠ {{customer}} متأخر {{days}} يوم بقيمة {{amount}} ج.م"></textarea>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                  <button onclick="tgAlertClose()" class="btn ghost">إلغاء</button>
+                  <button onclick="tgAlertSave()" class="btn" style="background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff">💾 حفظ</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="tgBotUserModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999998;align-items:center;justify-content:center;padding:20px">
+            <div style="background:#fff;border-radius:14px;padding:22px;max-width:460px;width:100%;direction:rtl;font-family:Cairo,Tahoma,Arial">
+              <h3 style="margin:0 0 14px;color:#1e40af;border-bottom:2px solid #0088cc;padding-bottom:10px">🤖 إضافة مستخدم بوت</h3>
+              <div style="display:grid;gap:10px">
+                <div><label style="font-weight:700;font-size:12px">Telegram User ID</label><input id="tgbuId" class="inp" type="number" placeholder="مثل: 123456789" style="direction:ltr"></div>
+                <div><label style="font-weight:700;font-size:12px">الاسم المعروض</label><input id="tgbuName" class="inp" placeholder="أحمد محمد"></div>
+                <div><label style="font-weight:700;font-size:12px">الصلاحية</label>
+                  <select id="tgbuRole" class="inp">
+                    <option value="viewer">👁 عرض فقط</option>
+                    <option value="admin">👑 أدمن (كل الأوامر)</option>
+                  </select>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                  <button onclick="tgBotUserClose()" class="btn ghost">إلغاء</button>
+                  <button onclick="tgBotUserSave()" class="btn" style="background:#0088cc;color:#fff">💾 حفظ</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Modal: تصميم/تعديل تقرير مخصص -->
@@ -23550,9 +23713,23 @@ async function tgSendReportPdf(html, title){
   toast("✓ اتبعت لـ" + sent + " جروب" + (failed ? " · فشل " + failed : ""), failed ? "err" : "ok");
 }
 
-// جيب إعدادات التيليجرام (من localStorage أو Supabase)
+// جيب إعدادات التيليجرام — Supabase أولاً (authoritative) ثم localStorage كـcache/offline
 async function tgGetConfig(){
-  // الأولوية للإعدادات في localStorage (أسرع)
+  // 1) الأولوية لـSupabase (authoritative)
+  try{
+    if(typeof sb !== "undefined" && sb.from){
+      var r = await sb.from("telegram_notify_config").select("*");
+      if(!r.error && r.data && r.data.length){
+        var firstToken = r.data[0].bot_token;
+        var chats = r.data.map(function(x){ return {id:x.id, name:x.name, chat_id:x.chat_id, is_active:x.is_active!==false, events:x.events||[]}; });
+        var cfg = {bot_token:firstToken, chats:chats};
+        // حدّث الكاش المحلي
+        try{ localStorage.setItem("ig_tg_config", JSON.stringify(cfg)); }catch(_){}
+        return cfg;
+      }
+    }
+  }catch(e){ console.warn("tgGetConfig: Supabase fetch failed, fallback to local cache"); }
+  // 2) fallback لـlocalStorage (offline أو الجدول مش موجود)
   try{
     var local = localStorage.getItem("ig_tg_config");
     if(local){
@@ -23560,20 +23737,9 @@ async function tgGetConfig(){
       if(p && p.bot_token && p.chats && p.chats.length) return p;
     }
   }catch(e){}
-  // fallback: جيب من سبابيز
-  try{
-    if(typeof sb !== "undefined" && sb.from){
-      var r = await sb.from("telegram_notify_config").select("*").eq("is_active", true);
-      if(!r.error && r.data && r.data.length){
-        var firstToken = r.data[0].bot_token;
-        var chats = r.data.map(function(x){ return {name:x.name, chat_id:x.chat_id, is_active:x.is_active, events:x.events||[]}; });
-        return {bot_token:firstToken, chats:chats};
-      }
-    }
-  }catch(e){}
   return null;
 }
-// احفظ الإعدادات في localStorage
+// احفظ الإعدادات محلياً (كـcache فقط — الحفظ في DB بيتم في tgCfgSave())
 function tgSaveConfig(cfg){
   try{ localStorage.setItem("ig_tg_config", JSON.stringify(cfg)); }catch(e){}
 }
@@ -23780,16 +23946,72 @@ async function tgBuildAndSend(item, opts){
 
 /* ==========================================================
    🧪 Custom Reports (SQL Pro) — تصميم اشعار/تقرير جديد
+   مخزّن على Supabase (telegram_custom_reports) مع local cache
 ========================================================== */
 var TG_CUSTOM_KEY = "ig_tg_custom_reports";
+window.__tgCustomCache = null;
 function tgCustomGetAll(){
+  if(Array.isArray(window.__tgCustomCache)) return window.__tgCustomCache;
   try{ var v = localStorage.getItem(TG_CUSTOM_KEY); return v ? JSON.parse(v) : []; }catch(_){ return []; }
 }
 function tgCustomSaveAll(arr){
+  window.__tgCustomCache = arr || [];
   try{ localStorage.setItem(TG_CUSTOM_KEY, JSON.stringify(arr||[])); }catch(_){}
+}
+// تحميل من Supabase + تحديث cache
+async function tgCustomSyncFromDb(){
+  if(typeof sb === "undefined" || !sb.from) return tgCustomGetAll();
+  try{
+    var r = await sb.from("telegram_custom_reports").select("*").order("created_at",{ascending:true});
+    if(r.error){
+      // لو الجدول مش موجود، استخدم local (fallback)
+      console.warn("telegram_custom_reports غير متاح:", r.error.message);
+      return tgCustomGetAll();
+    }
+    var list = (r.data||[]).map(function(x){
+      return {
+        id: x.id, name: x.name||"", emoji: x.emoji||"📊", titleEn: x.title_en||"",
+        kind: x.kind||"pdf", sql: x.sql_query||"", template: x.template||"",
+        is_active: x.is_active !== false,
+        created_at: x.created_at || new Date().toISOString()
+      };
+    });
+    tgCustomSaveAll(list);
+    return list;
+  }catch(e){
+    console.warn("tgCustomSyncFromDb failed:", e);
+    return tgCustomGetAll();
+  }
+}
+// upsert سجل واحد في Supabase (يُستدعى عند الحفظ)
+async function tgCustomUpsertDb(rec){
+  if(typeof sb === "undefined" || !sb.from) return {ok:false, err:"Supabase غير متصل"};
+  try{
+    var r = await sb.from("telegram_custom_reports").upsert({
+      id: rec.id, name: rec.name, emoji: rec.emoji||"📊", title_en: rec.titleEn||"",
+      kind: rec.kind||"pdf", sql_query: rec.sql, template: rec.template||"",
+      is_active: rec.is_active !== false,
+      updated_at: new Date().toISOString()
+    }, {onConflict:"id"});
+    if(r.error) return {ok:false, err:r.error.message};
+    return {ok:true};
+  }catch(e){ return {ok:false, err:e.message||String(e)}; }
+}
+async function tgCustomDeleteDb(id){
+  if(typeof sb === "undefined" || !sb.from) return {ok:false};
+  try{
+    var r = await sb.from("telegram_custom_reports").delete().eq("id", id);
+    if(r.error) return {ok:false, err:r.error.message};
+    return {ok:true};
+  }catch(e){ return {ok:false, err:e.message||String(e)}; }
 }
 function tgCustomRenderList(){
   var box = document.getElementById("tgCustomList"); if(!box) return;
+  // sync من DB في الخلفية أول مرة ثم أعد الرسم
+  if(!window.__tgCustomSynced){
+    window.__tgCustomSynced = true;
+    tgCustomSyncFromDb().then(function(){ tgCustomRenderList(); tgRenderReportsList && tgRenderReportsList(); }).catch(function(){});
+  }
   var list = tgCustomGetAll();
   if(!list.length){
     box.innerHTML = '<div style="padding:12px;text-align:center;color:#92400e;font-size:12px;background:#fffbea;border:1px dashed #fde68a;border-radius:8px">مفيش تقارير مخصصة لسه — اضغط "➕ تقرير جديد" فوق</div>';
@@ -23837,12 +24059,18 @@ function tgCustomOpen(editId){
 }
 function tgCustomClose(){ var m=document.getElementById("tgCustomModal"); if(m) m.style.display = "none"; }
 function tgCustomEdit(id){ tgCustomOpen(id); }
-function tgCustomDelete(id){
+async function tgCustomDelete(id){
   if(!confirm("تأكيد حذف هذا التقرير؟")) return;
+  // احذف من Supabase أولاً
+  var res = await tgCustomDeleteDb(id);
+  if(!res.ok && res.err && !/does not exist|not found/i.test(res.err)){
+    toast("فشل الحذف من السحابة: " + res.err, "err"); return;
+  }
   var all = tgCustomGetAll().filter(function(x){ return x.id !== id; });
   tgCustomSaveAll(all);
   tgCustomRenderList();
   tgRenderReportsList();
+  toast("تم الحذف","ok");
 }
 function tgCustomToggleKind(){
   var k = (document.getElementById("tgcKind")||{}).value;
@@ -23869,7 +24097,7 @@ function tgCustomValidateSql(sql){
   if(/;/.test(s)) return {ok:false, err:"ممنوع الفاصلة المنقوطة داخل الـquery"};
   return {ok:true, sql:s};
 }
-function tgCustomSave(){
+async function tgCustomSave(){
   var name = (document.getElementById("tgcName").value||"").trim();
   var emoji = (document.getElementById("tgcEmoji").value||"📊").trim();
   var titleEn = (document.getElementById("tgcTitleEn").value||"").trim();
@@ -23883,14 +24111,25 @@ function tgCustomSave(){
   var m = document.getElementById("tgCustomModal");
   var all = tgCustomGetAll();
   var id = m._editingId || ("cr_" + Date.now() + "_" + Math.random().toString(36).slice(2,7));
-  var rec = {id:id, name:name, emoji:emoji, titleEn:titleEn, kind:kind, sql:v.sql, template:template, created_at: new Date().toISOString()};
+  var rec = {id:id, name:name, emoji:emoji, titleEn:titleEn, kind:kind, sql:v.sql, template:template, is_active:true, created_at: new Date().toISOString()};
+  // احفظ في Supabase الأول
+  tgCustomStatus("⏳ جاري الحفظ في السحابة...", "info");
+  var up = await tgCustomUpsertDb(rec);
+  if(!up.ok){
+    // لو الجدول مش موجود، احفظ محلي مع تحذير
+    if(up.err && /does not exist|relation|schema cache/i.test(up.err)){
+      tgCustomStatus("⚠ الجدول مش موجود — اتحفظ محلي. نفّذ migrate_local_to_db.sql في Supabase", "err");
+    } else {
+      tgCustomStatus("❌ فشل الحفظ: " + up.err, "err"); return;
+    }
+  }
   if(m._editingId){
     all = all.map(function(x){ return x.id === id ? rec : x; });
   } else {
     all.push(rec);
   }
   tgCustomSaveAll(all);
-  tgCustomStatus("✓ اتحفظ · هتلاقيه في القائمة", "ok");
+  if(up.ok) tgCustomStatus("✓ اتحفظ في السحابة والجهاز", "ok");
   tgCustomRenderList();
   tgRenderReportsList();
   setTimeout(tgCustomClose, 900);
@@ -24015,6 +24254,316 @@ async function tgSendTextMessage(text){
   if(sent === 0 && failed > 0) throw new Error(errors[0] || "فشل");
   toast("✓ اتبعت لـ"+sent+" جروب"+(failed?" · فشل "+failed:""), failed?"err":"ok");
 }
+
+/* ==========================================================
+   🚀 مميزات التيليجرام الاحترافية (Pro Features)
+========================================================== */
+
+// ============ ⏰ 1. الجدولة التلقائية ============
+window.__tgSchedules = [];
+async function tgSchedulesLoad(){
+  if(typeof sb==="undefined"||!sb.from) return [];
+  try{
+    var r = await sb.from("telegram_schedules").select("*").order("send_time");
+    if(!r.error) window.__tgSchedules = r.data||[];
+  }catch(e){ console.warn("tgSchedulesLoad",e); }
+  return window.__tgSchedules;
+}
+async function tgSchedulesRender(){
+  var box = document.getElementById("tgSchedulesList"); if(!box) return;
+  await tgSchedulesLoad();
+  var catalog = (typeof tgReportsCatalog==="function") ? tgReportsCatalog() : [];
+  // دمج: الكتالوج الكامل + أي جدولات محفوظة لتقارير مش موجودة في الكتالوج
+  var scheds = window.__tgSchedules||[];
+  var schedMap = {}; scheds.forEach(function(s){ schedMap[s.report_id]=s; });
+  var days = ["أحد","اثنين","ثلاثاء","أربعاء","خميس","جمعة","سبت"];
+  box.innerHTML = catalog.map(function(item){
+    var s = schedMap[item.id] || {report_id:item.id, report_label:item.label, is_active:false, send_time:"09:00", days_of_week:[0,1,2,3,4,5,6]};
+    var dow = Array.isArray(s.days_of_week)?s.days_of_week:[0,1,2,3,4,5,6];
+    return '<div style="background:#fff;border:1px solid #bbf7d0;border-radius:9px;padding:10px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center">'+
+      '<div>'+
+        '<div style="font-weight:800;color:#0a1a35;font-size:12.5px;margin-bottom:6px">'+esc(item.label)+'</div>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px">'+
+          '<label style="display:flex;align-items:center;gap:4px;font-weight:700"><input type="checkbox" '+(s.is_active?"checked":"")+' data-tgs-field="is_active" data-tgs-id="'+esc(item.id)+'">مفعّل</label>'+
+          '<span>·</span>'+
+          '<label>الوقت: <input type="time" value="'+esc(s.send_time||"09:00")+'" data-tgs-field="send_time" data-tgs-id="'+esc(item.id)+'" style="padding:2px 4px;border:1px solid #cbd5e1;border-radius:5px"></label>'+
+          '<span>·</span>'+
+          '<span>الأيام:</span>'+
+          days.map(function(d,i){return '<label style="display:flex;align-items:center;gap:2px;background:'+(dow.indexOf(i)>=0?"#dcfce7":"#f3f4f6")+';padding:2px 7px;border-radius:999px;cursor:pointer;font-weight:700"><input type="checkbox" '+(dow.indexOf(i)>=0?"checked":"")+' data-tgs-day="'+i+'" data-tgs-id="'+esc(item.id)+'" style="display:none">'+d+'</label>';}).join("")+
+        '</div>'+
+      '</div>'+
+      '<button class="btn sm" onclick="tgScheduleSave(\''+esc(item.id)+'\',\''+esc(item.label).replace(/'/g,"\\\\'")+'\')" style="background:#16a34a;color:#fff;font-weight:800">💾 حفظ</button>'+
+    '</div>';
+  }).join("");
+  // ربط toggle للأيام
+  box.querySelectorAll('[data-tgs-day]').forEach(function(cb){
+    cb.addEventListener('change',function(){ var l=cb.closest('label'); if(l) l.style.background=cb.checked?'#dcfce7':'#f3f4f6'; });
+  });
+}
+async function tgScheduleSave(reportId, label){
+  var box = document.getElementById("tgSchedulesList"); if(!box) return;
+  var activeCb = box.querySelector('input[data-tgs-field="is_active"][data-tgs-id="'+reportId+'"]');
+  var timeI = box.querySelector('input[data-tgs-field="send_time"][data-tgs-id="'+reportId+'"]');
+  var dayCbs = box.querySelectorAll('input[data-tgs-day][data-tgs-id="'+reportId+'"]');
+  var days = []; dayCbs.forEach(function(cb){ if(cb.checked) days.push(parseInt(cb.getAttribute("data-tgs-day"),10)); });
+  var rec = {
+    report_id: reportId, report_label: label,
+    is_active: !!(activeCb&&activeCb.checked),
+    send_time: (timeI&&timeI.value)||"09:00",
+    days_of_week: days.length?days:[0,1,2,3,4,5,6],
+    timezone: "Africa/Cairo",
+    updated_at: new Date().toISOString()
+  };
+  try{
+    var r = await sb.from("telegram_schedules").upsert(rec,{onConflict:"report_id"});
+    if(r.error) throw r.error;
+    var s=document.getElementById("tgSchedulesStatus"); if(s){ s.textContent="✓ تم حفظ جدولة: "+label; setTimeout(function(){s.textContent="";},3000); }
+    toast("✓ اتحفظت الجدولة","ok");
+  }catch(e){
+    toast("فشل: "+(e.message||e),"err");
+  }
+}
+
+// ============ ☀️ 2. ملخص الصباح ============
+var MB_SECTIONS = [
+  {id:"sales_yesterday",label:"💰 مبيعات أمس"},
+  {id:"sales_month",label:"📈 مبيعات الشهر"},
+  {id:"collections_today",label:"↓ تحصيلات اليوم"},
+  {id:"due_cheques",label:"🧾 شيكات اليوم"},
+  {id:"new_overdue",label:"⚠ متأخرات جديدة"},
+  {id:"new_orders",label:"📝 أوامر بيع جديدة"},
+  {id:"custody_summary",label:"💼 ملخص العهد"},
+  {id:"bank_balances",label:"🏦 أرصدة البنوك"}
+];
+async function tgMbLoad(){
+  if(typeof sb==="undefined"||!sb.from) return null;
+  try{
+    var r = await sb.from("telegram_morning_brief").select("*").eq("id",1).maybeSingle();
+    if(r.error||!r.data) return {is_active:false,send_time:"08:00",include_sections:MB_SECTIONS.map(x=>x.id)};
+    return r.data;
+  }catch(e){ return null; }
+}
+async function tgMbRender(){
+  var cfg = await tgMbLoad(); if(!cfg) return;
+  var ac=document.getElementById("tgMbActive"); if(ac) ac.checked = !!cfg.is_active;
+  var tm=document.getElementById("tgMbTime"); if(tm) tm.value = String(cfg.send_time||"08:00").slice(0,5);
+  var sec=document.getElementById("tgMbSections"); if(!sec) return;
+  var selected = cfg.include_sections||[];
+  sec.innerHTML = MB_SECTIONS.map(function(s){
+    var on = selected.indexOf(s.id)>=0;
+    return '<label style="display:flex;align-items:center;gap:6px;padding:7px 10px;background:'+(on?"#fef3c7":"#fff")+';border:1px solid '+(on?"#d4a017":"#e5e7eb")+';border-radius:8px;cursor:pointer;font-weight:700"><input type="checkbox" '+(on?"checked":"")+' data-mb-sec="'+s.id+'"> '+s.label+'</label>';
+  }).join("");
+}
+async function tgMbSave(){
+  if(typeof sb==="undefined"||!sb.from) return toast("Supabase مش متصل","err");
+  var sections=[]; document.querySelectorAll('[data-mb-sec]:checked').forEach(function(c){sections.push(c.getAttribute("data-mb-sec"));});
+  var rec = {
+    id:1,
+    is_active: document.getElementById("tgMbActive").checked,
+    send_time: document.getElementById("tgMbTime").value||"08:00",
+    include_sections: sections
+  };
+  try{
+    var r = await sb.from("telegram_morning_brief").upsert(rec,{onConflict:"id"});
+    if(r.error) throw r.error;
+    var s=document.getElementById("tgMbStatus"); if(s) s.textContent="✓ اتحفظ";
+    toast("✓ اتحفظت إعدادات ملخص الصباح","ok");
+  }catch(e){ toast("فشل: "+(e.message||e),"err"); }
+}
+async function tgMbSendNow(){
+  var s=document.getElementById("tgMbStatus"); if(s) s.textContent="⏳ جاري البناء...";
+  try{
+    var msg = await tgMbBuildMessage();
+    await tgSendTextMessage(msg);
+    if(s) s.textContent="✓ اتبعت";
+  }catch(e){ if(s) s.textContent="❌ "+(e.message||e); }
+}
+async function tgMbBuildMessage(){
+  var cfg = await tgMbLoad();
+  var sections = cfg&&cfg.include_sections||MB_SECTIONS.map(x=>x.id);
+  var today = new Date().toLocaleDateString("ar-EG");
+  var lines = ["☀️ *ملخص الصباح*","📅 "+today,"━━━━━━━━━━━━━━━━━━━━",""];
+  // استخدم البيانات الموجودة في state إن أمكن
+  try{
+    if(sections.indexOf("sales_yesterday")>=0){
+      var y = new Date(); y.setDate(y.getDate()-1); var yStr=y.toISOString().slice(0,10);
+      var sales=0, cnt=0;
+      try{(state.policies||[]).forEach(function(p){ if(String(p.date||"").slice(0,10)===yStr){ sales+=(+p.netAmount||0); cnt++; }});}catch(_){}
+      lines.push("💰 مبيعات أمس: *"+sales.toLocaleString("en-US",{maximumFractionDigits:2})+"* ج.م ("+cnt+" بوليصة)");
+    }
+    if(sections.indexOf("sales_month")>=0){
+      var monthStr = new Date().toISOString().slice(0,7);
+      var monthS=0, mCnt=0;
+      try{(state.policies||[]).forEach(function(p){ if(String(p.date||"").slice(0,7)===monthStr){ monthS+=(+p.netAmount||0); mCnt++; }});}catch(_){}
+      lines.push("📈 مبيعات الشهر: *"+monthS.toLocaleString("en-US",{maximumFractionDigits:2})+"* ج.م ("+mCnt+" بوليصة)");
+    }
+    if(sections.indexOf("due_cheques")>=0){
+      var todayStr = new Date().toISOString().slice(0,10);
+      var dueN=0, dueT=0;
+      try{(state.treasuryEntries||[]).forEach(function(e){ if(e.method==="bank"&&String(e.dueDate||"").slice(0,10)===todayStr){dueN++; dueT+=(+e.amount||0);}});}catch(_){}
+      lines.push("🧾 شيكات اليوم: *"+dueN+"* بقيمة "+dueT.toLocaleString("en-US",{maximumFractionDigits:2})+" ج.م");
+    }
+    if(sections.indexOf("new_overdue")>=0){
+      var lateN=0, lateT=0;
+      try{ if(typeof salesInstallmentBaseRows==="function"){ salesInstallmentBaseRows().filter(function(r){return r.status==="متأخر"&&r.remaining>0.004}).forEach(function(r){lateN++;lateT+=r.remaining;}); } }catch(_){}
+      lines.push("⚠ متأخرات: *"+lateN+"* قسط بقيمة "+lateT.toLocaleString("en-US",{maximumFractionDigits:2})+" ج.م");
+    }
+    if(sections.indexOf("collections_today")>=0){
+      var tStr = new Date().toISOString().slice(0,10);
+      var coll=0;
+      try{(state.treasuryEntries||[]).forEach(function(e){if(e.direction==="in"&&e.entryKind!=="gl"&&String(e.date||"").slice(0,10)===tStr)coll+=(+e.amount||0);});}catch(_){}
+      lines.push("↓ تحصيلات اليوم: *"+coll.toLocaleString("en-US",{maximumFractionDigits:2})+"* ج.م");
+    }
+    if(sections.indexOf("new_orders")>=0){
+      var tStr2 = new Date().toISOString().slice(0,10);
+      var oN=0;
+      try{(state.saleOrders||[]).forEach(function(o){if(String(o.date||"").slice(0,10)===tStr2)oN++;});}catch(_){}
+      lines.push("📝 أوامر بيع جديدة اليوم: *"+oN+"*");
+    }
+  }catch(e){ console.warn(e); }
+  lines.push("");
+  lines.push("━━━━━━━━━━━━━━━━━━━━");
+  lines.push("_يوم عمل موفق_ 🌟");
+  return lines.join("\n");
+}
+
+// ============ 🚨 3. التنبيهات الذكية ============
+window.__tgAlerts = [];
+async function tgAlertsLoad(){
+  if(typeof sb==="undefined"||!sb.from) return [];
+  try{ var r=await sb.from("telegram_alert_rules").select("*").order("created_at",{ascending:false}); if(!r.error) window.__tgAlerts=r.data||[]; }catch(e){}
+  return window.__tgAlerts;
+}
+async function tgAlertsRender(){
+  var box=document.getElementById("tgAlertsList"); if(!box) return;
+  await tgAlertsLoad();
+  var list=window.__tgAlerts||[];
+  if(!list.length){ box.innerHTML='<div style="padding:12px;text-align:center;color:#991b1b;font-size:12px;background:#fff;border:1px dashed #fecaca;border-radius:8px">مفيش قواعد تنبيه — ضيف قاعدة جديدة</div>'; return; }
+  box.innerHTML = list.map(function(a){
+    return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#fff;border:1px solid #fecaca;border-radius:8px;gap:8px">'+
+      '<div><b style="color:#991b1b">'+esc(a.emoji||"🚨")+' '+esc(a.name)+'</b><div style="font-size:10.5px;color:#64748b;margin-top:2px">'+esc(a.event_type)+' · '+(a.is_active?"<span style=\"color:#16a34a\">✓ مفعّل</span>":"<span style=\"color:#9ca3af\">موقوف</span>")+'</div></div>'+
+      '<div style="display:flex;gap:4px"><button class="btn ghost sm" onclick="tgAlertToggle(\''+esc(a.id)+'\')" style="font-size:11px">'+(a.is_active?"⏸":"▶")+'</button><button class="btn ghost sm" onclick="tgAlertDelete(\''+esc(a.id)+'\')" style="color:#b91c1c;font-size:11px">🗑</button></div>'+
+    '</div>';
+  }).join("");
+}
+function tgAlertOpen(){ var m=document.getElementById("tgAlertModal"); if(m){ document.getElementById("tgaName").value=""; document.getElementById("tgaCondition").value=""; document.getElementById("tgaTemplate").value=""; m.style.display="flex"; } }
+function tgAlertClose(){ var m=document.getElementById("tgAlertModal"); if(m) m.style.display="none"; }
+async function tgAlertSave(){
+  var name=document.getElementById("tgaName").value.trim();
+  var event_type=document.getElementById("tgaEvent").value;
+  var condStr=document.getElementById("tgaCondition").value.trim();
+  var tpl=document.getElementById("tgaTemplate").value.trim();
+  var cooldown=parseInt(document.getElementById("tgaCooldown").value,10)||60;
+  if(!name||!condStr||!tpl) return toast("املأ كل الحقول","err");
+  var cond; try{ cond=JSON.parse(condStr); }catch(e){ return toast("JSON غير صحيح","err"); }
+  try{
+    var r=await sb.from("telegram_alert_rules").insert({name:name, emoji:"🚨", event_type:event_type, condition_json:cond, message_template:tpl, cooldown_minutes:cooldown, is_active:true});
+    if(r.error) throw r.error;
+    toast("✓ اتحفظت القاعدة","ok"); tgAlertClose(); tgAlertsRender();
+  }catch(e){ toast("فشل: "+(e.message||e),"err"); }
+}
+async function tgAlertToggle(id){
+  var a=(window.__tgAlerts||[]).find(function(x){return x.id===id;}); if(!a) return;
+  try{ await sb.from("telegram_alert_rules").update({is_active:!a.is_active}).eq("id",id); tgAlertsRender(); }catch(e){}
+}
+async function tgAlertDelete(id){
+  if(!confirm("حذف القاعدة؟")) return;
+  try{ await sb.from("telegram_alert_rules").delete().eq("id",id); tgAlertsRender(); toast("✓ اتحذفت","ok"); }catch(e){ toast("فشل","err"); }
+}
+
+// ============ 🤖 4. مستخدمي البوت (Whitelist) ============
+async function tgBotUsersRender(){
+  var box=document.getElementById("tgBotUsersList"); if(!box) return;
+  try{
+    var r=await sb.from("telegram_bot_users").select("*").order("created_at",{ascending:false});
+    var list=r.data||[];
+    if(!list.length){ box.innerHTML='<div style="padding:12px;text-align:center;color:#1e40af;font-size:12px;background:#fff;border:1px dashed #93c5fd;border-radius:8px">مفيش مستخدمين — ضيف واحد</div>'; return; }
+    box.innerHTML=list.map(function(u){
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#fff;border:1px solid #bfdbfe;border-radius:8px">'+
+        '<div><b style="color:#1e40af">'+esc(u.display_name||u.username||"—")+'</b><div style="font-size:10.5px;color:#64748b">ID: <code>'+esc(u.telegram_user_id)+'</code> · '+(u.role==='admin'?'👑 أدمن':'👁 عرض')+'</div></div>'+
+        '<button class="btn ghost sm" onclick="tgBotUserDelete('+u.telegram_user_id+')" style="color:#b91c1c">🗑</button>'+
+      '</div>';
+    }).join("");
+  }catch(e){}
+}
+function tgBotUserOpen(){ var m=document.getElementById("tgBotUserModal"); if(m){ ["tgbuId","tgbuName"].forEach(function(id){var e=document.getElementById(id);if(e)e.value="";}); m.style.display="flex"; } }
+function tgBotUserClose(){ var m=document.getElementById("tgBotUserModal"); if(m) m.style.display="none"; }
+async function tgBotUserSave(){
+  var id=parseInt(document.getElementById("tgbuId").value,10);
+  var nm=document.getElementById("tgbuName").value.trim();
+  var role=document.getElementById("tgbuRole").value;
+  if(!id||!nm) return toast("املأ الحقول","err");
+  try{
+    await sb.from("telegram_bot_users").upsert({telegram_user_id:id, display_name:nm, role:role, is_active:true},{onConflict:"telegram_user_id"});
+    toast("✓ اتحفظ","ok"); tgBotUserClose(); tgBotUsersRender();
+  }catch(e){ toast("فشل: "+(e.message||e),"err"); }
+}
+async function tgBotUserDelete(id){
+  if(!confirm("حذف المستخدم؟")) return;
+  try{ await sb.from("telegram_bot_users").delete().eq("telegram_user_id",id); tgBotUsersRender(); }catch(e){}
+}
+
+// ============ 🔕 5. الكتم المؤقت ============
+async function tgSnoozeRender(){
+  var box=document.getElementById("tgSnoozeList"); if(!box) return;
+  // Populate chat dropdown
+  var sel=document.getElementById("tgSnoozeChat");
+  var cfg = window.tgCfg&&window.tgCfg.chats||[];
+  if(sel) sel.innerHTML = '<option value="">— اختار جروب —</option>'+cfg.map(function(c){return '<option value="'+esc(c.chat_id)+'">'+esc(c.name||c.chat_id)+'</option>';}).join("");
+  try{
+    var r=await sb.from("telegram_snoozes").select("*");
+    var list=(r.data||[]).filter(function(s){ return new Date(s.snooze_until)>new Date(); });
+    if(!list.length){ box.innerHTML='<div style="padding:10px;text-align:center;color:#525252;font-size:11.5px;background:#fff;border:1px dashed #a3a3a3;border-radius:8px">مفيش جروبات مكتومة دلوقتي</div>'; return; }
+    box.innerHTML=list.map(function(s){
+      var until = new Date(s.snooze_until).toLocaleString("ar-EG");
+      var name = (cfg.find(function(c){return c.chat_id===s.chat_id;})||{}).name || s.chat_id;
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#fff;border:1px solid #d4d4d4;border-radius:8px">'+
+        '<div><b>🔕 '+esc(name)+'</b><div style="font-size:10.5px;color:#737373">حتى '+esc(until)+'</div></div>'+
+        '<button class="btn ghost sm" onclick="tgSnoozeRemove(\''+esc(s.chat_id)+'\')" style="color:#16a34a">🔊 إلغاء الكتم</button>'+
+      '</div>';
+    }).join("");
+  }catch(e){}
+}
+async function tgSnoozeAdd(){
+  var chat=document.getElementById("tgSnoozeChat").value;
+  var dur=parseInt(document.getElementById("tgSnoozeDur").value,10);
+  if(!chat||!dur) return toast("اختار الجروب والمدة","err");
+  var until=new Date(Date.now()+dur*60*1000).toISOString();
+  try{ await sb.from("telegram_snoozes").upsert({chat_id:chat, snooze_until:until},{onConflict:"chat_id"}); toast("✓ اتكتم","ok"); tgSnoozeRender(); }catch(e){ toast("فشل","err"); }
+}
+async function tgSnoozeRemove(chat){
+  try{ await sb.from("telegram_snoozes").delete().eq("chat_id",chat); toast("✓ اترفع الكتم","ok"); tgSnoozeRender(); }catch(e){}
+}
+
+// ============ 📊 6. سجل النشاط ============
+async function tgActivityLoad(){
+  var box=document.getElementById("tgActivityList"); if(!box) return;
+  box.innerHTML='<div style="padding:12px;text-align:center;color:#64748b">⏳ جاري التحميل...</div>';
+  try{
+    var r=await sb.from("telegram_activity_log").select("*").order("sent_at",{ascending:false}).limit(50);
+    var list=r.data||[];
+    if(!list.length){ box.innerHTML='<div style="padding:12px;text-align:center;color:#64748b">مفيش سجل بعد</div>'; return; }
+    box.innerHTML='<table style="width:100%;font-size:11px"><thead><tr style="background:#1e293b;color:#fff"><th style="padding:5px">التاريخ</th><th>النوع</th><th>التقرير</th><th>الجروب</th><th>الحالة</th></tr></thead><tbody>'+
+      list.map(function(l){
+        var dt=new Date(l.sent_at).toLocaleString("ar-EG");
+        var ok=l.success?'<span style="color:#16a34a">✓</span>':'<span style="color:#dc2626" title="'+esc(l.error_message||"")+'">✗</span>';
+        return '<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:4px 6px">'+esc(dt)+'</td><td>'+esc(l.event_type||"—")+'</td><td>'+esc(l.report_id||"—")+'</td><td>'+esc(l.chat_name||"—")+'</td><td style="text-align:center">'+ok+'</td></tr>';
+      }).join("")+'</tbody></table>';
+  }catch(e){ box.innerHTML='<div style="color:#dc2626;padding:10px">فشل: '+esc(e.message||e)+'</div>'; }
+}
+
+// ============ 🎯 ربط: افتح الكارت لما يفتح settings ============
+(function(){
+  var origCfgRender = window.tgCfgRender;
+  if(typeof origCfgRender==="function"){
+    window.tgCfgRender = function(){
+      try{ origCfgRender.apply(this,arguments); }catch(e){}
+      try{
+        tgSchedulesRender(); tgMbRender(); tgAlertsRender(); tgBotUsersRender(); tgSnoozeRender();
+      }catch(e){}
+    };
+  }
+})();
 
 function tgCfgField(idx, field, value){
   if(!window.tgCfg.chats[idx]) return;
@@ -29205,6 +29754,10 @@ function totalView(dash){
   const a=current(), anyLock=mine.some(x=>x.lock_date), canAdd=custodyCan("add");
   h+='<div class="cgx-top">'+(a?'<button type="button" class="cgx-rep" id="cgxRepBtn">📄 تقرير</button>':'<span></span>')+'<div class="cgx-who">'+(a?'🔒 خزنة: '+E(a.owner_name)+' — '+E(a.code):'كل العهد')+'</div>'+(canView("custodyCodes")?'<button type="button" class="cgx-rep alt" data-cgx-go="custodyCodes">🔖 تكويد العهد</button>':"")+'</div>';
   if(!CGL.v2()) h+='<div class="cgx-lockmsg" style="color:var(--danger)">⚠ '+NOTE_SQL+' — لحد ما يتشغّل، الحركات بتتسجل بدون بند/حساب ومش هتتحول لقيود.</div>';
+  // عدد الفلاتر المفعّلة (مؤشر صغير على زر الطي)
+  var __fActive = 0;
+  if(F.type) __fActive++; if(F.st) __fActive++; if(F.from) __fActive++; if(F.to) __fActive++; if(F.q) __fActive++;
+  h+='<button type="button" class="cgx-mobfilter" onclick="(function(e){var p=e.closest(\'.cgx\');if(p)p.classList.toggle(\'filters-open\');})(this)"><span>🔍 الفلاتر والبحث '+(__fActive?'<span class="cnt">'+__fActive+'</span>':'')+'</span><span class="chev">▼</span></button>';
   if(mine.length>1) h+='<div class="cgx-fbar"><div class="fe"><label for="cgxFEmp">الخزنة / الموظف</label><select id="cgxFEmp"><option value="*"'+(v==="*"?" selected":"")+'>كل الموظفين</option>'+mine.map(x=>'<option value="'+E(x.id)+'"'+(String(x.id)===String(v)?" selected":"")+'>'+E(ownerLabel(x,mine))+'</option>').join("")+'</select></div>';
   else h+='<div class="cgx-fbar"><div class="fe" style="display:none"></div>';
   h+='<div><label for="cgxFType">النوع</label><select id="cgxFType"><option value="">الكل</option><option value="in"'+(F.type==="in"?" selected":"")+'>وارد</option><option value="out"'+(F.type==="out"?" selected":"")+'>منصرف</option></select></div>'+
@@ -32740,7 +33293,7 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     ice:{name:"ثلجي",primary:"#0891B2",dark:"#155E75",accent:"#67E8F9",bg:"#F0FDFA",card:"#FFFFFF",line:"#CFFAFE",sidebar:"#CFFAFE",sidebarText:"#164E63",header:"#FFFFFF",headerText:"#164E63",text:"#164E63",muted:"#64748B"},
     coral:{name:"مرجاني",primary:"#F05D5E",dark:"#C2413B",accent:"#FF9B85",bg:"#FFF5F2",card:"#FFFFFF",line:"#FFD4C9",sidebar:"#FFE5DD",sidebarText:"#7C2D26",header:"#FFFFFF",headerText:"#7C2D26",text:"#4A201B",muted:"#806B67"}
   };
-  const defaults={logoData:"",companyName:"IRON GATE",subtitle:"SUPPLIES",preset:"classic",colors:palettes.classic,font:"Cairo",fontSize:"14px"};
+  const defaults={logoData:"",companyName:"",subtitle:"",preset:"classic",colors:palettes.classic,font:"Cairo",fontSize:"14px"};
   function cfg(){const s=(typeof state!=="undefined"&&state&&state.settings)?state.settings:{};s.branding=Object.assign({},defaults,s.branding||{});return s.branding}
   function setVal(id,v){const e=document.getElementById(id);if(e&&v)e.value=v}
   function setTxt(e,v){if(e&&e.textContent!==v)e.textContent=v}
@@ -34854,9 +35407,35 @@ html body:not(#_) .topbar .ap-menus .ap-dd button>span:first-child{width:28px;he
 </script>
 <script id="co-brand-runtime">
 (function(){
- function bn(){try{if(typeof CUR_CO!=="undefined"&&CUR_CO!=="*"){var n=JSON.parse(localStorage.getItem("ig_company_names")||"{}")[CUR_CO];if(n)return n;}}catch(e){}return "";}
+ // اسم الشركة: من إعدادات الهوية البصرية (Settings → Appearance) أولاً، ثم ig_company_names، وإلا placeholder
+ function bn(){
+   try{
+     // 1) إعدادات الهوية البصرية من شاشة الإعدادات
+     if(typeof state!=="undefined" && state && state.settings && state.settings.branding){
+       var cn = String(state.settings.branding.companyName||"").trim();
+       if(cn) return cn;
+     }
+     // 2) اسم الشركة المحفوظ لكل CUR_CO
+     if(typeof CUR_CO!=="undefined" && CUR_CO!=="*"){
+       var n=JSON.parse(localStorage.getItem("ig_company_names")||"{}")[CUR_CO];
+       if(n) return n;
+     }
+   }catch(e){}
+   return "";
+ }
  window.coBrandName=bn;
- function rep(v){var n=bn();if(!n||typeof v!=="string")return v;return v.split("IRON GATE SUPPLIES — شركة ايرون جيت للتوريدات").join(n).split("شركة ايرون جيت للتوريدات").join(n).split("IRON GATE SUPPLIES").join(n);}
+ // placeholder افتراضي لو مفيش اسم مضبوط (يمنع ظهور IRON GATE في أي مكان)
+ var DEFAULT_PLACEHOLDER = "اسم الشركة";
+ function rep(v){
+   if(typeof v!=="string") return v;
+   var n = bn() || DEFAULT_PLACEHOLDER;
+   return v
+     .split("IRON GATE SUPPLIES — شركة ايرون جيت للتوريدات").join(n)
+     .split("شركة ايرون جيت للتوريدات").join(n)
+     .split("IRON GATE SUPPLIES").join(n)
+     .split("شركة ايرون جيت").join(n)
+     .split("IRON GATE").join(n);
+ }
  window.coBrandRep=rep;
  try{var w=Document.prototype.write;Document.prototype.write=function(){return w.apply(this,Array.prototype.map.call(arguments,rep));};}catch(e){}
  try{var d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,"srcdoc");if(d&&d.set)Object.defineProperty(HTMLIFrameElement.prototype,"srcdoc",{get:d.get,set:function(v){d.set.call(this,rep(v));},configurable:true});}catch(e){}
@@ -34864,6 +35443,54 @@ html body:not(#_) .topbar .ap-menus .ap-dd button>span:first-child{width:28px;he
   try{if(window.XLSX&&XLSX.utils&&!XLSX.utils.__ig){var a=XLSX.utils.aoa_to_sheet;XLSX.utils.aoa_to_sheet=function(x,o){try{x=x.map(function(r){return Array.isArray(r)?r.map(rep):r;});}catch(e){}return a.call(this,x,o);};XLSX.utils.__ig=1;}}catch(e){}
   try{if(window.ExcelJS&&!ExcelJS.__ig){var g=Object.getOwnPropertyDescriptor(ExcelJS.Workbook.prototype,"xlsx");if(g&&g.get){Object.defineProperty(ExcelJS.Workbook.prototype,"xlsx",{get:function(){var x=g.get.call(this);if(!x.__ig){var wb=this,wr=x.writeBuffer;x.writeBuffer=function(){try{wb.eachSheet(function(ws){ws.eachRow(function(r){r.eachCell(function(c){if(typeof c.value==="string"){var nv=rep(c.value);if(nv!==c.value)c.value=nv;}});});});}catch(e){}return wr.apply(x,arguments);};x.__ig=1;}return x;},configurable:true});}ExcelJS.__ig=1;}}catch(e){}
  },500);
+
+ // MutationObserver — بيبدّل أي "IRON GATE" أو "شركة ايرون جيت" يظهر في الـDOM بعد الرسم
+ // ده بيمسك الحالات اللي بتدخل عن طريق innerHTML وtemplate strings، مش بس document.write
+ var BRAND_RE = /IRON GATE SUPPLIES — شركة ايرون جيت للتوريدات|شركة ايرون جيت للتوريدات|IRON GATE SUPPLIES|شركة ايرون جيت|IRON GATE/g;
+ function brandNode(node){
+   try{
+     if(!node) return;
+     if(node.nodeType === 3){
+       var txt = node.nodeValue;
+       if(txt && BRAND_RE.test(txt)){
+         var name = bn() || DEFAULT_PLACEHOLDER;
+         node.nodeValue = txt.replace(BRAND_RE, name);
+       }
+     } else if(node.nodeType === 1){
+       // استبعد الـscripts وعناصر الكود + استبعد اللوجو (data:image...)
+       var tag = (node.tagName||'').toLowerCase();
+       if(tag==='script' || tag==='style' || tag==='noscript') return;
+       // اتفحص attributes نصية (title, alt, placeholder)
+       ['title','alt','placeholder','aria-label'].forEach(function(a){
+         var v = node.getAttribute && node.getAttribute(a);
+         if(v && BRAND_RE.test(v)){
+           node.setAttribute(a, v.replace(BRAND_RE, bn() || DEFAULT_PLACEHOLDER));
+         }
+       });
+       // لو فيه أطفال، عالجهم
+       for(var i=0; i<node.childNodes.length; i++) brandNode(node.childNodes[i]);
+     }
+   }catch(e){}
+ }
+ // شغّل مرة بعد التحميل
+ function sweep(){ try{ brandNode(document.body); }catch(e){} }
+ if(document.readyState !== 'loading') setTimeout(sweep, 100);
+ else document.addEventListener('DOMContentLoaded', function(){ setTimeout(sweep, 100); });
+ // observer للتغييرات اللاحقة
+ try{
+   var mo = new MutationObserver(function(muts){
+     for(var i=0; i<muts.length; i++){
+       var m = muts[i];
+       if(m.type === 'childList'){
+         for(var j=0; j<m.addedNodes.length; j++) brandNode(m.addedNodes[j]);
+       } else if(m.type === 'characterData'){
+         brandNode(m.target);
+       }
+     }
+   });
+   if(document.body){ mo.observe(document.body, {childList:true, subtree:true, characterData:true}); }
+   else document.addEventListener('DOMContentLoaded', function(){ if(document.body) mo.observe(document.body, {childList:true, subtree:true, characterData:true}); });
+ }catch(e){}
 })();
 </script>
 <script id="partiesDashboardModule">
@@ -36083,8 +36710,50 @@ curShow(); setTimeout(curShow,800);
   .cgx.cgm .cgm-ic.cam{font-size:14px}.cgx.cgm .cgm-ic.del{font-size:13px}
   .cgx.cgm .cgm-ok{font-size:12px}
   .cgx.cgm .cgm-empty{padding:9px;font-size:11px}
+
+  /* ====== تحسينات موبايل إضافية — شاشة العهد ====== */
+  /* اسم الموظف في الـselect لا يُقطع */
+  .cgx.cgm .cgx-emp select{padding:0 32px 0 10px;background-position:left 10px center;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
+  /* صغّر الشريط الأحمر/الأخضر بتاع وارد/منصرف */
+  .cgx.cgm .cgm-add{padding:5px 10px!important;font-size:12px!important;min-height:30px;gap:5px}
+  .cgx.cgm .cgm-add .lk{font-size:10px}
+  .cgx.cgm .cgm-add .tot{font-size:11.5px;margin-right:auto}
+  .cgx.cgm .cgm-head{padding:0!important;gap:4px}
+  .cgx.cgm .cgm-lkbox{height:20px!important;font-size:9.5px!important;padding:0 6px!important;margin:3px!important}
+  .cgx.cgm .cgm-lkbox input{width:11px;height:11px}
+
+  /* ====== إجمالي العهد (totalView) على الموبايل — طي الفلاتر ====== */
+  .cgx.cgx-wide{padding:0 2px}
+  .cgx.cgx-wide .cgx-title{font-size:13.5px;margin:0 0 6px}
+  .cgx.cgx-wide .cgx-top{flex-wrap:wrap;gap:4px}
+  .cgx.cgx-wide .cgx-rep{padding:5px 12px;font-size:11.5px}
+  .cgx.cgx-wide .cgx-who{font-size:11.5px;flex:1 1 100%;text-align:center;order:2;padding:4px 0}
+  /* طي الفلاتر على الموبايل: مخفية افتراضياً وتفتح بزر */
+  .cgx.cgx-wide .cgx-fbar{display:none!important;grid-template-columns:1fr 1fr!important;gap:6px!important;padding:8px!important;background:#fff;border:1px solid #e1e6ed;border-radius:10px;margin:4px 0}
+  .cgx.cgx-wide.filters-open .cgx-fbar{display:grid!important}
+  .cgx.cgx-wide .cgx-fbar>div{padding:0!important}
+  .cgx.cgx-wide .cgx-fbar label{font-size:10px!important;font-weight:700;color:var(--text-dim);display:block;margin-bottom:2px}
+  .cgx.cgx-wide .cgx-fbar select,.cgx.cgx-wide .cgx-fbar input{width:100%!important;height:30px!important;font-size:12px!important;padding:0 8px!important;border:1px solid #dce2ea;border-radius:7px;background:#fff}
+  .cgx.cgx-wide .cgx-fbar .fe{grid-column:1/-1}
+  .cgx.cgx-wide .cgx-fbar .fq{grid-column:1/-1}
+  .cgx.cgx-wide .cgx-fbar .fb{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+  .cgx.cgx-wide .cgx-tb{padding:5px 10px;font-size:11.5px}
+  /* زر طي الفلاتر */
+  .cgx-mobfilter{display:flex;justify-content:space-between;align-items:center;gap:6px;background:linear-gradient(135deg,#fffbea,#fef3c7);border:1px solid #e6c46b;border-radius:9px;padding:7px 10px;margin:4px 0;font-weight:800;font-size:12px;color:#7a5003;cursor:pointer}
+  .cgx-mobfilter .chev{transition:transform .2s}
+  .cgx.cgx-wide.filters-open .cgx-mobfilter .chev{transform:rotate(180deg)}
+  .cgx-mobfilter .cnt{background:#d4a017;color:#fff;border-radius:999px;padding:1px 9px;font-size:10px;font-weight:900}
+  /* كروت الملخص فوق — 2x2 على الموبايل بدل 4x1 */
+  .cgx.cgx-wide .cgx-cards.c4{grid-template-columns:repeat(2,1fr)!important;gap:5px}
+  .cgx.cgx-wide .cgx-cards .cgx-card{padding:6px 4px;font-size:10.5px}
+  .cgx.cgx-wide .cgx-cards .cgx-card b{font-size:13px}
+  /* شريط إضافة وارد/منصرف أصغر */
+  .cgx.cgx-wide .cgx-addbar{gap:6px;margin:5px 0}
+  .cgx.cgx-wide .cgx-addbar button{padding:7px 12px!important;font-size:12.5px!important}
 }
 .cgx .cgm-item{font-size:10.5px;font-weight:800;color:#8a5a00;margin-bottom:1px}
+/* زر طي الفلاتر يظهر فقط على الموبايل */
+@media(min-width:701px){ .cgx-mobfilter{display:none!important} }
 @media(min-width:901px){
   /* ---- شاشة العهد على الكمبيوتر: أكبر، والوارد والمنصرف جنب بعض ---- */
   .cgx.cgm{max-width:1280px;font-size:14px;line-height:1.5;display:grid;grid-template-columns:1fr 1fr;gap:0 18px;align-items:start}
@@ -36793,4 +37462,371 @@ if(faTab==="settings"&&document.getElementById("faBody")){ try{ faRender(); }cat
   window.addEventListener("resize",closeAll);
   window.addEventListener("scroll",function(e){ if(e.target&&e.target.closest&&e.target.closest(".ap-dd")) return; closeAll(); },true);
 })();
+</script>
+
+<script id="botCallerModule">
+/* ==========================================================
+   🤖 منادة البوت — واجهة محادثة لسؤال البرنامج بلغة طبيعية
+========================================================== */
+window.botCallerHistory = window.botCallerHistory || [];
+function viewBotCaller(){
+  return '<style>'+_bcCss()+'</style>'+
+  '<div class="bc-wrap">'+
+    '<div class="bc-head">'+
+      '<div class="bc-h-l"><span class="bc-ic">🤖</span><div><h2>منادة البوت</h2><p>اكتب بالعربي اللي عايزه، البوت هيرد عليك فوراً</p></div></div>'+
+      '<button class="bc-clear" onclick="bcClear()" title="مسح المحادثة">🗑 مسح</button>'+
+    '</div>'+
+    '<div class="bc-hints">'+
+      '<div class="bc-h-title">💡 أمثلة سريعة (اضغط لإرسالها):</div>'+
+      '<div class="bc-h-chips">'+
+        _bcChip("رصيد عميل ويكادي","⚖ رصيد من ميزان المراجعة")+
+        _bcChip("متأخرات عميل ويكادي","⚠ أقساط متأخرة")+
+        _bcChip("شيكات مستحقة عميل ويكادي","🧾 أوراق قبض")+
+        _bcChip("مبيعات ويكادي الشهر","💰 مبيعات الشهر")+
+        _bcChip("مبيعات ويكادي السنة","💰 السنة")+
+        _bcChip("ملخص اليوم","📅 ملخص اليوم")+
+        _bcChip("متأخرات","📉 أكبر 10 متأخرات")+
+        _bcChip("شيكات مستحقة","📅 شيكات الأسبوع الجاي")+
+        _bcChip("مبيعات","🏆 أكبر 10 عملاء")+
+      '</div>'+
+    '</div>'+
+    '<div class="bc-messages" id="bcMessages">'+_bcRenderHistory()+'</div>'+
+    '<div class="bc-input-wrap">'+
+      '<input type="text" id="bcInput" class="bc-input" placeholder="اكتب سؤالك هنا... مثال: رصيد عميل ويكادي" autocomplete="off">'+
+      '<button class="bc-send" onclick="bcSend()">📤 إرسال</button>'+
+    '</div>'+
+    '<div class="bc-help">'+
+      '<details><summary>📖 شوف كل الصيغ اللي البوت بيفهمها</summary>'+
+      '<div class="bc-help-body">'+
+        '<div class="bc-help-sec"><b>⚖ الرصيد من ميزان المراجعة:</b><code>رصيد [عميل/مورد] &lt;الاسم&gt;</code></div>'+
+        '<div class="bc-help-sec"><b>⚠ الأقساط المتأخرة:</b><code>متأخرات [عميل] &lt;الاسم&gt;</code> · <code>متأخرات</code> (كل العملاء)</div>'+
+        '<div class="bc-help-sec"><b>🧾 أوراق القبض المستحقة:</b><code>شيكات مستحقة [عميل] &lt;الاسم&gt;</code> · <code>شيكات مستحقة</code> (الأسبوع الجاي)</div>'+
+        '<div class="bc-help-sec"><b>💰 المبيعات في فترة:</b><code>مبيعات &lt;الاسم&gt; من 2026-01-01 لـ 2026-12-31</code><br>بدلاً من التاريخ تقدر تقول: <b>اليوم / أمس / الشهر / الشهر الماضي / الأسبوع / السنة</b></div>'+
+        '<div class="bc-help-sec"><b>📅 ملخص اليوم:</b><code>ملخص اليوم</code> أو <code>ملخص النهاردة</code></div>'+
+      '</div></details>'+
+    '</div>'+
+  '</div>';
+}
+function _bcChip(text, label){
+  return '<button class="bc-chip" onclick="bcSendText(\''+text.replace(/'/g,"\\\\'")+'\')"><b>'+esc(label)+'</b><small>'+esc(text)+'</small></button>';
+}
+function _bcCss(){
+  return `
+    .bc-wrap{max-width:900px;margin:0 auto;font-family:Cairo,Tahoma,Arial,sans-serif;display:flex;flex-direction:column;gap:12px;padding:10px}
+    .bc-head{background:linear-gradient(135deg,#0a1a35,#1e3a72);color:#F4C542;padding:14px 18px;border-radius:14px;display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #d4a017;gap:10px;flex-wrap:wrap}
+    .bc-h-l{display:flex;align-items:center;gap:12px}
+    .bc-ic{font-size:30px}
+    .bc-head h2{margin:0;font-size:18px;font-weight:900}
+    .bc-head p{margin:2px 0 0;font-size:12px;color:#fde68a;font-weight:600}
+    .bc-clear{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);padding:6px 14px;border-radius:9px;cursor:pointer;font-weight:700;font-family:inherit;font-size:12px}
+    .bc-clear:hover{background:rgba(220,38,38,.3);border-color:#dc2626}
+    .bc-hints{background:linear-gradient(135deg,#fffbea,#fef3c7);border:2px solid #d4a017;border-radius:12px;padding:12px}
+    .bc-h-title{font-weight:900;color:#92400e;font-size:12.5px;margin-bottom:8px}
+    .bc-h-chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:7px}
+    .bc-chip{background:#fff;border:1.5px solid #fde68a;border-radius:10px;padding:8px 10px;text-align:right;cursor:pointer;font-family:inherit;transition:all .15s;display:flex;flex-direction:column;gap:2px}
+    .bc-chip:hover{border-color:#d4a017;background:#fffbea;transform:translateY(-1px);box-shadow:0 3px 8px rgba(212,160,23,.2)}
+    .bc-chip b{color:#92400e;font-size:12.5px;font-weight:800}
+    .bc-chip small{color:#64748b;font-size:10.5px;font-weight:600}
+    .bc-messages{background:#f8fafc;border:1px solid #e5e7eb;border-radius:12px;padding:12px;min-height:200px;max-height:55vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+    .bc-msg{display:flex;gap:10px;animation:bcFade .25s}
+    @keyframes bcFade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+    .bc-msg.user{flex-direction:row-reverse}
+    .bc-msg-av{flex:0 0 36px;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:900}
+    .bc-msg.user .bc-msg-av{background:#1e40af;color:#fff}
+    .bc-msg.bot .bc-msg-av{background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff}
+    .bc-msg-body{flex:1;min-width:0}
+    .bc-msg.user .bc-msg-body{background:#1e40af;color:#fff;padding:10px 14px;border-radius:14px 14px 4px 14px;max-width:70%}
+    .bc-msg.bot .bc-msg-body{background:#fff;border:1px solid #e5e7eb;padding:12px 15px;border-radius:14px 14px 14px 4px;box-shadow:0 2px 6px rgba(0,0,0,.04)}
+    .bc-msg-time{font-size:10px;color:#9ca3af;margin-top:4px}
+    .bc-msg.user .bc-msg-time{color:#bfdbfe;text-align:left}
+    .bc-reply pre{white-space:pre-wrap;font-family:inherit;margin:0;font-size:12.5px;line-height:1.7;color:#1f2937}
+    .bc-reply b{color:#92400e}
+    .bc-reply .bc-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px}
+    .bc-reply .bc-tbl th{background:#1e293b;color:#F4C542;padding:6px;text-align:right}
+    .bc-reply .bc-tbl td{padding:6px;border-bottom:1px solid #e5e7eb}
+    .bc-reply .bc-tbl tr:nth-child(even) td{background:#f9fafb}
+    .bc-reply .bc-kpi{display:inline-block;background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-weight:800;margin:3px 3px 0 0;font-size:11px}
+    .bc-empty{text-align:center;color:#94a3b8;padding:30px;font-size:13px}
+    .bc-input-wrap{display:flex;gap:8px;background:#fff;border:2px solid #d4a017;border-radius:12px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+    .bc-input{flex:1;border:0;outline:0;padding:10px 12px;font-family:inherit;font-size:14px;background:transparent;color:#0a1a35}
+    .bc-input:focus{background:#fffbea}
+    .bc-send{background:linear-gradient(135deg,#d4a017,#f59e0b);color:#fff;border:0;padding:10px 20px;border-radius:9px;font-weight:900;cursor:pointer;font-family:inherit;font-size:13px}
+    .bc-send:hover{background:linear-gradient(135deg,#b8890f,#d97706)}
+    .bc-send:disabled{opacity:.5}
+    .bc-help{font-size:12px;color:#64748b}
+    .bc-help summary{cursor:pointer;color:#0088cc;font-weight:700}
+    .bc-help-body{padding:10px 0 0;font-size:11.5px;line-height:1.8}
+    .bc-help-sec{margin-bottom:8px}
+    .bc-help-sec code{background:#f1f5f9;color:#0a1a35;padding:2px 7px;border-radius:5px;font-size:11px;font-family:monospace}
+    .bc-loading{display:inline-flex;gap:4px;padding:4px 8px}
+    .bc-loading span{width:7px;height:7px;background:#d4a017;border-radius:50%;animation:bcBlink 1s infinite}
+    .bc-loading span:nth-child(2){animation-delay:.2s}
+    .bc-loading span:nth-child(3){animation-delay:.4s}
+    @keyframes bcBlink{0%,80%,100%{opacity:.3}40%{opacity:1}}
+    @media(max-width:600px){.bc-hints .bc-h-chips{grid-template-columns:1fr 1fr}.bc-msg.user .bc-msg-body{max-width:85%}}
+  `;
+}
+function _bcRenderHistory(){
+  if(!botCallerHistory.length) return '<div class="bc-empty">💬 ابدأ المحادثة — اضغط على أي مثال فوق أو اكتب سؤالك تحت</div>';
+  return botCallerHistory.map(m=>{
+    var time=new Date(m.ts).toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"});
+    if(m.who==="user") return '<div class="bc-msg user"><div class="bc-msg-av">👤</div><div class="bc-msg-body">'+esc(m.text)+'<div class="bc-msg-time">'+time+'</div></div></div>';
+    return '<div class="bc-msg bot"><div class="bc-msg-av">🤖</div><div class="bc-msg-body"><div class="bc-reply">'+m.html+'</div><div class="bc-msg-time">'+time+'</div></div></div>';
+  }).join("");
+}
+function bindBotCaller(){
+  var inp=document.getElementById("bcInput"); if(!inp) return;
+  inp.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); bcSend(); } });
+  setTimeout(function(){ inp.focus(); var box=document.getElementById("bcMessages"); if(box) box.scrollTop=box.scrollHeight; },100);
+}
+function bcClear(){ if(!confirm("مسح كل المحادثة؟")) return; botCallerHistory=[]; var el=document.getElementById("bcMessages"); if(el) el.innerHTML=_bcRenderHistory(); }
+function bcSend(){ var inp=document.getElementById("bcInput"); if(!inp) return; var t=inp.value.trim(); if(!t) return; inp.value=""; bcSendText(t); }
+async function bcSendText(text){
+  botCallerHistory.push({who:"user",text:text,ts:Date.now()});
+  var box=document.getElementById("bcMessages"); if(!box) return;
+  box.innerHTML=_bcRenderHistory();
+  // add loading
+  box.insertAdjacentHTML("beforeend",'<div class="bc-msg bot" id="bcLoadMsg"><div class="bc-msg-av">🤖</div><div class="bc-msg-body"><div class="bc-loading"><span></span><span></span><span></span></div></div></div>');
+  box.scrollTop=box.scrollHeight;
+  try{
+    var html = await bcAnswer(text);
+    var lm=document.getElementById("bcLoadMsg"); if(lm) lm.remove();
+    botCallerHistory.push({who:"bot",html:html,ts:Date.now()});
+    box.innerHTML=_bcRenderHistory();
+    box.scrollTop=box.scrollHeight;
+  }catch(e){
+    var lm2=document.getElementById("bcLoadMsg"); if(lm2) lm2.remove();
+    botCallerHistory.push({who:"bot",html:'<pre style="color:#dc2626">❌ '+esc(e.message||e)+'</pre>',ts:Date.now()});
+    box.innerHTML=_bcRenderHistory();
+  }
+}
+
+// ============ Intent Parser (نفس منطق Telegram bot) ============
+function bcNorm(s){ return String(s||"").replace(/[ً-ٰٟ]/g,"").replace(/[إأآا]/g,"ا").replace(/[ىي]/g,"ي").replace(/ة/g,"ه").toLowerCase().trim(); }
+function bcParseIntent(text){
+  var t=bcNorm(text), raw=text.trim();
+  if(/مساعده|اوامر|^help/.test(t)) return {intent:"help"};
+  if(/ملخص اليوم|ملخص النهارده/.test(t)) return {intent:"today"};
+  if(/مبيعات/.test(t)) return {intent:"sales",target:bcExtractName(raw),range:bcParseRange(raw)};
+  if(/شيكات/.test(t)) return {intent:"cheques",target:bcExtractName(raw)};
+  if(/متاخر|متأخر/.test(t)) return {intent:"overdue",target:bcExtractName(raw)};
+  if(/رصيد/.test(t)) return {intent:"balance",target:bcExtractName(raw)};
+  return {intent:"unknown"};
+}
+function bcExtractName(text){
+  return text.replace(/رصيد|متاخر(ات)?|متأخر(ات)?|شيكات?|مستحقه|مستحقة|مبيعات|عميل|مورد|ميزان|اوراق|قبض|دفع/gi," ")
+    .replace(/من\s*\d{4}-\d{2}-\d{2}|الى\s*\d{4}-\d{2}-\d{2}|لـ?\s*\d{4}-\d{2}-\d{2}/g," ")
+    .replace(/الشهر الماضي|الشهر الفات|الشهر|السنه|السنة|العام|الاسبوع|الأسبوع|امس|أمس|اليوم|النهارده|النهاردة/g," ")
+    .replace(/\s+/g," ").trim();
+}
+function bcParseRange(text){
+  var t=bcNorm(text), now=new Date(), ymd=function(d){return d.toISOString().slice(0,10);};
+  var dates=text.match(/\d{4}-\d{2}-\d{2}/g);
+  if(dates&&dates.length>=2) return {from:dates[0],to:dates[1],label:dates[0]+" → "+dates[1]};
+  if(dates&&dates.length===1&&/من/.test(t)) return {from:dates[0],to:ymd(now),label:dates[0]+" → "+ymd(now)};
+  if(/الشهر الماضي|الشهر الفات/.test(t)){ var f=new Date(now.getFullYear(),now.getMonth()-1,1), l=new Date(now.getFullYear(),now.getMonth(),0); return {from:ymd(f),to:ymd(l),label:"الشهر الماضي"}; }
+  if(/الشهر/.test(t)){ var f2=new Date(now.getFullYear(),now.getMonth(),1); return {from:ymd(f2),to:ymd(now),label:"الشهر الحالي"}; }
+  if(/السنه|السنة|العام/.test(t)){ var f3=new Date(now.getFullYear(),0,1); return {from:ymd(f3),to:ymd(now),label:"السنة"}; }
+  if(/الاسبوع/.test(t)){ var d=new Date(now); d.setDate(now.getDate()-7); return {from:ymd(d),to:ymd(now),label:"آخر أسبوع"}; }
+  if(/امس|أمس/.test(t)){ var d2=new Date(now); d2.setDate(now.getDate()-1); var s=ymd(d2); return {from:s,to:s,label:"أمس"}; }
+  if(/اليوم|النهارده|النهاردة/.test(t)){ var s2=ymd(now); return {from:s2,to:s2,label:"اليوم"}; }
+  // default: الشهر الحالي
+  var first=new Date(now.getFullYear(),now.getMonth(),1);
+  return {from:ymd(first),to:ymd(now),label:"الشهر الحالي"};
+}
+
+// ============ Answerer (client-side, يستخدم state المحمل) ============
+async function bcAnswer(text){
+  var p=bcParseIntent(text);
+  var money=function(n){return Number(n||0).toLocaleString("en-US",{maximumFractionDigits:2});};
+  switch(p.intent){
+    case "help":
+      return '<pre>🤖 الصيغ اللي بفهمها:\n\n• رصيد عميل &lt;الاسم&gt; — من ميزان المراجعة\n• متأخرات عميل &lt;الاسم&gt; — الأقساط المتأخرة\n• شيكات مستحقة عميل &lt;الاسم&gt; — أوراق القبض\n• مبيعات &lt;الاسم&gt; الشهر / السنة / من تاريخ لـ تاريخ\n• ملخص اليوم</pre>';
+
+    case "balance": {
+      if(!p.target) return '<pre>اكتب اسم العميل: <b>رصيد ويكادي</b></pre>';
+      var party = bcFindParty(p.target);
+      if(!party) return '<pre style="color:#dc2626">❌ مفيش طرف اسمه "'+esc(p.target)+'"</pre>';
+      // رصيد من ميزان المراجعة = مجموع (مدين-دائن) على الحساب
+      var acc = bcFindAccountFor(party);
+      var tb = bcComputeTB(party, acc);
+      return '<pre>'+(party.kind==="customer"?"👤":"🏭")+' <b>'+esc(party.name)+'</b>\n(من ميزان المراجعة)\n━━━━━━━━━━━━━━━━━\n</pre>'+
+        '<span class="bc-kpi">↑ مدين: '+money(tb.dr)+'</span>'+
+        '<span class="bc-kpi">↓ دائن: '+money(tb.cr)+'</span>'+
+        '<span class="bc-kpi" style="background:'+(tb.bal<0?'#fee2e2':'#dcfce7')+';color:'+(tb.bal<0?'#991b1b':'#166534')+'">⚖ الرصيد: '+money(tb.bal)+' ج.م</span>';
+    }
+
+    case "overdue": {
+      var rows = bcOverdueRows(p.target);
+      if(!rows.length){
+        if(p.target){
+          var party2=bcFindParty(p.target);
+          return '<pre style="color:#16a34a">✓ '+(party2?'العميل '+esc(party2.name):'الاسم ده')+' مفيش عليه أقساط متأخرة</pre>';
+        }
+        return '<pre style="color:#16a34a">✓ مفيش أقساط متأخرة دلوقتي</pre>';
+      }
+      var total = rows.reduce(function(a,r){return a+(+r.remaining||0);},0);
+      var title = p.target ? ('أقساط متأخرة — '+esc(bcFindParty(p.target)?.name||p.target)) : 'أكبر العملاء عليهم متأخرات';
+      var cols = p.target ? ['#','العميل','أمر البيع','الاستحقاق','المتبقي','أيام التأخير'] : ['#','العميل','عدد الأقساط','إجمالي المتأخر'];
+      var body;
+      if(p.target){
+        body = rows.slice(0,30).map(function(r,i){
+          return '<tr><td>'+(i+1)+'</td><td>'+esc(r.customer||"—")+'</td><td>'+esc(r.orderNo||"—")+'</td><td>'+esc(r.due||"—")+'</td><td>'+money(r.remaining)+'</td><td style="color:#b91c1c;font-weight:800">'+(r.days||0)+' يوم</td></tr>';
+        }).join("");
+      } else {
+        // group by customer
+        var byCust={}; rows.forEach(function(r){var c=r.customer||"—"; (byCust[c]=byCust[c]||{n:0,s:0}).n++; byCust[c].s+=r.remaining;});
+        var arr = Object.keys(byCust).map(function(c){return {c:c,n:byCust[c].n,s:byCust[c].s};}).sort(function(a,b){return b.s-a.s;}).slice(0,15);
+        body = arr.map(function(x,i){return '<tr><td>'+(i+1)+'</td><td><b>'+esc(x.c)+'</b></td><td>'+x.n+'</td><td>'+money(x.s)+'</td></tr>';}).join("");
+      }
+      return '<pre>⚠ <b>'+title+'</b>\n📊 الإجمالي: '+money(total)+' ج.م\n━━━━━━━━━━━━━━━━━\n</pre>'+
+        '<table class="bc-tbl"><thead><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join("")+'</tr></thead><tbody>'+body+'</tbody></table>';
+    }
+
+    case "cheques": {
+      var rows2 = bcChequesRows(p.target);
+      if(!rows2.length) return '<pre style="color:#16a34a">✓ '+(p.target?'العميل '+esc(p.target)+' ':'')+'مفيش شيكات مستحقة</pre>';
+      var total2=rows2.reduce(function(a,r){return a+(+r.amount||0);},0);
+      var title2 = p.target ? ('أوراق قبض مستحقة — '+esc(p.target)) : 'شيكات الأسبوع الجاي';
+      var body2 = rows2.slice(0,30).map(function(r,i){
+        return '<tr><td>'+(i+1)+'</td><td>'+esc(r.customer||"—")+'</td><td>'+esc(r.refNo||"—")+'</td><td>'+esc(r.bankDrawn||"—")+'</td><td>'+esc(r.dueDate||"—")+'</td><td>'+money(r.amount)+'</td></tr>';
+      }).join("");
+      return '<pre>🧾 <b>'+title2+'</b>\n📊 العدد: '+rows2.length+' · الإجمالي: '+money(total2)+' ج.م\n━━━━━━━━━━━━━━━━━\n</pre>'+
+        '<table class="bc-tbl"><thead><tr><th>#</th><th>العميل</th><th>رقم الشيك</th><th>البنك</th><th>الاستحقاق</th><th>القيمة</th></tr></thead><tbody>'+body2+'</tbody></table>';
+    }
+
+    case "sales": {
+      var r=p.range||{};
+      var rows3 = bcSalesRows(p.target, r.from, r.to);
+      if(!rows3.length) return '<pre>⭕ مفيش مبيعات '+(p.target?'للعميل '+esc(p.target)+' ':'')+'في الفترة ('+esc(r.label||'')+')</pre>';
+      var total3 = rows3.reduce(function(a,o){return a+(+o.net||0);},0);
+      var weight = rows3.reduce(function(a,o){return a+(+o.weight||0);},0);
+      if(p.target){
+        var body3 = rows3.slice(0,30).map(function(o,i){
+          return '<tr><td>'+(i+1)+'</td><td>'+esc(o.date||"—")+'</td><td>'+esc(o.orderNo||"—")+'</td><td>'+(o.weight?money(o.weight):"—")+'</td><td>'+money(o.net)+'</td></tr>';
+        }).join("");
+        return '<pre>💰 <b>مبيعات العميل: '+esc(p.target)+'</b>\n📅 '+esc(r.label||"")+'\n📊 عدد الأوامر: '+rows3.length+(weight?('\n⚖ الوزن: '+money(weight)+' طن'):'')+'\n💵 الإجمالي: '+money(total3)+' ج.م\n━━━━━━━━━━━━━━━━━\n</pre>'+
+          '<table class="bc-tbl"><thead><tr><th>#</th><th>التاريخ</th><th>أمر البيع</th><th>الوزن (طن)</th><th>القيمة (ج.م)</th></tr></thead><tbody>'+body3+'</tbody></table>';
+      } else {
+        // group by customer
+        var byC={}; rows3.forEach(function(o){var c=o.customer||"—"; (byC[c]=byC[c]||{n:0,s:0,w:0}).n++; byC[c].s+=(+o.net||0); byC[c].w+=(+o.weight||0);});
+        var arr2=Object.keys(byC).map(function(c){return {c:c,n:byC[c].n,s:byC[c].s,w:byC[c].w};}).sort(function(a,b){return b.s-a.s;}).slice(0,15);
+        var body4=arr2.map(function(x,i){return '<tr><td>'+(i+1)+'</td><td><b>'+esc(x.c)+'</b></td><td>'+x.n+'</td><td>'+(x.w?money(x.w):"—")+'</td><td>'+money(x.s)+'</td></tr>';}).join("");
+        return '<pre>💰 <b>أكبر العملاء — المبيعات</b>\n📅 '+esc(r.label||"")+'\n💵 الإجمالي: '+money(total3)+' ج.م\n━━━━━━━━━━━━━━━━━\n</pre>'+
+          '<table class="bc-tbl"><thead><tr><th>#</th><th>العميل</th><th>عدد الأوامر</th><th>الوزن</th><th>المبيعات</th></tr></thead><tbody>'+body4+'</tbody></table>';
+      }
+    }
+
+    case "today": {
+      var t=new Date().toISOString().slice(0,10);
+      var so=(state.saleOrders||[]).filter(function(o){return String(o.date||"").slice(0,10)===t;});
+      var soT=so.reduce(function(a,o){return a+(+o.totalValue||+o.net||0);},0);
+      var coll=0, chqN=0, chqT=0;
+      (state.treasuryEntries||[]).forEach(function(e){
+        var d=String(e.date||"").slice(0,10), dd=String(e.dueDate||"").slice(0,10);
+        if(e.direction==="in"&&e.entryKind!=="gl"&&d===t) coll+=(+e.amount||0);
+        if(e.method==="bank"&&dd===t){ chqN++; chqT+=(+e.amount||0); }
+      });
+      return '<pre>📅 <b>ملخص اليوم '+t+'</b>\n━━━━━━━━━━━━━━━━━\n</pre>'+
+        '<span class="bc-kpi">📝 أوامر: '+so.length+' ('+money(soT)+' ج.م)</span>'+
+        '<span class="bc-kpi">↓ تحصيلات: '+money(coll)+' ج.م</span>'+
+        '<span class="bc-kpi">🧾 شيكات اليوم: '+chqN+' ('+money(chqT)+')</span>';
+    }
+
+    default:
+      return '<pre style="color:#b91c1c">❓ مش فاهم السؤال.\n\nجرّب:\n• <b>رصيد ويكادي</b>\n• <b>متأخرات ويكادي</b>\n• <b>شيكات مستحقة ويكادي</b>\n• <b>مبيعات ويكادي الشهر</b></pre>';
+  }
+}
+
+// ============ Helpers للبحث في state ============
+function bcFindParty(name){
+  if(!name) return null;
+  var n = bcNorm(name);
+  var cs = (state.customers||[]).filter(function(x){return bcNorm(x.name||"").indexOf(n)>=0;});
+  if(cs.length){ var ex=cs.find(function(x){return bcNorm(x.name)===n;}); return {kind:"customer",...(ex||cs[0])}; }
+  var sup = (state.suppliers||[]).filter(function(x){return bcNorm(x.name||"").indexOf(n)>=0;});
+  if(sup.length){ var ex2=sup.find(function(x){return bcNorm(x.name)===n;}); return {kind:"supplier",...(ex2||sup[0])}; }
+  return null;
+}
+function bcFindAccountFor(party){
+  // لو الـcustomer عنده account_id
+  if(party.accountId) return party.accountId;
+  // ابحث في الحسابات
+  try{
+    var accs=(glState&&glState.accounts)||[];
+    var n = bcNorm(party.name);
+    var a = accs.find(function(x){return bcNorm(x.account_name||"").indexOf(n)>=0;});
+    return a?a.id:null;
+  }catch(e){ return null; }
+}
+function bcComputeTB(party, accId){
+  try{
+    var lines=(glState&&glState.lines)||[], entries=(glState&&glState.entries)||[];
+    var postedIds=new Set(entries.filter(function(e){return e.status==="posted";}).map(function(e){return e.id;}));
+    var dr=0, cr=0;
+    if(accId){
+      lines.forEach(function(l){ if(l.account_id===accId && postedIds.has(l.entry_id)){ dr+=(+l.debit||0); cr+=(+l.credit||0); }});
+    } else {
+      // fallback: search in description
+      var n=bcNorm(party.name);
+      lines.forEach(function(l){
+        if(!postedIds.has(l.entry_id)) return;
+        var en=entries.find(function(e){return e.id===l.entry_id;});
+        if(bcNorm(l.description||"").indexOf(n)>=0 || (en&&bcNorm(en.description||"").indexOf(n)>=0)){
+          dr+=(+l.debit||0); cr+=(+l.credit||0);
+        }
+      });
+    }
+    var bal = party.kind==="customer" ? (dr-cr) : (cr-dr);
+    return {dr:dr,cr:cr,bal:bal};
+  }catch(e){ return {dr:0,cr:0,bal:0}; }
+}
+function bcOverdueRows(name){
+  try{
+    if(typeof salesInstallmentBaseRows!=="function") return [];
+    var rows = salesInstallmentBaseRows().filter(function(r){return r.status==="متأخر" && r.remaining>0.004;});
+    if(name){
+      var party = bcFindParty(name);
+      var target = party?party.name:name;
+      var n = bcNorm(target);
+      rows = rows.filter(function(r){return bcNorm(r.customer||"").indexOf(n)>=0;});
+    }
+    return rows;
+  }catch(e){ return []; }
+}
+function bcChequesRows(name){
+  try{
+    var today=new Date().toISOString().slice(0,10);
+    var week=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+    var rows=(state.treasuryEntries||[]).filter(function(e){
+      if(e.method!=="bank"||e.direction!=="in") return false;
+      if(["returned","collected"].indexOf(e.status)>=0) return false;
+      return true;
+    });
+    if(name){
+      var party=bcFindParty(name);
+      var target=party?party.name:name;
+      var n=bcNorm(target);
+      rows = rows.filter(function(e){return bcNorm(e.customer||"").indexOf(n)>=0;});
+    } else {
+      rows = rows.filter(function(e){var d=String(e.dueDate||"").slice(0,10); return d>=today && d<=week;});
+    }
+    return rows.sort(function(a,b){return String(a.dueDate||"").localeCompare(String(b.dueDate||""));});
+  }catch(e){ return []; }
+}
+function bcSalesRows(name, from, to){
+  try{
+    var rows=(state.saleOrders||[]).filter(function(o){
+      var d=String(o.date||"").slice(0,10);
+      return d>=from && d<=to;
+    });
+    if(name){
+      var party=bcFindParty(name);
+      var target=party?party.name:name;
+      var n=bcNorm(target);
+      rows = rows.filter(function(o){return bcNorm(o.customer||"").indexOf(n)>=0;});
+    }
+    return rows.map(function(o){return {date:o.date,orderNo:o.orderNo,customer:o.customer,net:+o.totalValue||+o.net||0,weight:+o.totalWeight||0};}).sort(function(a,b){return String(b.date).localeCompare(String(a.date));});
+  }catch(e){ return []; }
+}
 </script>
