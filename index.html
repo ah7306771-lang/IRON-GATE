@@ -4094,7 +4094,15 @@ function canSys(k){ const u=curU(); if(!u) return false; if(u.role==="admin") re
 // ---------- نطاق الموردين لكل مستخدم (perms.supScope) ----------
 // null = كل الموردين (الأدمن أو مستخدم من غير تحديد). غير كده Set بأسماء الموردين المسموحين.
 // مهم: الفلترة للعرض بس — مش بنعدّل state.suppliers نفسها عشان المزامنة ما تمسحش باقي الموردين من قاعدة البيانات.
-function supScope(u){ u=u||curU(); if(!u||u.role==="admin") return null; const sc=u.perms&&u.perms.supScope; if(!sc||sc.mode!=="selected") return null; return new Set((sc.names||[]).map(String)); }
+// الموردين اللي اليوزر ضافهم بنفسه (settings.supExtra[رقم اليوزر]) بيتضافوا لقايمته تلقائي، وتغيير اسم مورد (settings.supRenamed) بيتتبع.
+function supEffective(names,userNo){ const st=state.settings||{}, set=new Set((names||[]).map(String)), ex=(st.supExtra||{})[userNo]; if(Array.isArray(ex)) ex.forEach(n=>set.add(String(n))); const rn=st.supRenamed||{}; [...set].forEach(n=>{ let c=n,g=0; while(rn[c]&&g++<10){ c=String(rn[c]); set.add(c); } }); return set; }
+let _supSc=null;
+function supScope(u){ u=u||curU(); if(!u||u.role==="admin") return null; const sc=u.perms&&u.perms.supScope; if(!sc||sc.mode!=="selected") return null; const st=state.settings||{}, c=_supSc;
+  if(c&&c.u===u&&c.sc===sc&&c.ex===st.supExtra&&c.rn===st.supRenamed) return c.set;
+  const set=supEffective(sc.names,u.no); _supSc={u,sc,ex:st.supExtra,rn:st.supRenamed,set}; return set; }
+// يوزر محدّد بالموردين ضاف مورد جديد ← يتضاف لقايمته تلقائي
+function supAutoGrant(name){ const u=curU(); if(!u||u.role==="admin"||!name) return; const sc=u.perms&&u.perms.supScope; if(!sc||sc.mode!=="selected") return; const st=state.settings=state.settings||{}; st.supExtra=Object.assign({},st.supExtra||{}); const a=(st.supExtra[u.no]||[]).slice(); if(!a.includes(name)) a.push(name); st.supExtra[u.no]=a; }
+function supRecordRename(oldN,newN){ if(!oldN||!newN||oldN===newN) return; const st=state.settings=state.settings||{}; st.supRenamed=Object.assign({},st.supRenamed||{}); st.supRenamed[oldN]=newN; }
 function supOk(name){ const sc=supScope(); return !sc||sc.has(String(name||"")); }
 function supDocOk(name){ const sc=supScope(); return !sc||!name||sc.has(String(name)); }   // مستند من غير مورد (زي فواتير المبيعات) بيفضل ظاهر
 var SI_MODE=false; const isSIdoc=r=>!!r&&r.docKind==="sales"; const SIP=()=>SI_MODE?"salesInvoices":"shipments";
@@ -13090,7 +13098,7 @@ function addItem(key,label){
       if(!p.name){ toast("يجب إدخال الاسم","err"); return false; }
       if(state[key].some(x=> (x.name||x) === p.name)){ toast("هذا الاسم موجود بالفعل","err"); return false; }
       ccApplyCode(p,null,key);
-      state[key].push(p); saveState(); go("master");
+      state[key].push(p); if(key==="suppliers") supAutoGrant(p.name); saveState(); go("master");
       toast("تمت الإضافة","ok"); return true;
     });
     setTimeout(()=>document.getElementById("pf_name")?.focus(),50);
@@ -13183,6 +13191,7 @@ function editItem(key,idx){
       state[key][idx] = p;
       // لو الاسم اتغيّر، نحدّث السجلات المرتبطة
       if(originalName && originalName !== p.name){
+        if(key==="suppliers") supRecordRename(originalName,p.name);
         const field = key==="customers" ? "customer" : "supplier";
         [...state.shipments, ...state.policies, ...state.saleOrders, ...(state.quotes||[])].forEach(r=>{
           if(r[field] === originalName) r[field] = p.name;
@@ -22981,7 +22990,7 @@ function permMatrixHtml(p){
   }).join("");
   const quick=`<div class="pm-quick" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">➕ بنود زر "+ جديد" في الشريط العلوي</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${QUICK_NEW_ITEMS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pq_${x[2]}" ${quickOn(p,x[2])?"checked":""}> ${x[0]} ${escapeHtml(x[1])}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">البند بيظهر للمستخدم لو متعلّم هنا <b>و</b> عنده صلاحية "إضافة" في شاشته. لو شلت التعليم من الكل، الزر بيختفي.</div></div>`;
   const notifBox=`<div class="pm-quick pm-notif" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🔔 الإشعارات الخارجية (أيقونات شمال شاشة الدخول)</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${EXT_NOTIFS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pn_${x.id}" ${notifAllowed(p,x.id,"custom")?"checked":""}> ${x.icon} ${escapeHtml(x.label)}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">الأيقونات المعلَّمة بس هي اللي بتظهر للمستخدم لما يكتب رقمه وكلمة مروره في شاشة الدخول. الأيقونة اللي ما اتحددتش ليه بتتبع صلاحية مشاهدة شاشتها. الأدمن بيشوف الكل.</div></div>`;
-  const _sc=(p.supScope&&p.supScope.mode==="selected")?p.supScope:null, _chosen=new Set(((_sc&&_sc.names)||[]).map(String));
+  const _sc=(p.supScope&&p.supScope.mode==="selected")?p.supScope:null, _chosen=_sc?supEffective(_sc.names,(typeof userFormEditing!=="undefined"?userFormEditing:null)):new Set();
   const _supNames=(state.suppliers||[]).map(x=>typeof x==="string"?x:(x&&x.name)).filter(Boolean).sort((a,b)=>String(a).localeCompare(String(b),"ar"));
   const supBox=`<div id="pm_sup_box" class="pm-quick pm-sup" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🏭 الموردون المسموحين لهذا المستخدم</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:8px"><label class="pm-tab-chip"><input type="radio" name="pm_sup_mode" value="all" ${_sc?"":"checked"} onchange="pmSupMode()"> كل الموردين</label><label class="pm-tab-chip"><input type="radio" name="pm_sup_mode" value="selected" ${_sc?"checked":""} onchange="pmSupMode()"> موردين محددين فقط</label></div>
@@ -23115,6 +23124,7 @@ function saveUserForm(){
     (async()=>{
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, name, role, perms } });
       if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+(await fnErrMsg(r)),"err"); return; }
+      { const st=state.settings=state.settings||{}; if(st.supExtra&&st.supExtra[u.no]){ st.supExtra=Object.assign({},st.supExtra); delete st.supExtra[u.no]; } }
       u.name=name; u.role=role; u.perms=perms; saveState(); try{ if(currentUser&&u.no===currentUser.no) extNotifCacheSave(u.no,null); }catch(e){}
       if(perms.supScope){ try{ const chk=await sb.from("profiles").select("perms").eq("user_no",u.no).maybeSingle(); const got=chk&&chk.data&&chk.data.perms&&chk.data.perms.supScope; if(!got||got.mode!=="selected") toast("تنبيه: السيرفر ما حفظش قايمة الموردين المسموحين — الدالة smart-task على Supabase بتشيل الحقول الجديدة من الصلاحيات","err"); }catch(e){} }
       const d=permDiff(before,perms);
@@ -38910,7 +38920,11 @@ function unEdit(i){
 function unDel(i){
   if(!can("master","delete")) return toast("مفيش صلاحية حذف","err");
   const u=unitsList()[i]; if(!u) return;
-  if(unitUsed(u)) return toast("الوحدة مستخدمة في أصناف أو أرصدة افتتاحية — مينفعش تتحذف","err");
+  if(unitUsed(u)){
+    const nI=Object.values(iuStore()).filter(a=>(a||[]).some(x=>String(x.unitNo)===String(u.no))).length; let nM=0;
+    try{ ((state.settings.obWarehouse||{}).docs||[]).forEach(d=>(d.lines||[]).forEach(l=>{ if(String(l.unitNo)===String(u.no)||(!l.unitNo&&l.unit===u.name)) nM++; })); }catch(e){}
+    return toast("مينفعش تحذف الوحدة «"+u.name+"»"+(nI?" — مستخدمة في "+nI+" صنف":"")+(nM?" — وعليها "+nM+" سطر حركة (أرصدة افتتاحية)":""),"err");
+  }
   if(!confirm("حذف الوحدة «"+u.name+"»؟")) return;
   state.settings.units.splice(i,1); saveState(); go("master"); toast("تم الحذف","ok");
 }
@@ -38922,6 +38936,10 @@ function iuStore(){ const s=state.settings=state.settings||{}; if(!s.itemUnits||
 function iuOf(item){ const a=iuStore()[item]; return Array.isArray(a)?a:[]; }
 function iuBase(item){ const a=iuOf(item); return a.find(x=>x.base)||null; }
 function iuUnitName(no){ const u=unitsList().find(x=>String(x.no)===String(no)); return u?u.name:""; }
+// كم طن في الوحدة الواحدة (المخزون كله بالطن) — بيشتغل سواء الطن أو الكيلو هو الأساسي: معامل الوحدة ÷ معامل «طن» في نفس الصنف. لو الصنف مالوش وحدة «طن»: الكيلو الأساسي = 1/1000 طن، وغير كده بنستخدم المعامل زي ما هو.
+function iuTonsPer(item,ent){ const a=iuOf(item), t=a.find(x=>iuUnitName(x.unitNo)==="طن"), ft=t?Number(t.factor):0, f=Number(ent&&ent.factor)||1; const bs=a.find(x=>x.base), kb=bs&&/^(كيلو|كجم|كيلوجرام)$/.test(iuUnitName(bs.unitNo)); const v=(ft>0)?f/ft:(kb?f/1000:f); return Math.round(v*1e6)/1e6; }
+// أرصدة افتتاحية (حركات) على صنف بوحدة معيّنة
+function iuUnitInMoves(item,unitNo){ try{ const nm=iuUnitName(unitNo); return ((state.settings.obWarehouse||{}).docs||[]).some(d=>(d.lines||[]).some(l=>l.item===item&&(String(l.unitNo)===String(unitNo)||(!l.unitNo&&l.unit===nm)))); }catch(e){ return false; } }
 function iuRename(o,n){ const s=iuStore(); if(o!==n&&s[o]){ s[n]=s[o]; delete s[o]; } }
 function iuSummary(item){
   const a=iuOf(item); if(!a.length) return `<span style="color:var(--warn,#b45309);font-size:11.5px">بدون وحدات قياس</span>`;
@@ -38958,13 +38976,19 @@ function itUnits(idx){
   setTimeout(()=>{ const m=document.querySelector("#modalBackdrop .modal"); if(m){ m.style.maxWidth="1050px"; m.style.width="96vw"; } },0);
 }
 function iuSet(i,k,v){
-  const r=IU&&IU.rows[i]; if(!r) return; r[k]=v;
+  const r=IU&&IU.rows[i]; if(!r) return;
+  if(k==="unitNo"&&v!==""&&IU.rows.some((x,j)=>j!==i&&String(x.unitNo)===String(v))){ toast("الوحدة «"+iuUnitName(v)+"» مختارة بالفعل في سطر تاني لنفس الصنف","err"); r.unitNo=""; iuPaint(); return; }
+  r[k]=v;
   if(k==="unitNo"){ const e=document.getElementById("iuN"+i); if(e) e.value=v; }
   if(k==="factor"){ const e=document.getElementById("iuM"+i); if(e) e.value=iuMain(v); }
 }
 function iuSetBase(i){ IU.rows.forEach((r,j)=>{ r.base=(j===i); }); const r=IU.rows[i]; r.factor=1; r.used=true; iuPaint(); }
 function iuAdd(){ IU.rows.push(iuNew(false)); iuPaint(); }
-function iuDel(i){ IU.rows.splice(i,1); iuPaint(); }
+function iuDel(i){
+  const r=IU.rows[i]; if(!r) return;
+  if(r.unitNo!==""&&iuOf(IU.item).some(x=>String(x.unitNo)===String(r.unitNo))&&iuUnitInMoves(IU.item,r.unitNo)){ toast("مينفعش تحذف وحدة «"+iuUnitName(r.unitNo)+"» — عليها حركات (أرصدة افتتاحية) لهذا الصنف","err"); return; }
+  IU.rows.splice(i,1); iuPaint();
+}
 function iuSave(){
   const rows=IU.rows.filter(r=>r.unitNo!==""||r.factor!==""||r.bcIn||r.bcIntl);
   if(!rows.length){ toast("أضف وحدة واحدة على الأقل","err"); return false; }
@@ -38977,6 +39001,7 @@ function iuSave(){
     for(const b of [r.bcIn,r.bcIntl]){ const t=String(b||"").trim(); if(!t) continue; if(bcs.has(t)){ toast("الباركود «"+t+"» مكرر داخل الصنف","err"); return false; } bcs.add(t); }
   }
   if(nb!==1){ toast("لازم تحدد وحدة أساسية واحدة بالظبط","err"); return false; }
+  for(const o of iuOf(IU.item)){ if(!rows.some(r=>String(r.unitNo)===String(o.unitNo))&&iuUnitInMoves(IU.item,o.unitNo)){ toast("مينفعش تحذف وحدة «"+iuUnitName(o.unitNo)+"» — عليها حركات لهذا الصنف","err"); return false; } }
   const all=iuStore();
   for(const it in all){ if(it===IU.item) continue; for(const u of all[it]){ for(const b of [u.bcIn,u.bcIntl]){ const t=String(b||"").trim(); if(t&&bcs.has(t)){ toast("الباركود «"+t+"» مستخدم في الصنف «"+it+"»","err"); return false; } } } }
   all[IU.item]=rows.map(r=>({unitNo:r.unitNo,factor:Number(r.factor),base:!!r.base,used:r.used!==false,bcIn:String(r.bcIn||"").trim(),bcIntl:String(r.bcIntl||"").trim()}));
@@ -39146,8 +39171,8 @@ const API={
     D.warehouseId=id; const w=whById(id)||{}, el=document.getElementById("obwWhCode"); if(el) el.value=w.code||""; },
   set(i,k,v){ if(!D||!D.lines[i]) return; const l=D.lines[i]; l[k]=v;
     try{
-      if(k==="item"){ const b=iuBase(v); if(b){ l.unit=iuUnitName(b.unitNo); l.factor=b.factor||1; } const us=document.getElementById("obwUS"+i); if(us) us.innerHTML=unitOpts(l.unit,v); }
-      else if(k==="unit"){ const u=iuOf(l.item).find(x=>iuUnitName(x.unitNo)===v); if(u) l.factor=u.factor||1; }
+      if(k==="item"){ const b=iuBase(v); if(b){ l.unit=iuUnitName(b.unitNo); l.factor=iuTonsPer(v,b)||1; } const us=document.getElementById("obwUS"+i); if(us) us.innerHTML=unitOpts(l.unit,v); }
+      else if(k==="unit"){ const u=iuOf(l.item).find(x=>iuUnitName(x.unitNo)===v); if(u) l.factor=iuTonsPer(l.item,u)||1; }
     }catch(e){}
     const fe=document.getElementById("obwF"+i); if(fe&&k!=="factor") fe.value=l.factor===""||l.factor==null?"":l.factor;
     refreshRow(i); },
