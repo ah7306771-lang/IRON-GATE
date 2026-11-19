@@ -3963,6 +3963,7 @@ function normalizePerms(p){
   p.sys.backup = p.sys.backup===true;
   if(p.quick&&typeof p.quick==="object"){ const q={}; QUICK_NEW_ITEMS.forEach(x=>{ q[x[2]]=p.quick[x[2]]!==false; }); p.quick=q; } else delete p.quick;
   if(p.notif&&typeof p.notif==="object"){ const n={}; EXT_NOTIFS.forEach(x=>{ n[x.id]=p.notif[x.id]===true; }); p.notif=n; } else delete p.notif;
+  if(p.supScope&&p.supScope.mode==="selected"&&Array.isArray(p.supScope.names)) p.supScope={mode:"selected",names:p.supScope.names.map(String)}; else delete p.supScope;
   return p;
 }
 
@@ -4090,6 +4091,12 @@ function canView(page){
   return can(page,"view");
 }
 function canSys(k){ const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !!(u.perms&&u.perms.sys&&u.perms.sys[k]); }
+// ---------- نطاق الموردين لكل مستخدم (perms.supScope) ----------
+// null = كل الموردين (الأدمن أو مستخدم من غير تحديد). غير كده Set بأسماء الموردين المسموحين.
+// مهم: الفلترة للعرض بس — مش بنعدّل state.suppliers نفسها عشان المزامنة ما تمسحش باقي الموردين من قاعدة البيانات.
+function supScope(u){ u=u||curU(); if(!u||u.role==="admin") return null; const sc=u.perms&&u.perms.supScope; if(!sc||sc.mode!=="selected") return null; return new Set((sc.names||[]).map(String)); }
+function supOk(name){ const sc=supScope(); return !sc||sc.has(String(name||"")); }
+function supDocOk(name){ const sc=supScope(); return !sc||!name||sc.has(String(name)); }   // مستند من غير مورد (زي فواتير المبيعات) بيفضل ظاهر
 var SI_MODE=false; const isSIdoc=r=>!!r&&r.docKind==="sales"; const SIP=()=>SI_MODE?"salesInvoices":"shipments";
 function showBuy(scr){ if(SI_MODE&&(scr==="shipments"||scr==="salesInvoices")) return false; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].buy); }
 function showSell(scr){ if(SI_MODE&&scr==="shipments") scr="salesInvoices"; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].sell); }
@@ -5684,7 +5691,7 @@ function igPurchaseView(){const isO=currentPage==="purchaseOrders",kind=isO?"ord
 if(!igPurchaseFormOpen)return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أوامر الشراء":"فواتير المشتريات"}</h2><span class="chip">${list.length} مستند</span><div class="spacer"></div><button class="btn" onclick="igPurchaseNew('${kind}')">＋ مستند جديد</button><button class="btn ghost" onclick="igPurchaseLoad()">↻ تحديث</button></div><div class="igp-toolbar"><input class="inp" placeholder="بحث برقم المستند أو المورد أو رقم فاتورة المورد أو أمر البيع" value="${igPesc(igPurchaseQuery)}" oninput="igPurchaseQuery=this.value;igPurchaseRenderList()"><select class="inp" onchange="igPurchaseStatus=this.value;igPurchaseRenderList()"><option value="all">كل الحالات</option><option value="draft">مسودة</option><option value="posted">مرحّل</option></select><label class="fld" style="flex:0 0 auto"><span>من</span><input class="inp" type="date" value="${igPesc(igPurchaseFrom)}" onchange="igPurchaseFrom=this.value;igPurchaseRenderList()"></label><label class="fld" style="flex:0 0 auto"><span>إلى</span><input class="inp" type="date" value="${igPesc(igPurchaseTo)}" onchange="igPurchaseTo=this.value;igPurchaseRenderList()"></label><button class="btn ghost" onclick="igPurchaseFrom='';igPurchaseTo='';igPurchaseQuery='';igPurchaseStatus='all';document.getElementById('content').innerHTML=igPurchaseView()">مسح الفلاتر</button><button class="btn ghost" onclick="igPurchaseExport()">⬇ تصدير CSV</button></div><div id="igPurchaseList">${igPurchaseListHtml(list,isO)}</div>`;
 return `<style>${igPurchaseCss()}</style><div class="page-head"><h2>${isO?"أمر شراء":"فاتورة مشتريات"} ${edit?"رقم "+igPesc(d.docNo):"جديد"}</h2><span class="chip ${d.status==="posted"?"ok":"warn"}">${d.status==="posted"?"مرحّل":"مسودة"}</span><div class="spacer"></div><button class="btn ghost" onclick="igPurchaseBack()">↩ رجوع للقائمة</button>${!readOnly?`<button class="btn" onclick="igPurchaseSave()">💾 حفظ</button>`:""}${!isO?`<button class="btn ghost" onclick="igPurchasePrint()">🖨 طباعة الفاتورة</button>${d.status==="posted"?`<button class="btn ghost" onclick="igPurchasePrintJournal()">📒 طباعة قيد المشتريات</button><button class="btn danger" onclick="igPurchaseUnpost()">↶ إلغاء الترحيل</button>`:`<button class="btn primary" onclick="igPurchasePost()">✓ اعتماد وترحيل</button>`}`:""}${edit&&d.status!=="posted"?`<button class="btn danger" onclick="igPurchaseDelete()">حذف</button>`:""}</div>
 <div class="igp-grid"><section class="card"><div class="head"><h3>بيانات المستند والمورد</h3></div><div class="body"><div class="igp-fields">
-<label class="fld"><span>المورد *</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.supplier=this.value">${igPoptions(state.suppliers.map(x=>({id:x.name,name:x.name})),d.supplier,"اختر المورد")}</select></label>
+<label class="fld"><span>المورد *</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.supplier=this.value">${igPoptions(partyNames(state.suppliers).map(n=>({id:n,name:n})),d.supplier,"اختر المورد")}</select></label>
 ${F("تاريخ المستند","date","date",readOnly?"disabled":"")}${isO?F("تاريخ التسليم المتوقع","deliveryDate","date",readOnly?"disabled":""):F("رقم فاتورة المورد *","supplierInvoiceNo","text",readOnly?"disabled":"")}${!isO?F("تاريخ فاتورة المورد","supplierInvoiceDate","date",readOnly?"disabled":""):""}${!isO?F("تاريخ الاستلام الفعلي","deliveryDate","date",readOnly?"disabled":""):""}${!isO?F("تاريخ الاستحقاق","dueDate","date",readOnly?"disabled":""):""}
 <label class="fld"><span>المخزن</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseDraft.warehouseId=this.value">${igPoptions(state.warehouses.map(x=>({id:x.id,name:(x.code?x.code+" — ":"")+x.name})),d.warehouseId,"اختر المخزن")}</select></label>
 ${isO?`<label class="fld" style="flex:1 1 100%;padding:10px;border:1px solid var(--line);border-radius:9px"><span style="display:flex;gap:9px;align-items:center"><input type="checkbox" ${d.allowOverReceipt!==false?"checked":""} ${readOnly?"disabled":""} onchange="igPurchaseDraft.allowOverReceipt=this.checked"> السماح بتجاوز الكمية المطلوبة عند الاستلام</span><small class="muted">مفعّل افتراضيًا. عند إلغاء الاختيار يمنع النظام استلام كمية أكبر من المتبقي.</small></label>`:""}${!isO?`<label class="fld"><span>أمر الشراء المرتبط</span><select class="inp" ${readOnly?"disabled":""} onchange="igPurchaseLinkOrder(this.value)">${igPoptions(igPurchaseDocs.orders.map(x=>({id:x.id,name:x.docNo+" — "+x.supplier})),d.purchaseOrderId,"فاتورة مباشرة بدون أمر")}</select></label>`:""}
@@ -5734,6 +5741,7 @@ function igPurchaseOpenPolicy(id){
   try{ supOpenGroupPolicy(key); }catch(e){ toast("تعذر فتح البوليصة: "+(e.message||e),"err"); }
 }
 function igPurchaseListHtml(list,isO){
+  list=(list||[]).filter(x=>supDocOk(x.supplier));
   const q=igPurchaseQuery.toLowerCase();
   const visible=list.filter(x=>!isO||(!(x.data?.closed||x.closed||x.status==="cancelled")&&!igPurchaseOrderRemaining(x).complete));
   const rowsData=visible.filter(x=>(igPurchaseStatus==="all"||x.status===igPurchaseStatus)&&(!igPurchaseFrom||String(x.date||"")>=igPurchaseFrom)&&(!igPurchaseTo||String(x.date||"")<=igPurchaseTo)&&[x.docNo,x.supplier,x.supplierInvoiceNo,x.sourceSaleOrderNo,x.purchaseOrderNo].some(v=>String(v||"").toLowerCase().includes(q)));
@@ -10745,7 +10753,7 @@ function tbCompute(kind){
     if(s<0) s=0; if(e<0) e=master.length-1; if(s>e){const x=s;s=e;e=x;}
     names=master.slice(s,e+1);
   } else {
-    const extra=[...new Set(mv.map(m=>m.party))].filter(n=>!names.includes(n)).sort((a,b)=>a.localeCompare(b,'ar'));
+    const extra=[...new Set(mv.map(m=>m.party))].filter(n=>!names.includes(n)&&(customer||supOk(n))).sort((a,b)=>a.localeCompare(b,'ar'));
     names=names.concat(extra);
   }
   const by=new Map(names.map(n=>[n,{name:n,pre:0,dr:0,cr:0}]));
@@ -12209,7 +12217,7 @@ function viewMaster(){
     `).join("") : `<tr><td colspan="5"><div class="empty" style="padding:30px"><div class="ic">∅</div><p>لا توجد سجلات.</p></div></td></tr>`;
   } else if(isParty){
     header = `<tr>${isParty?`<th style="width:34px"><input type="checkbox" title="تحديد الكل" onclick="ccSelAll(this)"></th>`:""}<th>#</th>${isParty?"<th>الكود</th>":""}<th>الاسم</th>${isParty?"<th>التصنيف</th>":""}<th>التليفون</th><th>البطاقة الضريبية</th><th>السجل التجاري</th><th>العنوان</th><th>رقم الحساب</th><th>اسم الحساب</th><th>إجراءات</th></tr>`;
-    rows = items.length ? items.map((p,i)=>`
+    rows = items.length ? items.map((p,i)=>(tab.key==="suppliers"&&!supOk(p.name))?"":`
       <tr>
         ${isParty?`<td><input type="checkbox" class="cc-sel" data-i="${i}"></td>`:""}
         <td style="width:50px;color:var(--text-dim)">${i+1}</td>
@@ -12261,7 +12269,7 @@ function viewMaster(){
       </table>
     </div>
     <p style="margin-top:12px;color:var(--text-dim);font-size:12px">
-      عدد السجلات: <strong style="color:var(--gold-text)">${items.length}</strong>
+      عدد السجلات: <strong style="color:var(--gold-text)">${tab.key==="suppliers"?items.filter(p=>supOk(p&&p.name)).length:items.length}</strong>
     </p>
   `;
 }
@@ -14542,7 +14550,7 @@ function opts(list,sel,ph){
   return `<option value="">${ph}</option>`+l.map(v=>`<option value="${escapeAttr(v)}" ${v===sel?"selected":""}>${escapeHtml(v)}</option>`).join("");
 }
 // استخراج الأسماء من العملاء/الموردين (كائنات)
-function partyNames(list){ return (list||[]).map(x => (typeof x === "string" ? x : (x.name||""))).filter(Boolean); }
+function partyNames(list){ const sc=(list===state.suppliers)?supScope():null; return (list||[]).map(x => (typeof x === "string" ? x : (x.name||""))).filter(n=>n&&(!sc||sc.has(String(n)))); }
 function findParty(list, name){ return (list||[]).find(x => (typeof x === "string" ? x : x.name) === name); }
 
 // ---------- نموذج إدخال بوليصة ----------
@@ -15592,7 +15600,7 @@ async function openSearch(){
 }
 function renderSearch(){
   const q=(document.getElementById("srchQ")?.value||"").trim().toLowerCase();
-  const rows=allRecords().filter(({r})=>!q||[r.policyNo,r.supplier,r.customer,r.company,r.site,r.notes,r.date,...r.items.flatMap(it=>[itemFactory(r,it),it.diameter,it.type])]
+  const rows=allRecords().filter(({r})=>supDocOk(r.supplier)).filter(({r})=>!q||[r.policyNo,r.supplier,r.customer,r.company,r.site,r.notes,r.date,...r.items.flatMap(it=>[itemFactory(r,it),it.diameter,it.type])]
       .some(v=>String(v||"").toLowerCase().includes(q)))
     .sort((a,b)=>(b.r.date||"").localeCompare(a.r.date||"")||String(b.r.policyNo).localeCompare(String(a.r.policyNo),undefined,{numeric:true}))
     .slice(0,60);
@@ -15635,6 +15643,7 @@ function supplyLines(){
   const ordK=supFilter.order?supOrderNumberKey(supFilter.order):"", ordSo=ordK?(state.saleOrders||[]).find(x=>supOrderNumberKey(x.orderNo)===ordK):null;
   const list=[...state.shipments].sort((a,b)=>(byDate?supCmp(a.date,b.date,false,fe.dir):(b.date||"").localeCompare(a.date||""))||shEntryCmp(a,b)*(byDate?fe.dir:-1)||nz(a.saleOrderNo,b.saleOrderNo)||nz(a.policyNo,b.policyNo));
   list.forEach(s=>{
+    if(!supDocOk(s.supplier)) return;
     if(ordK&&supOrderNumberKey(s.saleOrderNo)!==ordK&&!(ordSo&&s.saleOrderId===ordSo.id)) return;
     if(!supColMatch("supplier", s.supplier)) return;
     if(!supColMatch("customer", s.customer)) return;
@@ -22972,7 +22981,13 @@ function permMatrixHtml(p){
   }).join("");
   const quick=`<div class="pm-quick" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">➕ بنود زر "+ جديد" في الشريط العلوي</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${QUICK_NEW_ITEMS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pq_${x[2]}" ${quickOn(p,x[2])?"checked":""}> ${x[0]} ${escapeHtml(x[1])}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">البند بيظهر للمستخدم لو متعلّم هنا <b>و</b> عنده صلاحية "إضافة" في شاشته. لو شلت التعليم من الكل، الزر بيختفي.</div></div>`;
   const notifBox=`<div class="pm-quick pm-notif" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🔔 الإشعارات الخارجية (أيقونات شمال شاشة الدخول)</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px">${EXT_NOTIFS.map(x=>`<label class="pm-tab-chip"><input type="checkbox" id="pn_${x.id}" ${notifAllowed(p,x.id,"custom")?"checked":""}> ${x.icon} ${escapeHtml(x.label)}</label>`).join("")}</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">الأيقونات المعلَّمة بس هي اللي بتظهر للمستخدم لما يكتب رقمه وكلمة مروره في شاشة الدخول. الأيقونة اللي ما اتحددتش ليه بتتبع صلاحية مشاهدة شاشتها. الأدمن بيشوف الكل.</div></div>`;
-  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}${notifBox}`;
+  const _sc=(p.supScope&&p.supScope.mode==="selected")?p.supScope:null, _chosen=new Set(((_sc&&_sc.names)||[]).map(String));
+  const _supNames=(state.suppliers||[]).map(x=>typeof x==="string"?x:(x&&x.name)).filter(Boolean).sort((a,b)=>String(a).localeCompare(String(b),"ar"));
+  const supBox=`<div id="pm_sup_box" class="pm-quick pm-sup" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(212,160,23,.05)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🏭 الموردون المسموحين لهذا المستخدم</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px 20px;margin-bottom:8px"><label class="pm-tab-chip"><input type="radio" name="pm_sup_mode" value="all" ${_sc?"":"checked"} onchange="pmSupMode()"> كل الموردين</label><label class="pm-tab-chip"><input type="radio" name="pm_sup_mode" value="selected" ${_sc?"checked":""} onchange="pmSupMode()"> موردين محددين فقط</label></div>
+    <div id="pm_sup_list" style="display:${_sc?"block":"none"}"><input class="inp" placeholder="ابحث عن مورد…" oninput="pmSupFilter(this.value)" style="margin-bottom:8px"><div style="max-height:200px;overflow:auto;display:flex;flex-wrap:wrap;gap:6px 16px">${_supNames.map(n=>`<label class="pm-tab-chip pm-sup-chip"><input type="checkbox" class="pm-sup-cb" value="${escapeAttr(n)}" ${_chosen.has(String(n))?"checked":""}> ${escapeHtml(n)}</label>`).join("")||'<span style="color:var(--text-dim);font-size:12px">لا يوجد موردين بعد</span>'}</div>
+    <div style="font-size:11.5px;color:var(--text-dim);margin-top:8px">المستخدم هيشوف الموردين المحددين بس في: قوائم الموردين والاختيارات، بيانات التوريد، أوامر وفواتير الشراء، ميزان المراجعة وكشف الحساب. لو ما اخترتش ولا مورد مش هيشوف أي مورد.</div></div></div>`;
+  return `<div class="tbl-wrap"><table class="perm-table"><thead><tr><th>الشاشة</th>${head}<th>🙈 سعر الشراء</th><th>🙈 سعر البيع</th></tr></thead><tbody>${rows}</tbody></table></div>${quick}${notifBox}${supBox}`;
 }
 function pmChange(scr,act){
   if(act!=="view") return;
@@ -22993,8 +23008,11 @@ function readPermForm(){
   p.sys.backup=!!document.getElementById("uf_sys_backup")?.checked;
   if(document.getElementById("pq_"+QUICK_NEW_ITEMS[0][2])){ p.quick={}; QUICK_NEW_ITEMS.forEach(x=>{ p.quick[x[2]]=!!document.getElementById("pq_"+x[2])?.checked; }); }
   if(document.getElementById("pn_"+EXT_NOTIFS[0].id)){ p.notif={}; EXT_NOTIFS.forEach(x=>{ p.notif[x.id]=!!document.getElementById("pn_"+x.id)?.checked; }); }
+  if(document.getElementById("pm_sup_box")){ const m=document.querySelector('input[name="pm_sup_mode"]:checked'); if(m&&m.value==="selected") p.supScope={mode:"selected",names:[...document.querySelectorAll(".pm-sup-cb:checked")].map(x=>x.value)}; }
   return p;
 }
+function pmSupMode(){ const m=document.querySelector('input[name="pm_sup_mode"]:checked'), l=document.getElementById("pm_sup_list"); if(l) l.style.display=(m&&m.value==="selected")?"block":"none"; }
+function pmSupFilter(q){ q=String(q||"").trim().toLowerCase(); document.querySelectorAll(".pm-sup-chip").forEach(l=>{ l.style.display=(!q||l.textContent.toLowerCase().includes(q))?"":"none"; }); }
 function pmRender(p){
   document.getElementById("pmWrap").innerHTML=permMatrixHtml(p);
   const b=document.getElementById("uf_sys_backup"); if(b) b.checked=!!p.sys.backup;
@@ -23004,7 +23022,7 @@ function pmRolePick(role){
   const isAd=role==="admin";
   document.getElementById("pmBox").classList.toggle("pm-locked",isAd);
   document.getElementById("pmAdminNote").style.display=isAd?"block":"none";
-  if(role!=="custom") pmRender(d.build());
+  if(role!=="custom"){ const b=d.build(); try{ const cur=readPermForm(); if(cur.supScope) b.supScope=cur.supScope; }catch(e){} pmRender(b); }
 }
 function pmBulk(kind){
   const p=readPermForm();
@@ -23098,6 +23116,7 @@ function saveUserForm(){
       const r=await sb.functions.invoke("smart-task",{ body:{ action:"update", no:u.no, name, role, perms } });
       if(r.error||(r.data&&r.data.error)){ toast("تعذر الحفظ: "+(await fnErrMsg(r)),"err"); return; }
       u.name=name; u.role=role; u.perms=perms; saveState(); try{ if(currentUser&&u.no===currentUser.no) extNotifCacheSave(u.no,null); }catch(e){}
+      if(perms.supScope){ try{ const chk=await sb.from("profiles").select("perms").eq("user_no",u.no).maybeSingle(); const got=chk&&chk.data&&chk.data.perms&&chk.data.perms.supScope; if(!got||got.mode!=="selected") toast("تنبيه: السيرفر ما حفظش قايمة الموردين المسموحين — الدالة smart-task على Supabase بتشيل الحقول الجديدة من الصلاحيات","err"); }catch(e){} }
       const d=permDiff(before,perms);
       audit("user_edit",`تعديل #${u.no} ${name}`+(oldRole!==role?` — الدور: ${(oldRole==="admin"?"أدمن":(ROLE_PRESETS[oldRole]||{}).label)} ← ${roleLabel(u)}`:"")+(oldName!==name?` — الاسم كان: ${oldName}`:"")+(d.length?` — ${d.join(" | ")}`:" — بدون تغيير في الصلاحيات"));
       toast("تم حفظ المستخدم","ok"); go("users"); updateTopbarUser();
