@@ -19015,7 +19015,19 @@ async function igSoPersistNow(){
     if(r.error) throw r.error;
     const got=new Map((r.data||[]).map(x=>[String(x.id),(x.data&&x.data.appr)||{}]));
     const bad=d.up.filter(([o])=>{ const g=got.get(String(o.id)), a=o.appr||{}; return !g||g.status!==a.status||(g.level||0)!==(a.level||0); });
-    if(bad.length) return fail('السيرفر لم يحتفظ بحالة الاعتماد للأمر: '+bad.map(([o])=>o.orderNo).join('، ')+'\nالسبب غالبًا صلاحيات قاعدة البيانات (RLS) على جدول sale_orders أو عمود data.');
+    if(bad.length){
+      // إعادة قراءة مستقلة من السيرفر (بالرقم وبالمعرّف) لتحديد السبب بدقة
+      const q2=await sb.from('sale_orders').select('id,order_no,deleted_at,updated_at,data').in('order_no',bad.map(([o])=>String(o.orderNo)));
+      const rowsDb=(q2.data||[]), byId=new Map(rowsDb.map(x=>[String(x.id),x]));
+      const still=bad.filter(([o])=>{ const x=byId.get(String(o.id)); const g=x&&x.data&&x.data.appr, a=o.appr||{}; return !g||g.status!==a.status||(g.level||0)!==(a.level||0); });
+      if(!still.length){ d.up.forEach(([o])=>{ if(docSnaps.so&&docSnaps.so.set) docSnaps.so.set(String(o.id),JSON.stringify(o)); }); return true; }
+      const lines=still.map(([o])=>{
+        const same=rowsDb.filter(x=>String(x.order_no)===String(o.orderNo));
+        const inUp=got.has(String(o.id));
+        return 'أمر '+o.orderNo+' — المعرّف المحلي: '+o.id+' — الحالة محليًا: '+((o.appr||{}).status)+'/'+((o.appr||{}).level)+' — رجع من الـupsert: '+(inUp?'نعم':'لا')+' — عدد صفوف السيرفر بنفس الرقم: '+same.length+(same.length?(' ['+same.map(x=>x.id+' | حالة: '+(((x.data||{}).appr||{}).status||'بدون')+' | محذوف: '+(x.deleted_at?'نعم':'لا')).join(' ; ')+']'):'');
+      }).join('\n');
+      return fail('السيرفر لم يحتفظ بحالة الاعتماد.\n'+lines+(q2.error?('\nخطأ القراءة: '+q2.error.message):'')+'\nصوّر هذه الرسالة وابعتها للمطوّر.');
+    }
     d.up.forEach(([o])=>{ if(docSnaps.so&&docSnaps.so.set) docSnaps.so.set(String(o.id),JSON.stringify(o)); });
     return true;
   }catch(e){
