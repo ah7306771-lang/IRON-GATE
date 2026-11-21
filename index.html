@@ -2940,23 +2940,24 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
       let answer='';
       try{
         const url=SB_URL+'/functions/v1/app-chat-ai';
-        let sessionResult=await sb.auth.getSession();
-        let session=sessionResult&&sessionResult.data&&sessionResult.data.session;
-        let accessToken=session&&session.access_token;
-        // جرّب تجديد الجلسة المحفوظة قبل اعتبار المستخدم غير مسجل الدخول.
-        if(!accessToken || (session.expires_at && session.expires_at*1000 <= Date.now()+30000)){
-          const refreshed=await sb.auth.refreshSession();
-          if(!refreshed.error && refreshed.data && refreshed.data.session){
-            session=refreshed.data.session;
-            accessToken=session.access_token;
+        // جلسة المستخدم (لو مسجّل دخول). قبل الدخول = وضع عام (Public) من غير بيانات.
+        let accessToken='';
+        try{
+          let sessionResult=await sb.auth.getSession();
+          let session=sessionResult&&sessionResult.data&&sessionResult.data.session;
+          accessToken=(session&&session.access_token)||'';
+          if(session&&(!accessToken||(session.expires_at&&session.expires_at*1000<=Date.now()+30000))){
+            const refreshed=await sb.auth.refreshSession();
+            if(!refreshed.error&&refreshed.data&&refreshed.data.session){
+              accessToken=refreshed.data.session.access_token||'';
+            }
           }
-        }
-        if(!accessToken) throw new Error('جلسة الدخول غير متاحة أو انتهت. سجّل الدخول مرة أخرى.');
-        const r=await fetch(url,{
-          method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':'Bearer '+accessToken,'apikey':SB_KEY,'x-company-id':w.c},
-          body:JSON.stringify({question:q,userNo:w.u,company:w.c,history:hist.slice(-8)})
-        });
+        }catch(_){accessToken='';}
+        const isPublic=!accessToken;
+        const reqHeaders={'Content-Type':'application/json','Authorization':'Bearer '+(accessToken||SB_KEY),'apikey':SB_KEY};
+        const reqBody={question:q,history:hist.slice(-8)};
+        if(!isPublic){reqHeaders['x-company-id']=w.c;reqBody.userNo=w.u;reqBody.company=w.c;}
+        const r=await fetch(url,{method:'POST',headers:reqHeaders,body:JSON.stringify(reqBody)});
         const j=await r.json();
         answer = j.error ? ('❌ '+j.error) : (j.text||j.answer||'(مفيش رد)');
       }catch(e){answer='❌ خطأ في الاتصال: '+String(e.message||e);}
