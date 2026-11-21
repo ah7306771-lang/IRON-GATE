@@ -206,6 +206,7 @@ nav .nb{
 nav .nb.late{background:#dc2626;color:#fff;box-shadow:0 2px 4px rgba(220,38,38,.3);animation:badgePulse 2s ease-in-out infinite}
 nav .nb.chq{background:#d4a017;color:#1a1a1a;box-shadow:0 2px 4px rgba(212,160,23,.3)}
 nav .nb.acct{background:#2563eb;color:#fff;box-shadow:0 2px 4px rgba(37,99,235,.3)}
+nav .nb.sappr{background:#7c3aed;color:#fff;box-shadow:0 2px 4px rgba(124,58,237,.3)}
 nav .nb.trash{background:#6b7280;color:#fff;box-shadow:0 2px 4px rgba(107,114,128,.3)}
 nav .nb:not(.late):not(.chq){background:#6b7280;color:#fff}
 @keyframes badgePulse{0%,100%{box-shadow:0 2px 4px rgba(220,38,38,.3)}50%{box-shadow:0 2px 10px rgba(220,38,38,.6)}}
@@ -1419,6 +1420,7 @@ aside nav button.navbtn .nl{flex:1;text-align:right}
 .nb.late{background:#d6403a;box-shadow:0 0 0 3px rgba(214,64,58,.25)}
 .nb.chq{background:#F4C542;color:#2a1c00;box-shadow:0 0 0 3px rgba(244,197,66,.25)}
 .nb.acct{background:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+.nb.sappr{background:#7c3aed;box-shadow:0 0 0 3px rgba(124,58,237,.25)}
 aside .sidebar-foot{background:rgba(0,0,0,.28);border-top:1px solid rgba(212,160,23,.32);box-shadow:none;padding:10px 12px;gap:7px}
 aside .sidebar-foot button{background:rgba(255,255,255,.06);color:#dbe3f3;border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:9px;font-weight:700}
 aside .sidebar-foot button:hover{border-color:#D4A017;color:#F4C542;background:rgba(212,160,23,.12)}
@@ -4129,6 +4131,7 @@ const SCREENS = [
   { id:"quote",     label:"عرض السعر",         icon:"💲", acts:["add","edit","delete","print"] },
   { id:"quoteList", label:"سجل عروض السعر",    icon:"📑", acts:["edit","delete"] },
   { id:"saleOrder", label:"أمر البيع",         icon:"📝", acts:["add","edit","delete","close","print"] },
+  { id:"salesApproval", label:"اعتماد أمر البيع", icon:"☑️", acts:[] },
   { id:"accountsApproval", label:"اعتماد إدارة الحسابات", icon:"✅", acts:[] },
   { id:"shipments", label:"إدخال البوليصة",    icon:"📦", acts:["add","edit","delete","post","print"], prices:true },
   { id:"salesInvoices", label:"فواتير المبيعات", icon:"🧾", acts:["add","edit","delete","post","print"], prices:true },
@@ -4856,6 +4859,7 @@ const navGroups = [
     { id:"saleOrder", icon:"📝", label:"أمر البيع" },
     { id:"shipments", icon:"📦", label:"إدخال البوليصة" },
     { id:"salesInvoices", icon:"🧾", label:"فواتير المبيعات" },
+    { id:"salesApproval", icon:"☑️", label:"اعتماد أمر البيع", badge:"sappr" },
     { id:"accountsApproval", icon:"✅", label:"اعتماد إدارة الحسابات", badge:"acct" },
     { id:"supply", icon:"▦", label:"بيانات التوريد" },
     { id:"supplyBulkPost", icon:"📥", label:"ترحيل بيانات التوريد" },
@@ -5517,10 +5521,11 @@ let _nbCache={t:0,v:{late:0,chq:0,trash:0}};
 let _nbTrashCache={t:0,v:0};
 function navBadges(force){
   if(!force && Date.now()-_nbCache.t<15000) return _nbCache.v;
-  const v={late:0,chq:0,acct:0,trash:_nbTrashCache.v||0};
+  const v={late:0,chq:0,acct:0,sappr:0,trash:_nbTrashCache.v||0};
   try{ if(canView("salesInstallments")) v.late=salesInstallmentBaseRows().filter(r=>r.status==="متأخر"&&r.remaining>0.004).length; }catch(e){}
   try{ if(canView("chequeRegister")) v.chq=chequeRegisterAll().filter(e=>{ const d=chequeDays(e); return d!==null&&d<=7; }).length; }catch(e){}
   try{ if(acctCan()&&!acctSkip()) v.acct=(state.saleOrders||[]).filter(o=>soApprAllows(o)&&acctStatus(o)==='pending').length; }catch(e){}
+  try{ if(soApprCfg().enabled&&can('salesApproval','view')) v.sappr=(state.saleOrders||[]).filter(soApprIsApprover).length; }catch(e){}
   _nbCache={t:Date.now(),v};
   // جلب عدد المحذوف من Supabase كل 5 دقائق في الخلفية (لو الأدمن)
   if(isAdmin() && Date.now()-_nbTrashCache.t > 5*60*1000){
@@ -5581,13 +5586,13 @@ function renderNav(){
     const isCurrentIn = g.items.some(navItemIsCurrent) && (g.single || modOfPage()===g.id || !navGroups.some(x=>x.id!==g.id&&!x.single&&x.items.some(navItemIsCurrent)));
     const expanded = g.single ? false : (navExpanded[g.id] || isCurrentIn);
     const activeCls = isCurrentIn ? "active" : "";
-    const late=g.items.reduce((a,it)=>a+(it.badge==="late"?(B.late||0):0),0), chq=g.items.reduce((a,it)=>a+(it.badge==="chq"?(B.chq||0):0),0), acc=g.items.reduce((a,it)=>a+(it.badge==="acct"?(B.acct||0):0),0);
+    const late=g.items.reduce((a,it)=>a+(it.badge==="late"?(B.late||0):0),0), chq=g.items.reduce((a,it)=>a+(it.badge==="chq"?(B.chq||0):0),0), acc=g.items.reduce((a,it)=>a+((it.badge==="acct"||it.badge==="sappr")?(B[it.badge]||0):0),0);
     const gb=(late||chq||acc)?`<span class="nb ${late?"late":chq?"chq":"acct"}">${fmtN(late+chq+acc)}</span>`:"";
     let _inSep=false;   // عناصر بعد عنوان فرعي (sep) تتميّز بصريًا
     const subs=g.items.map(it=>{
       if(it.sep){ _inSep=true; return `<div class="nav-sep">${it.sep}</div>`; }
       const c=it.badge?(B[it.badge]||0):0;
-      return `<button class="navbtn ${_inSep?'navbtn-sub ':''}${currentPage===it.id&&(!it.scope||txScope===it.scope)&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.scope||txScope===it.scope)&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:it.id==="fixedAssets"?`faSetTab('${it.tab}')`:`glNavTab('${it.tab}')`):(it.scope?`txGo('${it.id}','${it.scope}')`:`go('${it.id}')`)}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":it.badge==="acct"?"أوامر بيع بانتظار اعتماد الحسابات":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
+      return `<button class="navbtn ${_inSep?'navbtn-sub ':''}${currentPage===it.id&&(!it.scope||txScope===it.scope)&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'active':''}" ${currentPage===it.id&&(!it.scope||txScope===it.scope)&&(!it.tab||(it.id==="inventory"?inventoryTab===it.tab:it.id==="master"?navItemIsCurrent(it):it.id==="settings"?settingsTab===it.tab:it.id==="fixedAssets"?faTab===it.tab:glState.tab===it.tab))?'aria-current="page"':''} onclick="${it.tab?(it.id==="inventory"?`inventoryTab='${it.tab}';go('inventory')`:it.id==="master"?`navSysFrom='${it.from||""}';currentTab='${it.tab}';go('master')`:it.id==="settings"?`settingsTab='${it.tab}';go('settings')`:it.id==="fixedAssets"?`faSetTab('${it.tab}')`:`glNavTab('${it.tab}')`):(it.scope?`txGo('${it.id}','${it.scope}')`:`go('${it.id}')`)}"><span class="ic" aria-hidden="true">${it.icon}</span><span class="nl" title="${escapeAttr(it.label)}">${it.label}</span>${c?`<span class="nb ${it.badge}" title="${it.badge==="late"?"أقساط متأخرة":it.badge==="chq"?"شيكات مستحقة أو متأخرة":it.badge==="acct"?"أوامر بيع بانتظار اعتماد الحسابات":it.badge==="sappr"?"أوامر بيع بانتظار اعتمادك":"سجلات محذوفة قابلة للاسترجاع"}">${fmtN(c)}</span>`:""}</button>`;
     }).join("");
     return `
     <div class="ng-wrap" data-gid="${g.id}" data-app="${navAppOf(g.id)}" draggable="true">
@@ -5865,7 +5870,8 @@ function faExportCsv(){const rows=[['رقم الأصل','الاسم','النوع
 // ================== نهاية وحدة الأصول الثابتة ==================
 
 function go(page){
-  try{ const _c=document.getElementById("content"); if(_c) _c.classList.remove("so-locked"); }catch(e){}
+  try{ const _c=document.getElementById("content"); if(_c){ _c.classList.remove("so-locked"); _c.classList.remove("sa-ro"); } }catch(e){}
+  try{ if(page==="saleOrder"&&!window.__saKeep) saReturnId=null; }catch(e){}
   if(page==="receipts"||page==="payments"||page==="treasuryTransfer"){ if(window.__txScopeNext!==undefined){ txScope=window.__txScopeNext; window.__txScopeNext=undefined; } else if(currentPage!==page) txScope="all"; }
   { const _m=(page==="salesInvoices"); if((page==="shipments"||_m)&&_m!==SI_MODE){ SI_MODE=_m; draft=null; editingId=null; editingSrc="new"; viewOnly=false; dirty=false; } }
   if(page==="purchaseOrders"||page==="purchaseInvoices"){
@@ -5885,6 +5891,7 @@ function go(page){
     quoteList:["سجل عروض السعر","كل العروض وحالاتها — فتح وتحويل لأمر بيع"],
     quote:["عرض سعر","إنشاء عرض سعر — طباعة ومشاركة PDF"],
     saleOrder:["أمر بيع","إنشاء أمر بيع — طباعة ومشاركة PDF"],
+    salesApproval:["اعتماد أمر البيع","أوامر البيع بانتظار اعتماد المبيعات — اعتماد أو رفض فردي وجماعي حسب دورة الاعتماد"],
     accountsApproval:["اعتماد إدارة الحسابات","أوامر البيع المعتمدة مبيعات وبانتظار اعتماد الحسابات"],
     shipments:["إدخال بوليصة","بوليصة الشحن وأصنافها"],
     salesInvoices:["فواتير المبيعات","فاتورة مبيعات بدون مورد أو سعر شراء — تُستدعى من أمر بيع"],
@@ -5955,6 +5962,7 @@ function go(page){
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
   else if(page==="quote"){ c.innerHTML = viewQuote(); bindQuote(); }
   else if(page==="saleOrder"){ c.innerHTML = viewSaleOrder(); bindSaleOrder(); }
+  else if(page==="salesApproval"){ c.innerHTML = viewSalesApproval(); }
   else if(page==="accountsApproval"){ c.innerHTML = viewAcctApproval(); }
   else if(page==="purchaseOrders"||page==="purchaseInvoices"){ c.innerHTML = igPurchaseView(); igPurchaseLoad(); }
   else if(page==="shipments"||page==="salesInvoices"){ c.innerHTML = viewShipments(); bindShipments(); }
@@ -18723,6 +18731,204 @@ let soDraft = null;
 let soLoadedId = null;
 let soVirtualMode = false; // شاشة شروط سداد افتراضية عندما تكون خطة السداد موجودة دون سجل أمر بيع أصلي
 
+// ================= شاشة اعتماد أمر البيع (مستقلة) =================
+// بتعرض أوامر البيع اللي ليها سجل اعتماد (appr) وبتستخدم نفس قواعد دورة الاعتماد: كل اعتماد بينقل الأمر مستوى، والاعتماد/الرفض لمستخدمي المستوى الحالي بس (أو الأدمن).
+let saF={st:'pending',mine:false,cust:'',from:'',to:''}, saSel=new Set(), saShown=50, saReturnId=null;
+function saBack(){ saReturnId=null; go('salesApproval'); }
+function saOpenOrder(id){ saReturnId=id; acctReturnId=null; window.__saKeep=true; try{ soLoad(id); } finally{ window.__saKeep=false; } }
+
+// ----- شاشة اعتماد المبيعات: نفس شاشة أمر البيع بالظبط لكن للقراءة + الاعتماد/الرفض فقط -----
+function saMode(){ try{ return !!(saReturnId&&soLoadedId&&saReturnId===soLoadedId&&!soVirtualMode); }catch(e){ return false; } }
+function saCss(){
+  if(document.getElementById('saCss')) return;
+  const s=document.createElement('style'); s.id='saCss';
+  s.textContent='#content.sa-ro .so-loaded-actions,#content.sa-ro .so-save-bottom,#content.sa-ro .so-cols-control,#content.sa-ro .so-terms-status,#content.sa-ro [onclick^="soAddItem"],#content.sa-ro [onclick^="soDelItem"],#content.sa-ro [onclick^="soSaveConfirmed"],#content.sa-ro [onclick^="soDelete"]{display:none!important}#content.sa-ro .card input:disabled,#content.sa-ro .card select:disabled,#content.sa-ro .card textarea:disabled{opacity:1;color:inherit;-webkit-text-fill-color:currentColor;cursor:default}'+'#saMini{position:fixed;left:14px;bottom:44px;width:260px;max-width:86vw;background:var(--card);border:2px solid var(--gold);border-radius:12px;box-shadow:0 6px 22px rgba(0,0,0,.18);z-index:840;overflow:hidden}#saMini .sam-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;font-weight:800;font-size:12.5px;background:#fff8e1;cursor:pointer}#saMini .sam-b{max-height:150px;overflow:auto;padding:6px}#saMini.closed .sam-b{display:none}#saMini .sam-it{display:flex;gap:6px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;margin-bottom:5px;font-size:12px;cursor:pointer;background:var(--bg-3)}#saMini .sam-it:hover{border-color:var(--gold)}#saMini .sam-it span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#saMini .sam-e{font-size:12px;color:var(--text-dim);padding:6px}';
+  document.head.appendChild(s);
+}
+function saPageHead(d){
+  const o=soApprRec(), st=soApprStatus(o), rows=saRows(), ix=rows.findIndex(x=>x.id===d.id);
+  const prev=ix>0?rows[ix-1]:null, next=ix>=0?rows[ix+1]:(rows[0]||null), q=x=>escapeAttr(x.id);
+  const chip=st==='approved'?'<span class="chip ok">✔ معتمد</span>':st==='rejected'?'<span class="chip" style="background:#fee2e2;color:#991b1b">⛔ مرفوض</span>':st==='none'?'<span class="chip warn">دورة الاعتماد غير مفعّلة</span>':`<span class="chip warn">⏳ ${escapeHtml(soApprLvText(o))}</span>`;
+  const act=(o&&soApprIsApprover(o))?`<button class="btn sm" style="background:var(--ok);color:#fff;font-weight:800" onclick="soApprove('${q(o)}')">✅ اعتماد</button><button class="btn ghost sm" style="color:var(--danger);border-color:var(--danger)" onclick="soReject('${q(o)}')">⛔ رفض</button>`:'';
+  const n=(state.saleOrders||[]).filter(x=>x.appr&&x.appr.status==='pending').length;
+  return `<div class="page-head"><button class="btn sm" style="background:var(--gold);color:#1a1a1a;font-weight:800" onclick="saBack()">↩ رجوع لاعتماد أمر البيع</button><h2>☑️ اعتماد أمر بيع رقم ${escapeHtml(String(d.orderNo||''))}</h2>${chip}<div class="spacer"></div>${act}<button class="btn ghost sm" ${prev?'':'disabled'} onclick="${prev?`saOpenOrder('${q(prev)}')`:''}">› السابق</button><button class="btn ghost sm" ${next?'':'disabled'} onclick="${next?`saOpenOrder('${q(next)}')`:''}">التالي ‹</button><button class="btn ghost sm" onclick="soApprToggle()" title="الطلبات المعلقة">⏳ المعلقة <span class="chip warn" style="margin-inline-start:4px">${n}</span></button></div>`;
+}
+function saTransform(h){
+  saCss();
+  const d=soDraft||{};
+  h=h.replace(/<div class="page-head">[\s\S]*?(?=\s*<div class="so-terms-status")/, ()=>saPageHead(d));
+  return h.split('onclick="soLoad(\'').join('onclick="saOpenOrder(\'');
+}
+(function(){ const a=soApprove, r=soReject;
+  soApprove=async function(id){ window.__saKeep=true; try{ return await a(id); } finally{ window.__saKeep=false; } };
+  soReject=async function(id){ window.__saKeep=true; try{ return await r(id); } finally{ window.__saKeep=false; } };
+})();
+
+
+// ----- نافذة صغيرة: أوامر البيع المحتاجة اعتماد — تظهر فقط لمن له صلاحية الاعتماد في دورة الاعتماد -----
+let saMiniOpen=true;
+function saMiniAllowed(){
+  const c=soApprCfg(),u=curU(); if(!c.enabled||!u||u.active===false) return false;
+  return isAdmin()||c.levels.some(lv=>(lv.users||[]).map(String).includes(String(u.no)));
+}
+function saMiniToggle(){ saMiniOpen=!saMiniOpen; const e=document.getElementById('saMini'); if(e) e.classList.toggle('closed',!saMiniOpen); }
+function saMiniHtml(){
+  if(!saMiniAllowed()) return '';
+  saCss();
+  const rows=(state.saleOrders||[]).filter(soApprIsApprover).sort((a,b)=>String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true}));
+  const li=rows.map(o=>`<div class="sam-it" onclick="saReturnId=null;acctReturnId=null;soLoad('${escapeAttr(o.id)}')" title="${escapeAttr(soApprLvText(o))}"><b>#${escapeHtml(String(o.orderNo||''))}</b> <span>${escapeHtml(o.customer||'—')}</span></div>`).join('');
+  return `<div id="saMini" class="${saMiniOpen?'':'closed'}" dir="rtl"><div class="sam-h" onclick="saMiniToggle()">⏳ أوامر بيع بانتظار اعتمادك <span class="chip ${rows.length?'warn':'ok'}">${rows.length}</span></div><div class="sam-b">${li||'<div class="sam-e">لا يوجد شيء بانتظار اعتمادك ✓</div>'}</div></div>`;
+}
+function saFind(id){ return (state.saleOrders||[]).find(x=>x.id===id); }
+function saRows(){
+  const f=saF, q=f.cust.trim().toLowerCase();
+  return (state.saleOrders||[]).filter(o=>{
+    const st=soApprStatus(o); if(st==='none') return false;
+    if(f.st!=='all'&&st!==f.st) return false;
+    if(f.mine&&!soApprIsApprover(o)) return false;
+    if(q&&!String(o.customer||'').toLowerCase().includes(q)) return false;
+    if(f.from&&String(o.date||'')<f.from) return false; if(f.to&&String(o.date||'')>f.to) return false;
+    return true; })
+    .sort((a,b)=>String(a.orderNo).localeCompare(String(b.orderNo),undefined,{numeric:true}));
+}
+function saSet(k,v){ saF[k]=v; saShown=50; saRender(); }
+function saSearch(){ saF.cust=document.getElementById('saCust').value; saF.from=document.getElementById('saFrom').value; saF.to=document.getElementById('saTo').value; saShown=50; saRender(); }
+function saMore(all){ saShown=all?1e9:saShown+50; saRender(); }
+function saRefresh(){ acctCtx(true); saRender(); toast('تم تحديث الأرصدة ✓'); }
+function saLast(o){ const l=((o.appr||{}).log||[]).slice(-1)[0]; if(!l) return null; const L={submit:'أُرسل للاعتماد',approve:'اعتمد',reject:'رفض',reset:'أُعيد للاعتماد'}; return {label:L[l.act]||l.act, name:l.name||soApprUserName(l.by), at:l.at, note:l.note||''}; }
+function saStatusText(o,st){ return st==='approved'?'معتمد':soApprLvText(o); }
+function viewSalesApproval(){
+  setTimeout(saRender,0); if(!soApprPulled) setTimeout(soApprCfgPull,0);
+  const rad=(v,t)=>`<label style="display:inline-flex;gap:5px;align-items:center;margin-inline-end:14px"><input type="radio" name="sa_st" ${saF.st===v?'checked':''} onchange="saSet('st','${v}')"> ${t}</label>`;
+  const off=!soApprCfg().enabled?`<div class="chip warn" style="margin-bottom:10px;display:block;padding:8px 12px">دورة اعتماد أوامر البيع غير مفعّلة حاليًا — لا توجد أوامر للاعتماد.${isAdmin()?' <button class="btn sm" onclick="soApprCfgOpen()">⚙ تفعيل دورة الاعتماد</button>':''}</div>`:'';
+  return `<section class="card"><div class="head"><div><h2 style="margin:0">☑️ اعتماد أمر البيع</h2><small>أوامر البيع بانتظار اعتماد المبيعات — الاعتماد حسب مستويات دورة الاعتماد${isAdmin()?' &nbsp;<button class="btn ghost sm" onclick="soApprCfgOpen()">⚙ دورة الاعتماد</button>':''}</small></div></div><div class="body">${off}
+  <div class="qs-installment-filters" style="display:grid;gap:10px">
+    <div><b style="margin-inline-end:10px">الحالة</b>${rad('pending','قيد الاعتماد')}${rad('approved','معتمد')}${rad('rejected','مرفوض')}${rad('all','الكل')}
+      <label style="display:inline-flex;gap:5px;align-items:center;margin-inline-start:10px"><input type="checkbox" ${saF.mine?'checked':''} onchange="saSet('mine',this.checked)"> المطلوب اعتمادي فقط</label></div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:end">
+      <label>العميل<input id="saCust" class="inp" type="search" value="${escapeAttr(saF.cust)}" placeholder="اسم العميل (فارغ = الكل)"></label>
+      <label>من تاريخ<input id="saFrom" class="inp" type="date" value="${escapeAttr(saF.from)}"></label>
+      <label>إلى تاريخ<input id="saTo" class="inp" type="date" value="${escapeAttr(saF.to)}"></label>
+      <button class="btn" onclick="saSearch()">🔍 بحث</button>
+    </div></div>
+  <div id="saSummary" style="margin:10px 0;font-weight:700"></div><div class="tbl-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" id="saSelAll" title="تحديد كل الأوامر اللي تقدر تعتمدها" onchange="saSelAll(this.checked)"></th><th>رقم الأمر</th><th>م</th><th>تاريخ الأمر</th><th>اسم العميل</th><th>قيمة أمر البيع</th><th>حد الائتمان</th><th>رصيد المديونية</th><th>الحالة / المرحلة</th><th>آخر إجراء</th><th>إجراء</th></tr></thead><tbody id="saBody"></tbody></table></div></div></section>`;
+}
+function saRender(){
+  const tb=document.getElementById('saBody'); if(!tb) return;
+  const ctx=acctCtx(), rows=saRows(), cm=acctCustMap(), n=v=>v==null?'—':acctM(v);
+  { const vis=new Set(rows.filter(soApprIsApprover).map(o=>o.id)); saSel.forEach(x=>{ if(!vis.has(x)) saSel.delete(x); }); }
+  const shown=rows.slice(0,saShown); let overCnt=0;
+  tb.innerHTML=(shown.map((o,i)=>{ const st=soApprStatus(o), k=acctCalc(o,ctx,cm), id=escapeAttr(o.id), mine=soApprIsApprover(o), la=saLast(o); if(k.over) overCnt++;
+    const stx=st==='approved'?'<span class="chip ok">✔ معتمد</span>':st==='rejected'?`<span class="chip" style="background:#fee2e2;color:#991b1b">⛔ ${escapeHtml(soApprLvText(o))}</span>`:`<span class="chip warn">⏳ ${escapeHtml(soApprLvText(o))}</span>`;
+    return `<tr${k.over?` style="background:rgba(220,38,38,.13)" title="الرصيد + قيمة الأمر أعلى من حد الائتمان"`:''}><td><input type="checkbox" ${mine?'':'disabled'} ${saSel.has(o.id)?'checked':''} onchange="saSelOne('${id}',this.checked)"></td><td style="white-space:nowrap"><a href="#" onclick="saOpenOrder('${id}');return false" style="font-weight:800">${escapeHtml(String(o.orderNo||''))}</a> <button class="btn ghost sm" title="فتح أمر البيع للمراجعة" aria-label="فتح أمر البيع للمراجعة" onclick="saOpenOrder('${id}')">🔗</button></td><td>${i+1}</td><td style="white-space:nowrap">${o.date?escapeHtml(String(o.date).slice(0,10).replace(/-/g,'/')):'—'}</td><td>${escapeHtml(o.customer||'—')}</td><td>${k.val?acctM(k.val):'—'}</td><td>${k.limN?acctM(k.limN):'—'}${k.over?`<div style="color:var(--danger);font-weight:800;font-size:11.5px">⚠ يتعدى الحد بـ ${acctM(k.excess)}</div>`:''}</td><td>${n(k.bal)}${k.nx?`<div style="color:var(--text-dim);font-size:11px">بعد خصم أوراق قبض/شيكات ${acctM(k.nx)}</div>`:''}</td><td>${stx}</td><td style="font-size:12px;white-space:nowrap">${la?`<b>${escapeHtml(la.label)}</b> — ${escapeHtml(String(la.name||''))}<div style="color:var(--text-dim)">${la.at?fmtDT(la.at):'—'}</div>`:'—'}</td><td style="white-space:nowrap">${mine?`<button class="btn sm" style="background:var(--ok);color:#fff;font-weight:800" onclick="saApproveOne('${id}')">اعتماد</button> <button class="btn ghost sm" style="color:var(--danger);border-color:var(--danger)" onclick="saRejectOne('${id}')">رفض</button>`:'<span style="color:var(--text-dim)">—</span>'}</td></tr>`; }).join('')
+    +(rows.length>shown.length?`<tr><td colspan="11" style="text-align:center;padding:10px"><button class="btn ghost sm" onclick="saMore()">عرض ${Math.min(50,rows.length-shown.length)} أمر آخر (متبقي ${rows.length-shown.length})</button> <button class="btn ghost sm" onclick="saMore(true)">عرض الكل</button></td></tr>`:''))
+    ||`<tr><td colspan="11" style="text-align:center;color:var(--text-dim)">${soApprCfg().enabled?'لا توجد أوامر مطابقة':'دورة الاعتماد غير مفعّلة'}</td></tr>`;
+  const mineCnt=rows.filter(soApprIsApprover).length, hh=d=>String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  const sm=document.getElementById('saSummary'); if(sm) sm.innerHTML='<button class="btn sm" id="saBulkBtn" style="background:var(--ok);color:#fff;font-weight:800;margin-inline-end:6px" onclick="saBulkApprove()">✅ اعتماد المحدد</button><button class="btn ghost sm" id="saBulkRejBtn" style="color:var(--danger);border-color:var(--danger);margin-inline-end:12px" onclick="saBulkReject()">⛔ رفض المحدد</button>'
+    +'<button class="btn ghost sm" onclick="saPrint()">🖨 طباعة</button> <button class="btn ghost sm" onclick="saExport()">📊 تصدير Excel</button> <button class="btn ghost sm" title="إعادة حساب الأرصدة" onclick="saRefresh()">🔄 تحديث الأرصدة</button>'
+    +'<div style="margin-top:8px">عدد الأوامر: '+rows.length+(rows.length>shown.length?' (معروض '+shown.length+')':'')+' &nbsp;<span class="chip warn">تحتاج اعتمادك: '+mineCnt+'</span>'
+    +(overCnt?` &nbsp;<span class="chip" style="background:#fee2e2;color:#991b1b">⚠ ${overCnt} أمر يتعدى حد الائتمان${rows.length>shown.length?' (في المعروض)':''}</span>`:'')
+    +` &nbsp;<small style="color:var(--text-dim);font-weight:400">الأرصدة محسوبة ${hh(new Date(ctx.t))}</small></div>`;
+  saSelUi();
+}
+function saSelOne(id,on){ if(on) saSel.add(id); else saSel.delete(id); saSelUi(); }
+function saSelAll(on){ saRows().filter(soApprIsApprover).forEach(o=>{ if(on) saSel.add(o.id); else saSel.delete(o.id); }); saRender(); }
+function saSelUi(){
+  const b=document.getElementById('saBulkBtn'), r=document.getElementById('saBulkRejBtn');
+  if(b){ b.textContent='✅ اعتماد المحدد ('+saSel.size+')'; b.disabled=!saSel.size; b.style.opacity=saSel.size?1:.5; }
+  if(r){ r.textContent='⛔ رفض المحدد ('+saSel.size+')'; r.disabled=!saSel.size; r.style.opacity=saSel.size?1:.5; }
+  const all=document.getElementById('saSelAll'); if(all){ const sel=saRows().filter(soApprIsApprover); all.checked=!!sel.length&&sel.every(o=>saSel.has(o.id)); all.indeterminate=!all.checked&&sel.some(o=>saSel.has(o.id)); all.disabled=!sel.length; }
+}
+// ----- التنفيذ (نفس منطق soApprove / soReject لكن من غير إعادة تحميل شاشة الأمر) -----
+function saApplyApprove(o,note){
+  const c=soApprCfg(), u=curU(), e={act:'approve',lv:o.appr.level+1,by:u.no,name:u.name,at:new Date().toISOString()}; if(note) e.note=note;
+  o.appr.log.push(e); o.appr.level+=1; if(o.appr.level>=Math.max(1,c.levels.length)) o.appr.status='approved';
+  if(o.appr.status==='approved'&&acctSkip()){ acctLog(o,'approve','تلقائي مع اعتماد المبيعات — السماح بتعدي اعتماد الحسابات'); o.acct.status='approved'; o.acct.auto=true; }
+  if(soDraft&&soLoadedId===o.id) soDraft.appr=JSON.parse(JSON.stringify(o.appr));
+}
+function saApplyReject(o,note){
+  const u=curU(); o.appr.status='rejected'; o.appr.log.push({act:'reject',lv:o.appr.level+1,by:u.no,name:u.name,at:new Date().toISOString(),note});
+  if(soDraft&&soLoadedId===o.id) soDraft.appr=JSON.parse(JSON.stringify(o.appr));
+}
+function saFinish(){ saveState(); acctNavRefresh(); igWaitSynced(8000).then(ok=>{ if(!ok) toast('لم يتأكد وصول الاعتماد للسيرفر — راجع صلاحيتك أو الاتصال','err'); }); saRender(); }
+async function saApproveOne(id){
+  const o=saFind(id); if(!o||!soApprIsApprover(o)) return toast('غير مصرح لك باعتماد هذا الأمر','err');
+  if(!await askConfirm('اعتماد أمر البيع رقم '+o.orderNo+'؟',{ok:'اعتماد',danger:false})) return;
+  saApplyApprove(o,''); audit('approve','اعتماد أمر بيع '+o.orderNo+(o.appr.status==='approved'?' (نهائي)':' (مستوى '+o.appr.level+')'));
+  saFinish(); toast(o.appr.status==='approved'?'تم اعتماد الأمر نهائيًا ✓':'تم الاعتماد — الأمر انتقل للمستوى التالي ✓');
+}
+async function saRejectOne(id){
+  const o=saFind(id); if(!o||!soApprIsApprover(o)) return toast('غير مصرح لك برفض هذا الأمر','err');
+  const note=prompt('سبب الرفض (إجباري):'); if(!note||!note.trim()) return;
+  saApplyReject(o,note.trim()); audit('reject','رفض أمر بيع '+o.orderNo+' — '+note.trim()); saFinish(); toast('تم رفض الأمر وإرجاعه للتعديل','err');
+}
+async function saBulkApprove(){
+  const list=[...saSel].map(saFind).filter(o=>o&&soApprIsApprover(o));
+  if(!list.length) return toast('حدد أوامر الأول','warn');
+  acctMemo={bal:new Map()}; let over=0; list.forEach(o=>{ try{ const r=acctCreditInfo(o); if(r&&r.over) over++; }catch(e){} });
+  if(!await askConfirm('اعتماد '+list.length+' أمر بيع؟ (كل أمر بينتقل مستوى واحد حسب دورة الاعتماد)'+(over?' — تنبيه: '+over+' منهم يتعدى حد الائتمان':''),{ok:'اعتماد '+list.length+' أمر',danger:over>0})) return;
+  list.forEach(o=>saApplyApprove(o,'اعتماد جماعي'));
+  const fin=list.filter(o=>o.appr.status==='approved').length;
+  audit('approve','اعتماد جماعي مبيعات: '+list.length+' أمر ('+fin+' نهائي) — '+list.slice(0,30).map(o=>o.orderNo).join('، ')+(list.length>30?' ...':''));
+  saSel.clear(); saFinish(); toast('تم اعتماد '+list.length+' أمر ✓ ('+fin+' نهائي)');
+}
+async function saBulkReject(){
+  const list=[...saSel].map(saFind).filter(o=>o&&soApprIsApprover(o));
+  if(!list.length) return toast('حدد أوامر الأول','warn');
+  const note=prompt('سبب رفض '+list.length+' أمر (إجباري — نفس السبب لكل الأوامر):'); if(!note||!note.trim()) return;
+  if(!await askConfirm('رفض '+list.length+' أمر بيع وإرجاعها للتعديل؟',{ok:'رفض '+list.length+' أمر',danger:true})) return;
+  list.forEach(o=>saApplyReject(o,note.trim()));
+  audit('reject','رفض جماعي مبيعات: '+list.length+' أمر — '+note.trim()+' — '+list.slice(0,30).map(o=>o.orderNo).join('، ')+(list.length>30?' ...':''));
+  saSel.clear(); saFinish(); toast('تم رفض '+list.length+' أمر','err');
+}
+// ----- طباعة وتصدير (عامّين) -----
+function igRptXlsx(title,filters,head,money,rows,fileBase,widths){
+  if(typeof XLSX==='undefined') return toast('مكتبة Excel غير محمّلة','err');
+  toast('جاري تجهيز الملف…');
+  setTimeout(()=>{ try{
+    const d=rows(); if(!d.length) return toast('لا توجد أوامر للتصدير','warn');
+    const total=d.reduce((a,r)=>a+(r.val||0),0);
+    const aoa=[[title],[filters()],['تاريخ التصدير: '+fmtDT(new Date().toISOString())+' — عدد الأوامر: '+d.length+' — إجمالي قيمة الأوامر: '+acctM(total)],[],head,...d.map(r=>r.cells)];
+    const ws=XLSX.utils.aoa_to_sheet(aoa), wb=XLSX.utils.book_new(); wb.Workbook={Views:[{RTL:true}]};
+    ws['!cols']=widths.map(w=>({wch:w})); ws['!merges']=[0,1,2].map(r=>({s:{r,c:0},e:{r,c:5}}));
+    for(let r=5;r<aoa.length;r++) money.forEach(c=>{ const cell=ws[XLSX.utils.encode_cell({r,c})]; if(cell&&cell.t==='n') cell.z='#,##0.00'; });
+    XLSX.utils.book_append_sheet(wb,ws,title.slice(0,30)); XLSX.writeFile(wb,fileBase+'_'+new Date().toISOString().slice(0,10)+'.xlsx'); toast('تم التصدير ✓');
+  }catch(e){ toast('تعذر التصدير: '+(e.message||e),'err'); } },30);
+}
+function igRptPrint(title,filters,head,money,rows){
+  const w=window.open('','_blank'); if(!w) return toast('اسمح بالنوافذ المنبثقة للطباعة','err');
+  w.document.write('<!doctype html><meta charset="utf-8"><body style="font-family:Tahoma,Arial;padding:30px;text-align:center">جاري تجهيز التقرير…</body>');
+  setTimeout(()=>{ try{
+    const d=rows(); if(!d.length){ w.close(); return toast('لا توجد أوامر للطباعة','warn'); }
+    const total=d.reduce((a,r)=>a+(r.val||0),0);
+    const cell=(c,j)=>c==null||c===''?'—':typeof c==='number'?(money.includes(j)?acctM(c):String(c)):escapeHtml(String(c));
+    const trs=d.map(r=>`<tr${r.over?' class="o"':''}>${r.cells.map((c,j)=>`<td${money.includes(j)?' class="n"':''}>${cell(c,j)}</td>`).join('')}</tr>`).join('');
+    w.document.open();
+    w.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
+      @page{size:A4 landscape;margin:10mm} *{box-sizing:border-box} body{font-family:Cairo,Tahoma,Arial,sans-serif;color:#0a1a35;font-size:11px;margin:0}
+      h1{font-size:17px;margin:0 0 4px} .m{color:#555;margin-bottom:8px;font-size:11px}
+      table{width:100%;border-collapse:collapse} th,td{border:1px solid #9aa4b5;padding:4px 5px;text-align:right;vertical-align:top} th{background:#e8edf5;font-weight:800}
+      td.n{text-align:left;direction:ltr;white-space:nowrap} tr.o td{background:#fde2e2} thead{display:table-header-group} tr{break-inside:avoid}
+      .f{margin-top:8px;font-weight:800}</style></head><body>
+      <h1>${escapeHtml(title)}</h1>
+      <div class="m">${escapeHtml(filters())}<br>تاريخ الطباعة: ${fmtDT(new Date().toISOString())} — الصفوف الحمراء = الأمر يتعدى حد الائتمان</div>
+      <table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${trs}</tbody></table>
+      <div class="f">عدد الأوامر: ${d.length} — إجمالي قيمة الأوامر: ${acctM(total)}</div>
+      <script>window.onload=()=>setTimeout(()=>window.print(),300);<\/script></body></html>`);
+    w.document.close();
+  }catch(e){ try{w.close();}catch(_){} toast('تعذر الطباعة: '+(e.message||e),'err'); } },30);
+}
+const SA_HEAD=['م','رقم الأمر','تاريخ الأمر','اسم العميل','قيمة أمر البيع','حد الائتمان','رصيد المديونية','تجاوز الحد','الحالة / المرحلة','آخر إجراء','بواسطة','وقت الإجراء'], SA_MONEY=[4,5,6,7];
+function saFiltersText(){ const f=saF, t=['الحالة: '+({pending:'قيد الاعتماد',approved:'معتمد',rejected:'مرفوض',all:'الكل'}[f.st]||'')]; if(f.mine) t.push('المطلوب اعتمادي فقط'); if((f.cust||'').trim()) t.push('العميل: '+f.cust.trim()); if(f.from) t.push('من '+f.from); if(f.to) t.push('إلى '+f.to); return t.join(' — '); }
+function saExportRows(){
+  const ctx=acctCtx(), cm=acctCustMap();
+  return saRows().map((o,i)=>{ const st=soApprStatus(o), k=acctCalc(o,ctx,cm), la=saLast(o);
+    return { over:k.over, val:k.val, cells:[ i+1, String(o.orderNo||''), o.date?String(o.date).slice(0,10).replace(/-/g,'/'):'', o.customer||'', k.val||null, k.limN||null, k.bal==null?null:k.bal, k.over?k.excess:null,
+      saStatusText(o,st), la?la.label:'', la?String(la.name||''):'', la&&la.at?fmtDT(la.at):'' ] };
+  });
+}
+function saExport(){ igRptXlsx('اعتماد أمر البيع',saFiltersText,SA_HEAD,SA_MONEY,saExportRows,'اعتماد_أمر_البيع',[5,11,12,28,15,15,16,14,34,14,18,17]); }
+function saPrint(){ igRptPrint('اعتماد أمر البيع',saFiltersText,SA_HEAD,SA_MONEY,saExportRows); }
 // ================= دورة اعتماد أمر البيع (اعتماد المبيعات) =================
 // الإعداد: state.settings.soApproval = {enabled, levels:[{name, users:[رقم المستخدم]}]} — مستوى واحد أو أكتر بالترتيب.
 // حالة الأمر: rec.appr = {status:'pending'|'approved'|'rejected', level:عدد المستويات المعتمدة, log:[...]} وبتتحفظ في data JSONB.
@@ -18734,7 +18940,7 @@ async function soApprCfgPull(){
     const r=await sb.from('so_approval_cfg').select('enabled,levels').eq('company_id',CUR_CO).maybeSingle();
     if(r.error||!r.data) return;
     const nw={enabled:!!r.data.enabled,levels:r.data.levels||[]};
-    if(JSON.stringify(soApprCfg())!==JSON.stringify(nw)){ state.settings=state.settings||{}; state.settings.soApproval=Object.assign({},nw,{updatedAt:new Date().toISOString()}); if(currentPage==='saleOrder') go('saleOrder'); }
+    if(JSON.stringify(soApprCfg())!==JSON.stringify(nw)){ state.settings=state.settings||{}; state.settings.soApproval=Object.assign({},nw,{updatedAt:new Date().toISOString()}); if(currentPage==='saleOrder') go('saleOrder'); else if(currentPage==='salesApproval') go('salesApproval'); }
   }catch(e){}
 }
 function soApprCfg(){ const c=(state.settings||{}).soApproval||{}; return {enabled:!!c.enabled,levels:Array.isArray(c.levels)?c.levels:[]}; }
@@ -18813,6 +19019,8 @@ function soApprCss(){
 function soApprHeadHtml(d,loaded){
   const c=soApprCfg(); soApprCss(); let h=''; if(!soApprPulled) setTimeout(soApprCfgPull,0);
   if(acctReturnId&&loaded&&acctReturnId===soLoadedId) h+='<button class="btn sm" style="background:var(--gold);color:#1a1a1a;font-weight:800" onclick="acctBack()">↩ رجوع لاعتماد الحسابات</button>';
+  if(saReturnId&&loaded&&saReturnId===soLoadedId) h+='<button class="btn sm" style="background:var(--gold);color:#1a1a1a;font-weight:800" onclick="saBack()">↩ رجوع لاعتماد أمر البيع</button>';
+  return h;
   if(c.enabled){
     const o=soApprRec(), st=soApprStatus(o);
     if(!loaded) h+='<span class="chip warn">سيُرسل للاعتماد عند الحفظ</span>';
@@ -18892,8 +19100,7 @@ function soApprCheckHtml(d,loaded){
   const can=loaded&&o&&(soApprIsApprover(o)||(done&&soApprCanRevoke(o)));
   const last=done?[...(o.appr&&o.appr.log||[])].reverse().find(x=>x.act==='approve'):null;
   const txt=!loaded?'احفظ الأمر أولًا ليُرسل للاعتماد':done?('تم الاعتماد'+(last?' — '+(last.name||soApprUserName(last.by)):'')+' — مقفول للتعديل حتى إلغاء الاعتماد'):st==='rejected'?'مرفوض — يحتاج تعديل':soApprLvText(o);
-  return `<div class="fld so-flag-fld so-appr-fld"><label>اعتماد مبيعات</label>
-    <label class="so-switch" style="gap:8px"><input type="checkbox" ${done?'checked':''} ${can?'':'disabled'} onchange="soApprCheck(this,'${escapeAttr(loaded?o.id:'')}')" title="${can?'':'الاعتماد للمستخدمين المحددين في دورة الاعتماد فقط'}"> <b style="color:${done?'var(--ok)':'var(--warn)'}">${done?'✔ تم اعتماده':'✘ لم يتم اعتماده'}</b> <small style="color:var(--text-dim)">${escapeHtml(txt)}</small></label></div>`;
+  return `<div class="fld so-flag-fld so-appr-fld so-ap-s" title="${escapeAttr(txt)}"><label class="so-switch so-ap-chk"><input type="checkbox" ${done?'checked':''} disabled tabindex="-1"><span>اعتماد مبيعات</span><b style="color:${done?'var(--ok)':'var(--warn)'}">${done?'✔':'✘'}</b></label></div>`;
 }
 
 // ----- بوابة التنفيذ: الأمر غير المعتمد لا يُربط ببوليصة/فاتورة ولا يتحوّل لأمر شراء ولا يصدر له PDF -----
@@ -18926,8 +19133,9 @@ function soApprStampApply(paper){
 function soApprLocked(){ const o=soApprRec(); return !!(o&&soApprStatus(o)==='approved'); }
 function soApprLockApply(){
   const c=document.getElementById('content'); if(!c) return;
-  const lk=soApprLocked(); c.classList.toggle('so-locked',lk); if(!lk) return;
-  c.querySelectorAll('.card input,.card select,.card textarea').forEach(e=>{ if(!e.closest('.so-appr-fld')) e.disabled=true; });
+  const ro=saMode(); c.classList.toggle('sa-ro',ro);
+  const lk=ro||soApprLocked(); c.classList.toggle('so-locked',lk); if(!lk) return;
+  c.querySelectorAll('.card input,.card select,.card textarea').forEach(e=>{ if(!e.closest('.so-appr-fld')&&e.id!=='soPricingSw') e.disabled=true; });
   c.querySelectorAll('[onclick^="soAddItem"],[onclick^="soDelItem"],[onclick^="soSaveConfirmed"],[onclick^="soDelete"]').forEach(e=>{ e.disabled=true; });
 }
 
@@ -18973,7 +19181,7 @@ function viewAcctApproval(){
     </div></div>
   <div id="acctSummary" style="margin:10px 0;font-weight:700"></div><div class="tbl-wrap"><table><thead><tr><th style="width:34px"><input type="checkbox" id="acctSelAll" title="تحديد كل الأوامر المنتظرة" onchange="acctSelAll(this.checked)"></th><th>رقم الأمر</th><th>م</th><th>تاريخ الأمر</th><th>اسم العميل</th><th>قيمة أمر البيع</th><th>حد الائتمان</th><th>رصيد المديونية</th><th>قيمة المتأخرات</th><th>أوراق القبض لم تحصل</th><th>مدة التأخيرات (يوم)</th><th>اعتماد حسابات</th><th>الحالة</th><th>اعتمده / وقت الاعتماد</th></tr></thead><tbody id="acctBody"></tbody></table></div></div></section>`;
 }
-function acctOpenOrder(id){ acctReturnId=id; soLoad(id); }
+function acctOpenOrder(id){ acctReturnId=id; saReturnId=null; soLoad(id); }
 function acctBack(){ acctReturnId=null; go('accountsApproval'); }
 function acctSearch(){ acctF.cust=document.getElementById('acctCust').value; acctF.from=document.getElementById('acctFrom').value; acctF.to=document.getElementById('acctTo').value; acctShown=50; acctRender(); }
 // ----- كاش الأرصدة (بند 4: السرعة) -----
@@ -19157,11 +19365,11 @@ function acctCheckHtml(d,loaded){
   if(!soApprCfg().enabled) return '';
   const o=soApprRec(), ok=loaded&&o&&soApprAllows(o), st=ok?acctStatus(o):'pending', done=st==='approved', can_=ok&&acctCan()&&!acctSkip();
   const txt=!ok?'بعد اعتماد المبيعات':acctSkip()?'تلقائي مع اعتماد المبيعات (مؤشرات النظام)':done?('تم الاعتماد'+(o.acct&&o.acct.name?' — '+o.acct.name:'')):st==='rejected'?'مرفوض — '+((o.acct&&o.acct.note)||''):'بانتظار اعتماد الحسابات';
-  return `<div class="fld so-flag-fld so-appr-fld"><label>اعتماد حسابات</label>
-    <label class="so-switch" style="gap:8px"><input type="checkbox" ${done?'checked':''} ${can_?'':'disabled'} onchange="acctCheck(this,'${escapeAttr(ok?o.id:'')}')" title="${can_?'':'لمستخدمي شاشة اعتماد إدارة الحسابات فقط'}"> <b style="color:${done?'var(--ok)':'var(--warn)'}">${done?'✔ تم اعتماده':'✘ لم يتم اعتماده'}</b> <small style="color:var(--text-dim)">${escapeHtml(txt)}</small></label></div>`;
+  return `<div class="fld so-flag-fld so-appr-fld so-ap-a" title="${escapeAttr(txt)}"><label class="so-switch so-ap-chk"><input type="checkbox" ${done?'checked':''} disabled tabindex="-1"><span>اعتماد حسابات</span><b style="color:${done?'var(--ok)':'var(--warn)'}">${done?'✔':'✘'}</b></label></div>`;
 }
 
-function viewSaleOrder(){
+function viewSaleOrder(){ const _h=viewSaleOrderBase(); return saMode()?saTransform(_h):_h; }
+function viewSaleOrderBase(){
   if(!soDraft) soDraft = soDefault();
   const d = soDraft;
   const loaded = !!soLoadedId;
@@ -19214,7 +19422,7 @@ function viewSaleOrder(){
 
   <div class="so-terms-status" id="soTermsStatus">${d.quoteId?'شروط عرض السعر رقم ' + escapeHtml(d.quoteNo||'') + ' مرتبطة بهذا الأمر':'لا توجد شروط عرض سعر مرتبطة'}</div>
   <div class="so-status-msg" id="soStatusMsg"></div>
-  ${soApprDrawerHtml(d,loaded)}${soApprHistoryHtml(d,loaded)}
+  ${saMode()?soApprDrawerHtml(d,loaded)+soApprHistoryHtml(d,loaded):saMiniHtml()}
 
   ${d.quoteNo?`<div class="card" style="margin-bottom:12px;border-color:var(--gold)"><div class="body" style="padding:10px 18px;color:var(--gold-text)">🔗 أمر بيع ناتج عن عرض سعر رقم <b>${escapeHtml(d.quoteNo)}</b></div></div>`:""}
   ${loaded?soLinkedPoliciesPanel(d):""}
@@ -19303,6 +19511,7 @@ function viewSaleOrder(){
           <td class="pr tot"><b id="soTTot">0.00</b></td>
         </tr></tbody>
       </table></div>
+      <div class="so-stk so-stk-panel" id="soStkPanel"></div>
     </div>
   </div></div>
 
@@ -19401,6 +19610,22 @@ function soStockCalc(){
             net:Math.round((bal-reserved)*1000000)/1000000, ok:(need>0 ? (bal-reserved)>=need-0.000001 : bal-reserved>0), hasQty:lineQty>0,unit:iuBaseUnitName(it.diameter)||""};
   });
 }
+var _soStkActive=0;
+function soStkShow(){
+  var pn=document.getElementById("soStkPanel"); if(!pn||!soDraft) return;
+  var its=soDraft.items||[], i=_soStkActive, el=document.getElementById("soStk"+i);
+  if(!el||!el.innerHTML||!(its[i]&&its[i].diameter)){ i=-1; for(var k=0;k<its.length;k++){ var e2=document.getElementById("soStk"+k); if(e2&&e2.innerHTML&&its[k].diameter){ i=k; break; } } el=i>=0?document.getElementById("soStk"+i):null; }
+  if(!el||i<0){ pn.innerHTML=""; pn.className="so-stk so-stk-panel"; return; }
+  pn.className="so-stk so-stk-panel "+(/\bok\b/.test(el.className)?"ok":/\bno\b/.test(el.className)?"no":"");
+  pn.innerHTML='<div class="sp-t">رصيد الصنف — سطر '+(i+1)+': '+escapeHtml(its[i].diameter||"")+'</div>'+el.innerHTML;
+}
+document.addEventListener("mouseover",soStkPick); document.addEventListener("focusin",soStkPick);
+function soStkPick(ev){
+  var r=ev.target&&ev.target.closest?ev.target.closest(".so-item-row"):null; if(!r) return;
+  var w=document.getElementById("soItemsWrap"); if(!w||!w.contains(r)) return;
+  var ix=Array.prototype.indexOf.call(w.querySelectorAll(".so-item-row"),r);
+  if(ix>=0&&ix!==_soStkActive){ _soStkActive=ix; soStkShow(); }
+}
 function soStockRefresh(){
   if(!soDraft || !document.getElementById("soItemsWrap")) return;
   if(!_soStkLoading && (!_soStkRows || Date.now()-_soStkAt>300000) && !_soStkErr) soStockLoad();
@@ -19426,6 +19651,7 @@ function soStockRefresh(){
     el.innerHTML='<table class="so-sum so-sum-stk"><thead><tr>'+th+'</tr></thead><tbody><tr>'+td+'</tr></tbody></table>';
     if(q) q.classList.add(c.ok?"so-qty-ok":"so-qty-no");
   });
+  soStkShow();
 }
 /* الأسطر اللي رصيدها غير كافٍ (للتنبيه عند الحفظ) */
 function soStockShort(){
@@ -41730,6 +41956,16 @@ body.page-saleOrder #content .so-flag-fld .so-switch input:checked+.so-switch-tr
 body.page-saleOrder #content .so-flag-fld .so-switch input:checked+.so-switch-track:after{inset-inline-start:17px}
 body.page-saleOrder #content .so-flag-fld .so-switch input:focus-visible+.so-switch-track{box-shadow:0 0 0 3px rgba(212,160,23,.3)}
 body.page-saleOrder #content .so-flag-fld .so-switch-txt{overflow:hidden;text-overflow:ellipsis}
+
+/* اعتماد المبيعات/الحسابات: خانتين اختيار مدمجتين في عمود جانبي — في نفس السطرين بدون سطر ثالث */
+body.page-saleOrder #content .so-appr-fld .so-switch.so-ap-chk{display:flex!important;align-items:center;gap:7px;height:36px;padding:0 4px!important;border:0!important;background:none!important;font-size:12px!important;font-weight:800;white-space:nowrap}
+body.page-saleOrder #content .so-appr-fld .so-switch.so-ap-chk input{position:static!important;opacity:1!important;width:17px!important;height:17px!important;pointer-events:auto!important;accent-color:#d4a017;margin:0;cursor:pointer}
+body.page-saleOrder #content .so-appr-fld .so-switch.so-ap-chk input:disabled{cursor:default;opacity:.85!important}
+@media(min-width:1101px){
+body.page-saleOrder #content .so-grid.so-2rows{grid-template-columns:repeat(6,minmax(0,1fr)) 128px}
+body.page-saleOrder #content .so-grid.so-2rows .so-ap-s{grid-column:7;grid-row:1;align-self:end}
+body.page-saleOrder #content .so-grid.so-2rows .so-ap-a{grid-column:7;grid-row:2;align-self:end}
+}
 /* صف الصنف: سطر واحد */
 body.page-saleOrder #content .so-item-row{grid-template-columns:34px minmax(120px,1fr) minmax(150px,1.3fr) minmax(95px,.75fr) minmax(110px,.9fr) minmax(130px,1fr) minmax(125px,1fr) 36px 36px!important;gap:7px!important;align-items:end!important;padding:8px 10px!important}
 body.page-saleOrder #content .so-item-row .srn{position:static!important;align-self:end!important;margin-bottom:5px;width:26px;height:26px}
@@ -41963,6 +42199,12 @@ body.page-saleOrder #content .so-item-row .mini .inp.so-qty-ok{background:#dcfce
 body.page-saleOrder #content .so-item-row .mini .inp.so-qty-no{background:#fee2e2!important;border-color:#fca5a5!important}
 table.so-sum-stk td.neg b{color:#b91c1c}
 table.so-sum-stk td{white-space:nowrap}
+/* بيانات الرصيد تظهر فقط عند الوقوف على سطر الصنف (ماوس أو تركيز) */
+body.page-saleOrder #content .so-item-row .so-stk{display:none!important}
+body.page-saleOrder #content .so-stk-panel{display:block;margin-top:10px;padding:8px 12px;border:1px solid #e3d3a0;border-radius:10px;background:#fffdf5}
+body.page-saleOrder #content .so-stk-panel:empty{display:none}
+.so-stk-panel .sp-t{font-size:12px;font-weight:800;color:var(--gold-text);margin-bottom:6px}
+.so-stk-panel table.so-sum-stk{width:100%}
 
 /* طباعة بالنص الحقيقي لأمر الشراء/البيع (igVectorPrint) */
 body.ig-vprint #igViewer{display:none!important}
