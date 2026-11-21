@@ -15103,32 +15103,48 @@ function findParty(list, name){ return (list||[]).find(x => (typeof x === "strin
 function viewShipments(){
   migrateState(state);
   if(!draft) draft=newDraft();
+  // فاتورة المبيعات المرحّلة: عرض فقط — لا يوجد وضع تعديل إلا لغير المرحّلة
+  if(SI_MODE&&editingSrc!=="new"&&(editingSrc==="shipments"||draft.glEntryId)&&!viewOnly) viewOnly=true;
   const d=draft, ro=viewOnly?"disabled":"";
   const isNew=editingSrc==="new", posted=editingSrc==="shipments";
+  const siPosted=SI_MODE&&!isNew&&(posted||!!d.glEntryId);
   const F=(lbl,inner)=>`<div class="fld"><label>${lbl}</label>${inner}</div>`;
   const B=(label,fn,cls,on)=>`<button class="btn ${cls||""}" onclick="${fn}" ${on?"":"disabled"}>${label}</button>`;
   const status=isNew?`<span class="chip">جديدة</span>`
     :posted?`<span class="chip ok">مرحّلة لبيانات التوريد</span>`
     :`<span class="chip warn">محفوظة — لم تُرحَّل</span>`;
+  const _soRec=d.saleOrderId?(state.saleOrders||[]).find(x=>x.id===d.saleOrderId):null;
+  const _soNote=String(d.notes||"").trim();
+  const siOrderInline=SI_MODE?`<span class="ig-so-sep"></span>
+    ${d.saleOrderNo?`<span class="ig-so-lbl">🔗 أمر بيع <b>${escapeHtml(d.saleOrderNo)}</b></span>
+    ${d.saleOrderId?`<button type="button" class="btn ghost sm" onclick="viewLinkedSO()">عرض الأمر</button>`:""}
+    <button type="button" class="btn ghost sm" onclick="goOrderScreen('${escapeAttr(String(d.saleOrderNo))}')" title="فتح أمر البيع في شاشة أوامر البيع">↗ فتح أمر البيع</button>
+    ${(!viewOnly&&d.saleOrderId)?`<button type="button" class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${_soRec?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال الأمر"}</button><button type="button" class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}`
+    :`<span class="ig-so-lbl ig-so-none">غير مربوطة بأمر بيع</span>`}
+    <button type="button" class="btn ghost sm ig-so-toggle" onclick="document.getElementById('igSoStrip').classList.toggle('open')">▦ الكميات المتبقية <span class="ig-so-rem" id="soRemTag"></span> <span class="count" id="soFullTag"></span></button>`:"";
+  const siOrderStrip=SI_MODE?`<div class="card ig-so-strip" id="igSoStrip"><div class="body ig-so-detail" id="soFullBox"></div></div>`:"";
+  const fCustomer=F("العميل",`<select class="inp" ${ro} onchange="setF('customer',this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>`);
   return `
   <div class="page-head">
     ${typeof igBackBtn==="function"?igBackBtn():""}
     <h2>${SI_MODE?(isNew?"فاتورة مبيعات جديدة":`فاتورة مبيعات رقم ${escapeHtml(d.policyNo)}`):(isNew?"إدخال بوليصة جديدة":`بوليصة رقم ${escapeHtml(d.policyNo)}`)}</h2>
-    ${status}${(!viewOnly&&!isNew)?'<span class="chip gold">وضع التعديل</span>':""}
+    ${status}${(!viewOnly&&!isNew&&!siPosted)?'<span class="chip gold">وضع التعديل</span>':""}
     <div class="spacer"></div>
     <div class="ig-actions">
     <div class="ig-act-group">
       ${B("جديد","newPolicy()","ghost",true)}
       ${B("📋 استدعاء أمر بيع","openSOPicker()","ghost",!viewOnly&&!posted)}
       ${B("بحث","openSearch()","ghost",true)}
-      ${SI_MODE?B("🖨 طباعة الفاتورة","igSiPrint()","ghost",!isNew):""}
+      ${SI_MODE?B("🖨 طباعة الفاتورة","igSiPrint()","ghost",true):""}
+      ${B("🚚 إذن تسليم","igPolicyDeliveryPrint()","ghost",true)}
+      ${SI_MODE?B("🚚 التسليم والتحصيل","igSalesDeliveryHome('deliveries')","ghost",true):""}
       ${(!viewOnly&&!isNew)?B("إلغاء التعديل","cancelEdit()","ghost",true):""}
-      ${B("تعديل","startEdit()","ghost",viewOnly&&!isNew)}
+      ${B("تعديل","startEdit()","ghost",viewOnly&&!isNew&&!siPosted)}
       ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
       ${lastPostedOrderNoForSupply?B("▦ مراجعة توريد الأمر","openPostedOrderSupply()","ghost",true):""}
+      ${SI_MODE?siOrderInline:""}
     </div>
     <div class="ig-act-main">
-      ${SI_MODE?B("🚚 التسليم والتحصيل","igSalesDeliveryHome('deliveries')","ghost",true):""}
       ${B("حفظ","saveShipment()","ig-save",!viewOnly)}
       ${SI_MODE&&posted&&!d.glEntryId?B("ترحيل محاسبي","igSalesPostInvoice()","ig-post",true):B("ترحيل","postShipment()","ig-post",!posted)}
       ${SI_MODE&&posted&&d.glEntryId?B("فك الترحيل المحاسبي","igSalesUnpostInvoice()","danger",true):""}
@@ -15139,49 +15155,51 @@ function viewShipments(){
   </div>
   ${posted&&!viewOnly?'<p style="color:var(--warn);font-size:12px;margin:-8px 0 14px">تنبيه: دي بوليصة مرحّلة — الحفظ هنا هيعدّل صفوفها في بيانات التوريد مباشرة.</p>':""}
   <div class="ig-top-row">
-  ${d.saleOrderId?`<div class="card ig-link-banner"><div class="body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+  ${d.saleOrderId&&!SI_MODE?`<div class="card ig-link-banner"><div class="body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <span style="color:var(--gold-text);font-size:14px">🔗 مربوطة بأمر بيع رقم <b>${escapeHtml(d.saleOrderNo)}</b></span>
     <button class="btn ghost sm" onclick="viewLinkedSO()">عرض الأمر</button>
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   </div>
-  ${SI_MODE?igSiOrderBar(d):""}
+  ${SI_MODE?siOrderStrip:""}
   <div class="card ig-pol-head"><div class="head ig-pol-head-title"><h3>${SI_MODE?"بيانات الفاتورة والربط بأمر البيع":"بيانات البوليصة والربط بأمر البيع"}</h3><div class="ig-note-fld ig-note-head"><button type="button" class="ig-note-btn ${(d.notes||"").trim()?"has-note":""}" id="noteBtn" onclick="toggleNotePop(event)" title="${escapeAttr((d.notes||"").trim()||"ملاحظات عامة")}" aria-label="ملاحظات عامة">📝</button><div class="ig-note-pop" id="notePop" hidden><label for="f_notes_top">📝 ملاحظات عامة</label><input class="inp" id="f_notes_top" ${ro} value="${escapeAttr(d.notes||"")}" oninput="setF('notes',this.value);noteBtnSync()" onkeydown="if(event.key==='Enter'||event.key==='Escape'){closeNotePop()}" placeholder="تُكتب تفاصيل السداد تلقائيًا — ويمكنك الإضافة"></div></div></div><div class="body">
     <div class="fgrid${SI_MODE?" ig-si-fgrid":""}">
-      ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<input class="inp" id="f_soNoManual" type="text" inputmode="text" autocomplete="off" placeholder="✎ أو اكتب رقم الأمر" title="لو الأمر مش في القائمة اكتب رقمه بإيدك (زي ما هو في الداتا بيز) واضغط Enter" onchange="setSoNoManual(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" style="width:150px;flex:0 0 auto"><button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
+      ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<input class="inp" id="f_soNoManual" type="text" inputmode="text" autocomplete="off" placeholder="✎ أو اكتب رقم الأمر" title="لو الأمر مش في القائمة اكتب رقمه بإيدك (زي ما هو في الداتا بيز) واضغط Enter" onchange="setSoNoManual(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" style="width:150px;flex:0 0 auto"><button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div>${SI_MODE?"":'<small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>'}`)}
       <div class="fld ig-policy-no-fld"><label>${SI_MODE?"رقم الفاتورة":"رقم البوليصة"}</label><input class="inp" ${ro} value="${escapeAttr(d.policyNo)}" oninput="setF('policyNo',this.value)"><div class="dup" id="dupWarn"></div></div>
       ${F("التاريخ",`<input class="inp" type="date" ${ro} value="${d.date}" oninput="setF('date',this.value)">`)}
+      ${SI_MODE?fCustomer:""}
       ${F("مندوب المبيعات",`<select id="f_repShow" class="inp" ${ro} onchange="igRepSet(this.value)" style="font-weight:700">${igRepShow(d)}</select>`)}
       ${SI_MODE?"":F("المخزن الفعلي للوارد",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`)}
+      ${SI_MODE?'</div><div class="fgrid ig-si-fgrid ig-si-row2">':""}
       ${SI_MODE?F("إذن التسليم",`${igSalesLoadNotes()}<select class="inp" ${ro} ${d.glEntryId?"disabled":""} onchange="igSetDeliveryNote(this.value)"><option value="">بدون إذن — صرف مباشر مع الفاتورة</option>${igNoteOpts(d)}</select>${d.deliveryNoteId?`<small style="color:var(--ok)">مرتبطة بإذن تسليم — لن يُصرف المخزون مع الفاتورة.</small>`:""}`):""}
       ${SI_MODE&&!d.deliveryNoteId?F("صرف المخزون",`<label class="ig-si-switch"><input type="checkbox" ${ro} ${d.glEntryId?"disabled":""} ${d.directIssue?"checked":""} onchange="setF('directIssue',this.checked);go(SIP())"><span title="يصرف المخزون ويسجّل التكلفة مع ترحيل الفاتورة">صرف مع الترحيل</span></label>`):""}
       ${SI_MODE&&!d.deliveryNoteId&&d.directIssue?F("المخزن",`<select class="inp" ${ro} onchange="setF('warehouseId',this.value)"><option value="">اختر المخزن</option>${whList().filter(w=>!whHasKids(w.id)).map(w=>`<option value="${escapeAttr(String(w.id))}" ${String(d.warehouseId||"")===String(w.id)?"selected":""}>${escapeHtml(w.code||"")} — ${escapeHtml(w.name||"")}</option>`).join("")}</select>`):""}
       ${SI_MODE?"":F("المورد",`<select class="inp" ${ro} onchange="setF('supplier',this.value)">${opts(partyNames(state.suppliers),d.supplier,"اختر المورد")}</select>`)}
-      ${F("العميل",`<select class="inp" ${ro} onchange="setF('customer',this.value)">${opts(partyNames(state.customers),d.customer,"اختر العميل")}</select>`)}
+      ${SI_MODE?"":fCustomer}
       ${F("الشركة",`<input class="inp" ${ro} list="dlCompany" value="${escapeAttr(d.company)}" oninput="setF('company',this.value)" placeholder="اسم الشركة"><datalist id="dlCompany">${polyHist("company")}</datalist>`)}
       ${F("الموقع",`<input class="inp" ${ro} list="dlSite" value="${escapeAttr(d.site)}" oninput="setF('site',this.value)" placeholder="موقع التوريد / المشروع"><datalist id="dlSite">${polyHist("site")}</datalist>`)}
 
     </div>
   </div></div>
 
-  <details class="card ig-disclosure"><summary class="head"><h3>أصناف أمر البيع والكميات</h3><span class="count" id="soFullTag"></span></summary>
+  ${SI_MODE?"":`<details class="card ig-disclosure"><summary class="head"><h3>أصناف أمر البيع والكميات</h3><span class="count" id="soFullTag"></span></summary>
     <div class="body" id="soFullBox"></div>
-  </details>
+  </details>`}
 
-  <div class="card ig-items-card"><div class="head"><div><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3><small class="ig-section-hint">أسعار موحّدة أو تعديل كل صنف بشكل مستقل</small></div>
+  <div class="card ig-items-card"><div class="head"><div><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3><small class="ig-section-hint">${SI_MODE?"اسحب حافة عنوان أي عمود لتكبيره أو تصغيره (دبل كليك = الرجوع للأصل)":"أسعار موحّدة أو تعديل كل صنف بشكل مستقل"}</small></div>
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
-    <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items" data-rs-key="shipment-item-lines">
+    <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items" data-rs-key="shipment-item-lines"${SI_MODE?' data-rs-default-hide="المصنع|حالة التعتيق|كمية التوريد|الفرق"':""}>
       <thead>
-        <tr class="ig-bulk-price-row"><th colspan="9"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="6"></th>`:""}<th colspan="2"></th></tr>
-        <tr><th>#</th><th>المصنع</th><th>الصنف</th><th>النوع</th><th>حالة التعتيق</th><th>الوحدة</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th class="c-calc">الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th>سعر البيع شامل الضريبة</th><th>خصم الصنف</th><th>نوع الخصم</th><th class='c-calc'>قبل الضريبة</th><th class='c-calc'>الضريبة</th><th class='c-calc'>الخصم</th><th class='c-calc c-total'>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr>
+        <tr class="ig-bulk-price-row"><th colspan="${SI_MODE?10:9}"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="6"></th>`:""}<th colspan="2"></th></tr>
+        <tr><th>#</th><th>المصنع</th>${SI_MODE?"<th>التصنيف</th>":""}<th>الصنف</th><th>النوع</th><th>حالة التعتيق</th><th>الوحدة</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th class="c-calc">الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th class='c-price c-sep'>سعر البيع شامل الضريبة</th><th class='c-price'>خصم الصنف</th><th class='c-price'>نوع الخصم</th><th class='c-calc c-sep'>قبل الضريبة</th><th class='c-calc'>الضريبة</th><th class='c-calc'>الخصم</th><th class='c-calc c-total'>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr>
       </thead>
       <tbody id="itemsBody">${d.items.map(itemRow).join("")}</tbody>
       <tfoot id="itemsFoot"></tfoot>
     </table></div>
-    <p class="ig-items-hint">اختر وحدة القياس لكل صنف؛ كميات التوريد والوزن الفعلي تُعرض بالوحدة المختارة وتُحوَّل تلقائيًا بمعامل التحويل. الحسابات والتقارير وحركة المخزون تظل بالطن دون تغيير. يمكن تعديل سعر كل صنف منفردًا أو استخدام التطبيق الجماعي أعلى عمود السعر.</p>
+    ${SI_MODE?"":`<p class="ig-items-hint">اختر وحدة القياس لكل صنف؛ كميات التوريد والوزن الفعلي تُعرض بالوحدة المختارة وتُحوَّل تلقائيًا بمعامل التحويل. الحسابات والتقارير وحركة المخزون تظل بالطن دون تغيير. يمكن تعديل سعر كل صنف منفردًا أو استخدام التطبيق الجماعي أعلى عمود السعر.</p>`}
   </div>
 
-  <details class="card ig-disclosure" open><summary class="head"><h3>الضرائب والخصومات</h3></summary><div class="body">
+  <details class="card ig-disclosure" ${SI_MODE?"":"open"}><summary class="head"><h3>الضرائب والخصومات</h3><span class="ig-sec-sum" id="sumTax"></span></summary><div class="body">
     <div class="ig-policy-disc-row">
       ${F("القيمة المضافة (VAT)",`<select class="inp" ${ro} onchange="setF('applyVat',this.value==='1');refreshTotals()" style="min-width:115px"><option value="1" ${d.applyVat!==false?"selected":""}>مطبّقة</option><option value="0" ${d.applyVat===false?"selected":""}>غير مطبّقة</option></select>`)}
       ${F("نسبة القيمة المضافة %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.vatPct}" oninput="setF('vatPct',this.value);refreshTotals()" style="width:110px">`)}
@@ -15192,9 +15210,9 @@ function viewShipments(){
     <p id="policyDiscountError" style="margin-top:8px;color:var(--danger);font-size:12px"></p>
     <p style="margin-top:4px;color:var(--text-dim);font-size:12px">خصم الصنف وخصم الفاتورة يُحسبان قبل الضريبة، وخصم الفاتورة يتوزع على الأصناف بعد خصم كل صنف. خصم العميل 1% يظل حسب إعدادات العميل.</p>
   </div></details>
-  <details class="card ig-disclosure" open><summary class="head"><h3>الخدمات والمصاريف الإضافية</h3></summary><div class="body"><div id="policyChargesBox"></div></div></details>
+  <details class="card ig-disclosure" ${SI_MODE?"":"open"}><summary class="head"><h3>الخدمات والمصاريف الإضافية</h3><span class="ig-sec-sum" id="sumChg"></span></summary><div class="body"><div id="policyChargesBox"></div></div></details>
 
-  <div class="card ig-pay-card ig-terms-card"><div class="head"><div><h3>شروط السداد وجدول الاستحقاقات</h3></div><span class="count" id="paySchedTag"></span></div><div class="body">
+  <${SI_MODE?"details":"div"} class="card ig-pay-card ig-terms-card${SI_MODE?" ig-disclosure":""}"><${SI_MODE?"summary":"div"} class="head"><div><h3>شروط السداد وجدول الاستحقاقات</h3></div><span class="ig-sec-sum" id="sumTerms"></span><span class="count" id="paySchedTag"></span></${SI_MODE?"summary":"div"}><div class="body">
     <div class="ig-terms-layout"><div class="ig-terms-side">
     <div class="ig-terms-grid">
       ${F("نسبة النقدي %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.terms.cashPct??0}" id="t_cashPct" oninput="setT('cashPct',this.value)">`)}
@@ -15206,7 +15224,7 @@ function viewShipments(){
     </div>
     <div class="ig-terms-main"><div id="paySchedBox"></div></div>
     </div>
-  </div></div>
+  </div></${SI_MODE?"details":"div"}>
   <div class="ig-totbar" id="igTotBar" aria-live="polite"></div>`;
 }
 // اقتراحات من القيم المدخلة قبل كده في البوالص (محفوظة ومرحّلة)
@@ -15274,6 +15292,17 @@ function policySetQty(i,key,value){
   if(key==="actualWeight") payAutoReset();
   refreshTotals();
 }
+const IG_ROWGRP=new WeakMap();
+function siRowGroup(it){
+  if(it&&it.diameter){ const g=igMap()[it.diameter]||""; return igById(g)?g:""; }
+  return (it&&IG_ROWGRP.get(it))||"";
+}
+function siSetGroup(i,gid){
+  const it=draft.items[i]; if(!it) return;
+  IG_ROWGRP.set(it,gid||"");
+  if(it.diameter&&gid&&siRowGroup(it)!==gid){ setI(i,"diameter",""); }
+  else repaintItems();
+}
 function itemRow(it,i){
   const ro=viewOnly?"disabled":"";
   policyEnsureUnit(it);
@@ -15284,7 +15313,8 @@ function itemRow(it,i){
   return `<tr>
     <td>${i+1}</td>
     <td><select class="inp" data-k="factory" ${ro} onchange="setI(${i},'factory',this.value)">${opts(state.factories,it.factory,"المصنع")}</select></td>
-    <td><select class="inp" data-k="diameter" ${ro} onchange="setI(${i},'diameter',this.value)">${opts(state.diameters,it.diameter,"الصنف")}</select></td>
+    ${SI_MODE?`<td><select class="inp" data-k="group" ${ro} onchange="siSetGroup(${i},this.value)"><option value="">التصنيف</option>${(state.itemGroups||[]).map(g=>`<option value="${escapeAttr(g.id)}" ${String(g.id)===String(siRowGroup(it))?"selected":""}>${escapeHtml(g.name||"")}</option>`).join("")}</select></td>`:""}
+    <td><select class="inp" data-k="diameter" ${ro} onchange="setI(${i},'diameter',this.value)">${opts((SI_MODE&&siRowGroup(it))?igItemsOf(siRowGroup(it)).map(x=>x.n):state.diameters,it.diameter,"الصنف")}</select></td>
     <td><select class="inp" data-k="type" ${ro} onchange="setI(${i},'type',this.value)">${opts(state.types,it.type,"النوع")}</select></td>
     <td><select class="inp" ${ro} onchange="setI(${i},'agingStatus',this.value)">${opts(state.statuses,it.agingStatus,"الحالة")}</select></td>
     <td class="policy-unit-cell">${policyUnitSelectHtml(it,i)}</td>
@@ -15292,13 +15322,13 @@ function itemRow(it,i){
     <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الوزن بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'actualWeight'),3)}" data-k="actualWeight" oninput="policySetQty(${i},'actualWeight',this.value)"></td>
     <td class="num c-calc" id="rdf${i}"></td>
     ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.buyPrice,2)}" data-k="buyPrice"${puT} oninput="setI(${i},'buyPrice',this.value)">${pu}</td>`:""}
-    ${showSell("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.sellPrice,2)}" data-k="sellPrice"${puT} oninput="setI(${i},'sellPrice',this.value)">${pu}</td>
-    <td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.discVal)}" placeholder="0" style="width:76px" oninput="setI(${i},'discVal',this.value)"></td>
-    <td><select class="inp" ${ro} style="width:64px" onchange="setI(${i},'discType',this.value)"><option value="pct" ${(it.discType||"pct")==="pct"?"selected":""}>%</option><option value="amt" ${it.discType==="amt"?"selected":""}>ج</option></select></td>`:""}
-    ${showSell("shipments")?`<td class="num c-calc" id="rsub${i}"></td><td class="num c-calc" id="rtax${i}"></td><td class="num c-calc" id="rdis${i}"></td>
+    ${showSell("shipments")?`<td class="c-price c-sep"><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.sellPrice,2)}" data-k="sellPrice"${puT} oninput="setI(${i},'sellPrice',this.value)">${pu}</td>
+    <td class="c-price"><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.discVal)}" placeholder="0" style="width:76px" oninput="setI(${i},'discVal',this.value)"></td>
+    <td class="c-price"><select class="inp" ${ro} style="width:64px" onchange="setI(${i},'discType',this.value)"><option value="pct" ${(it.discType||"pct")==="pct"?"selected":""}>%</option><option value="amt" ${it.discType==="amt"?"selected":""}>ج</option></select></td>`:""}
+    ${showSell("shipments")?`<td class="num c-calc c-sep" id="rsub${i}"></td><td class="num c-calc" id="rtax${i}"></td><td class="num c-calc" id="rdis${i}"></td>
     <td class="num c-calc c-total" id="rtot${i}"><strong></strong></td>`:""}
     <td class="ig-c"><button class="note-icon-btn ${(it.notes||"").trim()?'has-note':''}" ${ro} data-act="note" data-i="${i}" title="${(it.notes||"").trim()?'يوجد ملاحظة — اضغط للتعديل':'إضافة ملاحظة'}">📝</button></td>
-    <td>${viewOnly?"":`<div class="td-actions"><button class="btn ghost sm" data-act="copy" data-i="${i}" title="نسخ الصف">نسخ</button><button class="del" data-act="del" data-i="${i}">حذف</button></div>`}</td>
+    <td>${viewOnly?"":`<div class="td-actions"><button class="btn ghost sm" data-act="copy" data-i="${i}" title="نسخ الصف">نسخ</button><button class="del${SI_MODE?" ig-row-trash":""}" data-act="del" data-i="${i}"${SI_MODE?' title="حذف الصنف" aria-label="حذف الصنف"':""}>${SI_MODE?IG_TRASH_SVG:"حذف"}</button></div>`}</td>
   </tr>`;
 }
 function setPolicyInvDisc(v){draft.invDiscVal=v;dirty=true;payAutoReset();refreshTotals();}
@@ -15329,7 +15359,7 @@ function policyRenderCharges(){
   b.innerHTML=chargesHeadHtml({title:"الخدمات المرتبطة بأمر البيع",totalLabel:"إجمالي الخدمات:",totalId:"policyChargesTotal",total:fmt(ch.reduce((a,x)=>a+(+x.amount||0),0)),addFn:"policyAddCharge",ro})
     +(!sv.length?`<p class="ig-chg-warn">لا توجد خدمات معرفة في البيانات الأساسية.</p>`:"")
     +(ch.map((c,i)=>chargeRowHtml({c,i,ro,setFn:"policySetCharge",delFn:"policyDelCharge",svcKey:"serviceCode",optionsHtml:optsFor(c),withName:true})).join("")
-      ||`<p class="ig-chg-empty">لا توجد خدمات مضافة. عند سحب أمر البيع ستظهر خدماته هنا تلقائيًا.</p>`);
+      ||(SI_MODE?"":`<p class="ig-chg-empty">لا توجد خدمات مضافة. عند سحب أمر البيع ستظهر خدماته هنا تلقائيًا.</p>`));
 }
 function policyAddCharge(){if(viewOnly)return;draft.saleOrderCharges=draft.saleOrderCharges||[];draft.saleOrderCharges.push({serviceCode:"",name:"",amount:"",vat:true});dirty=true;policyRenderCharges();refreshTotals();}
 function policyDelCharge(i){if(viewOnly)return;(draft.saleOrderCharges||[]).splice(i,1);dirty=true;policyRenderCharges();refreshTotals();}
@@ -15851,7 +15881,7 @@ function renderSoFullCard(t){
   const box=document.getElementById("soFullBox"), tag=document.getElementById("soFullTag"); if(!box) return;
   t=t||draftTotals();
   const no=String(draft.saleOrderNo||"").trim();
-  if(!no){ if(tag) tag.textContent="إدخال مباشر"; box.innerHTML='<p style="color:var(--text-dim);font-size:13px">البوليصة غير مرتبطة بأمر بيع. أدخل الأصناف والكميات والأسعار مباشرة، ويمكن ربطها بأمر بيع لاحقًا عند الحاجة. شروط السداد هنا اختيارية.</p>'; return; }
+  if(!no){ { const rt=document.getElementById("soRemTag"); if(rt) rt.textContent=""; } if(tag) tag.textContent="إدخال مباشر"; box.innerHTML='<p style="color:var(--text-dim);font-size:13px">البوليصة غير مرتبطة بأمر بيع. أدخل الأصناف والكميات والأسعار مباشرة، ويمكن ربطها بأمر بيع لاحقًا عند الحاجة. شروط السداد هنا اختيارية.</p>'; return; }
   if(tag) tag.textContent="أمر بيع "+no;
   const key=soKey(no), so=(state.saleOrders||[]).find(x=>soKey(x.orderNo)===key)||null, imp=supImportedPaymentPlan(no);
   if(!so){
@@ -15872,6 +15902,7 @@ function renderSoFullCard(t){
   const body=keys.map(k=>{ const [dia,typ]=k.split("|"), pl=r.planned[k]||0, us=r.used[k]||0, nw=mine[k]||0, rem=Math.round((pl-us-nw)*1000)/1000, m=meta[k];
     return `<tr><td>${escapeHtml(dia)}</td><td>${escapeHtml(typ)}</td><td>${m?escapeHtml([...m.spec].join(" / ")):""}</td><td class="num">${fmt(pl,3)}</td><td class="num">${fmt(us,3)}</td><td class="num">${fmt(nw,3)}</td><td class="num" style="color:${rem<-0.0005?"var(--danger)":"var(--ok)"}">${fmt(rem,3)}</td><td>${m?escapeHtml(m.notes.join(" | ")):""}</td></tr>`; }).join("");
   const totPl=r.totalPlanned, totUs=r.totalUsed, totNw=Object.values(mine).reduce((a,b)=>a+b,0);
+  { const rt=document.getElementById("soRemTag"); if(rt){ const rm=Math.round((totPl-totUs-totNw)*1000)/1000; rt.textContent="— "+fmt(rm,3)+" طن"; rt.style.color=rm<-0.0005?"var(--danger)":""; } }
   box.innerHTML=`<div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px">${facts.join("")}</div>
     ${so.notes?`<p style="margin-top:8px;font-size:12px;color:var(--text-dim)">ملاحظات الأمر: ${escapeHtml(so.notes)}</p>`:""}
     <div style="font-weight:700;color:var(--gold-text);margin:12px 0 6px">أصناف الأمر والكميات (طن)</div>
@@ -16022,6 +16053,17 @@ function soReturnToPolicy(){
   const c=soReturnContext; soReturnContext=null; soVirtualMode=false;
   if(c.policyId&&c.policySrc){ loadRecord(c.policySrc,c.policyId,!c.viewOnly); } else go(c.page||"shipments");
 }
+function igSiSectionSummaries(t,DC){
+  const set=(id,txt,warn)=>{ const e=document.getElementById(id); if(!e) return; e.textContent=txt; e.classList.toggle("warn",!!warn); };
+  const ch=policyChargesCalc(draft), nCh=(draft.saleOrderCharges||[]).length;
+  const vat=draft.applyVat!==false?"VAT "+(+draft.vatPct||0)+"%":"بدون VAT";
+  const err=!!(DC&&DC.err);
+  set("sumTax",(err?"⚠ خطأ في الخصم — ":"")+vat+" — خصم "+fmt(t.discount)+" — خدمات "+fmt(ch.sub),err);
+  if(err){ const e=document.getElementById("sumTax"); if(e&&e.closest("details")) e.closest("details").open=true; }
+  set("sumChg",nCh?nCh+" خدمة — "+fmt(ch.sub):"لا توجد خدمات");
+  const cp=+draft.terms.cashPct||0, n=parseInt(draft.terms.installments)||0, days=+draft.terms.periodDays||0;
+  set("sumTerms",termsBlank(draft.terms)?"غير محددة":("نقدي "+cp+"%"+(n>0&&cp<100?" — "+n+" قسط كل "+days+" يوم":" — بدون أقساط")));
+}
 function refreshTotals(){
   applyTermsLock();
   const set=(id,h)=>{const e=document.getElementById(id); if(e) e.innerHTML=h;};
@@ -16051,9 +16093,10 @@ function refreshTotals(){
   { const tb=document.getElementById("igTotBar");
     if(tb){
       const ch=policyChargesCalc(draft);
-      tb.innerHTML=SS?`<div class="tb-i"><small>قبل الضريبة</small><b>${fmt(t.subtotal)}</b></div><div class="tb-i"><small>الخصم</small><b>${fmt(t.discount)}</b></div><div class="tb-i"><small>الضريبة</small><b>${fmt(t.tax)}</b></div>${ch.sub>0?`<div class="tb-i"><small>خدمات</small><b>${fmt(ch.sub)}</b></div>`:""}<div class="tb-i tb-grand"><small>الإجمالي (${escapeHtml(String(cur||""))})</small><b>${fmt(t.grandTotal)}</b></div>`:"";
+      tb.innerHTML=SS?`<div class="tb-i"><small>إجمالي الكمية</small><b>${fmt(t.weight,3)}</b></div><div class="tb-i"><small>الإجمالي قبل الضريبة</small><b>${fmt(t.subtotal)}</b></div><div class="tb-i"><small>الخدمات</small><b>${fmt(ch.sub)}</b></div><div class="tb-i"><small>الضريبة</small><b>${fmt(t.tax)}</b></div><div class="tb-i"><small>الخصم</small><b>${fmt(t.discount)}</b></div><div class="tb-i tb-grand"><small>الصافي (${escapeHtml(String(cur||""))})</small><b>${fmt(t.grandTotal)}</b></div>`:"";
     } }
   renderSoFullCard(t);
+  try{ igSiSectionSummaries(t,DC); }catch(e){}
   const de=document.getElementById("policyDiscountError"); if(de) de.textContent=DC.err||"";
   const ce=document.getElementById("policyChargesTotal"); if(ce) ce.textContent=fmt(policyChargesCalc(draft).sub);
   renderPolicyPaySchedule(t);
@@ -16173,6 +16216,7 @@ function buildRecord(strict){
     if(!(+it.supplyQty>0)) return ierr(it,"supplyQty","اكتب كمية التوريد (أكبر من صفر)");
     if(has(it.actualWeight)&&!(+it.actualWeight>0)) return ierr(it,"actualWeight","الوزن الفعلي لازم يكون أكبر من صفر");
     if(has(it.sellPrice)&&!(+it.sellPrice>=0)) return ierr(it,"sellPrice","سعر البيع لا يمكن أن يكون أقل من صفر");
+    if(SI_MODE&&!(+it.sellPrice>0)) return ierr(it,"sellPrice","اكتب سعر البيع (أكبر من صفر) — الفاتورة لا تُحفظ بسعر صفر");
     if(has(it.buyPrice)&&+it.buyPrice<0) return ierr(it,"buyPrice","سعر الشراء لا يمكن أن يكون أقل من صفر");
   }
   if(strict){ const m=missingList(d); if(m.length){ showMissing(m); return null; } }
@@ -18420,7 +18464,8 @@ function invArabicWords(n){
 
 // جلب المجموعة (نفس key اللي بينتج من renderSupplyGrouped)
 function supInvoiceDataForKey(key){
-  const L = supplyLines();
+  let L = supplyLines();
+  if(window.__igSiPrintDocId) L = L.filter(({s})=>String(s.id)===String(window.__igSiPrintDocId));
   const map = new Map();
   L.forEach(({s,it})=>{
     const k = s.saleOrderId ? "so:"+s.saleOrderId : (s.saleOrderNo ? "no:"+s.saleOrderNo : "policy:"+s.id);
@@ -18461,13 +18506,47 @@ function supInvoiceDataForKey(key){
 }
 
 function supInvoiceHtml(inv){
+  // رقم الفاتورة: الرقم المرسل من شاشة الفاتورة، وإلا أرقام فواتير المبيعات اللي على الأمر، وإلا رقم أمر البيع
+  let invNoShown=String(window.__igSiPrintNo||"").trim();
+  if(!invNoShown){ try{ invNoShown=[...((inv.g&&inv.g.policies)?inv.g.policies.values():[])].filter(x=>x&&x.docKind==="sales"&&String(x.policyNo||"").trim()).map(x=>String(x.policyNo).trim()).join("، "); }catch(e){ invNoShown=""; } }
+  if(!invNoShown) invNoShown=String(inv.orderNo||"");
+  // بيانات إضافية من مستندات الفاتورة: الشركة / الموقع / المندوب / شروط السداد / جدول الاستحقاقات
+  const docs=[...((inv.g&&inv.g.policies)?inv.g.policies.values():[])];
+  const uniq=k=>[...new Set(docs.map(d=>String(d[k]||"").trim()).filter(Boolean))].join("، ");
+  const xCompany=uniq("company"), xSite=uniq("site"), xRep=uniq("repName");
+  let coTitle=""; try{ coTitle=(typeof CUR_CO!=="undefined"&&CUR_CO&&CUR_CO!=="*")?coName(CUR_CO):""; }catch(e){}
+  let xTerms="", xSched=null;
+  try{
+    const d0=docs.find(d=>d.paymentSchedule&&d.paymentSchedule.length)||docs[0]||{};
+    const ot=(typeof orderTermsFor==="function"&&orderTermsFor(inv.orderNo))||null;
+    const tm=ot?{cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays}:(d0.terms||null);
+    if(tm&&tm.cashPct!=null&&(+tm.cashPct>0||+tm.installments>0)){
+      xTerms=`نقدي ${+tm.cashPct||0}%`+((+tm.installments>0&&(+tm.cashPct||0)<100)?` — الباقي على ${+tm.installments} قسط`+((+tm.periodDays>0)?` كل ${+tm.periodDays} يوم`:""):"");
+    }
+    const sc=(d0.paymentSchedule&&d0.paymentSchedule.length)?d0.paymentSchedule:((ot&&ot.paymentSchedule)||null);
+    if(sc&&sc.length) xSched=sc;
+  }catch(e){}
+  const money2=v=>(+v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const extraInfo=
+    ((xCompany||xSite)?`<div class="lbl">الشركة</div><div class="val">${escapeHtml(xCompany||"-")}</div><div class="lbl">الموقع</div><div class="val">${escapeHtml(xSite||"-")}</div>`:"")
+    +(xRep?`<div class="lbl">المندوب</div><div class="val full">${escapeHtml(xRep)}</div>`:"")
+    +(xTerms?`<div class="lbl">شروط السداد</div><div class="val full">${escapeHtml(xTerms)}</div>`:"");
+  const schedHtml=xSched?`<table class="inv-tbl" style="margin-top:12px"><thead><tr><th>م</th><th>البيان</th><th>تاريخ الاستحقاق</th><th>المبلغ</th></tr></thead><tbody>${xSched.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(String(x.label||((+x.no||0)===0?"نقدي":"قسط "+x.no)))}</td><td>${escapeHtml(String(x.due||x.date||"-"))}</td><td>${money2(x.amount)}</td></tr>`).join("")}</tbody></table>`:"";
   const nowDate = inv.date || new Date().toISOString().slice(0,10);
   const typesInInvoice = [...new Set(inv.rows.map(r=>r.type).filter(Boolean))].join(" / ");
   const bayan = `توريد حديد تسليح ${typesInInvoice}`.trim();
   const vatPct = inv.totals.sub>0 ? Math.round((inv.totals.tax/inv.totals.sub)*100) : 14;
   const disNet = inv.totals.dis; // قيمة الخصم كما حُسبت
   const disPct = inv.totals.sub>0 ? ((disNet/inv.totals.sub)*100) : 0;
-  const net = inv.totals.sub + inv.totals.tax - inv.totals.dis;
+  // الخدمات والمصاريف الإضافية (من نفس الفاتورة/الأمر): بتتحط في الإجمالي والضريبة والصافي
+  let chDoc=null, chCalc={sub:0,tax:0,total:0}, chList=[];
+  try{
+    chDoc=docs.find(d=>Array.isArray(d.saleOrderCharges)&&d.saleOrderCharges.some(c=>(+c.amount||0)>0))||null;
+    if(chDoc){ chCalc=policyChargesCalc(chDoc); chList=chDoc.saleOrderCharges.filter(c=>(+c.amount||0)>0); }
+  }catch(e){ chDoc=null; }
+  const docVat=(docs[0]&&docs[0].vatPct!=null&&isFinite(+docs[0].vatPct))?+docs[0].vatPct:null;
+  const taxAll=inv.totals.tax+chCalc.tax;
+  const net = inv.totals.sub + chCalc.sub + taxAll - inv.totals.dis;
 
   const rowsHtml = inv.rows.map((r,i)=>`<tr>
     <td>${i+1}</td>
@@ -18481,14 +18560,15 @@ function supInvoiceHtml(inv){
   return `
     <div class="inv-top">
       <img class="logo" src="${(window.coLogoCur&&window.coLogoCur())||QT_LOGO}" alt="">
-      <div class="title">فاتورة مبيعات<span class="en">SALES INVOICE</span></div>
+      <div class="title">${coTitle?`<div style="font-size:15px;color:#333;margin-bottom:2px">${escapeHtml(coTitle)}</div>`:""}فاتورة مبيعات<span class="en">SALES INVOICE</span></div>
       <div class="ph"></div>
     </div>
     <div class="inv-hr"></div>
     <div class="inv-info">
-      <div class="lbl">رقم الفاتورة</div><div class="val num">${escapeHtml(String(inv.orderNo||"-"))}</div>
+      <div class="lbl">رقم الفاتورة</div><div class="val num">${escapeHtml(String(invNoShown||"-"))}</div>
       <div class="lbl">التاريخ</div><div class="val">${escapeHtml(nowDate)}</div>
       <div class="lbl">العميل</div><div class="val full">${escapeHtml(inv.customer||"-")}</div>
+      ${extraInfo}
       <div class="lbl">إجمالي الكمية (طن)</div><div class="val full">${inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</div>
       <div class="lbl">البيان</div><div class="val full">${escapeHtml(bayan)}</div>
     </div>
@@ -18498,11 +18578,13 @@ function supInvoiceHtml(inv){
       <tfoot><tr><td colspan="3">إجمالي الكمية</td><td>${inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td><td></td><td></td></tr></tfoot>
     </table>
     <div class="inv-totals">
-      <div class="row sub"><div class="lbl">الإجمالي قبل الضريبة</div><div class="pct"></div><div class="amt">${inv.totals.sub.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
-      <div class="row vat"><div class="lbl">ضريبة القيمة المضافة</div><div class="pct">${vatPct}%</div><div class="amt">${inv.totals.tax.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
-      <div class="row dis"><div class="lbl">خصم وإضافة ${(Math.round(disPct*10)/10)||1}%</div><div class="pct">${(Math.round(disPct*10)/10)||1}%</div><div class="amt">(${inv.totals.dis.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})})</div></div>
-      <div class="row net"><div class="lbl">الصافي المستحق</div><div class="pct"></div><div class="amt">${net.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+      <div class="row sub"><div class="lbl">الإجمالي قبل الضريبة (الأصناف)</div><div class="pct"></div><div class="amt">${money2(inv.totals.sub)}</div></div>
+      ${chList.map(c=>`<div class="row"><div class="lbl">${escapeHtml(String(c.name||c.serviceCode||"خدمة إضافية"))}</div><div class="pct"></div><div class="amt">${money2(c.amount)}</div></div>`).join("")}
+      <div class="row vat"><div class="lbl">ضريبة القيمة المضافة</div><div class="pct">${(docVat!=null?docVat:vatPct)}%</div><div class="amt">${money2(taxAll)}</div></div>
+      ${inv.totals.dis>0.004?`<div class="row dis"><div class="lbl">الخصم (أصناف + فاتورة + عميل)</div><div class="pct">${(Math.round(disPct*10)/10)}%</div><div class="amt">(${money2(inv.totals.dis)})</div></div>`:""}
+      <div class="row net"><div class="lbl">الصافي المستحق</div><div class="pct"></div><div class="amt">${money2(net)}</div></div>
     </div>
+    ${schedHtml}
     <div class="inv-words">${escapeHtml(invArabicWords(net))}</div>
     <div class="inv-stamp"><div class="lbl">الختم</div><img src="${QT_STAMP}" alt=""></div>
   `;
@@ -26381,6 +26463,15 @@ async function openMfaSetup(){
         h.addEventListener("pointermove",mv); h.addEventListener("pointerup",up); h.addEventListener("pointercancel",up);
       });
     });
+    // أعمدة مخفية افتراضيًا (مرة واحدة فقط لكل جدول) — المستخدم يرجّعها من زرار "الأعمدة" وتفضل زي ما اختار
+    if(t.dataset.rsDefaultHide&&!cfg[k]){
+      const fk="colDefHide_v1:"+k; let done=false; try{ done=!!localStorage.getItem(fk); }catch(e){}
+      if(!done){
+        const names=t.dataset.rsDefaultHide.split("|"), hid=[];
+        ths.forEach((th,i)=>{ if(names.includes(colName(th,i))) hid.push(i); });
+        if(hid.length&&hid.length<ths.length-1){ cfg[k]={hid}; save(); try{ localStorage.setItem(fk,"1"); }catch(e){} }
+      }
+    }
     if(cfg[k]) layout(t); else badge(t);
   }
   let pend=false;
@@ -34759,7 +34850,7 @@ ${isGl?`<table><thead><tr><th>م</th><th>رقم الحساب</th><th>اسم ال
     if(!ex.data||ex.data.status==='draft'){
       const wh=(typeof whList==='function'?whList():(state.warehouses||[])).find(w=>String(w.id)===String(rec.warehouseId));
       if(!wh) throw new Error('المخزن غير صالح — عدّل الفاتورة واختر المخزن');
-      const lines=(rec.items||[]).map(it=>({factory:it.factory,diameter:it.diameter,itemType:it.type,qty:Number(it.actualWeight||it.weightTon||it.supplyQty||0),orderLineNo:null,notes:'صرف مباشر مع فاتورة '+rec.policyNo})).filter(l=>l.qty>0);
+      const lines=(rec.items||[]).map(it=>({factory:it.factory,diameter:it.diameter,itemType:it.type,qty:iuToBaseQty(it.diameter,Number(it.actualWeight||it.weightTon||it.supplyQty||0)),orderLineNo:null,notes:'صرف مباشر مع فاتورة '+rec.policyNo})).filter(l=>l.qty>0);
       if(!lines.length) throw new Error('لا توجد كميات للصرف');
       await window.igSalesSaveDelivery({id:did,deliveryNo:'SDI-'+rec.policyNo,date:rec.date,saleOrderId:'',customer:rec.customer,warehouseId:rec.warehouseId,warehouseCode:wh.code||'',warehouseName:wh.name||'',notes:'صرف مباشر مع فاتورة المبيعات '+rec.policyNo,lines});
       await window.igSalesPostDelivery(did);
@@ -37502,12 +37593,15 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     }catch(e){if(host)host.innerHTML=`<div class="card"><div class="body" style="color:var(--danger)">تعذر تحميل أذون التسليم أو التخصيص: ${esc(e.message||e)}<p class="muted">تأكد من تشغيل ملف SQL الخاص بأذون التسليم وتخصيص التحصيل.</p><button class="btn" onclick="igSDReload()">إعادة المحاولة</button></div></div>`;}
   };
   function igSDRender(){const host=$('igSalesOpsBody');if(!host)return;host.innerHTML=ctx.tab==='deliveries'?igSDListHtml():ctx.tab==='uncovered'?igSDUncoveredHtml():igSDAllocHtml();}
+  // الكمية في الشاشة بوحدة الصنف المستخدمة (طن مثلًا)، والداتا بيز بتتعامل بالوحدة الأساسية؛ التحويل هنا بس.
+  function igSDToBase(item,q){return Math.round(iuToBaseQty(item,num(q))*1e6)/1e6;}
+  function igSDFromBase(item,q){return Math.round(iuBaseQtyToDefault(item,num(q))*1e6)/1e6;}
   function igSDNextNo(){let mx=0;(ctx.docs||[]).forEach(d=>{const m=String(d.delivery_no||'').match(/^SD-(\d{1,6})$/);if(m)mx=Math.max(mx,parseInt(m[1],10));});return 'SD-'+String(mx+1).padStart(4,'0');}
   function igSDInvQty(inv){return (inv.items||[]).reduce((t,it)=>t+num(it.actualWeight||it.weightTon||it.supplyQty),0);}
   function igSDUncoveredRows(){
     const orderInv={},orderDel={};
     ctx.invoices.forEach(i=>{if(i.saleOrderId)orderInv[i.saleOrderId]=(orderInv[i.saleOrderId]||0)+igSDInvQty(i);});
-    ctx.docs.filter(d=>d.status==='posted'&&d.sale_order_id).forEach(d=>{const q=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)).reduce((t,x)=>t+num(x.qty),0);orderDel[d.sale_order_id]=(orderDel[d.sale_order_id]||0)+q;});
+    ctx.docs.filter(d=>d.status==='posted'&&d.sale_order_id).forEach(d=>{const q=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)).reduce((t,x)=>t+igSDFromBase(x.diameter,x.qty),0);orderDel[d.sale_order_id]=(orderDel[d.sale_order_id]||0)+q;});
     return ctx.invoices.map(i=>{
       const qty=igSDInvQty(i);let st='bad',label='بدون صرف مخزون',ref='';const cut=state.settings&&state.settings.salesIssueTrackFrom;
       if(cut&&String(i.date||'').slice(0,10)<cut){st='ok';label='قديمة — قبل بدء تتبع الصرف';}
@@ -37531,26 +37625,26 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     return `<div class="card"><div class="head"><h3>فواتير مبيعات مرحّلة بدون صرف مخزون / تكلفة</h3><span class="count">${need} تحتاج مراجعة من ${all.length}</span></div><div class="body"><div class="fld" style="margin-bottom:8px"><label>تتبّع الصرف يبدأ من تاريخ (الفواتير قبله تُعتبر مصروفة)</label><input class="inp" type="date" value="${esc(state.settings.salesIssueTrackFrom||'')}" onchange="igSDSetCutoff(this.value)" style="max-width:200px"></div><label style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" ${ctx.hideCovered?'checked':''} onchange="igSDToggleCovered(this.checked)"> إخفاء الفواتير المغطّاة</label><div class="tbl-wrap"><table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>أمر البيع</th><th>كمية الفاتورة (طن)</th><th>المُسلَّم على الأمر (طن)</th><th>الحالة</th></tr></thead><tbody>${body}</tbody></table></div><p class="muted">الفواتير المرحّلة قبل تفعيل خيار الصرف المباشر تظهر هنا إذا لم يكن لها إذن تسليم؛ راجعها يدويًا، وليست بالضرورة خطأ إذا كانت خدمات أو بضاعة خارج المخزن.</p></div></div>`;
   }
   function igSDListHtml(){
-    const rows=ctx.docs.map(d=>{const its=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)),q=its.reduce((s,x)=>s+num(x.qty),0),cost=its.reduce((s,x)=>s+num(x.total_cost),0);return `<tr><td>${esc(d.delivery_no)}</td><td>${esc(d.delivery_date)}</td><td>${esc(d.customer)}</td><td>${esc(d.warehouse_code||d.warehouse_name||d.warehouse_id)}</td><td class="num">${nfmt(q)}</td><td class="num">${money(cost)}</td><td>${d.status==='posted'?'<span class="chip ok">مرحّل ومصروف</span>':d.status==='cancelled'?'<span class="chip danger">ملغي</span>':'<span class="chip warn">مسودة</span>'}</td><td>${d.status==='draft'?`<button class="btn sm ghost" onclick="igSDEdit('${esc(d.id)}')">فتح</button> <button class="btn sm primary" onclick="igSDPost('${esc(d.id)}')">ترحيل وصرف</button>`:`<button class="btn sm ghost" onclick="igSDShow('${esc(d.id)}')">عرض</button>`}</td></tr>`;}).join('')||'<tr><td colspan="8">لا توجد أذون تسليم حتى الآن</td></tr>';
+    const rows=ctx.docs.map(d=>{const its=ctx.items.filter(x=>String(x.delivery_id)===String(d.id)),q=its.reduce((s,x)=>s+igSDFromBase(x.diameter,x.qty),0),cost=its.reduce((s,x)=>s+num(x.total_cost),0);return `<tr><td>${esc(d.delivery_no)}</td><td>${esc(d.delivery_date)}</td><td>${esc(d.customer)}</td><td>${esc(d.warehouse_code||d.warehouse_name||d.warehouse_id)}</td><td class="num">${nfmt(q)}</td><td class="num">${money(cost)}</td><td>${d.status==='posted'?'<span class="chip ok">مرحّل ومصروف</span>':d.status==='cancelled'?'<span class="chip danger">ملغي</span>':'<span class="chip warn">مسودة</span>'}</td><td>${d.status==='draft'?`<button class="btn sm ghost" onclick="igSDEdit('${esc(d.id)}')">فتح</button> <button class="btn sm primary" onclick="igSDPost('${esc(d.id)}')">ترحيل وصرف</button>`:`<button class="btn sm ghost" onclick="igSDShow('${esc(d.id)}')">عرض</button>`}</td></tr>`;}).join('')||'<tr><td colspan="8">لا توجد أذون تسليم حتى الآن</td></tr>';
     const orderOpts=ctx.orders.map(o=>`<option value="${esc(o.id)}">${esc(o.orderNo)} — ${esc(o.customer)}</option>`).join('');
     return `<div class="card"><div class="head"><h3>إنشاء إذن تسليم من أمر بيع</h3></div><div class="body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><select class="inp" id="igSDOrder" style="min-width:260px;flex:1"><option value="">اختر أمر البيع المفتوح</option>${orderOpts}</select><button class="btn primary" onclick="igSDNewFromOrder()">إنشاء إذن من الأمر</button><small class="muted">يعرض الكميات المتبقية بعد أذون التسليم المُرحّلة فقط، ويدعم التسليم الجزئي والمتكرر.</small></div></div><div class="card"><div class="head"><h3>سجل أذون التسليم</h3><span class="count">${ctx.docs.length} إذن</span></div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>رقم الإذن</th><th>التاريخ</th><th>العميل</th><th>المخزن</th><th>الكمية طن</th><th>التكلفة</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>${rows}</tbody></table></div></div></div>`;
   }
   window.igSDNewDirect=function(){ctx.tab='deliveries';ctx.draft={id:'SD-'+Date.now(),deliveryNo:igSDNextNo(),date:today(),saleOrderId:'',customer:'',warehouseId:'',notes:'',allowOver:true,items:[{factory:'',diameter:'',itemType:'',qty:'',orderLineNo:null,notes:''}]};igSDForm();};
   window.igSDNewFromOrder=async function(){ctx.tab='deliveries';const id=$('igSDOrder')?.value;if(!id)return toast('اختر أمر البيع أولاً','err');const o=ctx.orders.find(x=>String(x.id)===String(id));if(!o)return toast('أمر البيع غير موجود','err');
-    try{const orderDocs=ctx.docs.filter(d=>String(d.sale_order_id)===String(o.id)&&d.status==='posted');const delivered=ctx.items.filter(x=>orderDocs.some(d=>d.id===x.delivery_id));const items=(o.items||[]).map((it,i)=>{const line=i+1,used=delivered.filter(x=>Number(x.source_order_line_no)===line).reduce((s,x)=>s+num(x.qty),0),ordered=num(it.qty);return {...it,orderLineNo:line,orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used),qty:Math.max(0,ordered-used),factory:it.factory||'',itemType:it.type||''};}).filter(x=>x.orderedQty>0&&(o.allowOverDelivery!==false||x.remaining>0));
+    try{const orderDocs=ctx.docs.filter(d=>String(d.sale_order_id)===String(o.id)&&d.status==='posted');const delivered=ctx.items.filter(x=>orderDocs.some(d=>d.id===x.delivery_id));const items=(o.items||[]).map((it,i)=>{const line=i+1,used=igSDFromBase(it.diameter,delivered.filter(x=>Number(x.source_order_line_no)===line).reduce((s,x)=>s+num(x.qty),0)),ordered=num(it.qty);return {...it,orderLineNo:line,orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used),qty:Math.max(0,ordered-used),factory:it.factory||'',itemType:it.type||''};}).filter(x=>x.orderedQty>0&&(o.allowOverDelivery!==false||x.remaining>0));
       if(!items.length)return toast('الأمر لا يحتوي كميات متبقية للتسليم، أو أنه مكتمل بالفعل','err');
       const wh=whs().find(w=>String(w.id)===String(o.warehouseId));ctx.draft={id:'SD-'+Date.now(),deliveryNo:igSDNextNo(),date:today(),saleOrderId:o.id,saleOrderNo:o.orderNo,customer:o.customer,warehouseId:String(o.warehouseId||''),warehouseCode:wh?.code||'',warehouseName:wh?.name||'',notes:'',allowOver:o.allowOverDelivery!==false,items};igSDForm();
     }catch(e){toast('تعذر تجهيز إذن التسليم: '+(e.message||e),'err');}
   };
   window.igSDEdit=async function(id){const d=ctx.docs.find(x=>String(x.id)===String(id));if(!d||d.status!=='draft')return;const its=ctx.items.filter(x=>String(x.delivery_id)===String(id));
     const o=d.sale_order_id?(state.saleOrders||[]).find(x=>String(x.id)===String(d.sale_order_id)):null;
-    const info=line=>{const it=o&&(o.items||[])[Number(line)-1];if(!it)return {};const ordered=num(it.qty);const used=ctx.items.filter(x=>String(x.delivery_id)!==String(id)&&Number(x.source_order_line_no)===Number(line)&&ctx.docs.some(dd=>String(dd.id)===String(x.delivery_id)&&dd.status==='posted'&&String(dd.sale_order_id)===String(o.id))).reduce((s,x)=>s+num(x.qty),0);return {orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used)};};
-    ctx.draft={id:d.id,deliveryNo:d.delivery_no,date:d.delivery_date,saleOrderId:d.sale_order_id||'',saleOrderNo:o?o.orderNo:'',customer:d.customer,warehouseId:String(d.warehouse_id||''),warehouseCode:d.warehouse_code||'',warehouseName:d.warehouse_name||'',notes:d.notes||'',allowOver:o?o.allowOverDelivery!==false:true,items:its.map(x=>({factory:x.factory||'',diameter:x.diameter||'',itemType:x.item_type,qty:x.qty,orderLineNo:x.source_order_line_no,notes:x.notes||'',...info(x.source_order_line_no)}))};igSDForm();};
+    const info=line=>{const it=o&&(o.items||[])[Number(line)-1];if(!it)return {};const ordered=num(it.qty);const used=igSDFromBase(it.diameter,ctx.items.filter(x=>String(x.delivery_id)!==String(id)&&Number(x.source_order_line_no)===Number(line)&&ctx.docs.some(dd=>String(dd.id)===String(x.delivery_id)&&dd.status==='posted'&&String(dd.sale_order_id)===String(o.id))).reduce((s,x)=>s+num(x.qty),0));return {orderedQty:ordered,deliveredBefore:used,remaining:Math.max(0,ordered-used)};};
+    ctx.draft={id:d.id,deliveryNo:d.delivery_no,date:d.delivery_date,saleOrderId:d.sale_order_id||'',saleOrderNo:o?o.orderNo:'',customer:d.customer,warehouseId:String(d.warehouse_id||''),warehouseCode:d.warehouse_code||'',warehouseName:d.warehouse_name||'',notes:d.notes||'',allowOver:o?o.allowOverDelivery!==false:true,items:its.map(x=>({factory:x.factory||'',diameter:x.diameter||'',itemType:x.item_type,qty:igSDFromBase(x.diameter,x.qty),orderLineNo:x.source_order_line_no,notes:x.notes||'',...info(x.source_order_line_no)}))};igSDForm();};
   function igSDForm(){const d=ctx.draft,c=content();if(!d||!c)return;const whOpts=whs().map(w=>`<option value="${esc(w.id)}" ${String(w.id)===String(d.warehouseId)?'selected':''}>${esc(w.code||'')} — ${esc(w.name||'')}</option>`).join('');
-    const rows=d.items.map((x,i)=>`<tr><td>${i+1}</td><td><select class="inp" onchange="igSDSet(${i},'factory',this.value)">${factoryOpts(x.factory)}</select></td><td><select class="inp" onchange="igSDSet(${i},'diameter',this.value)">${diamOpts(x.diameter)}</select></td><td><select class="inp" onchange="igSDSet(${i},'itemType',this.value)">${typeOpts(x.itemType)}</select></td><td>${x.orderLineNo?`<b>${esc(d.saleOrderNo||'')} / ${x.orderLineNo}</b><small class="muted">مطلوب ${nfmt(x.orderedQty)} · سُلّم ${nfmt(x.deliveredBefore)} · متبقٍ ${nfmt(x.remaining)}</small>`:'—'}</td><td><input class="inp num" type="number" min="0" step="0.001" ${!d.allowOver&&x.orderLineNo?`max="${x.remaining}"`:''} value="${esc(x.qty)}" oninput="igSDSet(${i},'qty',this.value);igSDExcess(${i})"></td><td id="igSDEx${i}" class="num">${x.orderLineNo?nfmt(Math.max(0,num(x.qty)-num(x.remaining))):'—'}</td><td><button class="btn sm danger" onclick="igSDDelLine(${i})">حذف</button></td></tr>`).join('');
-    c.innerHTML=pageHead('إذن تسليم مبيعات',`<button class="btn ghost" onclick="igSalesDeliveryHome('deliveries')">إلغاء</button><button class="btn" onclick="igSDSave()">حفظ مسودة</button><button class="btn primary" onclick="igSDSave(true)">حفظ وترحيل وصرف</button>`)+`<div class="card"><div class="body"><div class="fgrid"><div class="fld"><label>رقم الإذن</label><input class="inp" id="igSDNo" value="${esc(d.deliveryNo)}"></div><div class="fld"><label>التاريخ</label><input class="inp" id="igSDDate" type="date" value="${esc(d.date)}"></div><div class="fld"><label>العميل</label><select class="inp" id="igSDCustomer"><option value="">اختر العميل</option>${partyNames(state.customers).map(v=>`<option value="${esc(v)}" ${v===d.customer?'selected':''}>${esc(v)}</option>`).join('')}</select></div><div class="fld"><label>المخزن الفعلي</label><select class="inp" id="igSDWarehouse"><option value="">اختر المخزن</option>${whOpts}</select></div></div><p class="muted">${d.saleOrderId?`مرتبط بأمر البيع رقم <b>${esc(d.saleOrderNo||'')}</b>${igRepLabel(d.saleOrderId)}`:'إذن مباشر بدون أمر بيع'}</p>${d.saleOrderId?`<label class="fld" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="igSDOver" ${d.allowOver?'checked':''} onchange="igSDSetOver(this.checked)"> السماح بتجاوز الكمية المتبقية حسب سياسة أمر البيع</label>`:''}<div class="fld"><label>ملاحظات</label><input class="inp" id="igSDNotes" value="${esc(d.notes)}"></div></div></div><div class="card"><div class="head"><h3>بنود التسليم</h3>${d.saleOrderId?'':'<button class="btn sm" onclick="igSDAddLine()">+ إضافة بند</button>'}</div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>المصنع</th><th>الصنف</th><th>النوع</th><th>بيانات أمر البيع</th><th>كمية التسليم الآن (طن)</th><th>زيادة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">يتم خصم المخزون عند ترحيل إذن التسليم فقط. حفظ المسودة لا يغيّر رصيد المخزون، ولا تخصم فاتورة المبيعات المخزون مرة أخرى.</p></div></div>`;
+    const rows=d.items.map((x,i)=>`<tr><td>${i+1}</td><td><select class="inp" onchange="igSDSet(${i},'factory',this.value)">${factoryOpts(x.factory)}</select></td><td><select class="inp" onchange="igSDSet(${i},'diameter',this.value)">${diamOpts(x.diameter)}</select></td><td><select class="inp" onchange="igSDSet(${i},'itemType',this.value)">${typeOpts(x.itemType)}</select></td><td>${x.orderLineNo?`<b>${esc(d.saleOrderNo||'')} / ${x.orderLineNo}</b><small class="muted">مطلوب ${nfmt(x.orderedQty)} · سُلّم ${nfmt(x.deliveredBefore)} · متبقٍ ${nfmt(x.remaining)}</small>`:'—'}</td><td><input class="inp num" type="number" min="0" step="0.001" ${!d.allowOver&&x.orderLineNo?`max="${x.remaining}"`:''} value="${esc(x.qty)}" oninput="igSDSet(${i},'qty',this.value);igSDExcess(${i})"><small class="muted" id="igSDU${i}">${esc(iuDefaultUnitName(x.diameter)||'')}</small></td><td id="igSDEx${i}" class="num">${x.orderLineNo?nfmt(Math.max(0,num(x.qty)-num(x.remaining))):'—'}</td><td><button class="btn sm danger" onclick="igSDDelLine(${i})">حذف</button></td></tr>`).join('');
+    c.innerHTML=pageHead('إذن تسليم مبيعات',`<button class="btn ghost" onclick="igSalesDeliveryHome('deliveries')">إلغاء</button><button class="btn" onclick="igSDSave()">حفظ مسودة</button><button class="btn primary" onclick="igSDSave(true)">حفظ وترحيل وصرف</button>`)+`<div class="card"><div class="body"><div class="fgrid"><div class="fld"><label>رقم الإذن</label><input class="inp" id="igSDNo" value="${esc(d.deliveryNo)}"></div><div class="fld"><label>التاريخ</label><input class="inp" id="igSDDate" type="date" value="${esc(d.date)}"></div><div class="fld"><label>العميل</label><select class="inp" id="igSDCustomer"><option value="">اختر العميل</option>${partyNames(state.customers).map(v=>`<option value="${esc(v)}" ${v===d.customer?'selected':''}>${esc(v)}</option>`).join('')}</select></div><div class="fld"><label>المخزن الفعلي</label><select class="inp" id="igSDWarehouse"><option value="">اختر المخزن</option>${whOpts}</select></div></div><p class="muted">${d.saleOrderId?`مرتبط بأمر البيع رقم <b>${esc(d.saleOrderNo||'')}</b>${igRepLabel(d.saleOrderId)}`:'إذن مباشر بدون أمر بيع'}</p>${d.saleOrderId?`<label class="fld" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="igSDOver" ${d.allowOver?'checked':''} onchange="igSDSetOver(this.checked)"> السماح بتجاوز الكمية المتبقية حسب سياسة أمر البيع</label>`:''}<div class="fld"><label>ملاحظات</label><input class="inp" id="igSDNotes" value="${esc(d.notes)}"></div></div></div><div class="card"><div class="head"><h3>بنود التسليم</h3>${d.saleOrderId?'':'<button class="btn sm" onclick="igSDAddLine()">+ إضافة بند</button>'}</div><div class="body"><div class="tbl-wrap"><table><thead><tr><th>#</th><th>المصنع</th><th>الصنف</th><th>النوع</th><th>بيانات أمر البيع</th><th>كمية التسليم الآن (بوحدة الصنف)</th><th>زيادة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted">يتم خصم المخزون عند ترحيل إذن التسليم فقط. حفظ المسودة لا يغيّر رصيد المخزون، ولا تخصم فاتورة المبيعات المخزون مرة أخرى.</p></div></div>`;
   }
-  window.igSDSet=(i,k,v)=>{if(ctx.draft?.items[i])ctx.draft.items[i][k]=v;};
+  window.igSDSet=(i,k,v)=>{if(ctx.draft?.items[i])ctx.draft.items[i][k]=v;if(k==='diameter'){const u=$('igSDU'+i);if(u)u.textContent=iuDefaultUnitName(v)||'';}};
   window.igSDSetOver=v=>{if(ctx.draft)ctx.draft.allowOver=!!v;};
   window.igSDAddLine=()=>{ctx.draft.items.push({factory:'',diameter:'',itemType:'',qty:'',orderLineNo:null,notes:''});igSDForm();};
   window.igSDDelLine=i=>{ctx.draft.items.splice(i,1);igSDForm();};
@@ -37559,10 +37653,10 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     if(!d.deliveryNo||!d.date||!d.customer||!d.warehouseId)return toast('أكمل رقم الإذن والتاريخ والعميل والمخزن','err');if(!d.items.length)return toast('أضف بندًا واحدًا على الأقل','err');if((ctx.docs||[]).some(x=>String(x.delivery_no||'').trim()===d.deliveryNo&&String(x.id)!==String(d.id)))return toast('رقم الإذن '+d.deliveryNo+' مستخدم من قبل','err');
     for(let i=0;i<d.items.length;i++){const x=d.items[i];if(!x.factory||!x.diameter||!x.itemType||!(num(x.qty)>0))return toast('راجع المصنع والصنف والنوع والكمية في السطر '+(i+1),'err');if(d.saleOrderId&&!d.allowOver&&x.orderLineNo&&num(x.qty)>num(x.remaining)+0.0001)return toast('كمية السطر '+(i+1)+' تتجاوز المتبقي المسموح به','err');}
     if(!(ctx.docs||[]).some(x=>String(x.id)===String(d.id))&&/^SD-\d+$/.test(d.deliveryNo)){try{const n=await sb.rpc('ig_sales_next_number',{p_kind:'delivery'});if(!n.error&&n.data)d.deliveryNo=String(n.data);}catch(e){console.warn('ig_sales_next_number غير متاحة، تم استخدام الترقيم المحلي',e);}}
-    try{const result=await window.igSalesSaveDelivery({id:d.id,deliveryNo:d.deliveryNo,date:d.date,saleOrderId:d.saleOrderId,customer:d.customer,warehouseId:d.warehouseId,warehouseCode:wh?.code||'',warehouseName:wh?.name||'',notes:d.notes,lines:d.items.map(x=>({factory:x.factory,diameter:x.diameter,itemType:x.itemType,qty:num(x.qty),orderLineNo:x.orderLineNo,notes:x.notes||''}))});d.id=result.delivery_id||d.id;d.saved=true;if(andPost){await window.igSalesPostDelivery(d.id);ctx.tab='deliveries';await igSDReload();return;}toast('تم حفظ إذن التسليم كمسودة','ok');ctx.tab='deliveries';await igSDReload();}catch(e){toast('تعذر حفظ/ترحيل الإذن: '+(e.message||e),'err');}
+    try{const result=await window.igSalesSaveDelivery({id:d.id,deliveryNo:d.deliveryNo,date:d.date,saleOrderId:d.saleOrderId,customer:d.customer,warehouseId:d.warehouseId,warehouseCode:wh?.code||'',warehouseName:wh?.name||'',notes:d.notes,lines:d.items.map(x=>({factory:x.factory,diameter:x.diameter,itemType:x.itemType,qty:igSDToBase(x.diameter,x.qty),orderLineNo:x.orderLineNo,notes:x.notes||''}))});d.id=result.delivery_id||d.id;d.saved=true;if(andPost){await window.igSalesPostDelivery(d.id);ctx.tab='deliveries';await igSDReload();return;}toast('تم حفظ إذن التسليم كمسودة','ok');ctx.tab='deliveries';await igSDReload();}catch(e){toast('تعذر حفظ/ترحيل الإذن: '+(e.message||e),'err');}
   };
   window.igSDPost=async function(id){if(!await askConfirm('سيتم صرف الكميات من المخزون وترحيل تكلفة البضاعة المباعة. هل تريد المتابعة؟'))return;try{await window.igSalesPostDelivery(id);await igSDReload();}catch(e){toast('تعذر ترحيل الإذن: '+(e.message||e),'err');}};
-  window.igSDShow=id=>{const d=ctx.docs.find(x=>String(x.id)===String(id)),its=ctx.items.filter(x=>String(x.delivery_id)===String(id));if(!d)return;const body=`<div class="tbl-wrap"><table><thead><tr><th>المصنع</th><th>الصنف</th><th>النوع</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th></tr></thead><tbody>${its.map(x=>`<tr><td>${esc(x.factory)}</td><td>${esc(x.diameter)}</td><td>${esc(x.item_type)}</td><td>${nfmt(x.qty)}</td><td>${money(x.unit_cost)}</td><td>${money(x.total_cost)}</td></tr>`).join('')}</tbody></table></div>`;openModal('تفاصيل إذن '+esc(d.delivery_no),body,()=>true);};
+  window.igSDShow=id=>{const d=ctx.docs.find(x=>String(x.id)===String(id)),its=ctx.items.filter(x=>String(x.delivery_id)===String(id));if(!d)return;const body=`<div class="tbl-wrap"><table><thead><tr><th>المصنع</th><th>الصنف</th><th>النوع</th><th>الكمية</th><th>تكلفة الوحدة</th><th>إجمالي التكلفة</th></tr></thead><tbody>${its.map(x=>`<tr><td>${esc(x.factory)}</td><td>${esc(x.diameter)}</td><td>${esc(x.item_type)}</td><td>${nfmt(igSDFromBase(x.diameter,x.qty))} ${esc(iuDefaultUnitName(x.diameter)||'')}</td><td>${money(iuFromBaseCost(x.diameter,num(x.unit_cost)))}</td><td>${money(x.total_cost)}</td></tr>`).join('')}</tbody></table></div>`;openModal('تفاصيل إذن '+esc(d.delivery_no),body,()=>true);};
   function igSDInvoiceOptions(receiptId){const receipt=ctx.receipts.find(r=>String(r.id)===String(receiptId));return ctx.invoices.filter(i=>!receipt||String(i.customer)===String(receipt.customer)).map(i=>{const used=ctx.allocs.filter(a=>String(a.invoice_id)===String(i.id)).reduce((s,a)=>s+num(a.amount),0),total=num(i.totals?.grandTotal??i.grandTotal);return total-used>0.009?`<option value="${esc(i.id)}">${esc(i.policyNo)} — ${esc(i.customer)} — متبقي ${money(total-used)}</option>`:'';}).join('');}
   window.igSDReceiptChanged=()=>{const el=$('igSDInvoice');if(el)el.innerHTML='<option value="">اختر فاتورة</option>'+igSDInvoiceOptions($('igSDReceipt')?.value);};
   function igSDAllocHtml(){const recOpts=ctx.receipts.map(r=>{const used=ctx.allocs.filter(a=>String(a.receipt_id)===String(r.id)).reduce((s,a)=>s+num(a.amount),0),left=Math.max(0,num(r.amount)-used);return left>0?`<option value="${esc(r.id)}">${esc(r.no||r.refNo||r.id)} — ${esc(r.customer)} — متاح ${money(left)}</option>`:'';}).join('');const invOpts=igSDInvoiceOptions('');const rows=ctx.allocs.map(a=>{const r=ctx.receipts.find(x=>String(x.id)===String(a.receipt_id)),i=ctx.invoices.find(x=>String(x.id)===String(a.invoice_id));return `<tr><td>${esc(r?.no||a.receipt_id)}</td><td>${esc(i?.policyNo||a.invoice_id)}</td><td>${esc(a.customer)}</td><td class="num">${money(a.amount)}</td><td>${esc(a.allocated_at||'')}</td></tr>`;}).join('')||'<tr><td colspan="5">لا توجد تخصيصات حتى الآن</td></tr>';
@@ -43233,7 +43327,7 @@ body.page-shipments #content:has(#paySchedBox) .ig-ro-fld{display:flex;align-ite
 body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-ro-fld{background:#101a2d!important;color:#74829e!important;border:1px dashed #2f405f!important;opacity:.85}
 /* وضوح خط عناوين الأعمدة المحسوبة */
 body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th{color:#fff!important;font-weight:800!important;text-shadow:none!important}
-body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#1d4e89!important;color:#fff!important}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#13294b!important;color:#fff!important}
 body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-total{background:#7a5200!important;color:#fff!important}
 body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#244a7c!important;color:#fff!important}
 /* الوضع الليلي لباقي شاشة البوليصة */
@@ -43404,6 +43498,62 @@ body.page-shipments #content:has(#paySchedBox) .ig-policy-disc-row .fld{min-widt
 /* تثبيت عرض الحقول (تجاهل قواعد الـ span الخاصة بالبوليصة) */
 body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid.ig-si-fgrid>.fld:nth-child(n){grid-column:auto!important}
 </style>
+<style id="ig-si-v20">
+/* ============================================================
+   v20 — فواتير المبيعات: وضوح الخط + تقسيم الأقسام
+   السبب: قاعدة عامة في ig-branding-style (thead th{background:var(--bg-3)!important})
+   كانت بتخلّي خلفية عناوين الأعمدة فاتحة بينما الخط أبيض فيبان باهت.
+   كل القواعد هنا مقيّدة بصفحة فواتير المبيعات فقط.
+   ============================================================ */
+
+/* 1) عناوين أعمدة جدول الأصناف: كحلي + خط أبيض بولد */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th:not(.c-calc):not(.c-total){
+  background:#13294b!important;color:#fff!important;opacity:1!important;
+  font-size:12.5px!important;font-weight:800!important;text-shadow:none!important;
+  padding:12px 6px!important;border-bottom:3px solid #c99a1c!important;
+  border-left:1px solid rgba(255,255,255,.2)!important;
+}
+/* أعمدة التسعير (سعر البيع / خصم الصنف / نوع الخصم) بلون مختلف عشان الجزء ده يتميّز */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-price:not(.c-calc):not(.c-total){
+  background:#13294b!important;
+}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#13294b!important;color:#fff!important;font-weight:800!important;font-size:12.5px!important}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-total{background:#7a5200!important;color:#fff!important;font-weight:800!important;font-size:12.5px!important}
+
+/* 2) فاصل واضح بين جزء "التوريد" وجزء "التسعير" وجزء "الحسابات" */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-sep,
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items tbody td.c-sep{border-inline-start:3px solid #c99a1c!important}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items tbody td.c-price{background:#fffaf0}
+
+/* 3) صف السعر الجماعي: واضح ومش باهت */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items .ig-bulk-price-row th{background:#fff6dc!important;border-bottom:1px solid #e5c76b!important;color:#13294b!important}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card .ig-bulk-price .inp{background:#fff!important;color:#0f172a!important;font-weight:800!important;border:1px solid #c99a1c!important}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card .ig-bulk-price .inp::placeholder{color:#475569!important;font-weight:700;opacity:1}
+
+/* 4) كل قسم في كارت منفصل بعناوين كحلي وخط ظاهر */
+body.page-salesInvoices #content:has(#paySchedBox)>.card{margin-bottom:18px!important;border:1px solid #b9c4d6!important;border-radius:12px!important;
+  box-shadow:0 2px 10px rgba(19,41,75,.08)!important;overflow:hidden}
+body.page-salesInvoices #content:has(#paySchedBox)>.card>.head,body.page-salesInvoices #content:has(#paySchedBox)>.card>summary.head{
+  background:#13294b!important;border-bottom:3px solid #c99a1c!important;border-inline-start:6px solid #c99a1c!important}
+body.page-salesInvoices #content:has(#paySchedBox)>.card>.head h3,body.page-salesInvoices #content:has(#paySchedBox)>.card>summary.head h3{color:#fff!important;font-size:15px!important;font-weight:800!important}
+body.page-salesInvoices #content:has(#paySchedBox)>.card>.head small,body.page-salesInvoices #content:has(#paySchedBox)>.card>summary.head small{color:#f6d26b!important;font-weight:700}
+body.page-salesInvoices #content:has(#paySchedBox)>.card .count{background:#f6d26b!important;color:#13294b!important;font-weight:900!important}
+body.page-salesInvoices #content:has(#paySchedBox)>.card>.head .btn.sm{color:#13294b!important}
+
+/* 5) النصوص الصغيرة والتلميحات */
+body:not([data-theme="dark"]) body.page-salesInvoices #content:has(#paySchedBox) .ig-section-hint,
+body:not([data-theme="dark"]) body.page-salesInvoices #content:has(#paySchedBox) .ig-items-hint,
+body:not([data-theme="dark"]) body.page-salesInvoices #content:has(#paySchedBox) .fld>small,
+body:not([data-theme="dark"]) body.page-salesInvoices #content:has(#paySchedBox) .ig-policy-disc-row~p{color:#334155!important;font-weight:600}
+body:not([data-theme="dark"]) body.page-salesInvoices #content:has(#paySchedBox) .ig-ro-fld{background:#e8edf5!important;color:#334155!important;border:1px dashed #94a3b8!important;opacity:1!important;font-weight:700}
+body.page-salesInvoices #content:has(#paySchedBox) .inp::placeholder{color:#64748b!important;opacity:1}
+
+/* 6) شارة "لم تُفوتر" ونتايج البحث */
+#modalBackdrop .so-search-modal .chip.warn{background:#fde8e8!important;color:#9b1c1c!important;border:1px solid #f5c2c2!important;font-weight:800}
+#modalBackdrop .so-search-modal .chip.gold{background:#fff2cc!important;color:#7a5200!important;border:1px solid #e5c76b!important;font-weight:800}
+#modalBackdrop .so-search-modal .chip.ok{background:#e8f6ee!important;color:#15803d!important;border:1px solid #86cfa4!important;font-weight:800}
+#modalBackdrop .so-search-modal table.tbl thead th{background:#13294b!important;color:#fff!important;font-weight:800}
+</style>
 
 <script id="ig-sup-inv-unified">
 /* IRON GATE — توحيد ترحيل بيانات التوريد وفاتورة المبيعات (إضافة فقط).
@@ -43566,15 +43716,17 @@ body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid.ig-si-fgrid>.
   window.igSiPrint=async function(){
     const id=(typeof editingId!=="undefined")?editingId:null;
     const inShip=(state.shipments||[]).find(x=>String(x.id)===String(id));
-    const rec=inShip||(state.policies||[]).find(x=>String(x.id)===String(id));
-    if(!rec) return toast("احفظ الفاتورة الأول عشان تتطبع","warn");
+    let rec=inShip||(state.policies||[]).find(x=>String(x.id)===String(id));
+    // فاتورة جديدة لسه ما اتحفظتش: نطبع من البيانات الحالية على الشاشة (لو ناقص بيان مطلوب بتظهر رسالة بالناقص)
+    if(!rec){ try{ rec=buildRecord(false); }catch(e){ rec=null; } if(!rec) return; }
     const saved=supFilter;
     supFilter={...saved,q:"",supplier:[],customer:[],factory:[],status:[],diameter:[],type:[],company:[],site:[],saleOrder:[],policy:[],from:"",to:"",order:""};
     // الفاتورة غير المرحّلة: نضيفها مؤقتاً لبيانات التوريد أثناء بناء الورقة بس (البيانات بتتقرا في أول الدالة قبل أي await)
     const temp=!inShip; if(temp) state.shipments.push(rec);
     let p;
+    window.__igSiPrintNo=String(rec.policyNo||"").trim(); window.__igSiPrintDocId=rec.id;
     try{ p=supPrintInvoiceForKey(keyOf(rec)); }
-    finally{ supFilter=saved; if(temp){ const i=state.shipments.indexOf(rec); if(i>=0) state.shipments.splice(i,1); } }
+    finally{ window.__igSiPrintNo=""; window.__igSiPrintDocId=""; supFilter=saved; if(temp){ const i=state.shipments.indexOf(rec); if(i>=0) state.shipments.splice(i,1); } }
     try{ await p; }catch(e){ console.error("print invoice",e); toast("تعذرت الطباعة: "+(e.message||e),"err"); }
   };
 
@@ -43585,3 +43737,159 @@ body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid.ig-si-fgrid>.
   }
 })();
 </script>
+
+<script id="ig-policy-delivery-print-v1">
+/* إذن تسليم مطبوع من نفس البوليصة — بيانات البيع فقط (بدون المورد / المصنع / سعر الشراء / التكلفة) */
+(function(){
+  if(window.__igPolicyDeliveryPrint) return; window.__igPolicyDeliveryPrint=true;
+  window.igPolicyDeliveryPrint=function(){
+    const id=(typeof editingId!=="undefined")?editingId:null;
+    let rec=(state.shipments||[]).find(x=>String(x.id)===String(id))||(state.policies||[]).find(x=>String(x.id)===String(id));
+    if(!rec){ try{ rec=buildRecord(false); }catch(e){ rec=null; } if(!rec) return; }
+    const items=(rec.items||[]).filter(it=>it&&(it.diameter||it.type||it.factory));
+    if(!items.length) return toast("لا توجد أصناف في البوليصة","err");
+    const e=v=>escapeHtml(String(v==null?"":v));
+    const n3=v=>{const x=Number(v);return Number.isFinite(x)?x.toLocaleString("en-US",{minimumFractionDigits:3,maximumFractionDigits:3}):"";};
+    const n2=v=>{const x=Number(v);return Number.isFinite(x)?x.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"";};
+    let tq=0,tw=0,tt=0;
+    const rows=items.map((it,i)=>{
+      const u=it.unitName||(typeof iuDefaultUnitName==="function"?iuDefaultUnitName(it.diameter):"")||"";
+      const q=Number(it.supplyQty)||0,w=Number(it.actualWeight??it.weightTon)||0; tq+=q; tw+=w;
+      const tot=Number(it.total)||0; tt+=tot;
+      let grp=""; try{ const g=typeof siRowGroup==="function"?siRowGroup(it):""; const o=g&&typeof igById==="function"?igById(g):null; grp=o&&o.name?o.name:""; }catch(_){}
+      return `<tr><td>${i+1}</td><td>${e(grp)}</td><td>${e(it.diameter)}</td><td>${e(it.type)}</td><td>${n3(q)}</td><td>${n3(w)}</td><td>${e(u)}</td><td>${n2(it.sellPrice)}</td><td>${n2(it.discount)}</td><td>${n2(it.tax)}</td><td>${n2(tot)}</td></tr>`;
+    }).join("");
+    const meta=[["رقم الإذن / البوليصة",rec.policyNo||"مسودة"],["التاريخ",rec.date||""],["العميل",rec.customer||""],["الشركة",rec.company||""],["الموقع / جهة التسليم",rec.site||""],["أمر البيع",rec.saleOrderNo||""]].filter(x=>String(x[1]).trim()!=="");
+    const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إذن تسليم ${e(rec.policyNo||"")}</title><style>@page{size:A4;margin:12mm}body{font-family:Tahoma,Arial,sans-serif;color:#18263b;padding:18px}h1{text-align:center;margin:0 0 4px;color:#17345b}.co{text-align:center;color:#64748b;margin-bottom:14px;font-weight:700}.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;border:1px solid #ccd5df;padding:12px;border-radius:6px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #b8c4d2;padding:8px;text-align:center;font-size:13px}th{background:#edf2f8}tfoot td{font-weight:900;background:#f6f8fb}.notes{margin-top:14px;border:1px solid #ccd5df;border-radius:6px;min-height:60px;padding:8px;font-size:12px;color:#64748b}.foot{margin-top:46px;display:flex;justify-content:space-around;text-align:center;font-weight:700}.foot span{min-width:150px;border-top:1px solid #444;padding-top:6px}button{margin-top:16px}@media print{button{display:none}}</style><h1>إذن تسليم</h1><div class="co">IRON GATE SUPPLIES</div><div class="meta">${meta.map(([k,v])=>`<div><b>${e(k)}:</b> ${e(v)}</div>`).join("")}</div><table><thead><tr><th>م</th><th>التصنيف</th><th>الصنف</th><th>النوع</th><th>الكمية</th><th>الوزن الفعلي</th><th>الوحدة</th><th>سعر البيع</th><th>الخصم</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="4">الإجمالي</td><td>${n3(tq)}</td><td>${n3(tw)}</td><td></td><td></td><td></td><td></td><td>${n2((rec.totals&&Number(rec.totals.grandTotal))||tt)}</td></tr></tfoot></table><div class="notes">ملاحظات:</div><div class="foot"><span>أمين المخزن</span><span>السائق / رقم السيارة</span><span>المستلم</span></div><button onclick="print()">طباعة</button><script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></html>`;
+    const w=window.open("","_blank");
+    if(!w) return toast("اسمح بفتح النوافذ المنبثقة للطباعة","err");
+    w.document.write(html); w.document.close();
+  };
+})();
+</script>
+
+<script id="ig-si-lock-v1">
+/* فواتير المبيعات: قفل التعديل لما الفاتورة تترحّل محاسبيًا (للعرض فقط — لازم «فك الترحيل المحاسبي» الأول) */
+(function(){
+  if(window.__igSiLock) return; window.__igSiLock=true;
+  const MSG="الفاتورة مرحّلة محاسبيًا — التعديل مقفول. استخدم «فك الترحيل المحاسبي» الأول لو محتاج تعدّل.";
+  window.igSiLocked=function(){
+    try{
+      if(!SI_MODE||editingSrc==="new"||!editingId) return false;
+      const r=[...(state.shipments||[]),...(state.policies||[])].find(x=>String(x.id)===String(editingId));
+      if(!r) return false;
+      return !!r.glEntryId||(typeof supOrderLocked==="function"&&supOrderLocked(r.saleOrderNo));
+    }catch(e){ return false; }
+  };
+  const oSE=window.startEdit;
+  if(typeof oSE==="function") window.startEdit=function(){ if(igSiLocked()){ toast(MSG,"warn"); return; } return oSE.apply(this,arguments); };
+  const oSave=window.saveShipment;
+  if(typeof oSave==="function") window.saveShipment=function(){ if(!viewOnly&&igSiLocked()){ toast(MSG,"err"); return; } return oSave.apply(this,arguments); };
+  const oVS=window.viewShipments;
+  if(typeof oVS==="function") window.viewShipments=function(){
+    let lk=false;
+    try{ lk=igSiLocked(); if(lk&&!viewOnly){ viewOnly=true; dirty=false; toast(MSG,"warn"); } }catch(e){}
+    let h=oVS.apply(this,arguments);
+    if(lk&&typeof h==="string"){
+      h=h.replace(/<button([^>]*onclick="startEdit\(\)"[^>]*)>/,(m,a)=>/\bdisabled\b/.test(a)?m:`<button${a} disabled title="${MSG}">`);
+      h=h.replace('<div class="spacer"></div>','<span class="chip warn" title="'+MSG+'">🔒 مقفولة — مرحّلة محاسبيًا</span><div class="spacer"></div>');
+    }
+    return h;
+  };
+})();
+</script>
+
+<style id="ig-si-v21">
+/* v21 — شاشة فاتورة المبيعات: أزرار رئيسية/ثانوية + كارت إجماليات واحد + بيانات الفاتورة في صفين */
+@media(min-width:901px){
+  body.page-salesInvoices #content>.page-head{flex-wrap:wrap!important}
+  body.page-salesInvoices #content>.page-head .ig-actions{display:contents!important}
+  body.page-salesInvoices #content>.page-head .ig-act-main{display:flex!important;align-items:center;gap:10px;order:1}
+  body.page-salesInvoices #content>.page-head .ig-act-main .btn{min-height:44px!important;padding:0 28px!important;font-size:15px!important;font-weight:900!important;min-width:110px}
+  body.page-salesInvoices #content>.page-head .ig-act-group{display:flex!important;flex-wrap:wrap;align-items:center;gap:2px 4px;order:2;flex:1 1 100%;margin:0!important;padding:6px 0 0!important;border:0!important;border-top:1px dashed #d8dee8!important}
+  body.page-salesInvoices #content>.page-head .pend{order:3}
+  body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.ghost{
+    background:transparent!important;border:1px solid transparent!important;box-shadow:none!important;
+    color:#475569!important;font-size:12.5px!important;font-weight:700!important;
+    min-height:30px!important;padding:3px 11px!important;transform:none!important}
+  body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.ghost:hover:not(:disabled){
+    background:#eef2f7!important;border-color:#cbd5e1!important;color:#13294b!important;box-shadow:none!important;transform:none!important}
+  body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.danger{
+    background:transparent!important;border:1px solid transparent!important;box-shadow:none!important;color:#b42318!important;
+    font-size:12.5px!important;min-height:30px!important;padding:3px 11px!important}
+  body[data-theme="dark"].page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.ghost{background:transparent!important;color:#c7d2e6!important}
+  body[data-theme="dark"].page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.ghost:hover:not(:disabled){background:#1d2a45!important;color:#fff!important}
+
+  /* كارت إجماليات واحد ظاهر وأنت بتسكرول */
+  body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items tfoot{display:none}
+  body.page-salesInvoices #content:has(#paySchedBox) .ig-totbar{justify-content:space-between;border-radius:12px;margin-top:12px}
+  body.page-salesInvoices #content:has(#paySchedBox) .ig-totbar .tb-i{flex:1 1 0;min-width:110px;align-items:center;text-align:center}
+  body.page-salesInvoices #content:has(#paySchedBox) .ig-totbar .tb-grand{flex:1.4 1 0}
+}
+/* بيانات الفاتورة: صف ثاني */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-pol-head .fgrid.ig-si-row2{margin-top:10px}
+</style>
+
+<style id="ig-si-v22">
+/* v22 — فاتورة المبيعات: شريط أمر بيع واحد + ملخصات الأقسام المطوية */
+body.page-salesInvoices .ig-top-row{display:none}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-strip{margin:0 0 12px;border-inline-start:5px solid #4f7fd6;overflow:hidden}
+.ig-so-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 16px!important}
+.ig-so-lbl{font-size:14px;font-weight:800;color:var(--gold-text,#7a5200)}
+.ig-so-lbl.ig-so-none{color:var(--text-dim);font-weight:700}
+.ig-so-note{flex:1 1 200px;min-width:0;font-size:12.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-so-toggle{margin-inline-start:auto;font-weight:800}
+.ig-so-rem{font-weight:900}
+.ig-so-strip:not(.open) .ig-so-detail{display:none}
+.ig-so-strip.open .ig-so-toggle{background:#fff6dc;border-color:#c99a1c}
+.ig-sec-sum{margin-inline-start:6px;font-size:12.5px;font-weight:700;color:#64748b}
+.ig-sec-sum.warn{color:#b42318}
+.ig-sec-sum:empty{display:none}
+</style>
+
+<style id="ig-si-v23">
+/* v23 — فاتورة المبيعات: لوحة ألوان مقيّدة
+   كحلي = العناوين · ذهبي = التمييز · أخضر = المرحّل فقط · أحمر = التحذير */
+body.page-salesInvoices{--warn:#b42318}
+/* حالات (غير المرحّل = ذهبي، المرحّل فقط أخضر) */
+body.page-salesInvoices #content .chip.warn,body.page-salesInvoices #content .chip.gold{background:#fdf6e3!important;color:#7a5200!important;border:1px solid #e6c36b!important}
+body.page-salesInvoices #content .chip.ok{background:#e8f6ee!important;color:#15803d!important;border:1px solid #86cfa4!important}
+body[data-theme="dark"].page-salesInvoices #content .chip.warn,body[data-theme="dark"].page-salesInvoices #content .chip.gold{background:rgba(201,154,28,.16)!important;color:#f6d26b!important;border-color:rgba(201,154,28,.5)!important}
+/* أي أخضر "عادي" (مش ترحيل) يبقى كحلي */
+body.page-salesInvoices #content [style*="color:var(--ok)"]{color:#13294b!important}
+body[data-theme="dark"].page-salesInvoices #content [style*="color:var(--ok)"]{color:#c7d2e6!important}
+/* مفتاح صرف المخزون: ذهبي بدل الأخضر */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-si-switch input:checked{background:#c99a1c}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-si-switch:has(input:checked){background:#fdf6e3;border-color:#e6c36b;color:#7a5200}
+/* شريط أمر البيع وعناوين الأعمدة المحسوبة: كحلي */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-strip{border-inline-start-color:#13294b}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead th.c-calc{background:#13294b!important;border-bottom:3px solid #c99a1c!important}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-lbl{color:#13294b}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-lbl b{color:#7a5200}
+body[data-theme="dark"].page-salesInvoices #content:has(#paySchedBox) .ig-so-lbl{color:#c7d2e6}
+/* عدّاد الأقسام: كحلي/ذهبي */
+body.page-salesInvoices #content:has(#paySchedBox)>.card .count{background:#13294b!important;color:#f6d26b!important}
+</style>
+<style id="ig-si-v24">
+/* مقبض تكبير/تصغير الأعمدة: ظاهر دايمًا في جدول أصناف الفاتورة */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card thead .col-rs::after{opacity:.55}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card thead th:hover>.col-rs::after{opacity:1}
+</style>
+
+<style id="ig-si-v25">
+/* v25 — أزرار أمر البيع داخل الهيدر + لون الهيدر كحلي فاتح */
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-strip:not(.open){display:none}
+body.page-salesInvoices #content:has(#paySchedBox) .ig-so-strip{margin:0 0 12px}
+.ig-so-sep{align-self:stretch;width:1px;background:#b7c5dd;margin:2px 8px}
+body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-so-lbl{color:#13294b;font-size:13px;font-weight:800}
+body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-so-lbl b{color:#7a5200}
+body.page-salesInvoices #content:has(#paySchedBox) .page-head{background:#dfe7f4!important}
+body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-act-group{border-top-color:#b7c5dd!important}
+body.page-salesInvoices #content:has(#paySchedBox) .page-head .ig-actions .ig-act-group .btn.ghost:hover:not(:disabled){background:#fff!important}
+body[data-theme="dark"].page-salesInvoices #content:has(#paySchedBox) .page-head{background:#1b2a4a!important}
+body[data-theme="dark"].page-salesInvoices #content:has(#paySchedBox) .page-head .ig-so-lbl{color:#c7d2e6}
+</style>
+<style id="ig-si-v26">
+body.page-salesInvoices #itemsBody .del.ig-row-trash{display:inline-flex!important;align-items:center;justify-content:center;width:32px;height:32px;min-width:32px;padding:0!important;font-size:0!important;border-radius:8px}
+body.page-salesInvoices #itemsBody .del.ig-row-trash svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+</style>
