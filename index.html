@@ -663,10 +663,11 @@ aside{transition:opacity .2s ease}
 #soPaper .order-greet .og-line3{line-height:1.75;text-align:justify}
 #soPaper table.dtable{width:100%;border-collapse:collapse;margin-bottom:16px;table-layout:fixed;border:1.4px solid #26231d}
 #soPaper table.dtable col.c-onum{width:6%}
-#soPaper table.dtable col.c-odia{width:16%}
+#soPaper table.dtable col.c-odia{width:15%}
+#soPaper table.dtable col.c-ounit{width:11%}
 #soPaper table.dtable col.c-oqty{width:16%}
-#soPaper table.dtable col.c-ospec{width:30%}
-#soPaper table.dtable col.c-otype{width:32%}
+#soPaper table.dtable col.c-ospec{width:24%}
+#soPaper table.dtable col.c-otype{width:28%}
 #soPaper table.dtable th,#soPaper table.dtable td{
   border:1px solid #bfae78;padding:5px 6px;text-align:center;font-size:.78em;line-height:1.2;
 }
@@ -3091,7 +3092,7 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
 
       <div class="order-info-grid">
         <div><b>🏭 اسم المورد:</b> <span id="pvSoSupplier">—</span></div>
-        <div class="full"><b>📍 عنوان التوصيل:</b> <span id="pvSoAddress">—</span></div>
+        <div><b>📍 عنوان التوصيل:</b> <span id="pvSoAddress">—</span></div>
         <div><b>👤 مسؤول التواصل:</b> <span id="pvSoContactName">—</span></div>
         <div><b>📞 رقم التواصل:</b> <span id="pvSoContactPhone">—</span></div>
       </div>
@@ -3105,23 +3106,24 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
 
       <table class="dtable">
         <colgroup>
-          <col class="c-onum"><col class="c-odia"><col class="c-oqty"><col class="c-ospec"><col class="c-otype">
+          <col class="c-onum"><col class="c-odia"><col class="c-ounit"><col class="c-oqty"><col class="c-ospec"><col class="c-otype">
         </colgroup>
         <thead>
           <tr>
             <th>م</th>
             <th>الصنف</th>
+            <th>الوحدة</th>
             <th>الكمية بالوحدة الأساسية</th>
             <th>المواصفة</th>
             <th>النوع</th>
           </tr>
         </thead>
         <tbody id="pvSoTableBody">
-          <tr><td colspan="5" style="color:#999">أضف صنفًا واحدًا على الأقل</td></tr>
+          <tr><td colspan="6" style="color:#999">أضف صنفًا واحدًا على الأقل</td></tr>
         </tbody>
         <tfoot>
           <tr>
-            <td colspan="2" style="text-align:center;">الإجمالي</td>
+            <td colspan="3" style="text-align:center;">الإجمالي</td>
             <td id="pvSoTotalQty">0</td>
             <td colspan="2"></td>
           </tr>
@@ -20698,16 +20700,17 @@ function soRenderPreview(){
   if(tbody){
     const valid = d.items.filter(it=>it.diameter||it.qty||it.spec||it.type);
     if(valid.length===0){
-      tbody.innerHTML = `<tr><td colspan="5" style="color:#999">أضف صنفًا واحدًا على الأقل</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="color:#999">أضف صنفًا واحدًا على الأقل</td></tr>`;
     } else {
       tbody.innerHTML = valid.map((it,i)=>{
         const noteRow = (it.notes||"").trim()
-          ? `<tr class="so-item-note-row"><td colspan="5" style="text-align:center;font-size:.88em;color:#111;background:#fff8e5;padding:6px 8px"><b style="color:var(--gold-text)">📝 ملاحظة ${i+1}:</b> ${escapeHtml(it.notes)}</td></tr>`
+          ? `<tr class="so-item-note-row"><td colspan="6" style="text-align:center;font-size:.88em;color:#111;background:#fff8e5;padding:6px 8px"><b style="color:var(--gold-text)">📝 ملاحظة ${i+1}:</b> ${escapeHtml(it.notes)}</td></tr>`
           : "";
         return `
         <tr>
           <td>${i+1}</td>
           <td>${escapeHtml(it.diameter)||"—"}${it.group?`<small style="display:block;color:#777">${escapeHtml(qtGroupName(it.group))}</small>`:""}</td>
+          <td>${escapeHtml((()=>{try{return uomLineName(it.diameter,it)||"";}catch(e){return "";}})())||"—"}</td>
           <td>${escapeHtml(it.qty)||"—"}${uomPrintSub(it.diameter,it)}</td>
           <td>${escapeHtml(it.spec)||"—"}</td>
           <td>${escapeHtml(it.type)||"—"}</td>
@@ -20718,7 +20721,10 @@ function soRenderPreview(){
   let total = 0;
   d.items.forEach(it=>{ const n=parseFloat(String(it.qty).replace(',','.')); if(!isNaN(n)) total+=n; });
   const tfoot = document.getElementById("pvSoTotalQty");
-  if(tfoot) tfoot.textContent = Math.round(total*1000)/1000;
+  if(tfoot){
+    let uTxt=""; try{ const us=[...new Set(d.items.filter(it=>it.diameter||it.qty).map(it=>iuDefaultUnitName(it.diameter)||"طن"))]; uTxt=us.length===1?us[0]:(us.length>1?"حسب الوحدة":""); }catch(e){ uTxt="طن"; }
+    tfoot.textContent = (Math.round(total*1000)/1000)+(uTxt?" "+uTxt:"");
+  }
   const brandLogo = document.querySelector(".brand img");
   const paperLogo = document.getElementById("pvSoLogo");
   if(brandLogo && paperLogo && !paperLogo.src){ paperLogo.src = brandLogo.src; }
@@ -42279,6 +42285,37 @@ body.page-saleOrder #content .so-item-row:hover,body.page-saleOrder #content .so
 body.page-saleOrder #content .so-item-row .inp.num,body.page-saleOrder #content .so-item-row .so-pr-calc,body.page-saleOrder #content .so-item-row .so-dinp .inp{font-weight:800!important}
 body.page-saleOrder #content table.so-sum td,body.page-saleOrder #content table.so-sum td b,body.page-saleOrder #content table.so-sum .inp,body.page-saleOrder #content table.so-sum-stk td b{font-weight:800!important}
 body.page-saleOrder #content #soChargesBox .inp.num,body.page-saleOrder #content #soChargesBox b{font-weight:800!important}
+/* ===== تحسين تنسيق طباعة أمر الشراء ===== */
+#soPaper, #soPaper *{font-weight:700 !important}
+#soPaper .company-name-lg,#soPaper .tf-line-title,#soPaper .tf-line-title b,#soPaper .order-greet .og-line1,#soPaper .sign-block .lbl,#soPaper table.dtable thead th,#soPaper table.dtable tfoot td,#soPaper .order-info-grid b{font-weight:800 !important}
+#soPaper .tf-line-title{margin-bottom:16px}
+#soPaper .order-info-grid{background:#fdf6e3;border:1px solid #e3d3a0;border-right:6px solid #D4A017;border-radius:10px;font-size:.95em;line-height:1.6}
+#soPaper .order-greet{margin:6px 0 16px}
+#soPaper .order-greet .og-line3{line-height:1.9;font-size:.96em;color:#26231d}
+#soPaper table.dtable{border:1.5px solid #26231d;border-radius:6px;margin-bottom:18px}
+#soPaper table.dtable th,#soPaper table.dtable td{padding:10px 8px;border:1px solid #e3d3a0;font-size:.95em;color:#1a1a1a}
+#soPaper table.dtable thead th{padding:11px 8px;font-size:.9em;border:1px solid #e3d3a0;border-bottom:3px solid #D4A017}
+#soPaper table.dtable tbody tr:nth-child(even){background:#fdf6e3}
+#soPaper table.dtable tbody td:first-child{color:#8a6400}
+#soPaper table.dtable tfoot td{background:#fdeeb8 !important;color:#1a1a1a !important;border-top:3px solid #26231d;border-color:#e3d3a0;font-size:1.08em;padding:12px 8px}
+#soPaper table.dtable tfoot td#pvSoTotalQty{font-size:1.2em;color:#8a6400 !important}
+#soPaper .closing{margin:14px 0 10px;font-size:1.05em}
+#soPaper .sign-row{height:170px;margin-bottom:16px}
+#soPaper .sign-block{width:44%}
+#soPaper .sign-block .lbl{font-size:.88em;padding:3px 22px;margin-bottom:10px;border-bottom:2px solid #D4A017}
+#soPaper .sign-block img.stamp{width:128px;margin:6px auto 0}
+#soPaper .sign-block .val{font-family:'Cairo','Segoe UI',Tahoma,sans-serif !important;font-size:1.25em;color:#26231d;transform:none;border-top:0;margin-top:14px;padding:0 20px 8px;min-width:70%;border-bottom:1.5px solid #bfae78}
+#soPaper .order-phone-line{margin-top:10px;font-size:.95em;color:#8a6400}
+#soPaper .ord-footer{border-top:3px solid #D4A017;padding-top:10px}
+/* صف بيانات المورد: خلايا منظمة (التسمية فوق والقيمة تحتها) */
+#soPaper .order-info-grid{display:grid;grid-template-columns:1fr 1fr;justify-items:stretch;gap:10px;padding:12px;background:#fdf6e3;border:1px solid #e3d3a0;border-right:6px solid #D4A017;border-radius:10px}
+#soPaper .order-info-grid>div{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:8px 10px;background:#fff;border:1px solid #ecdfb4;border-radius:8px;min-height:52px;width:auto;justify-self:stretch;text-align:center}
+#soPaper .order-info-grid>div.full{grid-column:1 / -1}
+#soPaper .order-info-grid>div:first-child,#soPaper .order-info-grid>div:nth-child(2){}
+#soPaper .order-info-grid>div b{font-size:.8em;color:#8a6400;letter-spacing:0}
+#soPaper .order-info-grid>div span,#soPaper .order-info-grid>div bdi{font-size:1.02em;color:#1a1a1a;line-height:1.4}
+/* ألوان الخط في ورقة أمر الشراء: كحلي بدل الذهبي (الذهبي للخطوط والحدود بس) */
+#soPaper .tf-line-title b,#soPaper .order-info-grid>div b,#soPaper .order-greet .og-line2,#soPaper table.dtable tbody td:first-child,#soPaper table.dtable thead th,#soPaper table.dtable tfoot td#pvSoTotalQty,#soPaper .order-phone-line,#soPaper .order-notes b,#soPaper .tf-line-date{color:#17376a !important}
 /* طباعة بالنص الحقيقي لأمر الشراء/البيع (igVectorPrint) */
 body.ig-vprint #igViewer{display:none!important}
 body.ig-vprint, body.ig-vprint *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
