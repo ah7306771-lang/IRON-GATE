@@ -4349,6 +4349,7 @@ function canView(page){
   if(page==="treasuryBulkPost") return can("receipts","post")||can("payments","post");
   if(page==="bankBulkPost") return can("receipts","post")||can("payments","post")||can("treasuryTransfer","post");
   if(page==="users") return isAdmin();
+  if(page==="chatAnswers") return isAdmin();
   if(page==="trash") return isAdmin();
   if(page==="dataHealth") return isAdmin();
   // دفتر الشيكات قراءة مشتقة من التحصيلات؛ يستخدم نفس صلاحية مشاهدة التحصيلات حتى للمستخدمين الحاليين.
@@ -4782,6 +4783,7 @@ const navGroups = [
     { id:"settings", tab:"appearance", icon:"🎨", label:"الهوية البصرية والمظهر" },
     { id:"settings", tab:"system", icon:"💾", label:"النظام والنسخ الاحتياطي" },
     { id:"users", icon:"🔐", label:"المستخدمون والصلاحيات" },
+    { id:"chatAnswers", icon:"💬", label:"أسئلة الشات" },
     { id:"trash", icon:"🗑", label:"سلة المحذوفات", badge:"trash" },
     { id:"dataHealth", icon:"🩺", label:"فحص سلامة البيانات" }
   ]},
@@ -5863,6 +5865,7 @@ function go(page){
     payments:["المدفوعات","شيكات وتحويلات ونقدية للموردين"],
     settings:["الإعدادات العامة","الضريبة والخصومات والعملة"],
     users:["المستخدمون والصلاحيات","الحسابات وصلاحيات الشاشات وإخفاء الأسعار وسجل النشاط"],
+    chatAnswers:["أسئلة الشات","ردود ثابتة وتقارير SQL يجاوب بيها Ask AI — من غير تعديل كود"],
     trash:["🗑 سلة المحذوفات","القيود والبوالص وأوامر البيع والخزنة والعروض المحذوفة — استرجاع متاح للأدمن"],
     dataHealth:["🩺 فحص سلامة البيانات","اكتشف التناقضات والسجلات المعلّقة والمكررة قبل ما تسبّب مشاكل"],
     custodyLedger:["العهد","حركات الوارد والمنصرف لكل عهدة — عرض الحركة وترحيلها كقيد محاسبي"],
@@ -5897,6 +5900,7 @@ function go(page){
   else if(page==="settings") { c.innerHTML = viewSettings(); bindSettings(); }
   else if(page==="fixedAssets") { c.innerHTML = faView(); faRender(); }
   else if(page==="users") { c.innerHTML = viewUsers(); }
+  else if(page==="chatAnswers") { c.innerHTML = caView(); caLoad(); }
   else if(page==="trash") { c.innerHTML = viewTrash(); renderTrash(); }
   else if(page==="dataHealth") { c.innerHTML = viewDataHealth(); }
   else if(page==="quoteList"){ c.innerHTML = viewQuoteList(); renderQuoteList(); }
@@ -36449,6 +36453,120 @@ html body .layout:not(.collapsed) aside .navsub .nav-sep:first-child{margin-top:
 #content .items tbody td input.inp[title^="الوزن بالوحدة"]{min-width:92px}
 </style>
 
+
+<script>
+/* ============ شاشة أسئلة الشات (Ask AI): ردود ثابتة + تقارير SQL ============ */
+var CA = { rows:[], editing:null };
+function caEsc(v){ return String(v==null?"":v).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];}); }
+function caView(){
+  return '<style>'+
+  '.ca-wrap{max-width:1100px;margin:0 auto;padding:6px 2px;direction:rtl;font-family:inherit}'+
+  '.ca-card{background:#fff;border:1px solid #e3d9bd;border-radius:14px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px rgba(11,31,58,.06)}'+
+  '.ca-card h3{margin:0 0 10px;color:#0b1f3a;font-size:16px}'+
+  '.ca-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}'+
+  '.ca-grid .full{grid-column:1/-1}'+
+  '.ca-wrap label{display:block;font-size:12px;color:#51607a;margin-bottom:4px}'+
+  '.ca-wrap input[type=text],.ca-wrap select,.ca-wrap textarea{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #cfd6e4;border-radius:9px;font:inherit;background:#fff}'+
+  '.ca-wrap textarea{min-height:96px;resize:vertical}'+
+  '.ca-wrap textarea.ca-code{direction:ltr;text-align:left;font-family:Consolas,monospace;font-size:12.5px;min-height:150px}'+
+  '.ca-btn{border:0;border-radius:9px;padding:9px 16px;font:inherit;font-weight:700;cursor:pointer;background:#0b1f3a;color:#e8c872}'+
+  '.ca-btn.sec{background:#eef1f7;color:#0b1f3a}.ca-btn.del{background:#fde8e8;color:#b42318}'+
+  '.ca-btn.sm{padding:5px 10px;font-size:12px}'+
+  '.ca-tbl{width:100%;border-collapse:collapse;font-size:13px}'+
+  '.ca-tbl th{background:#0b1f3a;color:#e8c872;padding:8px;text-align:right;white-space:nowrap}'+
+  '.ca-tbl td{padding:8px;border-bottom:1px solid #edf0f5;vertical-align:top}'+
+  '.ca-tag{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;background:#eef1f7;color:#0b1f3a;margin:1px}'+
+  '.ca-tag.on{background:#e3f6ea;color:#0a6b34}.ca-tag.off{background:#f3f3f3;color:#777}.ca-tag.pub{background:#fff3d6;color:#8a5a00}'+
+  '.ca-help{font-size:12px;color:#51607a;line-height:1.8;background:#faf6e8;border:1px dashed #d9c58a;border-radius:10px;padding:10px 12px;margin-top:8px}'+
+  '.ca-help code{direction:ltr;display:inline-block;background:#fff;padding:0 5px;border-radius:5px}'+
+  '.ca-msg{font-size:13px;margin-top:8px;min-height:18px}'+
+  '.ca-scroll{overflow-x:auto}'+
+  '@media(max-width:700px){.ca-grid{grid-template-columns:1fr}}'+
+  '</style>'+
+  '<div class="ca-wrap">'+
+   '<div class="ca-card"><h3 id="caFormTitle">➕ إضافة سؤال جديد</h3>'+
+    '<div class="ca-grid">'+
+     '<div><label>النوع</label><select id="caKind" onchange="caKindChange()"><option value="faq">💬 رد ثابت</option><option value="sql">📊 تقرير SQL</option></select></div>'+
+     '<div><label>العنوان</label><input type="text" id="caTitle" placeholder="مثلاً: مواعيد الشغل"></div>'+
+     '<div class="full"><label>الكلمات المفتاحية (افصل بينها بفاصلة أو سطر جديد) — لو السؤال فيه أي واحدة منها يتفعّل الرد</label><textarea id="caKeys" style="min-height:60px" placeholder="مواعيد الشغل, مواعيد العمل, بتفتحوا امتى"></textarea></div>'+
+     '<div class="full" id="caFaqBox"><label>الرد</label><textarea id="caAnswer" placeholder="اكتب الرد اللي هيظهر في الشات"></textarea></div>'+
+     '<div class="full" id="caSqlBox" style="display:none"><label>استعلام SQL (SELECT فقط ولازم فيه :company)</label><textarea id="caSql" class="ca-code" placeholder="SELECT data->>\'date\' AS &quot;التاريخ&quot;, data->>\'customer\' AS &quot;العميل&quot;, (data->>\'amount\')::numeric AS &quot;المبلغ&quot;&#10;FROM treasury_entries&#10;WHERE deleted_at IS NULL AND company_id = :company&#10;ORDER BY 1 DESC LIMIT 20"></textarea>'+
+       '<div class="ca-help">المتغيرات المتاحة: <code>:company</code> (إجباري) · <code>:name</code> اسم العميل/المورد اللي في السؤال · <code>:from</code> و <code>:to</code> الفترة من السؤال (الشهر الحالي افتراضي).<br>اكتبها من غير علامات تنصيص. مثال بحث بالاسم: <code>ILIKE \'%\' || :name || \'%\'</code><br>سمّي الأعمدة بالعربي بـ <code>AS "اسم العمود"</code> وهتظهر كعناوين في الجدول. بحد أقصى 50 صف.</div></div>'+
+     '<div><label>أيقونة</label><input type="text" id="caEmoji" value="💬" maxlength="4"></div>'+
+     '<div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">'+
+       '<label style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" id="caActive" checked> مفعّل</label>'+
+       '<label id="caPubLbl" style="display:flex;gap:6px;align-items:center;margin:0" title="الرد الثابت بيظهر لأي حد قبل تسجيل الدخول — ماتحطش بيانات حساسة"><input type="checkbox" id="caPublic"> متاح قبل تسجيل الدخول</label>'+
+     '</div>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="ca-btn" onclick="caSave()">💾 حفظ</button><button class="ca-btn sec" onclick="caReset()">إلغاء / جديد</button></div>'+
+    '<div class="ca-msg" id="caMsg"></div>'+
+   '</div>'+
+   '<div class="ca-card"><h3>📋 الأسئلة المسجّلة</h3><div class="ca-scroll"><table class="ca-tbl"><thead><tr><th>العنوان</th><th>النوع</th><th>الكلمات المفتاحية</th><th>الحالة</th><th></th></tr></thead><tbody id="caBody"><tr><td colspan="5">جاري التحميل...</td></tr></tbody></table></div></div>'+
+  '</div>';
+}
+function caKindChange(){
+  var k=document.getElementById('caKind').value;
+  document.getElementById('caFaqBox').style.display=k==='faq'?'':'none';
+  document.getElementById('caSqlBox').style.display=k==='sql'?'':'none';
+  var pl=document.getElementById('caPubLbl'); if(pl){ pl.style.display=k==='faq'?'flex':'none'; if(k!=='faq') document.getElementById('caPublic').checked=false; }
+}
+function caMsg(t,ok){ var m=document.getElementById('caMsg'); if(m){ m.textContent=t||''; m.style.color=ok?'#0a6b34':'#b42318'; } }
+async function caLoad(){
+  var body=document.getElementById('caBody'); if(!body) return;
+  var r=await sb.from('chat_custom_answers').select('*').eq('company_id',String(window.CUR_CO||'01')).order('created_at',{ascending:false});
+  if(r.error){ body.innerHTML='<tr><td colspan="5" style="color:#b42318">تعذر التحميل: '+caEsc(r.error.message)+' — تأكد إنك شغّلت ملف chat_custom_answers.sql</td></tr>'; return; }
+  CA.rows=r.data||[];
+  if(!CA.rows.length){ body.innerHTML='<tr><td colspan="5" style="color:#777">لسه مفيش أسئلة. أضف أول سؤال من فوق.</td></tr>'; return; }
+  body.innerHTML=CA.rows.map(function(x,i){
+    var keys=(x.keywords||[]).map(function(k){return '<span class="ca-tag">'+caEsc(k)+'</span>';}).join('');
+    return '<tr><td>'+caEsc(x.emoji||'')+' <b>'+caEsc(x.title)+'</b></td>'+
+      '<td>'+(x.kind==='sql'?'📊 SQL':'💬 رد ثابت')+'</td><td>'+keys+'</td>'+
+      '<td><span class="ca-tag '+(x.active?'on':'off')+'">'+(x.active?'مفعّل':'موقوف')+'</span>'+(x.public_ok?' <span class="ca-tag pub">قبل الدخول</span>':'')+'</td>'+
+      '<td style="white-space:nowrap"><button class="ca-btn sm sec" onclick="caEdit('+i+')">تعديل</button> '+
+      '<button class="ca-btn sm sec" onclick="caToggle('+i+')">'+(x.active?'إيقاف':'تفعيل')+'</button> '+
+      '<button class="ca-btn sm del" onclick="caDelete('+i+')">حذف</button></td></tr>';
+  }).join('');
+}
+function caReset(){
+  CA.editing=null;
+  var ids={caTitle:'',caKeys:'',caAnswer:'',caSql:'',caEmoji:'💬'};
+  Object.keys(ids).forEach(function(k){ var e=document.getElementById(k); if(e) e.value=ids[k]; });
+  document.getElementById('caKind').value='faq'; document.getElementById('caActive').checked=true; document.getElementById('caPublic').checked=false;
+  document.getElementById('caFormTitle').textContent='➕ إضافة سؤال جديد'; caKindChange(); caMsg('');
+}
+function caEdit(i){
+  var x=CA.rows[i]; if(!x) return; CA.editing=x.id;
+  document.getElementById('caKind').value=x.kind; caKindChange();
+  document.getElementById('caTitle').value=x.title||''; document.getElementById('caKeys').value=(x.keywords||[]).join(', ');
+  document.getElementById('caAnswer').value=x.answer||''; document.getElementById('caSql').value=x.sql_text||'';
+  document.getElementById('caEmoji').value=x.emoji||'💬'; document.getElementById('caActive').checked=!!x.active; document.getElementById('caPublic').checked=!!x.public_ok;
+  document.getElementById('caFormTitle').textContent='✏️ تعديل سؤال'; caMsg(''); window.scrollTo({top:0,behavior:'smooth'});
+}
+async function caSave(){
+  var kind=document.getElementById('caKind').value;
+  var title=document.getElementById('caTitle').value.trim();
+  var keys=document.getElementById('caKeys').value.split(/[,،\n]+/).map(function(k){return k.trim();}).filter(function(k){return k.length>=2;});
+  var answer=document.getElementById('caAnswer').value.trim();
+  var sql=document.getElementById('caSql').value.trim();
+  if(!title) return caMsg('اكتب عنوان',false);
+  if(!keys.length) return caMsg('اكتب كلمة مفتاحية واحدة على الأقل (حرفين فأكتر)',false);
+  if(kind==='faq'&&!answer) return caMsg('اكتب الرد',false);
+  if(kind==='sql'){
+    if(!/^\s*select\b/i.test(sql)) return caMsg('الاستعلام لازم يبدأ بـ SELECT',false);
+    if(!/:company\b/.test(sql)) return caMsg('الاستعلام لازم يحتوي :company عشان يتحصر على الشركة',false);
+  }
+  var row={ company_id:String(window.CUR_CO||'01'), kind:kind, title:title, keywords:keys,
+    answer:kind==='faq'?answer:null, sql_text:kind==='sql'?sql:null,
+    emoji:document.getElementById('caEmoji').value.trim()||'💬',
+    active:document.getElementById('caActive').checked,
+    public_ok:kind==='faq'&&document.getElementById('caPublic').checked };
+  var r = CA.editing ? await sb.from('chat_custom_answers').update(row).eq('id',CA.editing) : await sb.from('chat_custom_answers').insert(row);
+  if(r.error) return caMsg('تعذر الحفظ: '+r.error.message,false);
+  caMsg('✅ تم الحفظ',true); caReset(); caMsg('✅ تم الحفظ',true); caLoad();
+}
+async function caToggle(i){ var x=CA.rows[i]; if(!x) return; var r=await sb.from('chat_custom_answers').update({active:!x.active}).eq('id',x.id); if(r.error) return alert(r.error.message); caLoad(); }
+async function caDelete(i){ var x=CA.rows[i]; if(!x||!confirm('حذف "'+x.title+'"؟')) return; var r=await sb.from('chat_custom_answers').delete().eq('id',x.id); if(r.error) return alert(r.error.message); caLoad(); }
+</script>
 </body></html>`);
     w.document.close();w.focus();setTimeout(()=>w.print(),300);
   };
@@ -39573,6 +39691,16 @@ function _bcRenderApiOverdueTable(payload){
       '</div>';
   return html;
 }
+function _bcRenderApiCustomTable(payload){
+  var t=payload&&payload.table;
+  if(!t||t.type!=="custom") return null;
+  var cols=Array.isArray(t.columns)?t.columns:[], rows=Array.isArray(t.rows)?t.rows:[];
+  var e=function(v){return esc(String(v==null?"":v));};
+  var money=function(v){return Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var head=cols.map(function(c){return '<th>'+e(c.label)+'</th>';}).join("");
+  var body=rows.map(function(r){return '<tr>'+cols.map(function(c){var v=r[c.key];return c.type==="money"?'<td class="api-money">'+money(v)+'</td>':'<td>'+e(v)+'</td>';}).join("")+'</tr>';}).join("");
+  return '<div class="bc-api-table-card"><div class="bc-api-table-head"><strong>'+e(t.title||"")+'</strong><small>عدد الصفوف: '+Number(t.count||rows.length)+'</small></div><div class="bc-api-table-scroll"><table class="bc-api-table"><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div></div>';
+}
 async function _bcFetchOverdueDetail(question, history){
   var who=_bcGetApiIdentity();
   if(!who.c) throw new Error("لم يتم تحديد الشركة الحالية.");
@@ -39591,8 +39719,8 @@ async function _bcFetchOverdueDetail(question, history){
   });
   var payload=await response.json();
   if(!response.ok || payload.error) throw new Error(payload.error||payload.text||"تعذر الاتصال بخدمة تفاصيل المتأخرات");
-  var tableHtml=_bcRenderApiOverdueTable(payload);
-  if(tableHtml) return (payload.text?'<pre>'+esc(payload.text)+'</pre>':'')+tableHtml;
+  var tableHtml=_bcRenderApiOverdueTable(payload)||_bcRenderApiCustomTable(payload);
+  if(tableHtml) return ((payload.text&&!(payload.table&&payload.table.type==="custom"))?'<pre>'+esc(payload.text)+'</pre>':'')+tableHtml;
   return payload.text?'<pre>'+esc(payload.text)+'</pre>':"لم يتم إرجاع نتيجة من المساعد.";
 }
 
