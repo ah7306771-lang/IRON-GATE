@@ -3498,8 +3498,7 @@ const SHIP_SPEC = [["policyNo","policy_no","t"],["date","date","d"],["supplier",
 const SHIP_ITEM_SPEC = [["factory","factory","t"],["diameter","diameter","t"],["type","type","t"],["agingStatus","aging_status","t"],["supplyQty","supply_qty","n"],
   ["actualWeight","actual_weight","n"],["weightTon","weight_ton","n"],["buyPrice","buy_price","n"],["sellPrice","sell_price","n"],
   ["tax","tax","n"],["discount","discount","n"],["total","total","n"],["notes","notes","t"],
-  ["unitNo","unit_no","t"],["unitName","unit_name","t"],["unitFactor","unit_factor","n"],
-  ["supplyUnitQty","supply_unit_qty","n"],["actualWeightUnitQty","actual_weight_unit_qty","n"]];
+  ["unitNo","unit_no","t"],["unitName","unit_name","t"],["unitFactor","unit_factor","n"],["supplyUnitQty","supply_unit_qty","n"],["actualWeightUnitQty","actual_weight_unit_qty","n"]];
 // sale_orders schema الفعلي: الحقول الإضافية تحفظ داخل data JSONB ولا تُرسل كأعمدة غير موجودة.
 const SO_SPEC = [["orderNo","order_no","t"],["date","so_date","d"],["customer","customer","t"],["supplier","supplier","t"],
   ["closed","closed","b"],["closedAt","closed_at","z"],["closeReason","close_reason","t"],["quoteId","quote_id","t"],["address","address","t"]];
@@ -3537,53 +3536,11 @@ function unpackObj(row,spec,base){
   if(row.extra && typeof row.extra==="object") Object.keys(row.extra).forEach(k=>pset(o,k,row.extra[k]));
   return o;
 }
-function shipmentItemUnitFactorToBase(it){
-  const item=String(it?.diameter||"");
-  const selected=it?.unitNo;
-  const f=iuFactorToBase(item,selected);
-  return Number.isFinite(f)&&f>0?f:1;
-}
-function shipmentItemStoredFactorToBase(it,unitNo){
-  const savedNo=it&&it._policyUnitNoSnapshot;
-  const savedFactor=Number(it&&it._policyUnitFactorToBaseSnapshot);
-  if(savedNo!==undefined&&savedNo!==null&&String(savedNo)===String(unitNo)&&Number.isFinite(savedFactor)&&savedFactor>0) return savedFactor;
-  return shipmentItemUnitFactorToBase({...it,unitNo});
-}
-function shipmentItemDefaultFactorToBase(it){
-  const item=String(it?.diameter||"");
-  const d=iuDefaultEntry(item);
-  const f=d?iuFactorToBase(item,d.unitNo):1;
-  return Number.isFinite(f)&&f>0?f:1;
-}
 function packShipment(rec,posted){
   const row=packObj(rec,SHIP_SPEC,["id","items"]); row.id=String(rec.id); row.is_posted=!!posted;
   row.gl_entry_id=rec.glEntryId||null; row.gl_posted_at=rec.glPostedAt||null; row.gl_posted_by=rec.glPostedBy||null;
   row.updated_at=new Date().toISOString();
-  const items=(rec.items||[]).map((it,i)=>{
-    const cleanItem={...it};
-    delete cleanItem._policyUnitNoSnapshot;
-    delete cleanItem._policyUnitFactorToBaseSnapshot;
-    const r=packObj(cleanItem,SHIP_ITEM_SPEC); const resolved=uomResolve(String(it?.diameter||""),it);
-    const unitNo=(it.unitNo!==undefined&&it.unitNo!==null&&it.unitNo!=="")?it.unitNo:(resolved?.unitNo??"");
-    const unitItem={...it,unitNo};
-    const selectedFactor=shipmentItemStoredFactorToBase(unitItem,unitNo);
-    const defaultFactor=shipmentItemDefaultFactorToBase(unitItem);
-    const asNum=v=>{const n=parseFloat(String(v??"").replace(",","."));return Number.isFinite(n)?n:null;};
-    const supplyEntered=asNum(it.supplyUnitQty!==undefined&&it.supplyUnitQty!==""?it.supplyUnitQty:policyUnitShown(it,"supplyQty"));
-    const weightEntered=asNum(it.actualWeightUnitQty!==undefined&&it.actualWeightUnitQty!==""?it.actualWeightUnitQty:policyUnitShown(it,"actualWeight"));
-    // كمية التوريد تُحفظ بوحدة السطر المختارة، أما الوزن الفعلي فيُخزن بوحدة الصنف الأساسية.
-    r.supply_qty=supplyEntered;
-    r.actual_weight=(weightEntered??0)*selectedFactor;
-    r.weight_ton=Number(it.actualWeight)||0; // حقل توافق قديم: يحتفظ بمرجع العرض التشغيلي
-    r.unit_no=unitNo===""?null:String(unitNo);
-    r.unit_name=it.unitName||iuUnitName(unitNo)||policyUnitName(unitItem)||null;
-    r.unit_factor=selectedFactor;
-    r.supply_unit_qty=supplyEntered;
-    r.actual_weight_unit_qty=weightEntered;
-    // تُعاد القيم الداخلية للواجهة بوحدة العرض الافتراضية عند التحميل.
-    r.extra=Object.assign({},r.extra||{},{_policyUnitStorageVersion:2,_policyDefaultFactorToBase:defaultFactor});
-    r.shipment_id=row.id; r.line_no=i+1; return r;
-  });
+  const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SHIP_ITEM_SPEC); r.shipment_id=row.id; r.line_no=i+1; return r; });
   return { row, items };
 }
 function packSO(rec){
@@ -3757,35 +3714,7 @@ async function loadDocs(){
       hs.forEach(h=>{
         const rec=unpackObj(h,SHIP_SPEC,{id:h.id});
         rec.glEntryId=h.gl_entry_id||null; rec.glPostedAt=h.gl_posted_at||null; rec.glPostedBy=h.gl_posted_by||null;
-        rec.items=(li.get(h.id)||[]).map(x=>{
-          const it=unpackObj(x,SHIP_ITEM_SPEC);
-          const ex=x.extra&&typeof x.extra==="object"?x.extra:{};
-          // السجلات المرحّلة قبل إضافة علامة الإصدار قد تكون محوّلة بالفعل:
-          // وجود unit_no وunit_factor دليل على تخزين الوزن بالوحدة الأساسية.
-          const hasUnitStorage=x.unit_no!==null&&x.unit_no!==undefined&&
-            x.unit_factor!==null&&x.unit_factor!==undefined&&Number(x.unit_factor)>0;
-          if(Number(ex._policyUnitStorageVersion)>=2||hasUnitStorage){
-            const selectedFactor=Number(x.unit_factor)||1;
-            // نحتفظ بمعامل الوحدة وقت حفظ السطر؛ تغيير إعدادات الصنف لاحقًا لا يعيد تفسير مستند قديم.
-            it._policyUnitNoSnapshot=x.unit_no==null?"":String(x.unit_no);
-            it._policyUnitFactorToBaseSnapshot=selectedFactor;
-            // نعيد القيم الداخلية إلى وحدة العرض الافتراضية الحالية من إعدادات الصنف.
-            // لا نعتمد على لقطة قديمة للمعامل حتى لا تختل الحسابات إذا تغيرت الوحدة المستخدمة لاحقًا.
-            const defaultFactor=shipmentItemDefaultFactorToBase(it);
-            it.actualWeight=String(uomRound((Number(x.actual_weight)||0)/defaultFactor,6));
-            // weight_ton حقل توافق قديم؛ نحافظ على قيمته الأصلية ولا نستبدلها بقيمة محوّلة.
-            it.weightTon=x.weight_ton==null?it.weightTon:String(x.weight_ton);
-            // supply_qty مخزن بوحدة السطر؛ نعيده إلى وحدة العرض الافتراضية الحالية.
-            const ratio=selectedFactor/defaultFactor;
-            it.supplyQty=String(uomRound((Number(x.supply_qty)||0)*ratio,6));
-            it.unitNo=x.unit_no==null?it.unitNo:String(x.unit_no);
-            it.unitName=x.unit_name||it.unitName||"";
-            it.unitFactor=selectedFactor;
-            it.supplyUnitQty=x.supply_unit_qty==null?String(x.supply_qty??""):String(x.supply_unit_qty);
-            it.actualWeightUnitQty=x.actual_weight_unit_qty==null?String((Number(x.actual_weight)||0)/selectedFactor):String(x.actual_weight_unit_qty);
-          }
-          return it;
-        });
+        rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SHIP_ITEM_SPEC));
         (h.is_posted?state.shipments:state.policies).push(rec);
       });
       docSnaps.ship=docDiff("ship").cur;
@@ -10650,7 +10579,7 @@ function trFiltCount(f){ let n=0; if(String(f.q||"").trim())n++; if(f.customer)n
 // بيانات تقارير التجارة القديمة لها وحدة مصدر تاريخية؛ يجب أن تُحوّل حسب وحدة الصنف وإعدادات المستند قبل العرض.
 function trUnitInfo(item,mode){
   const u=invUnitInfo(item,mode||"used");
-  return {name:u.name||iuDefaultUnitName(item)||"",factor:Number(u.factor)||1,basePerTon:Number(iuBasePerTon(item))||1};
+  return {name:u.name||iuDefaultUnitName(item)||"",factor:Number(u.factor)||1,basePerTon:Number(iuBasePerDefaultUnit(item))||1};
 }
 function trFromTon(item,value,mode){ const u=trUnitInfo(item,mode); return (Number(value)||0)*u.basePerTon/u.factor; }
 function trPriceFromTon(item,value,mode){ const u=trUnitInfo(item,mode); return (Number(value)||0)*u.factor/u.basePerTon; }
@@ -15126,12 +15055,7 @@ function fnv(x,d){ if(x===""||x==null||!isFinite(+x)) return ""; return escapeAt
 // وحدات البوليصة: معامل السطر مأخوذ من إعدادات وحدة الصنف؛ لا يُفترض اسم وحدة ثابت.
 function policyUnitFactor(it){
   if(!it||!it.diameter) return 1;
-  const savedNo=it._policyUnitNoSnapshot, savedFactor=Number(it._policyUnitFactorToBaseSnapshot);
-  if(savedNo!==undefined&&savedNo!==null&&String(savedNo)===String(it.unitNo)&&Number.isFinite(savedFactor)&&savedFactor>0){
-    const defaultFactor=shipmentItemDefaultFactorToBase(it);
-    return defaultFactor>0?savedFactor/defaultFactor:1;
-  }
-  const f=Number(uomTonsPer(it.diameter,it));
+  const f=Number(uomFactorToDefaultUnit(it.diameter,it));
   return Number.isFinite(f)&&f>0?f:1;
 }
 function policyUnitName(it){
@@ -15150,7 +15074,7 @@ function policyEnsureUnit(it){
   if(resolved){
     it.unitNo=resolved.unitNo;
     it.unitName=iuUnitName(resolved.unitNo);
-    it.unitFactor=Number(iuTonsPer(it.diameter,resolved))||1;
+    it.unitFactor=Number(iuFactorToDefaultUnit(it.diameter,resolved))||1;
   }else{
     it.unitNo="";
     it.unitName=iuDefaultUnitName(it.diameter)||"";
@@ -15167,10 +15091,6 @@ function policySetUnit(i,no){
   if(viewOnly) return;
   const it=draft.items[i]; if(!it||!it.diameter) return;
   it.unitNo=String(no??"");
-  if(it._policyUnitNoSnapshot!==undefined&&String(it._policyUnitNoSnapshot)!==String(it.unitNo)){
-    delete it._policyUnitNoSnapshot;
-    delete it._policyUnitFactorToBaseSnapshot;
-  }
   delete it.supplyUnitQty;
   delete it.actualWeightUnitQty;
   policyEnsureUnit(it);
@@ -15405,7 +15325,7 @@ async function pickSO(id){
       soUnitMap[k]=resolved?{
         unitNo:String(resolved.unitNo),
         unitName:iuUnitName(resolved.unitNo),
-        unitFactor:Number(iuTonsPer(it.diameter,resolved))||1
+        unitFactor:Number(iuFactorToDefaultUnit(it.diameter,resolved))||1
       }:{unitNo:"",unitName:iuDefaultUnitName(it.diameter)||"",unitFactor:1};
     }
     if((it.notes||"").trim()){ soNoteMap[k] = (soNoteMap[k]?soNoteMap[k]+" | ":"") + it.notes.trim(); }
@@ -15419,7 +15339,7 @@ async function pickSO(id){
     (so.items||[]).forEach((it,ix)=>{
       const up=soPriceNum(it.unitPrice); if(!(up>0)) return;
       const tons=parseFloat(String(it.qty==null?"":it.qty).replace(",","."))||0;
-      const per=(typeof uomTonsPer==="function"?uomTonsPer(it.diameter,it):1)||1;
+      const per=(typeof uomFactorToDefaultUnit==="function"?uomFactorToDefaultUnit(it.diameter,it):1)||1;
       const k=`${it.diameter}|${it.type}`,w=tons>0?tons:1,pricePerTon=up/per;
       const a=soPriceMap[k]||(soPriceMap[k]={sum:0,w:0});a.sum+=pricePerTon*w;a.w+=w;
       const gross=soDc&&soDc.lines[ix]?soDc.lines[ix].gross:0;
@@ -15536,7 +15456,6 @@ function setI(i,k,v){
   if(window.event&&event.target&&event.target.classList) event.target.classList.remove("bad");
   if(k==="diameter"){
     it.unitNo=""; it.unitName=""; it.unitFactor=1;
-    delete it._policyUnitNoSnapshot; delete it._policyUnitFactorToBaseSnapshot;
     delete it.supplyUnitQty; delete it.actualWeightUnitQty;
     policyEnsureUnit(it);
     const body=document.getElementById("itemsBody"); if(body) body.innerHTML=draft.items.map(itemRow).join("");
@@ -15994,7 +15913,7 @@ function buildRecord(strict){
     const ix=d.items.indexOf(it), c=calcItem(it,{...opts,lineDiscount:DC.lines[ix]?.disc||0});
     return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
       actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),
-      // تحفظ packShipment بيانات الوحدة في أعمدتها المخصصة، وتحول الوزن الفعلي للأساس.
+      // حفظ وحدة الصنف ومعامل التحويل والكميات المعروضة بها داخل extra في shipment_items.
       unitNo:it.unitNo||"",unitName:it.unitName||policyUnitName(it),unitFactor:Number(policyUnitFactor(it))||1,
       supplyUnitQty:it.supplyUnitQty===""?"":(it.supplyUnitQty??policyUnitShown(it,"supplyQty")),
       actualWeightUnitQty:it.actualWeightUnitQty===""?"":(it.actualWeightUnitQty??policyUnitShown(it,"actualWeight")),
@@ -16169,7 +16088,7 @@ async function postShipment(){
   const rec=buildRecord(true); if(!rec) return;
   // مراجعة تلقائية قبل الترحيل: التحذير لا يمنع الترحيل، والقرار يُحفظ مع البوليصة.
   const so=(state.saleOrders||[]).find(x=>String(x.id)===String(rec.saleOrderId) || (rec.saleOrderNo && String(x.orderNo)===String(rec.saleOrderNo)));
-  let review={checkedAt:new Date().toISOString(),status:"unlinked",expected:0,actual:0,difference:0,details:[]};
+  let review={checkedAt:new Date().toISOString(),status:"unlinked",details:[]};
   if(so){
     const remaining=soComputeRemaining(so,rec.id), expectedByKey={...remaining.remaining}, actualByKey={};
     (rec.items||[]).forEach(it=>{
@@ -16179,18 +16098,15 @@ async function postShipment(){
       const q=Number(String(it.supplyQty??"").replace(",","."));
       const w=Number(String(it.actualWeight??"").replace(",","."));
       const approved=(Number.isFinite(w)&&w>0)?w:((Number.isFinite(q)&&q>0)?q:0);
-      actualByKey[key]=(actualByKey[key]||0)+approved;
+      actualByKey[key]=(actualByKey[key]||0)+iuDefaultQtyToBase(it.diameter,approved);
     });
     const keys=new Set([...Object.keys(expectedByKey),...Object.keys(actualByKey)]);
-    review.details=[...keys].map(key=>({item:key,expected:+(expectedByKey[key]||0),actual:+(actualByKey[key]||0),difference:+((actualByKey[key]||0)-(expectedByKey[key]||0)).toFixed(3)})).filter(x=>Math.abs(x.difference)>0.001);
-    review.expected=Object.values(expectedByKey).reduce((a,b)=>a+(+b||0),0);
-    review.actual=Object.values(actualByKey).reduce((a,b)=>a+(+b||0),0);
-    review.difference=+(review.actual-review.expected).toFixed(3);
+    review.details=[...keys].map(key=>{const diameter=key.split("|")[0],unit=iuBaseUnitName(diameter)||"وحدة";return {item:key,unit,expected:+(expectedByKey[key]||0),actual:+(actualByKey[key]||0),difference:+((actualByKey[key]||0)-(expectedByKey[key]||0)).toFixed(3)};}).filter(x=>Math.abs(x.difference)>0.001);
     review.status=review.details.length?"needs_review":"matched";
   }
   rec.postReview=review;
   const mismatch=review.status!=="matched";
-  const reviewText=review.status==="unlinked"?`\nتنبيه: البوليصة غير مرتبطة بأمر بيع؛ سيتم الترحيل مع تسجيل ذلك.`:mismatch?`\n\nتنبيه مراجعة: يوجد فرق بين المتبقي في أمر البيع والكمية المعتمدة في البوليصة.\nكمية أمر البيع المتبقية قبل البوليصة: ${review.expected.toFixed(3)} طن\nالكمية المعتمدة في البوليصة: ${review.actual.toFixed(3)} طن\nالفرق (المعتمد − المتبقي): ${review.difference>0?"+":""}${review.difference.toFixed(3)} طن\n\nسيتم الترحيل مع حفظ نتيجة المراجعة دون تعديل الكميات.`:`\n\nالمطابقة سليمة: الكميات متوافقة مع المتبقي في أمر البيع.`;
+  const reviewText=review.status==="unlinked"?`\nتنبيه: البوليصة غير مرتبطة بأمر بيع؛ سيتم الترحيل مع تسجيل ذلك.`:mismatch?`\n\nتنبيه مراجعة: يوجد فرق بين المتبقي في أمر البيع والكمية المعتمدة في البوليصة.\n${review.details.map(x=>`${x.item}: المتبقي ${x.expected.toFixed(3)} ${x.unit} — المعتمد ${x.actual.toFixed(3)} ${x.unit} — الفرق ${x.difference>0?"+":""}${x.difference.toFixed(3)} ${x.unit}`).join("\n")}\n\nسيتم الترحيل مع حفظ نتيجة المراجعة دون تعديل الكميات.`:`\n\nالمطابقة سليمة: الكميات متوافقة مع المتبقي في أمر البيع.`;
   if(!await askConfirm(`ترحيل ${SI_MODE?"الفاتورة":"البوليصة"} ${rec.policyNo} (${rec.items.length} صنف) إلى بيانات التوريد؟${reviewText}\n\nهل تريد الاستمرار؟`)) return;
   // سعر الشراء صفر مسموح (يُرحَّل بتكلفة صفر).
   // الوارد المخزني مستقل عن وجود عميل أو أمر بيع: كل بوليصة مرحّلة تُدخل البضاعة للمخزن المحدد.
@@ -20029,8 +19945,8 @@ function qtUnitItem(desc){
 // تغيير الوحدة في عرض السعر: نفس السعر الفعلي بيتحوّل لسعر الوحدة الجديدة بمعامل التحويل
 function qtSetUnit(i,no){
   const it=qtDraft.items[i]; if(!it) return;
-  const src=qtUnitOf(it), oldT=uomTonsPer(src,it), oldN=uomLineName(src,it);
-  it.unitNo=no; const newT=uomTonsPer(src,it);
+  const src=qtUnitOf(it), oldT=uomFactorToDefaultUnit(src,it), oldN=uomLineName(src,it);
+  it.unitNo=no; const newT=uomFactorToDefaultUnit(src,it);
   const pr=parseFloat(String(it.price).replace(",","."));
   if(pr>0&&oldT>0&&newT>0&&oldT!==newT){
     it.price=String(Math.round(pr*newT/oldT*100)/100);
@@ -20106,7 +20022,7 @@ function qtPersist(){
   // حفظ لقطة مستقلة للوحدة المختارة وقت إصدار العرض (الكود + الاسم + معامل التحويل)
   (qtDraft.items||[]).forEach(it=>{
     const src=qtUnitOf(it), resolved=uomResolve(src,it);
-    if(resolved){ it.unitNo=resolved.unitNo; it.unitName=iuUnitName(resolved.unitNo); it.unitFactor=Number(iuTonsPer(src,resolved))||1; }
+    if(resolved){ it.unitNo=resolved.unitNo; it.unitName=iuUnitName(resolved.unitNo); it.unitFactor=Number(iuFactorToDefaultUnit(src,resolved))||1; }
     else { it.unitName=it.unitName||iuDefaultUnitName(qtUnitOf(it))||""; it.unitFactor=Number(it.unitFactor)||1; }
   });
   const rec=JSON.parse(JSON.stringify(qtDraft)); rec.savedAt=new Date().toISOString();
@@ -39407,6 +39323,13 @@ function _bcCss(){
     .bc-msg-time{font-size:10px;color:#9ca3af;margin-top:4px}
     .bc-msg.user .bc-msg-time{color:#bfdbfe;text-align:left}
     .bc-reply pre{white-space:pre-wrap;font-family:inherit;margin:0;font-size:12.5px;line-height:1.7;color:#1f2937}
+    .bc-reply .bc-num{display:inline-block;font-weight:900;font-variant-numeric:tabular-nums;direction:ltr;unicode-bidi:isolate;padding:1px 4px;border-radius:5px;white-space:nowrap}
+    .bc-reply .bc-num-red{color:#b91c1c;background:#fee2e2}
+    .bc-reply .bc-num-green{color:#047857;background:#d1fae5}
+    .bc-reply .bc-num-blue{color:#1d4ed8;background:#dbeafe}
+    .bc-reply .bc-num-orange{color:#b45309;background:#fef3c7}
+    .bc-reply .bc-balance-main{display:inline-block;padding:5px 10px;border-radius:9px;font-size:14px;font-weight:900;border:1px solid currentColor}
+    .bc-reply .bc-kpi{font-variant-numeric:tabular-nums}
     .bc-reply b{color:#92400e}
     .bc-reply .bc-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px}
     .bc-reply .bc-tbl th{background:#1e293b;color:#F4C542;padding:6px;text-align:right}
@@ -39441,6 +39364,45 @@ function _bcRenderHistory(){
     return '<div class="bc-msg bot"><div class="bc-msg-av">🤖</div><div class="bc-msg-body"><div class="bc-reply">'+m.html+'</div><div class="bc-msg-time">'+time+'</div></div></div>';
   }).join("");
 }
+function _bcColorizeReplyNumbers(html, question){
+  try{
+    var doc=new DOMParser().parseFromString('<div id="bcColorRoot">'+String(html||'')+'</div>','text/html');
+    var root=doc.getElementById('bcColorRoot');
+    if(!root) return html;
+    var walker=doc.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+    var nodes=[]; while(walker.nextNode()) nodes.push(walker.currentNode);
+    var numberRe=/(?<![\w/])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w/])[-+]?\d+(?:\.\d+)?/g;
+    nodes.forEach(function(node){
+      var value=node.nodeValue||'';
+      if(!/[0-9]/.test(value)) return;
+      var parent=node.parentElement;
+      if(parent && /^(SCRIPT|STYLE|CODE)$/.test(parent.tagName)) return;
+      var frag=doc.createDocumentFragment(), last=0, match, changed=false;
+      numberRe.lastIndex=0;
+      while((match=numberRe.exec(value))){
+        var token=match[0], start=match.index, end=start+token.length;
+        // لا نلوّن أجزاء التواريخ أو أرقام الوقت.
+        if((value[start-1]==='-' || value[end]==='-') || (value[start-1]===':' || value[end]===':')) continue;
+        var before=value.slice(Math.max(0,start-45),start);
+        var context=(parent ? parent.textContent : value);
+        var cls='bc-num-blue';
+        if(/متأخر|متاخر|مستحق|مدين/.test(before) || (/متأخر|متاخر/.test(context))) cls='bc-num-red';
+        else if(/دائن|محصل|تحصيل|مدفوع|إيراد|ايراد/.test(before)) cls='bc-num-green';
+        else if(/رصيد/.test(before)) cls=(Number(token.replace(/,/g,''))<0?'bc-num-red':'bc-num-green');
+        else if(/عدد|أقساط|اقساط|سجل|عميل|عملاء|يوم/.test(before)) cls='bc-num-orange';
+        frag.appendChild(doc.createTextNode(value.slice(last,start)));
+        var span=doc.createElement('span');
+        span.className='bc-num '+cls;
+        span.textContent=token;
+        if(/رصيد/.test(before)) span.className+=' bc-balance-main';
+        frag.appendChild(span);
+        last=end; changed=true;
+      }
+      if(changed){ frag.appendChild(doc.createTextNode(value.slice(last))); node.parentNode.replaceChild(frag,node); }
+    });
+    return root.innerHTML;
+  }catch(e){ console.warn('BC number formatting skipped',e); return html; }
+}
 function bindBotCaller(){
   var inp=document.getElementById("bcInput"); if(!inp) return;
   inp.addEventListener("keydown",function(e){ if(e.key==="Enter"){ e.preventDefault(); bcSend(); } });
@@ -39457,6 +39419,7 @@ async function bcSendText(text){
   box.scrollTop=box.scrollHeight;
   try{
     var html = await bcAnswer(text);
+    html = _bcColorizeReplyNumbers(html, text);
     var lm=document.getElementById("bcLoadMsg"); if(lm) lm.remove();
     botCallerHistory.push({who:"bot",html:html,ts:Date.now()});
     box.innerHTML=_bcRenderHistory();
@@ -40295,9 +40258,9 @@ function iuFromBaseCost(item,cost,unitNo){ return iuConvertPrice(item,cost,iuBas
 function iuValidate(item){ const a=iuOf(item), bases=a.filter(x=>x.base), seen=new Set(), errors=[]; if(!a.length) errors.push("لم تُعرّف وحدات للصنف"); if(bases.length!==1) errors.push("يجب تحديد وحدة أساسية واحدة فقط"); a.forEach(e=>{const k=String(e.unitNo); if(!iuUnitName(e.unitNo)) errors.push("رقم وحدة غير موجود: "+k); if(seen.has(k)) errors.push("وحدة مكررة: "+k); seen.add(k); const f=Number(e.factor); if(!Number.isFinite(f)||f<=0) errors.push("معامل تحويل غير صالح للوحدة: "+(iuUnitName(e.unitNo)||k));}); if(bases.length===1&&Number(bases[0].factor)!==1) errors.push("معامل الوحدة الأساسية يجب أن يساوي 1"); return {ok:errors.length===0,errors}; }
 // توافق مؤقت مع أجزاء النظام القديمة: معامل الوحدة الافتراضية نسبةً إلى وحدة الأساس.
 function iuBasePerUnit(item,unitNo){ return iuFactorToBase(item,unitNo); }
-function iuBasePerTon(item){ return iuFactorToBase(item); }
-// توافق قديم: معامل الوحدة المحددة نسبةً إلى الوحدة الافتراضية للصنف، وليس طنًا.
-function iuTonsPer(item,ent){ const d=iuDefaultEntry(item), f=Number(ent&&ent.factor), df=Number(d&&d.factor); return Number.isFinite(f)&&Number.isFinite(df)&&df>0?f/df:1; }
+function iuBasePerDefaultUnit(item){ return iuFactorToBase(item); }
+// معامل الوحدة المحددة نسبةً إلى الوحدة الافتراضية للصنف.
+function iuFactorToDefaultUnit(item,ent){ const d=iuDefaultEntry(item), f=Number(ent&&ent.factor), df=Number(d&&d.factor); return Number.isFinite(f)&&Number.isFinite(df)&&df>0?f/df:1; }
 // أرصدة افتتاحية (حركات) على صنف بوحدة معيّنة
 function iuUnitInMoves(item,unitNo){ try{ const nm=iuUnitName(unitNo); return ((state.settings.obWarehouse||{}).docs||[]).some(d=>(d.lines||[]).some(l=>l.item===item&&(String(l.unitNo)===String(unitNo)||(!l.unitNo&&l.unit===nm)))); }catch(e){ return false; } }
 function iuRename(o,n){ const s=iuStore(); if(o!==n&&s[o]){ s[n]=s[o]; delete s[o]; } }
@@ -40435,7 +40398,7 @@ function uomResolve(item,it){
   if(no!==undefined&&no!==null&&no!==""){ const e=iuOf(item).find(x=>String(x.unitNo)===String(no)); if(e) return e; }
   return uomDefault(item);
 }
-function uomTonsPer(item,it){ const e=uomResolve(item,it); return e?(iuTonsPer(item,e)||1):1; }
+function uomFactorToDefaultUnit(item,it){ const e=uomResolve(item,it); return e?(iuFactorToDefaultUnit(item,e)||1):1; }
 function uomLineName(item,it){ const e=item?uomResolve(item,it):null; return e?iuUnitName(e.unitNo):(iuDefaultUnitName(item)||""); }
 const uomRound=(v,d)=>{ const m=Math.pow(10,d); return Math.round(v*m)/m; };
 // الكمية اللي بتظهر في خانة الكمية بالوحدة المختارة
@@ -40443,11 +40406,11 @@ function uomLineShown(item,it){
   if(!item||!uomEntries(item).length) return it.qty;
   if(it.unitNo!==undefined&&it.unitNo!==""&&it.unitQty!==undefined&&it.unitQty!=="") return it.unitQty;
   const q=parseFloat(String(it.qty).replace(",",".")); if(!(q>=0)||it.qty==="") return it.qty;
-  return String(uomRound(q/uomTonsPer(item,it),4));
+  return String(uomRound(q/uomFactorToDefaultUnit(item,it),4));
 }
 function uomHint(item,it){
   const q=parseFloat(String(it.qty).replace(",",".")); if(!item||!(q>0)) return "";
-  const nm=uomLineName(item,it); if(uomTonsPer(item,it)===1) return "";
+  const nm=uomLineName(item,it); if(uomFactorToDefaultUnit(item,it)===1) return "";
   return "= "+uomRound(q,4)+" "+nm;
 }
 function uomSelectHtml(item,it,onchange,includeUnused=false){
@@ -40467,22 +40430,22 @@ function uomApplyDefault(it,item,noQty){
   it.unitNo=d.unitNo;
   if(noQty) return;
   const q=parseFloat(String(it.qty).replace(",","."));
-  if(q>=0&&it.qty!==""){ it.unitQty=String(uomRound(q/uomTonsPer(item,it),4)); } else it.unitQty="";
+  if(q>=0&&it.qty!==""){ it.unitQty=String(uomRound(q/uomFactorToDefaultUnit(item,it),4)); } else it.unitQty="";
 }
 // تغيير وحدة العرض يحافظ على القيمة المرجعية للسطر.
 function uomChangeUnit(it,item,no){
   it.unitNo=no;
   const q=parseFloat(String(it.qty).replace(",","."));
-  it.unitQty=(q>=0&&it.qty!=="")?String(uomRound(q/uomTonsPer(item,it),4)):"";
+  it.unitQty=(q>=0&&it.qty!=="")?String(uomRound(q/uomFactorToDefaultUnit(item,it),4)):"";
 }
 // كتابة كمية بالوحدة المختارة وتحويلها إلى الوحدة المرجعية الافتراضية للصنف.
 function uomSetQty(it,item,v){
   if(!item||!uomEntries(item).length){ it.qty=v; delete it.unitQty; return; }
   it.unitQty=v;
   const n=parseFloat(String(v).replace(",","."));
-  it.qty=(v===""||isNaN(n))?"":String(uomRound(n*uomTonsPer(item,it),6));
+  it.qty=(v===""||isNaN(n))?"":String(uomRound(n*uomFactorToDefaultUnit(item,it),6));
 }
-// سطر فرعي صغير في الطباعة لو الوحدة مش طن (مثال: ٥٠ شيكارة)
+// سطر فرعي صغير في الطباعة عند اختلاف وحدة السطر عن الوحدة الافتراضية.
 function uomPrintSub(item,it){
   if(!item||!uomEntries(item).length||it.unitNo===undefined||it.unitNo===""||it.unitQty===undefined||it.unitQty==="") return "";
   const nm=uomLineName(item,it); if(nm===iuDefaultUnitName(item)) return "";
@@ -40511,14 +40474,16 @@ const whById=id=>(whList()||[]).find(w=>String(w.id)===String(id));
 const names=k=>(state[k]||[]).map(x=>typeof x==="string"?x:(x&&x.name)).filter(Boolean);
 const grpOf=n=>{ try{ const g=igById(igMap()[n]||""); return g?g.name:""; }catch(e){ return ""; } };
 const codeOf=n=>{ const i=names("diameters").indexOf(n); return i<0?"":String(i+1).padStart(3,"0"); };
-const calc=l=>{ const q=Number(l.qty)||0, f=Number(l.factor)||0, p=Number(l.price)||0; return {base:q*f, total:r2(q*p)}; };
-const unitNoOf=l=>{ try{ const u=unitsList().find(x=>x.name===l.unit); return u?u.no:""; }catch(e){ return ""; } };
-const unitOpts=(cur,item)=>{ let a=[]; try{ const mine=iuOf(item).filter(x=>x.used!==false).map(x=>iuUnitName(x.unitNo)).filter(Boolean); a=mine.length?mine:unitsList().map(u=>u.name); }catch(e){} if(cur&&a.indexOf(cur)<0) a.push(cur); return a.map(v=>`<option value="${E(v)}"${v===cur?" selected":""}>${E(v)}</option>`).join(""); };
+const unitNoOf=l=>{ if(l.unitNo!==undefined&&l.unitNo!==null&&l.unitNo!=="") return l.unitNo; try{ const u=unitsList().find(x=>x.name===l.unit); return u?u.no:""; }catch(e){ return ""; } };
+const unitEntryOf=l=>iuEntry(l.item,unitNoOf(l));
+const factorToBase=l=>{ const e=unitEntryOf(l); return e?iuFactorToBase(l.item,e.unitNo):0; };
+const calc=l=>{ const q=Number(l.qty)||0, f=factorToBase(l), p=Number(l.price)||0; return {base:q*f, total:r2(q*p)}; };
+const unitOpts=(cur,item)=>{ const a=iuOf(item).filter(x=>x.used!==false||x.base); return a.map(e=>{const nm=iuUnitName(e.unitNo); return nm?`<option value="${E(e.unitNo)}"${String(e.unitNo)===String(cur)?" selected":""}>${E(nm)}</option>`:"";}).join(""); };
 const blank=()=>({item:"",type:"",factory:"",unit:"",unitNo:"",factor:1,qty:"",price:""});
 const used=l=>!!(l.item||Number(l.qty)||Number(l.price));
 function baseUnitOf(item){ try{return iuBaseUnitName(item)||"وحدة";}catch(e){return "وحدة";} }
-function qtyByBaseUnit(lines){ const m=new Map(); (lines||[]).filter(used).forEach(l=>{const c=calc(l),u=baseUnitOf(l.item),k=iuBasePerTon(l.item)||1;m.set(u,(m.get(u)||0)+c.base*k);}); return [...m].map(([u,q])=>n3(q)+" "+u).join(" · ")||"0"; }
-function totals(lines){ let q=0,t=0,n=0; (lines||[]).filter(used).forEach(l=>{ const c=calc(l); q+=Number(l.qty)||0; t+=c.total; n++; }); return {q:r3(q),bText:qtyByBaseUnit(lines),t:r2(t),n}; }
+function qtyByBaseUnit(lines){ const m=new Map(); (lines||[]).filter(used).forEach(l=>{const c=calc(l),u=baseUnitOf(l.item);m.set(u,(m.get(u)||0)+c.base);}); return [...m].map(([u,q])=>n3(q)+" "+u).join(" · ")||"0"; }
+function totals(lines){ const byUnit=new Map(); let t=0,n=0; (lines||[]).filter(used).forEach(l=>{ const c=calc(l),no=unitNoOf(l),nm=iuUnitName(no)||l.unit||""; const key=String(no||nm); const z=byUnit.get(key)||{qty:0,name:nm}; z.qty+=Number(l.qty)||0; byUnit.set(key,z); t+=c.total; n++; }); const q=[...byUnit.values()].map(x=>n3(x.qty)+(x.name?" "+x.name:"" )).join(" · ")||"0"; return {q,bText:qtyByBaseUnit(lines),t:r2(t),n}; }
 function css(){
   if(document.getElementById("obw-style")) return;
   const s=document.createElement("style"); s.id="obw-style";
@@ -40575,10 +40540,10 @@ function rowHtml(l,i){
   <td><select onchange="OBW.set(${i},'factory',this.value)">${optHtml(names("factories"),l.factory,"— المصنع —")}</select></td>
   <td><input class="ro" id="obwG${i}" value="${E(grpOf(l.item))}" readonly tabindex="-1"></td>
   <td><input class="ro num" id="obwU${i}" value="${E(unitNoOf(l))}" readonly tabindex="-1"></td>
-  <td><select id="obwUS${i}" onchange="OBW.set(${i},'unit',this.value)">${unitOpts(l.unit,l.item)}</select></td>
-  <td><input class="num" id="obwF${i}" type="number" step="any" min="0" value="${v(l.factor)}" oninput="OBW.set(${i},'factor',this.value)"></td>
+  <td><select id="obwUS${i}" onchange="OBW.set(${i},'unitNo',this.value)">${unitOpts(unitNoOf(l),l.item)}</select></td>
+  <td><input class="ro num" id="obwF${i}" value="${factorToBase(l)||""}" readonly tabindex="-1" title="يُقرأ تلقائيًا من إعدادات وحدات الصنف"></td>
   <td><input class="num" type="number" step="any" min="0" value="${v(l.qty)}" oninput="OBW.set(${i},'qty',this.value)"></td>
-  <td><input class="ro num" id="obwB${i}" value="${c.base?n3(c.base*(iuBasePerTon(l.item)||1)): ""}" readonly tabindex="-1" title="${E(baseUnitOf(l.item))}"></td>
+  <td><input class="ro num" id="obwB${i}" value="${c.base?n3(c.base): ""}" readonly tabindex="-1" title="${E(baseUnitOf(l.item))}"></td>
   <td><input class="num" type="number" step="any" min="0" value="${v(l.price)}" oninput="OBW.set(${i},'price',this.value)"></td>
   <td><input class="ro num" id="obwT${i}" value="${c.total?m2(c.total):""}" readonly tabindex="-1"></td>
   <td class="act"><button class="obw-x" title="حذف السطر" onclick="OBW.delRow(${i})">✕</button></td></tr>`;
@@ -40611,16 +40576,16 @@ function paint(){ const c=root(); if(!c) return; css(); c.innerHTML=D?docHtml():
 function refreshRow(i){
   const l=D.lines[i], c=calc(l), g=id=>document.getElementById(id);
   if(g("obwU"+i)) g("obwU"+i).value=unitNoOf(l); if(g("obwC"+i)) g("obwC"+i).value=codeOf(l.item); if(g("obwG"+i)) g("obwG"+i).value=grpOf(l.item);
-  if(g("obwB"+i)) g("obwB"+i).value=c.base?n3(c.base*(iuBasePerTon(l.item)||1)):""; if(g("obwT"+i)) g("obwT"+i).value=c.total?m2(c.total):"";
+  if(g("obwB"+i)) g("obwB"+i).value=c.base?n3(c.base):""; if(g("obwF"+i)) g("obwF"+i).value=factorToBase(l)||""; if(g("obwUS"+i)) g("obwUS"+i).value=unitNoOf(l); if(g("obwT"+i)) g("obwT"+i).value=c.total?m2(c.total):"";
   const t=g("obwTot"); if(t) t.innerHTML=totTiles();
 }
 function pad(){ while(D.lines.length<MIN_ROWS) D.lines.push(blank()); }
 
 /* ---------- حركات المخزون ---------- */
 function movesOf(d){
-  return (d.lines||[]).filter(used).map(l=>{ const c=calc(l), f=Number(l.factor)||1;
+  return (d.lines||[]).filter(used).map(l=>{ const c=calc(l), f=factorToBase(l);
     return {movement_date:d.date,warehouse_id:String(d.warehouseId),warehouse_code:String(d.warehouseCode||""),warehouse_name:String(d.warehouseName||""),
-      factory:l.factory||"",diameter:l.item,item_type:l.type||"",movement_type:"receipt",qty:c.base*(iuBasePerTon(l.item)||1),unit:iuBaseUnitName(l.item)||l.unit,unit_cost:((Number(l.price)||0)/f)/(iuBasePerTon(l.item)||1),total_cost:c.total,
+      factory:l.factory||"",diameter:l.item,item_type:l.type||"",movement_type:"receipt",qty:c.base,unit:iuBaseUnitName(l.item)||l.unit,unit_cost:f>0?(Number(l.price)||0)/f:0,total_cost:c.total,
       source_type:SRC,source_id:String(d.id),source_no:String(d.no||""),note:(d.note||"رصيد افتتاحي")+" — "+d.no,supplier:"",customer:"",sale_order_no:""}; });
 }
 async function syncMoves(d,old){
@@ -40642,10 +40607,10 @@ const API={
     D.warehouseId=id; const w=whById(id)||{}, el=document.getElementById("obwWhCode"); if(el) el.value=w.code||""; },
   set(i,k,v){ if(!D||!D.lines[i]) return; const l=D.lines[i]; l[k]=v;
     try{
-      if(k==="item"){ const b=iuBase(v); if(b){ l.unit=iuUnitName(b.unitNo); l.factor=iuTonsPer(v,b)||1; } const us=document.getElementById("obwUS"+i); if(us) us.innerHTML=unitOpts(l.unit,v); }
-      else if(k==="unit"){ const u=iuOf(l.item).find(x=>iuUnitName(x.unitNo)===v); if(u) l.factor=iuTonsPer(l.item,u)||1; }
+      if(k==="item"){ const a=iuOf(v), d=a.find(x=>x.used)||iuBase(v)||a[0]; l.unitNo=d?d.unitNo:""; l.unit=d?iuUnitName(d.unitNo):""; l.factor=d?iuFactorToBase(v,d.unitNo):0; const us=document.getElementById("obwUS"+i); if(us) us.innerHTML=unitOpts(l.unitNo,v); }
+      else if(k==="unitNo"){ const u=iuEntry(l.item,v); l.unitNo=u?u.unitNo:""; l.unit=u?iuUnitName(u.unitNo):""; l.factor=u?iuFactorToBase(l.item,u.unitNo):0; }
     }catch(e){}
-    const fe=document.getElementById("obwF"+i); if(fe&&k!=="factor") fe.value=l.factor===""||l.factor==null?"":l.factor;
+    const fe=document.getElementById("obwF"+i); if(fe) fe.value=factorToBase(l)||"";
     refreshRow(i); },
   addRow(){ D.lines.push(blank()); const b=document.getElementById("obwBody"); if(b) b.insertAdjacentHTML("beforeend",rowHtml(D.lines[D.lines.length-1],D.lines.length-1)); },
   delRow(i){ D.lines.splice(i,1); pad(); const b=document.getElementById("obwBody"); if(b) b.innerHTML=D.lines.map(rowHtml).join(""); const t=document.getElementById("obwTot"); if(t) t.innerHTML=totTiles(); },
@@ -40659,13 +40624,13 @@ const API={
     for(let k=0;k<D.lines.length;k++){ const l=D.lines[k]; if(!used(l)) continue; const p="سطر "+(k+1)+": ";
       if(!l.item) return toast(p+"اختر الصنف","err");
       if(!(Number(l.qty)>0)) return toast(p+"الكمية لازم تكون أكبر من صفر","err");
-      if(!(Number(l.factor)>0)) return toast(p+"معامل التحويل لازم يكون أكبر من صفر","err");
+      const ue=unitEntryOf(l); if(!ue||!(factorToBase(l)>0)) return toast(p+"وحدة الصنف غير معرفة أو معاملها غير صالح في إعدادات الوحدات","err");
       if(!(Number(l.price)>=0)||l.price==="") return toast(p+"أدخل سعر الوحدة","err");
       const key=[l.item,l.type,l.factory].join("|"); if(seen.has(key)) return toast(p+"الصنف مكرر بنفس النوع والمصنع","err"); seen.add(key); }
     const w=whById(D.warehouseId); if(!w) return toast("المخزن غير موجود","err");
     const st=store(), old=docs().find(x=>x.id===D.id)||null;
     const d={id:D.id,no:D.no||("OBW-"+String(st.seq+1).padStart(4,"0")),date:D.date,warehouseId:String(w.id),warehouseCode:w.code||"",warehouseName:w.name||"",note:D.note||"",
-      lines:ls.map(l=>({item:l.item,type:l.type||"",factory:l.factory||"",unit:l.unit||iuBaseUnitName(l.item)||"",unitNo:unitNoOf(l),factor:Number(l.factor),qty:Number(l.qty),price:Number(l.price)})),updated_at:new Date().toISOString()};
+      lines:ls.map(l=>{const un=unitNoOf(l),ue=iuEntry(l.item,un);return {item:l.item,type:l.type||"",factory:l.factory||"",unit:iuUnitName(un)||l.unit||iuBaseUnitName(l.item)||"",unitNo:un,factor:ue?iuFactorToBase(l.item,un):0,qty:Number(l.qty),price:Number(l.price)};}),updated_at:new Date().toISOString()};
     BUSY=true; const btn=document.getElementById("obwSave"); if(btn) btn.disabled=true;
     try{ await syncMoves(d,old); }
     catch(e){ BUSY=false; if(btn) btn.disabled=false; return toast("تعذر تسجيل حركة المخزون: "+String((e&&e.message)||e),"err"); }
