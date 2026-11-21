@@ -6844,7 +6844,11 @@ function glRenderBalanceSheet(){
 function glFinPlain(){const d=window._glFinCurrent;if(!d)return '';const inc=d.kind==='income';return [d.head||d.title,d.subtitle||'',inc?'البيان,كود الحساب,جزئي,إجمالي':'كود الحساب,البيان,جزئي,كلي',...d.rows.filter(r=>r.cls!=='gap').map(r=>{const lab=String(r.label||'').replace(/,/g,' '),a=r.d==null?'':Number(r.d).toFixed(2),b=r.e==null?'':Number(r.e).toFixed(2);return (inc?[lab,r.code||'',a,b]:[r.code||'',lab,a,b]).join(',');})].join('\n');}
 function glFinExport(kind){if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');const d=window._glFinCurrent;if(!d||d.kind!==kind)return toast('اضغط «عرض التقرير» أولاً ثم صدّر','err');const f=glFinState(),inc=kind==='income';const aoa=[[glFinCompany()],[d.head||d.title],[d.subtitle||''],[],inc?['البيان','كود الحساب','جزئي','إجمالي','فحص']:['كود الحساب','البيان','جزئي','كلي','فحص']];d.rows.forEach(r=>{if(r.cls==='gap'){aoa.push([]);return;}const lab=String(r.label||''),a=r.d==null?'':Number(r.d),b=r.e==null?'':Number(r.e);aoa.push(inc?[lab,r.code||'',a,b,r.chk||'']:[r.code||'',lab,a,b,r.chk||'']);});const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=inc?[{wch:56},{wch:18},{wch:22},{wch:24},{wch:12}]:[{wch:18},{wch:56},{wch:22},{wch:24},{wch:12}];const wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};XLSX.utils.book_append_sheet(wb,ws,inc?'قائمة الدخل':'المركز المالي');XLSX.writeFile(wb,(inc?'قائمة_الدخل_':'قائمة_المركز_المالي_')+(inc?f.from+'_'+f.to:f.asOf)+'.xlsx');}
 function glFinPrint(kind){if(!document.getElementById('glFinOutput'))return toast('اضغط «عرض التقرير» وانتظر التحميل ثم اطبع','err');const w=window.open('','_blank');if(!w)return toast('اسمح بالنوافذ المنبثقة للطباعة','err');const title=window._glFinCurrent?.title||'القوائم المالية';const body=document.getElementById('glFinOutput')?.outerHTML||'';if(!body){w.close();return toast('اضغط «تنفيذ التقرير» أولاً ثم اطبع','err');}w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>${title}</title><style>@page{size:A4;margin:10mm}body{font-family:'Segoe UI',Tahoma,Arial,sans-serif;margin:0;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}.fx-card{border:0!important;border-radius:0!important}.fx-tbl{min-width:0!important}</style></head><body>${body}</body></html>`);w.document.close();w.focus();setTimeout(()=>w.print(),400);}
-async function glFinShare(kind){const csv=glFinPlain();try{if(navigator.share)await navigator.share({title:window._glFinCurrent?.title||'القوائم المالية',text:csv});else if(navigator.clipboard){await navigator.clipboard.writeText(csv);toast('تم نسخ التقرير للمشاركة','ok');}else toast('المشاركة غير مدعومة في هذا المتصفح','err');}catch(e){if(e.name!=='AbortError')toast('تعذر مشاركة التقرير','err');}}
+async function glFinShare(kind){
+  const _o=document.getElementById('glFinOutput');
+  if(_o&&typeof igVectorPdfDeliver==='function'){ const _t=window._glFinCurrent?.title||'القوائم المالية';
+    return igVectorPdfDeliver('<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>'+glEsc(_t)+'</title>'+glFinCss()+'</head><body style="margin:0;font-family:Tahoma,Arial,sans-serif">'+_o.outerHTML+'</body></html>','Financial_Statement_'+new Date().toISOString().slice(0,10),_t,'share'); }
+  const csv=glFinPlain();try{if(navigator.share)await navigator.share({title:window._glFinCurrent?.title||'القوائم المالية',text:csv});else if(navigator.clipboard){await navigator.clipboard.writeText(csv);toast('تم نسخ التقرير للمشاركة','ok');}else toast('المشاركة غير مدعومة في هذا المتصفح','err');}catch(e){if(e.name!=='AbortError')toast('تعذر مشاركة التقرير','err');}}
 function glRender(){const el=document.getElementById("glBody");if(!el)return;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad()">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;el.innerHTML=t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderSysTabs():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():t==="rpt_income"?glRenderIncomeStatement():t==="rpt_balance"?glRenderBalanceSheet():glRenderEntries();}
 
 // ============== موقف مركز تكلفة (Cost Center Position) ==============
@@ -6881,16 +6885,13 @@ function glRptMeta(k){return k==='cc'?{out:'glCcOut',build:()=>glCcBuild(),html:
 function glRptShare(k){
   const m=glRptMeta(k),out=document.getElementById(m.out);
   if(!out||!out.innerHTML.trim()||out.querySelector('.gltb-empty'))return toast('شغّل التقرير أولاً','warn');
-  const f=m.st(),title=`${m.title} — ${glAcDmy(f.from)} إلى ${glAcDmy(f.to)}`,text=out.innerText.slice(0,2000);
-  if(navigator.share){navigator.share({title,text}).catch(()=>{});}
-  else if(navigator.clipboard){navigator.clipboard.writeText(title+' '+text).then(()=>toast('تم النسخ للحافظة','ok'));}
-  else toast('المتصفح لا يدعم المشاركة','err');
+  const f=m.st(),title=`${m.title} — ${glAcDmy(f.from)} إلى ${glAcDmy(f.to)}`;
+  const d=m.build();if(!d)return;
+  igVectorPdfDeliver(m.html(d,true),'GL_Report_'+d.f.from+'_'+d.f.to,title,'share');
 }
 function glRptDownload(k){
   const m=glRptMeta(k),d=m.build();if(!d)return;
-  const blob=new Blob([m.html(d,true)],{type:'text/html;charset=utf-8'}),url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download=`${m.file}-${d.f.from}-${d.f.to}.html`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
-  toast('تم التنزيل — افتح الملف واطبع PDF','ok');
+  igVectorPdfDeliver(m.html(d,true),'GL_Report_'+d.f.from+'_'+d.f.to,m.title,'download');
 }
 function glRptPrintCurrent(k){const m=glRptMeta(k),d=m.build();if(d)m.print(d);}
 function glRptActHtml(k,f,runFn,resetFn){
@@ -8778,18 +8779,12 @@ function glAcReset(){const t=new Date();glState.ac={from:t.getFullYear()+'-01-01
 function glAcShare(){
   const out=document.getElementById('glAcOut');if(!out||!out.innerHTML.trim()||out.querySelector('.glra-empty'))return toast('شغّل التقرير أولاً','warn');
   const f=glAcState();const title=`كشف حساب لكل الحسابات — ${glAcDmy(f.from)} إلى ${glAcDmy(f.to)}`;
-  const text=out.innerText.slice(0,2000);
-  if(navigator.share){navigator.share({title,text}).catch(()=>{});}
-  else if(navigator.clipboard){navigator.clipboard.writeText(title+'\n\n'+text).then(()=>toast('تم النسخ للحافظة','ok'));}
-  else toast('المتصفح لا يدعم المشاركة','err');
+  const d=glAcBuild();if(!d)return;
+  igVectorPdfDeliver(glAcPrintHtml(d,true),'Account_Statement_'+d.f.from+'_'+d.f.to,title,'share');
 }
 function glAcDownload(){
   const d=glAcBuild();if(!d)return;
-  const html=glAcPrintHtml(d,true);
-  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download=`كشف-حساب-${d.f.from}-${d.f.to}.html`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
-  toast('تم التنزيل — افتح الملف واطبع PDF','ok');
+  igVectorPdfDeliver(glAcPrintHtml(d,true),'Account_Statement_'+d.f.from+'_'+d.f.to,'كشف حساب','download');
 }
 function glAcPrintCurrent(){const d=glAcBuild();if(d)glAcPrint(d);}
 function glAcSave(){
@@ -9195,18 +9190,12 @@ function glTbPicked(side,code){
 function glTbShare(){
   const out=document.getElementById('glTbOut');if(!out||!out.innerHTML.trim()||out.querySelector('.gltb-empty'))return toast('شغّل التقرير أولاً','warn');
   const f=glTbState();const title=`ميزان المراجعة — ${glAcDmy(f.from)} إلى ${glAcDmy(f.to)}`;
-  const text=out.innerText.slice(0,2000);
-  if(navigator.share){navigator.share({title,text}).catch(()=>{});}
-  else if(navigator.clipboard){navigator.clipboard.writeText(title+'\n\n'+text).then(()=>toast('تم النسخ للحافظة','ok'));}
-  else toast('المتصفح لا يدعم المشاركة','err');
+  const d=glTbBuild();if(!d)return;
+  igVectorPdfDeliver(glTbPrintHtml(d,true),'Trial_Balance_'+d.f.from+'_'+d.f.to,title,'share');
 }
 function glTbDownload(){
   const d=glTbBuild();if(!d)return;
-  const html=glTbPrintHtml(d,true);
-  const blob=new Blob([html],{type:'text/html;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');a.href=url;a.download=`ميزان-المراجعة-${d.f.from}-${d.f.to}.html`;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
-  toast('تم التنزيل — افتح الملف واطبع PDF','ok');
+  igVectorPdfDeliver(glTbPrintHtml(d,true),'Trial_Balance_'+d.f.from+'_'+d.f.to,'ميزان المراجعة','download');
 }
 function glTbPrintCurrent(){const d=glTbBuild();if(d)glTbPrint(d);}
 function glTbBrandHeader(){
@@ -10949,7 +10938,7 @@ async function igSharePdfFromHtml(html,baseName,title){
 function openReportPreview(html,title,fileBase,pdfBuilder){
   const w=window.open('','_blank');
   if(!w){toast('المتصفح منع فتح نافذة المعاينة','err');return;}
-  if(!pdfBuilder&&typeof igHtmlToVectorPdf==='function') pdfBuilder=function(){ return igHtmlToVectorPdf(w); };
+  if(!pdfBuilder&&typeof igHtmlToVectorPdf==='function') pdfBuilder=function(){ return igReportToPdf(w,w.html2canvas||window.html2canvas,w.jspdf||window.jspdf); };
   const toolbar=`<div class="report-preview-toolbar" style="position:sticky;top:0;z-index:9999;display:flex;align-items:center;gap:10px;padding:12px 18px;background:#172337;color:#fff;font:14px Tahoma,Arial,sans-serif;box-shadow:0 2px 10px #0002"><strong style="flex:1">${title||'معاينة التقرير'}</strong>${pdfBuilder?`<button id="igPdfDl" onclick="downloadVectorPdf()" style="border:0;border-radius:8px;padding:9px 14px;background:#fff;color:#172337;font-weight:bold;cursor:pointer">⬇ تحميل PDF</button>`:''}<button onclick="shareReportPreview()" style="border:0;border-radius:8px;padding:9px 14px;background:#fff;color:#172337;font-weight:bold;cursor:pointer">↗ مشاركة</button><button onclick="window.print()" style="border:0;border-radius:8px;padding:9px 16px;background:#d9ad3b;color:#172337;font-weight:bold;cursor:pointer">🖨 طباعة</button><button onclick="window.close()" style="border:1px solid #ffffff66;border-radius:8px;padding:9px 14px;background:transparent;color:#fff;cursor:pointer">إغلاق</button></div>`;
   const safePdfBase=(fileBase&&String(fileBase).replace(/[^0-9A-Za-z_-]/g,''))||igSafeFileName(String(title||'Report').replace(/<[^>]*>/g,'').trim(),'').replace(/\s+/g,'_');
   const shareScript=`<script>
@@ -24254,6 +24243,10 @@ async function igInstallmentsPdf(JS, M){
       if(i<2){ stroke([95,128,176],.2); doc.line(x0,MG+3.4,x0,MG+11.6); }
       mx=x0; });
   }
+  function drawInfo(grp,y){
+    fill([248,250,252]); stroke(C.line,.2); doc.roundedRect(MG,y,UW,6.2,1.2,1.2,'FD');
+    const sz=fit(grp.info,UW-6,7.4,true,5); font(true,sz,C.ink); mixed(grp.info,PW/2,y+4.3,'c');
+  }
   function kpis(grp,y){
     const gap=2, ws=[.62,1,1,1,1,1,1], tot=ws.reduce((a,b)=>a+b,0), avail=UW-gap*6; let x=PW-MG;
     grp.kpis.forEach((k,i)=>{
@@ -24310,12 +24303,13 @@ async function igInstallmentsPdf(JS, M){
     while(i<grp.rows.length || pg){
       if(!first) doc.addPage(); first=false;
       band(grp); y=MG+17;
+      const IH=grp.info?7.5:0; if(IH){ drawInfo(grp,y); y+=IH; }
       const KH=(pg&&grp.kpis&&grp.kpis.length)?13.6:0; if(KH){ kpis(grp,y); y+=KH; }
       thead(grp,W,y); y+=7;
       const reserveFoot=7.2;
       while(i<grp.rows.length){
         const last=(i===grp.rows.length-1); const need=rh+(last?reserveFoot:0);
-        if(y+need>BOTTOM && !(y===MG+17+KH+7)) break;
+        if(y+need>BOTTOM && !(y===MG+17+IH+KH+7)) break;
         rowDraw(grp,W,grp.rows[i],y,rh); y+=rh; i++;
       }
       pg=false;
@@ -24357,36 +24351,60 @@ async function igHtmlToVectorPdf(win,JS){
     return "#"+[m[1],m[2],m[3]].map(function(x){ return (+x).toString(16).padStart(2,"0"); }).join(""); };
   const lum=function(h){ const v=[1,3,5].map(function(i){ return parseInt(h.slice(i,i+2),16); }); return (0.299*v[0]+0.587*v[1]+0.114*v[2])/255; };
   const isRow=function(tr){ return tr.cells&&tr.cells.length; };
-  const expand=function(tr){ const out=[]; Array.prototype.forEach.call(tr.cells,function(c){ const sp=Math.max(1,c.colSpan||1); out.push({el:c,span:sp,text:cap(c.innerText!==undefined?c.innerText:c.textContent)}); }); return out; };
+  const expand=function(tr){ const out=[]; Array.prototype.forEach.call(tr.cells,function(c){ out.push({el:c,span:Math.max(1,c.colSpan||1),text:cap(c.textContent)}); }); return out; };
+  // رأس الجدول متعدد الصفوف (rowspan/colspan): نبني شبكة ونجمع نص كل عمود
+  const headerCols=function(rows){
+    const grid=[];
+    rows.forEach(function(tr,ri){ grid[ri]=grid[ri]||[]; let ci=0;
+      Array.prototype.forEach.call(tr.cells,function(c){ while(grid[ri][ci]!==undefined) ci++;
+        const rs=Math.max(1,c.rowSpan||1), cs=Math.max(1,c.colSpan||1), tx=clean(c.textContent);
+        for(let x=0;x<rs;x++){ grid[ri+x]=grid[ri+x]||[]; for(let y=0;y<cs;y++) grid[ri+x][ci+y]={t:tx,src:c}; } ci+=cs; }); });
+    let n=0; grid.forEach(function(r){ if(r.length>n) n=r.length; });
+    const cols=[]; for(let c=0;c<n;c++){ const parts=[]; let last=null; grid.forEach(function(r){ const g=r[c]; if(g&&g.src!==last&&g.t){ parts.push(g.t); } if(g) last=g.src; }); cols.push({h:cap(parts.join(" ")),k:"c"+c}); }
+    return cols;
+  };
   const headingFor=function(t){
     let el=t; for(let up=0;up<4&&el&&el!==doc.body;up++,el=el.parentElement){
       let p=el.previousElementSibling, hops=0;
       while(p&&hops<3){ const h=(/^H[1-4]$/.test(p.tagName)?p:p.querySelector&&p.querySelector("h1,h2,h3,h4,.qs-tag,.fx-ttl")); const tx=h?clean(h.textContent):(p.classList&&p.classList.contains("qs-tag")?clean(p.textContent):""); if(tx) return tx.slice(0,110); p=p.previousElementSibling; hops++; }
     } return "";
   };
+  // نص الرأس اللي قبل أول جدول (الفترة، الفلاتر، العميل...) يظهر تحت عنوان التقرير
+  const preTextFor=function(root,firstTable,title){
+    const parts=[], w=doc.createTreeWalker(root,4,null); let n;
+    while((n=w.nextNode())){
+      if(!(firstTable.compareDocumentPosition(n)&2)) break;
+      const p=n.parentElement; if(!p||p.closest("style,script,button,select,option,noscript,.report-preview-toolbar")) continue;
+      const t=clean(n.nodeValue); if(!t||t===title||/^[\s·|:–—-]+$/.test(t)) continue;
+      if(parts[parts.length-1]!==t) parts.push(t);
+    }
+    // دمج «عنوان :» مع قيمته، واستبعاد التاريخ/الوقت/رقم الصفحة (موجودين في رأس الـPDF)
+    const merged=[]; for(let i=0;i<parts.length;i++){ let t=parts[i]; if(/[:：]$/.test(t)&&i+1<parts.length){ t=t+" "+parts[i+1]; i++; } merged.push(t); }
+    return merged.filter(function(t){ return !/^(التاريخ|الوقت|صفحة)\s*[:：]/.test(t); }).join(" · ").slice(0,230);
+  };
+  let title=clean(((doc.querySelector(".rprt-hdr h1,.fx-ttl")||{}).textContent)||doc.title||((doc.querySelector("h1")||{}).textContent)||"تقرير").replace(/^[^\u0600-\u06FFA-Za-z0-9]+/,"");
+  if(!title) title="تقرير";
   const shareRoots=Array.prototype.slice.call(doc.querySelectorAll("[data-share-page]"));
   const roots=shareRoots.length?shareRoots:[doc.body];
-  const groups=[]; let kp=[];
-  roots.forEach(function(root,ri){
+  const groups=[]; const kp=[];
+  roots.forEach(function(root){
+    let firstInRoot=true;
     Array.prototype.forEach.call(root.querySelectorAll("table"),function(t){
       if(t.parentElement&&t.parentElement.closest("table")) return;
       if(!t.getClientRects().length) return;
       const allRows=Array.prototype.filter.call(t.rows,isRow);
       if(!allRows.length) return;
-      const theadRows=Array.prototype.filter.call(t.tHead?t.tHead.rows:[],isRow);
+      let theadRows=Array.prototype.filter.call(t.tHead?t.tHead.rows:[],isRow);
       const tfootRows=Array.prototype.filter.call(t.tFoot?t.tFoot.rows:[],isRow);
-      let headRow=theadRows.length?theadRows[theadRows.length-1]:null;
       let bodyRows=allRows.filter(function(r){ return theadRows.indexOf(r)<0&&tfootRows.indexOf(r)<0; });
-      if(!headRow&&bodyRows.length&&Array.prototype.every.call(bodyRows[0].cells,function(c){ return c.tagName==="TH"; })) headRow=bodyRows.shift();
-      let n=0;
-      if(headRow) expand(headRow).forEach(function(c){ n+=c.span; });
-      else bodyRows.concat(tfootRows).forEach(function(r){ let k=0; expand(r).forEach(function(c){ k+=c.span; }); if(k>n) n=k; });
+      if(!theadRows.length&&bodyRows.length&&Array.prototype.every.call(bodyRows[0].cells,function(c){ return c.tagName==="TH"; })) theadRows=[bodyRows.shift()];
+      let cols=theadRows.length?headerCols(theadRows):[], n=cols.length;
+      if(!theadRows.length) bodyRows.concat(tfootRows).forEach(function(r){ let k=0; expand(r).forEach(function(c){ k+=c.span; }); if(k>n) n=k; });
       if(n<2||(!bodyRows.length&&!tfootRows.length)) return;
-      const cols=[]; if(headRow) expand(headRow).forEach(function(c){ cols.push({h:c.text,k:"c"+cols.length}); for(let q=1;q<c.span;q++) cols.push({h:"",k:"c"+cols.length}); });
       while(cols.length<n) cols.push({h:"",k:"c"+cols.length});
       const mkCells=function(tr){
-        const cells=[]; expand(tr).forEach(function(c){ const st=gcs(c.el); const fw=parseInt(st.fontWeight,10)||400; let fg=toHex(st.color);
-          cells.push({t:c.text,b:fw>=700,fg:fg}); for(let q=1;q<c.span;q++) cells.push({t:""}); });
+        const cells=[]; expand(tr).forEach(function(c){ const st=gcs(c.el); const fw=parseInt(st.fontWeight,10)||400;
+          cells.push({t:c.text,b:fw>=700,fg:toHex(st.color)}); for(let q=1;q<c.span;q++) cells.push({t:""}); });
         while(cells.length<n) cells.push({t:""}); return cells.slice(0,n);
       };
       const rowBg=function(tr){ let bg=toHex(gcs(tr).backgroundColor); if(!bg&&tr.cells[0]) bg=toHex(gcs(tr.cells[0]).backgroundColor); return bg||"#ffffff"; };
@@ -24397,21 +24415,32 @@ async function igHtmlToVectorPdf(win,JS){
       if(tfootRows.length){ expand(tfootRows[0]).forEach(function(c,i){ foot.push({span:c.span,t:c.text,left:i===0&&c.span>1}); });
         let tot=0; foot.forEach(function(f){ tot+=f.span; }); if(tot<n) foot.push({span:n-tot,t:""}); if(tot>n) foot=[{span:n,t:""}];
         tfootRows.slice(1).forEach(function(tr){ rows.push({bg:"#f3f4f6",cells:mkCells(tr).map(function(c){ c.b=true; delete c.fg; return c; })}); }); }
-      groups.push({cust:"",scope:headingFor(t),kpis:[],cols:cols,rows:rows,foot:foot,_root:ri});
+      const scope=headingFor(t); let info="";
+      if(firstInRoot){ info=preTextFor(root,t,title); firstInRoot=false; }
+      groups.push({cust:"",scope:info?"":scope,info:info||scope,kpis:[],cols:cols,rows:rows,foot:foot});
     });
   });
   if(!groups.length) throw new Error("لا توجد جداول قابلة للتحويل");
   Array.prototype.slice.call(doc.querySelectorAll(".rprt-kpi,.kpi,.kc,.fx-kpi")).slice(0,7).forEach(function(k){
-    const lbl=clean((k.querySelector(".lbl,.kl,.l,.lbl")||{}).textContent||"").replace(/:$/,""), val=clean((k.querySelector(".val,.kv,.v")||{}).textContent||""), sub=clean((k.querySelector(".sub,.ks,.s")||{}).textContent||"");
+    const lbl=clean((k.querySelector(".lbl,.kl,.l")||{}).textContent||"").replace(/:$/,""), val=clean((k.querySelector(".val,.kv,.v")||{}).textContent||""), sub=clean((k.querySelector(".sub,.ks,.s")||{}).textContent||"");
     if(lbl&&val) kp.push({l:lbl.slice(0,26),v:val.slice(0,24),s:sub.slice(0,30),a:toHex(gcs(k).borderRightColor)||"#64748b"});
   });
   if(kp.length) groups[0].kpis=kp;
-  let title=clean((doc.querySelector(".rprt-hdr h1,.fx-ttl,h1")||{}).textContent||doc.title||"تقرير").replace(/^[^\u0600-\u06FFA-Za-z0-9]+/,"");
-  if(!title) title="تقرير";
   let logo=null; try{ logo=await igPdfRoundLogo((document.querySelector("aside .brand img")||{}).src||""); }catch(e){}
   const now=new Date();
   return igInstallmentsPdf(JS,{fonts:IG_INST_FONT,title:title.slice(0,70),en:"IRON GATE SUPPLIES",date:now.toLocaleDateString("en-GB"),cur:(state&&state.settings&&state.settings.currency)||"ج.م",
     stamp:now.toLocaleString("en-GB"),logo:logo,noLegend:true,groups:groups});
+}
+/* تسليم PDF نصي من HTML: مشاركة (ملف) أو تحميل مباشر */
+async function igVectorPdfDeliver(html,base,title,mode){
+  try{
+    toast("جاري تجهيز ملف PDF…","ok");
+    const pdf=await igHtmlStringToVectorPdf(html);
+    const file=new File([pdf.output("blob")],base+".pdf",{type:"application/pdf"});
+    if(mode==="share"&&navigator.canShare&&navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:title||base}); return; }
+    pdf.save(file.name);
+    toast(mode==="share"?"المشاركة المباشرة غير متاحة في المتصفح ده — تم تحميل ملف PDF لتشاركه يدويًا":"تم تحميل ملف PDF","ok");
+  }catch(e){ if(e&&e.name==="AbortError") return; console.error(e); toast("تعذّر تجهيز ملف PDF: "+((e&&e.message)||e),"err"); }
 }
 async function igHtmlStringToVectorPdf(html){
   const fr=document.createElement("iframe");
