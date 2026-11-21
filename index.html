@@ -2313,6 +2313,8 @@ table.qs-lp th,table.qs-lp td{font-size:12px!important;padding:6px 7px!important
 #igViewer .igv-page{position:relative;width:min(794px,calc(100vw - 24px));background:#fff;box-shadow:0 4px 24px rgba(0,0,0,.5);overflow:hidden;flex:0 0 auto}
 #igViewer .igv-page::before{content:"";display:block;padding-top:141.4286%}
 #igViewer .igv-page img{position:absolute;display:block;max-width:none;-webkit-user-select:none;user-select:none}
+#igViewer .igv-page.igv-vec img{position:static;display:revert;max-width:100%}
+#igViewer .igv-page.igv-vec{text-rendering:geometricPrecision}
 #igViewer .igv-loading{color:#fff;text-align:center;padding:70px 10px;font-weight:800;font-size:15px}
 @media print{
   html.ig-viewing,body.ig-viewing{height:auto!important;overflow:visible!important;background:#fff!important}
@@ -20424,6 +20426,27 @@ async function igOpenViewer(cfg){
   ov.addEventListener("click", e=>{ if(e.target===ov) igViewerClose(); });
   document.addEventListener("keydown", igViewerKey);
   try{
+    if(cfg.vector){
+      try{
+        const src = await cfg.vector();
+        if(document.getElementById("igViewer")!==ov) return;
+        if(src){
+          const host = document.getElementById("igvPages"); host.innerHTML = "";
+          const box = document.createElement("div"); box.className = "igv-page igv-vec"; box.setAttribute("aria-label","صفحة 1");
+          host.appendChild(box);
+          const W = 794, H = 1123, c = src.cloneNode(true);
+          c.style.cssText = "position:absolute;top:0;left:0;right:auto;width:"+W+"px;min-height:0;height:auto;max-height:none;box-sizing:border-box;margin:0;transform-origin:0 0";
+          box.appendChild(c);
+          const nat = c.scrollHeight;
+          if(nat > H){ const z = H/nat; c.style.zoom = String(z); c.style.width = (W/z)+"px"; c.style.height = (H/z)+"px"; c.style.overflow = "hidden"; }
+          else { c.style.height = H+"px"; }
+          const fit = ()=>{ c.style.transform = "scale("+(box.clientWidth/W)+")"; };
+          fit(); if(window.ResizeObserver) new ResizeObserver(fit).observe(box);
+          ov.classList.add("igv-ready");
+          return;
+        }
+      }catch(e){ console.warn("vector viewer failed, falling back to images", e); }
+    }
     const pages = await cfg.build();
     if(document.getElementById("igViewer")!==ov) return;            // اتقفل قبل ما يخلص التجهيز
     const host = document.getElementById("igvPages"); host.innerHTML = "";
@@ -20631,6 +20654,7 @@ function soView(){
   igOpenViewer({
     title: "أمر شراء رقم " + (soDraft.orderNo||""),
     build: soBuildPages, paperId: "soPaper",
+    vector: async ()=>{ soRenderPreview(); const p=document.getElementById("soPaper"); if(p) await igPrepPaper(p); return p; },
     download: "soDownloadPdf()", share: "soSharePdf()",
     validate: soValidate
   });
@@ -42544,6 +42568,7 @@ body.page-saleOrder #content #soChargesBox .inp.num,body.page-saleOrder #content
 #soPaper .order-phone-line{margin-top:2px;font-size:.72em;white-space:nowrap}
 #soPaper .sign-block img.stamp{height:70px}
 #soPaper .po-docref{display:none !important}
+#soPaper .sign-appr .sign-cap{display:none !important}
 /* اسم المندوب وتليفونه تحت كلمة المندوب مباشرة بشكل صغير زي الإمضاء */
 #soPaper .sign-block.pos-right .val{display:block;height:auto;min-height:0;margin:2px 0 0;padding:0;border:0 !important;font-size:.78em;line-height:1.3;white-space:nowrap}
 #soPaper .sign-block.pos-right .order-phone-line{margin-top:1px;font-size:.68em;line-height:1.3;white-space:nowrap}
