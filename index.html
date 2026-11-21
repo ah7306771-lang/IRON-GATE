@@ -2953,6 +2953,28 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
             }
           }
         }catch(_){accessToken='';}
+        // قبل الدخول: لو رقم المستخدم وكلمة السر مكتوبين في شاشة الدخول، اتحقق منهم بجلسة مؤقتة (من غير حفظ أو دخول فعلي)
+        if(!accessToken){
+          let lu=((document.getElementById('loginUserNo')||{}).value||'').trim();
+          let lp=((document.getElementById('loginPass')||{}).value||'');
+          // لو الحقول فاضية (مثلاً المتصفح لسه ما سلّمش القيمة) استخدم بيانات "تذكرني" المحفوظة في البرنامج
+          if(!lp){
+            try{
+              if(typeof SAVED_KEY!=='undefined'&&typeof decPw==='function'){
+                const sv=JSON.parse(localStorage.getItem(SAVED_KEY)||'null');
+                if(sv&&sv.p&&(!lu||String(sv.no)===lu)){lu=String(sv.no||lu);lp=decPw(sv.p);}
+              }
+            }catch(_){}
+          }
+          if(lu&&lp){
+            try{
+              const tmp=window.supabase.createClient(SB_URL,SB_KEY,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
+              const tr=await tmp.auth.signInWithPassword({email:`u${lu}@irongate.app`,password:lp});
+              if(!tr.error&&tr.data&&tr.data.session){accessToken=tr.data.session.access_token||'';}
+              else{loading.innerHTML='❌ رقم المستخدم أو كلمة السر غلط.';btn.disabled=false;return;}
+            }catch(_){}
+          }
+        }
         const isPublic=!accessToken;
         const reqHeaders={'Content-Type':'application/json','Authorization':'Bearer '+(accessToken||SB_KEY),'apikey':SB_KEY};
         const reqBody={question:q,history:hist.slice(-8)};
