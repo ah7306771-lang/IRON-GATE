@@ -2940,9 +2940,18 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
       let answer='';
       try{
         const url=SB_URL+'/functions/v1/app-chat-ai';
-        const sessionResult=await sb.auth.getSession();
-        const accessToken=sessionResult&&sessionResult.data&&sessionResult.data.session&&sessionResult.data.session.access_token;
-        if(!accessToken) throw new Error('جلسة الدخول غير متاحة. سجّل الدخول مرة أخرى.');
+        let sessionResult=await sb.auth.getSession();
+        let session=sessionResult&&sessionResult.data&&sessionResult.data.session;
+        let accessToken=session&&session.access_token;
+        // جرّب تجديد الجلسة المحفوظة قبل اعتبار المستخدم غير مسجل الدخول.
+        if(!accessToken || (session.expires_at && session.expires_at*1000 <= Date.now()+30000)){
+          const refreshed=await sb.auth.refreshSession();
+          if(!refreshed.error && refreshed.data && refreshed.data.session){
+            session=refreshed.data.session;
+            accessToken=session.access_token;
+          }
+        }
+        if(!accessToken) throw new Error('جلسة الدخول غير متاحة أو انتهت. سجّل الدخول مرة أخرى.');
         const r=await fetch(url,{
           method:'POST',
           headers:{'Content-Type':'application/json','Authorization':'Bearer '+accessToken,'apikey':SB_KEY,'x-company-id':w.c},
@@ -3252,7 +3261,7 @@ function saveState(){
 // ---------- Supabase ----------
 const SB_URL = "https://wadovjghevemdmqkhhml.supabase.co";
 const SB_KEY = "sb_publishable_mZH6txuODQ5vAAxqK4Gl7A_1Uk5H-wr";
-const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:true, autoRefreshToken:true, storage:window.sessionStorage },
+const sb = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:true, autoRefreshToken:true, storage:window.localStorage },
   global:{ fetch:(u,o)=>{ const h=new Headers((o&&o.headers)||{}); h.set("x-company-id",CUR_CO); return fetch(u,Object.assign({},o,{headers:h})); } } });
 // بعد عزل الشركات المفاتيح الفريدة بقت (company_id + العمود) — فبنضيف company_id تلقائيًا في onConflict
 (function(){
@@ -39483,8 +39492,15 @@ async function _bcGetApiAccessToken(){
   try{
     if(typeof sb === "undefined" || !sb.auth || !sb.auth.getSession) return "";
     var sessionResult=await sb.auth.getSession();
-    return sessionResult&&sessionResult.data&&sessionResult.data.session
-      ? String(sessionResult.data.session.access_token||"") : "";
+    var session=sessionResult&&sessionResult.data&&sessionResult.data.session;
+    var token=session&&session.access_token||"";
+    if(!token || (session.expires_at && session.expires_at*1000 <= Date.now()+30000)){
+      var refreshed=await sb.auth.refreshSession();
+      if(!refreshed.error && refreshed.data && refreshed.data.session){
+        token=refreshed.data.session.access_token||"";
+      }
+    }
+    return String(token||"");
   }catch(_){ return ""; }
 }
 function _bcGetApiIdentity(){
