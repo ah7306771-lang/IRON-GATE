@@ -15121,6 +15121,7 @@ function viewShipments(){
       ${B("جديد","newPolicy()","ghost",true)}
       ${B("📋 استدعاء أمر بيع","openSOPicker()","ghost",!viewOnly&&!posted)}
       ${B("بحث","openSearch()","ghost",true)}
+      ${SI_MODE?B("🖨 طباعة الفاتورة","igSiPrint()","ghost",!isNew):""}
       ${(!viewOnly&&!isNew)?B("إلغاء التعديل","cancelEdit()","ghost",true):""}
       ${B("تعديل","startEdit()","ghost",viewOnly&&!isNew)}
       ${editingSrc==="policies"?B("حذف","deletePolicy()","danger",true):""}
@@ -15130,6 +15131,7 @@ function viewShipments(){
       ${SI_MODE?B("🚚 التسليم والتحصيل","igSalesDeliveryHome('deliveries')","ghost",true):""}
       ${B("حفظ","saveShipment()","ig-save",!viewOnly)}
       ${SI_MODE&&posted&&!d.glEntryId?B("ترحيل محاسبي","igSalesPostInvoice()","ig-post",true):B("ترحيل","postShipment()","ig-post",!posted)}
+      ${SI_MODE&&posted&&d.glEntryId?B("فك الترحيل المحاسبي","igSalesUnpostInvoice()","danger",true):""}
       ${SI_MODE&&posted&&d.glEntryId&&d.directIssue&&!d.directDeliveryId?B("📦 صرف المخزون","igSalesIssueDirectUI()","ig-post",true):""}
     </div>
     </div>
@@ -15143,6 +15145,7 @@ function viewShipments(){
     ${!viewOnly?`<button class="btn ghost sm" onclick="shipmentToggleOrderClosed()">${(state.saleOrders||[]).find(x=>x.id===d.saleOrderId)?.closed?"🔓 إعادة فتح الأمر":"🔒 إقفال أمر البيع"}</button><button class="btn ghost sm" onclick="unlinkSO()">فك الربط</button>`:""}
   </div></div>`:""}
   </div>
+  ${SI_MODE?igSiOrderBar(d):""}
   <div class="card ig-pol-head"><div class="head ig-pol-head-title"><h3>${SI_MODE?"بيانات الفاتورة والربط بأمر البيع":"بيانات البوليصة والربط بأمر البيع"}</h3><div class="ig-note-fld ig-note-head"><button type="button" class="ig-note-btn ${(d.notes||"").trim()?"has-note":""}" id="noteBtn" onclick="toggleNotePop(event)" title="${escapeAttr((d.notes||"").trim()||"ملاحظات عامة")}" aria-label="ملاحظات عامة">📝</button><div class="ig-note-pop" id="notePop" hidden><label for="f_notes_top">📝 ملاحظات عامة</label><input class="inp" id="f_notes_top" ${ro} value="${escapeAttr(d.notes||"")}" oninput="setF('notes',this.value);noteBtnSync()" onkeydown="if(event.key==='Enter'||event.key==='Escape'){closeNotePop()}" placeholder="تُكتب تفاصيل السداد تلقائيًا — ويمكنك الإضافة"></div></div></div><div class="body">
     <div class="fgrid${SI_MODE?" ig-si-fgrid":""}">
       ${F("🔑 ربط بأمر بيع (اختياري)",`<div style="display:flex;gap:8px;align-items:center"><select class="inp" id="f_soNo" ${ro} onchange="setSoNo(this.value)" style="font-weight:700;border-color:var(--gold);flex:1">${soNoSelectOptions(d.saleOrderNo)}</select>${viewOnly?"":'<input class="inp" id="f_soNoManual" type="text" inputmode="text" autocomplete="off" placeholder="✎ أو اكتب رقم الأمر" title="لو الأمر مش في القائمة اكتب رقمه بإيدك (زي ما هو في الداتا بيز) واضغط Enter" onchange="setSoNoManual(this.value)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();}" style="width:150px;flex:0 0 auto"><button type="button" class="btn ghost sm" onclick="newOrderFromPolicy()" title="يفتح شاشة أمر البيع لإنشاء أمر جديد">+ أمر جديد</button>'}</div><small style="color:var(--text-dim)">تقدر تدخل البوليصة مباشرة بدون أمر بيع.</small>`)}
@@ -15169,7 +15172,7 @@ function viewShipments(){
     <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
     <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items" data-rs-key="shipment-item-lines">
       <thead>
-        <tr class="ig-bulk-price-row"><th colspan="9"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><label for="bulkBuyPrice">تطبيق سعر الشراء على الكل</label><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><label for="bulkSellPrice">تطبيق سعر البيع على الكل</label><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="6"></th>`:""}<th colspan="2"></th></tr>
+        <tr class="ig-bulk-price-row"><th colspan="9"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="6"></th>`:""}<th colspan="2"></th></tr>
         <tr><th>#</th><th>المصنع</th><th>الصنف</th><th>النوع</th><th>حالة التعتيق</th><th>الوحدة</th><th>كمية التوريد</th><th>الوزن الفعلي</th><th class="c-calc">الفرق</th>${showBuy("shipments")?"<th>سعر الشراء شامل الضريبة</th>":""}${showSell("shipments")?"<th>سعر البيع شامل الضريبة</th><th>خصم الصنف</th><th>نوع الخصم</th><th class='c-calc'>قبل الضريبة</th><th class='c-calc'>الضريبة</th><th class='c-calc'>الخصم</th><th class='c-calc c-total'>الإجمالي</th>":""}<th>ملاحظة</th><th></th></tr>
       </thead>
       <tbody id="itemsBody">${d.items.map(itemRow).join("")}</tbody>
@@ -15838,6 +15841,12 @@ function soPoliciesRows(no, t){
     rows.map(r=>`<tr${r.cur?' style="background:var(--bg-2)"':""}><td>${escapeHtml(String(r.no))}</td><td>${escapeHtml(r.date||"")}</td><td class="num">${fmt(r.w,3)}</td>${SS?`<td class="num">${fmt(r.total)}</td>`:""}<td>${r.st}</td></tr>`).join("")
   }</tbody><tfoot><tr><td>الإجمالي</td><td></td><td class="num">${fmt(sumW,3)}</td>${SS?`<td class="num">${fmt(sumT)}</td>`:""}<td></td></tr></tfoot></table></div>`;
 }
+
+// ---- فاتورة المبيعات: بيانات التوريد المرحّلة للأمر المربوط (نفس صفوف شاشة بيانات التوريد) ----
+function siSupplyDocs(no){
+  return orderDocs(no, editingId).filter(x=>!isSIdoc(x) && (state.shipments||[]).some(y=>y.id===x.id))
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||String(a.policyNo||"").localeCompare(String(b.policyNo||"")));
+}
 function renderSoFullCard(t){
   const box=document.getElementById("soFullBox"), tag=document.getElementById("soFullTag"); if(!box) return;
   t=t||draftTotals();
@@ -16445,6 +16454,7 @@ async function openPending(id){ if(!(await guard())) return; loadRecord("policie
 // ---------- بحث ----------
 async function openSearch(){
   if(!(await guard())) return;
+  if(SI_MODE){ siOpenSearch(); return; }
   closeModal();
   const b=document.createElement("div");
   b.className="modal-backdrop"; b.id="modalBackdrop";
@@ -16473,6 +16483,111 @@ function renderSearch(){
       ${showSell("shipments")?`<td class="num">${fmt(r.totals?.grandTotal)}</td>`:""}
       <td>${src==="shipments"?'<span class="chip ok">مرحّلة</span>':'<span class="chip warn">لم تُرحَّل</span>'}</td></tr>`).join("")}</tbody></table></div>`
     :`<div class="empty" style="padding:24px"><p>${allRecords().length?"مفيش نتائج للبحث ده":"لسه مفيش بوالص محفوظة"}</p></div>`;
+}
+
+// ---------- فاتورة المبيعات: البحث بأمر البيع من بيانات التوريد، والفتح مباشرة في الفاتورة ----------
+let siSearchPage=1; const SI_SEARCH_PAGE_SIZE=20;
+const siInvWeight=r=>(r.items||[]).reduce((a,it)=>a+(+it.actualWeight||0),0);
+function siGroups(){
+  const so0=(state.saleOrders||[]), m=new Map(), solo=[];
+  const orderOf=x=>so0.find(o=>o.id===x.saleOrderId)||so0.find(o=>soKey(o.orderNo)===soKey(x.saleOrderNo))||null;
+  const grp=(no,so)=>{ const k=soKey(no); let g=m.get(k); if(!g){ g={key:k,orderNo:String(no).trim(),so:so||null,docs:[],invoices:[]}; m.set(k,g); } return g; };
+  (state.shipments||[]).filter(x=>!isSIdoc(x)).forEach(d=>{ const so=orderOf(d), no=d.saleOrderNo||(so&&so.orderNo)||""; if(!soKey(no)) return; grp(no,so).docs.push(d); });
+  allRecords().filter(({r})=>supDocOk(r.supplier)).forEach(({r,src})=>{
+    const so=orderOf(r), no=r.saleOrderNo||(so&&so.orderNo)||"";
+    if(soKey(no)) grp(no,so).invoices.push({r,src}); else solo.push({key:"inv:"+r.id,orderNo:"",so:null,docs:[],invoices:[{r,src}]});
+  });
+  return [...m.values(),...solo].map(g=>{
+    g.invoices.sort((a,b)=>(b.r.date||"").localeCompare(a.r.date||""));
+    g.supplyW=g.docs.reduce((a,d)=>a+siInvWeight(d),0);
+    g.invW=g.invoices.reduce((a,x)=>a+siInvWeight(x.r),0);
+    g.customer=(g.so&&g.so.customer)||(g.docs[0]&&g.docs[0].customer)||(g.invoices[0]&&g.invoices[0].r.customer)||"";
+    g.date=[...g.docs.map(d=>d.date),...g.invoices.map(x=>x.r.date)].filter(Boolean).sort().at(-1)||"";
+    return g;
+  }).sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
+function siOpenSearch(){
+  closeModal();
+  if(!siGroups().length){ toast("لا توجد أوامر بيع لها بيانات توريد أو فواتير","ok"); return; }
+  siSearchPage=1;
+  openModal("البحث عن أمر بيع (من بيانات التوريد)", `
+<div class="so-search-filters">
+<div class="fld"><label>بحث برقم الأمر أو العميل أو رقم بوليصة التوريد أو رقم الفاتورة</label>
+<input class="inp" id="siSearchInp" autocomplete="off" oninput="siSearchPage=1;siDoSearch()" placeholder="اكتب رقم الأمر أو اسم العميل..." autofocus>
+</div>
+<div class="fld"><label>من تاريخ</label><input class="inp" type="date" id="siSearchFrom" value="${igYearStart()}" onchange="siSearchPage=1;siDoSearch()"></div>
+<div class="fld"><label>إلى تاريخ</label><input class="inp" type="date" id="siSearchTo" value="${igYearEnd()}" onchange="siSearchPage=1;siDoSearch()"></div>
+<div class="fld"><label>الحالة</label><select class="inp" id="siSearchStatus" onchange="siSearchPage=1;siDoSearch()"><option value="all">كل الحالات</option><option value="new">لم تُفوتر بعد</option><option value="inv">لها فاتورة</option><option value="rest">فيها توريد متبقي للفوترة</option></select></div>
+</div>
+<div id="siSearchMeta" style="font-size:12px;color:var(--text-dim);margin:8px 0"></div>
+<div id="siSearchResults" style="max-height:52vh;overflow:auto;margin-top:10px"></div>
+<div class="so-search-pager"><button class="btn ghost sm" id="siSearchPrev" onclick="siSearchMove(-1)">→ السابق</button><span id="siSearchPageLabel">صفحة 1</span><button class="btn ghost sm" id="siSearchNext" onclick="siSearchMove(1)">التالي ←</button></div>
+`, ()=>true);
+  document.querySelector('#modalBackdrop .modal')?.classList.add('so-search-modal');
+  setTimeout(()=>{ siDoSearch(); const i=document.getElementById("siSearchInp"); if(i) i.focus(); },50);
+}
+function siSearchMove(delta){ siSearchPage=Math.max(1,siSearchPage+delta); siDoSearch(); }
+function siDoSearch(){
+  const q=(document.getElementById("siSearchInp")?.value||"").trim().toLowerCase();
+  const from=document.getElementById("siSearchFrom")?.value||"", to=document.getElementById("siSearchTo")?.value||"";
+  const status=document.getElementById("siSearchStatus")?.value||"all";
+  const all=siGroups().filter(g=>{
+    const date=String(g.date||"").slice(0,10);
+    const hay=[g.orderNo,g.customer,...g.docs.map(d=>d.policyNo),...g.invoices.map(x=>x.r.policyNo)].join(" ").toLowerCase();
+    const rest=g.docs.length&&g.supplyW-g.invW>0.0005;
+    if(q&&!hay.includes(q)) return false;
+    if(from&&(!date||date<from)) return false;
+    if(to&&(!date||date>to)) return false;
+    if(status==="new"&&g.invoices.length) return false;
+    if(status==="inv"&&!g.invoices.length) return false;
+    if(status==="rest"&&!(rest&&g.invoices.length)) return false;
+    return true;
+  });
+  const pages=Math.max(1,Math.ceil(all.length/SI_SEARCH_PAGE_SIZE)); siSearchPage=Math.min(siSearchPage,pages);
+  const rows=all.slice((siSearchPage-1)*SI_SEARCH_PAGE_SIZE,siSearchPage*SI_SEARCH_PAGE_SIZE);
+  const html=rows.length?`<div class="so-search-table-wrap"><table class="tbl" style="min-width:900px"><thead><tr>
+<th>رقم الأمر</th><th>العميل</th><th>آخر تاريخ</th><th>بوالص التوريد</th><th>وزن التوريد (طن)</th><th>الفواتير</th><th>الحالة</th><th>فتح</th>
+</tr></thead><tbody>${rows.map(g=>{
+    const rest=g.docs.length&&g.supplyW-g.invW>0.0005, sup=g.docs.map(d=>d.policyNo).filter(Boolean).join("، ")||"—";
+    const invs=g.invoices.map(x=>escapeHtml(String(x.r.policyNo||""))).join("، ")||"—";
+    const chip=!g.invoices.length?'<span class="chip warn">لم تُفوتر</span>':(rest?'<span class="chip gold">فيها توريد متبقي</span>':(g.invoices.every(x=>x.r.glEntryId)?'<span class="chip ok">مرحّلة محاسبيًا</span>':'<span class="chip ok">مفوترة</span>'));
+    const btns=g.invoices.length
+      ? g.invoices.slice(0,3).map(x=>`<button class="btn sm" onclick="pickRecord('${x.src}','${escapeAttr(String(x.r.id))}')">فتح ${escapeHtml(String(x.r.policyNo||""))}</button>`).join(" ")+(rest?` <button class="btn sm ghost" onclick="siOpenOrder('${escapeAttr(g.key)}',true)">فاتورة جديدة من التوريد</button>`:"")
+      : `<button class="btn sm" onclick="siOpenOrder('${escapeAttr(g.key)}',true)">فتح فاتورة</button>`;
+    return `<tr><td data-label="رقم الأمر"><b style="color:var(--gold-text)">${g.orderNo?"#"+escapeHtml(g.orderNo):"—"}</b></td><td data-label="العميل">${escapeHtml(partyWithCode("customers",g.customer))}</td><td data-label="آخر تاريخ">${escapeHtml(g.date||"")}</td><td data-label="بوالص التوريد">${escapeHtml(sup)}</td><td data-label="وزن التوريد" class="num">${g.docs.length?fmt(g.supplyW,3):"—"}</td><td data-label="الفواتير">${invs}</td><td data-label="الحالة">${chip}</td><td data-label="فتح">${btns}</td></tr>`;
+  }).join("")}</tbody></table></div>`:`<div style="text-align:center;color:var(--text-dim);padding:20px">لا توجد نتائج مطابقة للفلاتر المحددة</div>`;
+  const el=document.getElementById("siSearchResults"); if(el) el.innerHTML=html;
+  const meta=document.getElementById("siSearchMeta"); if(meta) meta.textContent=`عدد النتائج: ${all.length} · الصفحة ${siSearchPage} من ${pages} · ${SI_SEARCH_PAGE_SIZE} سجلًا في الصفحة`;
+  const label=document.getElementById("siSearchPageLabel"); if(label) label.textContent=`صفحة ${siSearchPage} / ${pages}`;
+  const prev=document.getElementById("siSearchPrev"),next=document.getElementById("siSearchNext"); if(prev) prev.disabled=siSearchPage<=1; if(next) next.disabled=siSearchPage>=pages;
+}
+// فتح فاتورة جديدة مباشرة ببيانات التوريد المرحّلة للأمر (كل صف توريد = صنف في الفاتورة)
+async function siOpenOrder(key){
+  const g=siGroups().find(x=>x.key===key); if(!g) return;
+  const items=[]; siSupplyDocs(g.orderNo).forEach(d=>(d.items||[]).filter(rowUsed).forEach(it=>items.push(JSON.parse(JSON.stringify(it)))));
+  if(!items.length){ toast("لا توجد بيانات توريد مرحّلة لهذا الأمر","err"); return; }
+  closeModal();
+  if(!(await guard())) return;
+  draft=newDraft(); editingId=null; editingSrc="new"; viewOnly=false; dirty=false;
+  const so=g.so;
+  if(so){
+    await pickSO(so.id);
+    if(!draft||draft.saleOrderId!==so.id){ go(SIP()); return; } // اتوقف على بوابة الاعتماد
+    if(!draft.saleOrderCharges||!draft.saleOrderCharges.length) draft.saleOrderCharges=JSON.parse(JSON.stringify(so.charges||[]));
+  } else { draft.saleOrderNo=g.orderNo; draft.customer=g.customer||""; }
+  const d0=g.docs[0]||{};
+  if(!draft.company) draft.company=d0.company||""; if(!draft.site) draft.site=d0.site||"";
+  const key2=it=>`${it.diameter}|${it.type}`, old={};
+  (draft.items||[]).forEach(it=>{ if(!old[key2(it)]) old[key2(it)]=it; });
+  draft.items=items.map(it=>{
+    const o=old[key2(it)]||{}; let sp=+o.sellPrice||0;
+    if(!sp&&so&&typeof soPricingOn==="function"&&soPricingOn(so)){
+      const l=(so.items||[]).find(x=>x.diameter===it.diameter&&x.type===it.type), up=l?soPriceNum(l.unitPrice):0;
+      if(up>0){ const per=(typeof uomFactorToDefaultUnit==="function"?uomFactorToDefaultUnit(l.diameter,l):1)||1; sp=Math.round(up/per*100)/100; }
+    }
+    return {...it, buyPrice:0, sellPrice:sp, discVal:o.discVal||"", discType:o.discType||"pct"};
+  });
+  dirty=true; go(SIP());
 }
 function pickRecord(src,id){ closeModal(); dirty=false; loadRecord(src,id,false); }
 
@@ -43116,6 +43231,11 @@ body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-totbar .tb
 /* حقول للقراءة فقط (خصم العميل / أساس الخصم): باهتة + غير قابلة للتفاعل */
 body.page-shipments #content:has(#paySchedBox) .ig-ro-fld{display:flex;align-items:center;min-height:40px;white-space:nowrap;background:#eef1f6!important;color:#8793a8!important;border:1px dashed #c9d3e4!important;opacity:.8;cursor:not-allowed;user-select:none;pointer-events:none;font-weight:600}
 body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-ro-fld{background:#101a2d!important;color:#74829e!important;border:1px dashed #2f405f!important;opacity:.85}
+/* وضوح خط عناوين الأعمدة المحسوبة */
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th{color:#fff!important;font-weight:800!important;text-shadow:none!important}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#1d4e89!important;color:#fff!important}
+body.page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-total{background:#7a5200!important;color:#fff!important}
+body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-calc{background:#244a7c!important;color:#fff!important}
 /* الوضع الليلي لباقي شاشة البوليصة */
 body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-items-card .tbl-wrap{border-color:#2b3b5a!important}
 body[data-theme="dark"].page-shipments #content:has(#paySchedBox) .ig-items-card table.items tbody td{background:#131c2e;color:#e8edf5}
@@ -43284,3 +43404,184 @@ body.page-shipments #content:has(#paySchedBox) .ig-policy-disc-row .fld{min-widt
 /* تثبيت عرض الحقول (تجاهل قواعد الـ span الخاصة بالبوليصة) */
 body.page-shipments #content:has(#paySchedBox) .ig-pol-head .fgrid.ig-si-fgrid>.fld:nth-child(n){grid-column:auto!important}
 </style>
+
+<script id="ig-sup-inv-unified">
+/* IRON GATE — توحيد ترحيل بيانات التوريد وفاتورة المبيعات (إضافة فقط).
+   ترحيل المبيعات على مستوى أمر البيع (sale_order_postings / kind=sales) هو الأساس:
+   الفاتورة بترحّل وتفك الترحيل من نفس القيد، وحالة القيد بتتنسخ على كل مستندات الأمر. */
+(function(){
+  if(window.__igSupInvUnified) return; window.__igSupInvUnified=true;
+
+  const orderNoOf=r=>{
+    if(!r) return "";
+    if(r.saleOrderId){ const so=(state.saleOrders||[]).find(x=>String(x.id)===String(r.saleOrderId)); if(so&&so.orderNo) return String(so.orderNo); }
+    return String(r.saleOrderNo||"");
+  };
+  const keyOf=r=>r.saleOrderId?("so:"+r.saleOrderId):(r.saleOrderNo?("no:"+r.saleOrderNo):("policy:"+r.id));
+  const recOf=id=>(state.shipments||[]).find(x=>String(x.id)===String(id||(typeof editingId!=="undefined"?editingId:"")));
+  const legacyDocs=no=>(state.shipments||[]).filter(r=>orderNoOf(r)===no&&r.glEntryId&&!r.glOrderLinked);
+  const legacyMsg=(no,L)=>"لا يمكن ترحيل مبيعات الأمر "+no+": فيه فاتورة مرحّلة بقيد منفصل ("+L.map(r=>r.policyNo).join("، ")+"). افك ترحيلها أولاً.";
+
+  // نسخ حالة قيد مبيعات الأمر على كل مستنداته (فواتير وبيانات توريد) — بدون المساس بالقيود المنفصلة القديمة
+  function syncGl(){
+    const ids=window.supPostIds||{}; let changed=false;
+    (state.shipments||[]).forEach(r=>{
+      const no=orderNoOf(r); if(!no) return;
+      const id=ids[no+"|sales"];
+      if(id){
+        if(r.glEntryId&&!r.glOrderLinked) return;
+        if(r.glEntryId!==id||!r.glOrderLinked){ r.glEntryId=id; r.glPostedAt=r.glPostedAt||new Date().toISOString(); r.glOrderLinked=true; changed=true; }
+      }else if(r.glOrderLinked){
+        r.glEntryId=null; r.glPostedAt=null; r.glPostedBy=null; delete r.glOrderLinked; changed=true;
+      }
+    });
+    if(!changed) return;
+    try{ saveState(); }catch(e){ console.warn("sync gl save",e); }
+    try{
+      if(typeof currentPage!=="undefined"&&(currentPage==="salesInvoices"||currentPage==="shipments")&&typeof editingId!=="undefined"&&editingId&&typeof viewOnly!=="undefined"&&viewOnly){
+        const r=recOf(editingId); if(r&&typeof toDraft==="function"){ draft=toDraft(r); go(SIP()); }
+      }
+    }catch(e){}
+  }
+
+  // بعد كل تحميل ناجح لخريطة الترحيل: نسّخ الحالة (النجاح = الخريطة اتبدلت بكائن جديد)
+  const origEnsure=window.supEnsurePostMap;
+  if(typeof origEnsure==="function"){
+    window.supEnsurePostMap=async function(force){
+      const before=window.supPostMap;
+      const r=await origEnsure.apply(this,arguments);
+      if(window.supPostMap!==before) syncGl();
+      return r;
+    };
+  }
+
+  // حماية من التكرار: ممنوع قيد مبيعات الأمر لو فيه فاتورة مرحّلة بقيد منفصل
+  const origPostAcc=window.supPostAccounts;
+  if(typeof origPostAcc==="function"){
+    window.supPostAccounts=async function(key,kind){
+      if(kind==="sales"){
+        try{
+          const c=supPostCollect(key), no=c&&c.orderNo;
+          if(no&&!(window.supPostMap||{})[no+"|sales"]){ const L=legacyDocs(no); if(L.length){ toast(legacyMsg(no,L),"err"); return; } }
+        }catch(e){}
+      }
+      return origPostAcc.apply(this,arguments);
+    };
+  }
+  const origDoPost=window.supDoPostKind;
+  if(typeof origDoPost==="function"){
+    window.supDoPostKind=async function(opts){
+      try{
+        const X=(opts&&opts.ctx)||window._supPostCtx;
+        if(X&&X.kind==="sales"&&!X.posted&&X.c&&X.c.orderNo){
+          const L=legacyDocs(X.c.orderNo);
+          if(L.length){ const m=legacyMsg(X.c.orderNo,L); if(opts&&opts.silent) return {ok:false,error:m}; return toast(m,"err"); }
+        }
+      }catch(e){}
+      return origDoPost.apply(this,arguments);
+    };
+  }
+
+  // ترحيل الفاتورة: لو ليها أمر بيع → نفس ترحيل التوريد بالظبط (قيد مشتريات لو فيه مشتريات + قيد مبيعات)،
+  // بنفس الحسابات واليوميات. بدون أمر بيع → القيد المنفصل القديم.
+  const legacyPost=window.igSalesPostInvoice;
+  window.igSalesPostInvoice=async function(invoiceId){
+    const rec=recOf(invoiceId), no=orderNoOf(rec);
+    if(!rec||!no) return legacyPost.apply(this,arguments);
+    if(!can("supply","post")) return toast("لا تملك صلاحية الترحيل","err");
+    const L=legacyDocs(no); if(L.length) return toast(legacyMsg(no,L),"err");
+    const key=keyOf(rec), lbl={purchase:"مشتريات",sales:"مبيعات"};
+    try{
+      await window.supEnsurePostMap(true);
+      const m=window.supPostMap||{}, sh=await supBulkShared(), okK=[], errs=[];
+      for(const kind of ["purchase","sales"]){
+        if(m[no+"|"+kind]) continue;
+        const p=supBulkPrepare(key,kind,sh);
+        // مفيش مشتريات (بيع من رصيد / سعر الشراء صفر) → يترحّل مبيعات فقط
+        if(kind==="purchase"&&p.c&&supPurchaseZeroMsg(p.c)) continue;
+        if(p.errs.length){ errs.push(lbl[kind]+": "+p.errs.join("، ")); continue; }
+        const r=await supDoPostKind({silent:true,ctx:{c:p.c,sup:p.sup,cus:p.cus,wh:p.wh,ind:sh.ind,journals:sh.journals,bad:0,postingsOk:true,posted:null,kind}});
+        if(r&&r.ok) okK.push(lbl[kind]+" "+r.entryNo); else errs.push(lbl[kind]+": "+((r&&r.error)||"فشل الترحيل"));
+      }
+      window._supPostMapAt=0; await window.supEnsurePostMap(true);
+      if(okK.length) toast("تم ترحيل أمر البيع "+no+" — "+okK.join(" / "),errs.length?"warn":"ok");
+      else if(!errs.length) toast("أمر البيع "+no+" مرحّل بالفعل","warn");
+      if(errs.length) toast("تعذر ترحيل: "+errs.join(" | "),"err");
+    }catch(e){ console.error("post invoice via supply",e); toast("تعذر الترحيل: "+(e.message||e),"err"); throw e; }
+  };
+
+  // فك الترحيل من الفاتورة: بيفك قيود الأمر (مشتريات ومبيعات) زي شاشة التوريد
+  window.igSalesUnpostInvoice=async function(invoiceId){
+    try{
+      const rec=recOf(invoiceId); if(!rec) throw new Error("الفاتورة غير موجودة");
+      const no=orderNoOf(rec);
+      if(no){
+        await window.supEnsurePostMap(true);
+        const m=window.supPostMap||{}, kinds=["sales","purchase"].filter(k=>m[no+"|"+k]);
+        if(kinds.length){
+          if(!can("supply","post")) return toast("لا تملك صلاحية إلغاء الترحيل","err");
+          const names=kinds.map(k=>({purchase:"المشتريات",sales:"المبيعات"})[k]).join(" و");
+          if(!await askConfirm("إلغاء ترحيل قيد "+names+" لأمر البيع "+no+"؟\n\nنفس القيود في بيانات التوريد، وإلغاؤها هنا بيلغيها هناك.",{title:"إلغاء الترحيل",ok:"نعم، ألغِ الترحيل",cancel:"رجوع",danger:true})) return;
+          const errs=[];
+          for(const k of kinds){ const r=await supBulkUnpostOne(no,k); if(!r.ok) errs.push(({purchase:"المشتريات",sales:"المبيعات"})[k]+": "+r.msg); }
+          window._supPostMapAt=0; await window.supEnsurePostMap(true);
+          if(errs.length) toast("تعذر إلغاء: "+errs.join(" | "),"err"); else toast("تم إلغاء ترحيل أمر البيع "+no,"ok");
+          return;
+        }
+      }
+      if(rec.glEntryId&&!rec.glOrderLinked){
+        if(!await askConfirm("إلغاء الترحيل المحاسبي للفاتورة "+rec.policyNo+"؟",{title:"فك ترحيل فاتورة",ok:"نعم، ألغِ الترحيل",cancel:"رجوع",danger:true})) return;
+        const r=await sb.rpc("ig_sales_unpost_invoice_v1",{p_invoice_id:String(rec.id)});
+        if(r.error) throw r.error;
+        rec.glEntryId=null; rec.glPostedAt=null; rec.glPostedBy=null;
+        try{ saveState(); }catch(e){}
+        toast("تم فك الترحيل المحاسبي للفاتورة "+rec.policyNo,"ok");
+        draft=toDraft(rec); go(SIP());
+        return;
+      }
+      toast("الفاتورة غير مرحّلة محاسبياً","warn");
+    }catch(e){ console.error("unpost invoice",e); toast("تعذر فك الترحيل: "+(e.message||e),"err"); }
+  };
+
+
+  // شريط في الفاتورة: زرار فتح أمر البيع + الملاحظة ظاهرة (زي بيانات التوريد)
+  window.igSiOrderBar=function(d){
+    const no=String(d.saleOrderNo||"").trim(), note=String(d.notes||"").trim();
+    if(!no&&!note) return "";
+    return '<div class="card" id="igSiOrderBar" style="margin:0 0 12px"><div class="body" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+      +(no?'<button class="btn ghost sm" type="button" onclick="goOrderScreen(\''+escapeAttr(no)+'\')" title="فتح أمر البيع في شاشة أوامر البيع">↗ فتح أمر البيع '+escapeHtml(no)+'</button>':'')
+      +'<span id="igSiNote" style="flex:1;min-width:200px;font-size:13px;color:var(--text-dim)">'+(note?'📝 '+escapeHtml(note):'<span style="opacity:.6">لا توجد ملاحظة</span>')+'</span></div></div>';
+  };
+  const origNoteSync=window.noteBtnSync;
+  if(typeof origNoteSync==="function"){
+    window.noteBtnSync=function(){
+      const r=origNoteSync.apply(this,arguments);
+      try{ const el=document.getElementById("igSiNote"); if(el&&typeof draft!=="undefined"&&draft){ const n=String(draft.notes||"").trim(); el.innerHTML=n?"📝 "+escapeHtml(n):'<span style="opacity:.6">لا توجد ملاحظة</span>'; } }catch(e){}
+      return r;
+    };
+  }
+
+
+  // طباعة الفاتورة من شاشة الفاتورة: نفس ورقة «فاتورة المبيعات» اللي بتتطبع من بيانات التوريد (بدون تأثر بفلاتر شاشة التوريد)
+  window.igSiPrint=async function(){
+    const id=(typeof editingId!=="undefined")?editingId:null;
+    const inShip=(state.shipments||[]).find(x=>String(x.id)===String(id));
+    const rec=inShip||(state.policies||[]).find(x=>String(x.id)===String(id));
+    if(!rec) return toast("احفظ الفاتورة الأول عشان تتطبع","warn");
+    const saved=supFilter;
+    supFilter={...saved,q:"",supplier:[],customer:[],factory:[],status:[],diameter:[],type:[],company:[],site:[],saleOrder:[],policy:[],from:"",to:"",order:""};
+    // الفاتورة غير المرحّلة: نضيفها مؤقتاً لبيانات التوريد أثناء بناء الورقة بس (البيانات بتتقرا في أول الدالة قبل أي await)
+    const temp=!inShip; if(temp) state.shipments.push(rec);
+    let p;
+    try{ p=supPrintInvoiceForKey(keyOf(rec)); }
+    finally{ supFilter=saved; if(temp){ const i=state.shipments.indexOf(rec); if(i>=0) state.shipments.splice(i,1); } }
+    try{ await p; }catch(e){ console.error("print invoice",e); toast("تعذرت الطباعة: "+(e.message||e),"err"); }
+  };
+
+  // تحميل حالة الترحيل أول ما تتفتح شاشة الفاتورة/البوليصة
+  const origBind=window.bindShipments;
+  if(typeof origBind==="function"){
+    window.bindShipments=function(){ const r=origBind.apply(this,arguments); try{ window.supEnsurePostMap(); }catch(e){} return r; };
+  }
+})();
+</script>
