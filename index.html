@@ -524,6 +524,30 @@ tfoot td{background:var(--bg-3);font-weight:700;color:var(--gold-text);border-to
 .clickrow tbody tr{cursor:pointer}
 .clickrow tbody tr:hover{background:rgba(230,179,37,0.08)}
 .inp.bad,select.inp.bad{border-color:var(--danger)!important;background:rgba(255,107,107,.10)}
+#itemsBody tr.is-invalid>td{background:rgba(255,107,107,.07)}
+#itemsBody .num,#itemsFoot .num,.ig-totbar{font-variant-numeric:tabular-nums}
+#itemsBody td.ig-c{text-align:center}
+#itemsBody .ig-pu{display:block;margin-top:2px;font-size:10.5px;line-height:1.2;color:var(--text-dim);white-space:nowrap;text-align:center}
+.ig-policy-disc-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end}
+.ig-chg-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ig-chg-tot{margin-inline-start:auto;font-size:12px;white-space:nowrap}
+.ig-chg-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.ig-chg-svc{flex:2 1 220px;min-width:0}
+.ig-chg-name{flex:1 1 160px;min-width:0}
+.ig-chg-amt{flex:1 1 130px;min-width:0}
+.ig-chg-acc{flex:0 1 120px;min-width:0}
+.ig-chg-vat{display:flex;gap:4px;align-items:center;font-size:12px;white-space:nowrap}
+.ig-chg-warn{margin-top:8px;font-size:12px;color:var(--danger)}
+.ig-chg-empty{margin-top:8px;font-size:12px;color:var(--text-dim)}
+.ig-totbar{display:flex;gap:6px;flex-wrap:wrap;align-items:stretch;justify-content:flex-end;margin:14px 0 0;padding:8px 10px;background:var(--bg-2);border:1px solid var(--line);border-top:2px solid var(--gold);border-radius:12px}
+.ig-totbar:empty{display:none}
+.ig-totbar .tb-i{display:flex;flex-direction:column;gap:1px;padding:4px 14px;min-width:96px;border-inline-start:1px solid var(--line)}
+.ig-totbar .tb-i:first-child{border-inline-start:0}
+.ig-totbar .tb-i small{font-size:11px;color:var(--text-dim);white-space:nowrap}
+.ig-totbar .tb-i b{font-size:15px;white-space:nowrap}
+.ig-totbar .tb-grand b{font-size:18px;color:var(--gold-text)}
+@media(min-width:901px){.ig-totbar{position:sticky;bottom:0;z-index:45;box-shadow:0 -8px 18px rgba(0,0,0,.25)}}
+@media(max-width:900px){.ig-totbar .tb-i{flex:1 1 40%;min-width:0}body.ig-has-actbar .ig-totbar{margin-bottom:8px}}
 .pend .body{padding:12px 18px}
 .pwrap{display:flex;flex-wrap:wrap;gap:8px;max-height:140px;overflow:auto;padding:2px}
 .pchip{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 14px;border-radius:8px;border:1px solid var(--line-2);background:#ffffff;color:inherit;cursor:pointer;font-family:inherit;min-width:88px;text-align:right}
@@ -3271,14 +3295,16 @@ function clearLocalSaleOrderCache(){
   }catch(e){ console.warn("تعذر إزالة نسخة أوامر البيع القديمة من تخزين المتصفح:",e); }
 }
 function saveState(){
+  let _ok=true;
   try{ securityMigrate(state); }catch(e){}
   // البيانات الأساسية والإعدادات والمستخدمين والسجل في Supabase، والباقي مؤقتًا في المتصفح لحد المرحلة 2
   try{
     const part = {}; LOCAL_ONLY_KEYS.forEach(k=>{ part[k] = state[k]; });
     localStorage.setItem(STORAGE_KEY, JSON.stringify(part));
-  }catch(e){ toast("فشل الحفظ: "+e.message,"err"); }
+  }catch(e){ _ok=false; toast("فشل الحفظ: "+e.message,"err"); }
   scheduleSync();
   if(currentPage==="chequeRegister" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
+  return _ok;
 }
 
 // ---------- Supabase ----------
@@ -4374,7 +4400,17 @@ function supAutoGrant(name){ const u=curU(); if(!u||u.role==="admin"||!name) ret
 function supRecordRename(oldN,newN){ if(!oldN||!newN||oldN===newN) return; const st=state.settings=state.settings||{}; st.supRenamed=Object.assign({},st.supRenamed||{}); st.supRenamed[oldN]=newN; }
 function supOk(name){ const sc=supScope(); return !sc||sc.has(String(name||"")); }
 function supDocOk(name){ const sc=supScope(); return !sc||!name||sc.has(String(name)); }   // مستند من غير مورد (زي فواتير المبيعات) بيفضل ظاهر
-var SI_MODE=false; const isSIdoc=r=>!!r&&r.docKind==="sales"; const SIP=()=>SI_MODE?"salesInvoices":"shipments";
+/* حالة شاشة البوليصة/الفاتورة في مكان واحد (PolicyScreen).
+   الأسماء القديمة (draft / viewOnly / editingSrc / editingId / dirty / SI_MODE) لسه شغالة في كل الكود
+   لكنها بقت تقرأ وتكتب في الكائن ده، فالحالة كلها متجمّعة وتتصفّر من مكان واحد. */
+const PolicyScreen={
+  draft:null, editingId:null, editingSrc:"new", viewOnly:false, dirty:false, SI_MODE:false,
+  reset(){ this.draft=null; this.editingId=null; this.editingSrc="new"; this.viewOnly=false; this.dirty=false; },
+  snapshot(){ return {draft:this.draft,editingId:this.editingId,editingSrc:this.editingSrc,viewOnly:this.viewOnly,dirty:this.dirty,SI_MODE:this.SI_MODE}; },
+  restore(x){ Object.assign(this,x); }
+};
+["draft","editingId","editingSrc","viewOnly","dirty","SI_MODE"].forEach(k=>Object.defineProperty(window,k,{get(){return PolicyScreen[k];},set(v){PolicyScreen[k]=v;},configurable:true}));
+const isSIdoc=r=>!!r&&r.docKind==="sales"; const SIP=()=>SI_MODE?"salesInvoices":"shipments";
 function showBuy(scr){ if(SI_MODE&&(scr==="shipments"||scr==="salesInvoices")) return false; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].buy); }
 function showSell(scr){ if(SI_MODE&&scr==="shipments") scr="salesInvoices"; const u=curU(); if(!u) return false; if(u.role==="admin") return true; return !(u.perms&&u.perms.hide&&u.perms.hide[scr]&&u.perms.hide[scr].sell); }
 function firstAllowedPage(){ if(can("dashboard","view")) return "dashboard"; const s=SCREENS.find(x=>can(x.id,"view")); return s?s.id:null; }
@@ -14839,7 +14875,7 @@ const newDraft=()=>({policyNo:"",date:today(),supplier:"",customer:"",company:""
   applyProfitTax: !!state.settings.discount1pct,
   profitTaxPct: +state.settings.profitTax || 1,
   notes:"", invDiscVal:"", invDiscType:"pct", saleOrderCharges:[], saleOrderDiscountSnapshot:null, items:[blankItem()]});
-let draft=null, editingId=null, editingSrc="new", viewOnly=false, dirty=false;
+/* draft / editingId / editingSrc / viewOnly / dirty / SI_MODE → PolicyScreen (معرّف فوق) */
 let lastPostedOrderNoForSupply="";
 // editingSrc: "new" = جديدة | "policies" = محفوظة لم تُرحَّل | "shipments" = مرحّلة لبيانات التوريد
 let supFilter={q:"",supplier:[],customer:[],factory:[],status:[],diameter:[],type:[],company:[],site:[],saleOrder:[],policy:[],from:igYearStart(),to:igYearEnd(),grouped:false,order:"",groupWarehouse:"",groupPosting:"",groupOrderStatus:"",groupCollection:"",groupStock:[]};
@@ -15096,7 +15132,7 @@ function viewShipments(){
   </div>
 
   <details class="card ig-disclosure" open><summary class="head"><h3>الضرائب والخصومات</h3></summary><div class="body">
-    <div class="ig-policy-disc-row" style="display:flex;align-items:end;gap:10px;flex-wrap:nowrap;overflow-x:auto;padding-bottom:4px">
+    <div class="ig-policy-disc-row">
       ${F("القيمة المضافة (VAT)",`<select class="inp" ${ro} onchange="setF('applyVat',this.value==='1');refreshTotals()" style="min-width:115px"><option value="1" ${d.applyVat!==false?"selected":""}>مطبّقة</option><option value="0" ${d.applyVat===false?"selected":""}>غير مطبّقة</option></select>`)}
       ${F("نسبة القيمة المضافة %",`<input class="inp num" type="number" min="0" max="100" step="0.01" ${ro} value="${d.vatPct}" oninput="setF('vatPct',this.value);refreshTotals()" style="width:110px">`)}
       ${F("خصم الفاتورة",`<div style="display:flex;gap:5px;min-width:180px"><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${escapeAttr(d.invDiscVal??"")}" placeholder="0" oninput="setPolicyInvDisc(this.value)" style="min-width:90px"><select class="inp" ${ro} onchange="setPolicyInvDiscType(this.value)" style="width:82px"><option value="pct" ${(d.invDiscType||"pct")==="pct"?"selected":""}>نسبة %</option><option value="amt" ${d.invDiscType==="amt"?"selected":""}>مبلغ ج</option></select></div>`)}
@@ -15120,7 +15156,8 @@ function viewShipments(){
     </div>
     <div class="ig-terms-main"><div id="paySchedBox"></div></div>
     </div>
-  </div></div>`;
+  </div></div>
+  <div class="ig-totbar" id="igTotBar" aria-live="polite"></div>`;
 }
 // اقتراحات من القيم المدخلة قبل كده في البوالص (محفوظة ومرحّلة)
 function polyHist(k){ return [...new Set([...state.policies,...state.shipments].map(r=>(r[k]||"").trim()).filter(Boolean))].map(v=>`<option value="${escapeAttr(v)}">`).join(""); }
@@ -15169,7 +15206,7 @@ function policySetUnit(i,no){
   delete it.actualWeightUnitQty;
   policyEnsureUnit(it);
   dirty=true;
-  document.getElementById("itemsBody").innerHTML=draft.items.map(itemRow).join("");
+  repaintItems();
   refreshTotals();
 }
 function policySetQty(i,key,value){
@@ -15191,30 +15228,59 @@ function itemRow(it,i){
   const ro=viewOnly?"disabled":"";
   policyEnsureUnit(it);
   const v=x=>escapeAttr(x??"");
+  // السعر دايمًا لوحدة الصنف الافتراضية حتى لو اتغيّرت وحدة عرض الكمية — بنوضّحها تحت الخانة
+  let duN=""; try{ duN=it.diameter?(iuDefaultUnitName(it.diameter)||""):""; }catch(_){}
+  const pu=duN?`<small class="ig-pu">لكل ${escapeHtml(duN)}</small>`:"", puT=duN?` title="السعر لكل ${escapeAttr(duN)} (الوحدة الافتراضية للصنف)"`:"";
   return `<tr>
     <td>${i+1}</td>
-    <td><select class="inp" ${ro} onchange="setI(${i},'factory',this.value)">${opts(state.factories,it.factory,"المصنع")}</select></td>
-    <td><select class="inp" ${ro} onchange="setI(${i},'diameter',this.value)">${opts(state.diameters,it.diameter,"الصنف")}</select></td>
-    <td><select class="inp" ${ro} onchange="setI(${i},'type',this.value)">${opts(state.types,it.type,"النوع")}</select></td>
+    <td><select class="inp" data-k="factory" ${ro} onchange="setI(${i},'factory',this.value)">${opts(state.factories,it.factory,"المصنع")}</select></td>
+    <td><select class="inp" data-k="diameter" ${ro} onchange="setI(${i},'diameter',this.value)">${opts(state.diameters,it.diameter,"الصنف")}</select></td>
+    <td><select class="inp" data-k="type" ${ro} onchange="setI(${i},'type',this.value)">${opts(state.types,it.type,"النوع")}</select></td>
     <td><select class="inp" ${ro} onchange="setI(${i},'agingStatus',this.value)">${opts(state.statuses,it.agingStatus,"الحالة")}</select></td>
     <td class="policy-unit-cell">${policyUnitSelectHtml(it,i)}</td>
-    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الكمية بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'supplyQty'),3)}" oninput="policySetQty(${i},'supplyQty',this.value)"></td>
+    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الكمية بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'supplyQty'),3)}" data-k="supplyQty" oninput="policySetQty(${i},'supplyQty',this.value)"></td>
     <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الوزن بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'actualWeight'),3)}" data-k="actualWeight" oninput="policySetQty(${i},'actualWeight',this.value)"></td>
     <td class="num c-calc" id="rdf${i}"></td>
-    ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.buyPrice,2)}" data-k="buyPrice" oninput="setI(${i},'buyPrice',this.value)"></td>`:""}
-    ${showSell("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.sellPrice,2)}" data-k="sellPrice" oninput="setI(${i},'sellPrice',this.value)"></td>
+    ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.buyPrice,2)}" data-k="buyPrice"${puT} oninput="setI(${i},'buyPrice',this.value)">${pu}</td>`:""}
+    ${showSell("shipments")?`<td><input class="inp num fmtnum" data-dec="2" type="text" inputmode="decimal" ${ro} value="${fnv(it.sellPrice,2)}" data-k="sellPrice"${puT} oninput="setI(${i},'sellPrice',this.value)">${pu}</td>
     <td><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.discVal)}" placeholder="0" style="width:76px" oninput="setI(${i},'discVal',this.value)"></td>
     <td><select class="inp" ${ro} style="width:64px" onchange="setI(${i},'discType',this.value)"><option value="pct" ${(it.discType||"pct")==="pct"?"selected":""}>%</option><option value="amt" ${it.discType==="amt"?"selected":""}>ج</option></select></td>`:""}
     ${showSell("shipments")?`<td class="num c-calc" id="rsub${i}"></td><td class="num c-calc" id="rtax${i}"></td><td class="num c-calc" id="rdis${i}"></td>
     <td class="num c-calc c-total" id="rtot${i}"><strong></strong></td>`:""}
-    <td style="text-align:center"><button class="note-icon-btn ${(it.notes||"").trim()?'has-note':''}" ${ro} onclick="openItemNote(${i})" title="${(it.notes||"").trim()?'يوجد ملاحظة — اضغط للتعديل':'إضافة ملاحظة'}">📝</button></td>
-    <td>${viewOnly?"":`<div class="td-actions"><button class="btn ghost sm" onclick="copyRow(${i})" title="نسخ الصف">نسخ</button><button class="del" onclick="delRow(${i})">حذف</button></div>`}</td>
+    <td class="ig-c"><button class="note-icon-btn ${(it.notes||"").trim()?'has-note':''}" ${ro} data-act="note" data-i="${i}" title="${(it.notes||"").trim()?'يوجد ملاحظة — اضغط للتعديل':'إضافة ملاحظة'}">📝</button></td>
+    <td>${viewOnly?"":`<div class="td-actions"><button class="btn ghost sm" data-act="copy" data-i="${i}" title="نسخ الصف">نسخ</button><button class="del" data-act="del" data-i="${i}">حذف</button></div>`}</td>
   </tr>`;
 }
 function setPolicyInvDisc(v){draft.invDiscVal=v;dirty=true;payAutoReset();refreshTotals();}
 function setPolicyInvDiscType(v){draft.invDiscType=v==="amt"?"amt":"pct";dirty=true;payAutoReset();refreshTotals();}
 function policySvcList(){return Array.isArray(state.services)?state.services:[];}
-function policyRenderCharges(){const b=document.getElementById("policyChargesBox");if(!b||!draft)return;const ch=draft.saleOrderCharges||[],sv=policySvcList();const optsFor=c=>{const cur=String(c.serviceCode||"");let h=cur&&!sv.some(x=>String(x.code)===cur)?`<option value="${escapeAttr(cur)}" selected>${escapeHtml(cur+" — "+(c.name||""))} (غير موجودة)</option>`:`<option value="">اختر الخدمة</option>`;return h+sv.map(x=>`<option value="${escapeAttr(x.code)}" ${String(x.code)===cur?"selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");};b.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:nowrap;overflow-x:auto"><b style="white-space:nowrap">الخدمات المرتبطة بأمر البيع</b><span style="margin-inline-start:auto;white-space:nowrap;font-size:12px">إجمالي الخدمات: <b id="policyChargesTotal">${fmt((ch||[]).reduce((a,x)=>a+(+x.amount||0),0))}</b></span><button class="btn sm ghost" ${viewOnly?"disabled":""} onclick="policyAddCharge()">+ إضافة خدمة</button></div>`+(!sv.length?`<p style="font-size:12px;color:var(--danger);margin-top:8px">لا توجد خدمات معرفة في البيانات الأساسية.</p>`:"")+ch.map((c,i)=>`<div style="display:flex;align-items:center;gap:7px;flex-wrap:nowrap;overflow-x:auto;margin-top:8px"><select class="inp" ${viewOnly?"disabled":""} style="min-width:220px;flex:2" onchange="policySetCharge(${i},'serviceCode',this.value)">${optsFor(c)}</select><input class="inp" ${viewOnly?"disabled":""} style="min-width:160px;flex:1" placeholder="اسم الخدمة" value="${escapeAttr(c.name||"")}" oninput="policySetCharge(${i},'name',this.value)"><input class="inp num" ${viewOnly?"disabled":""} style="width:130px;flex:0 0 130px" type="number" min="0" step="0.01" placeholder="المبلغ قبل الضريبة" value="${escapeAttr(c.amount??"")}" oninput="policySetCharge(${i},'amount',this.value)"><label style="white-space:nowrap;display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" ${viewOnly?"disabled":""} ${c.vat===false?"":"checked"} onchange="policySetCharge(${i},'vat',this.checked)">تخضع للضريبة</label><button class="rm-btn ig-trash-btn" ${viewOnly?"disabled":""} onclick="policyDelCharge(${i})" title="حذف الخدمة" aria-label="حذف الخدمة"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v7m4-7v7"/></svg></button></div>`).join("")||`<p style="font-size:12px;color:var(--text-dim);margin-top:8px">لا توجد خدمات مضافة. عند سحب أمر البيع ستظهر خدماته هنا تلقائيًا.</p>`;}
+// ---- مولّد مشترك لصفوف الخدمات (بوليصة + أمر بيع): التعديل في مكان واحد ----
+const IG_TRASH_SVG='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v7m4-7v7"/></svg>';
+function chargesHeadHtml(o){
+  return `<div class="ig-chg-head"><b>${o.title}</b><span class="ig-chg-tot">${o.totalLabel} <b id="${o.totalId}">${o.total}</b></span><button class="btn sm ghost" ${o.ro||""} onclick="${o.addFn}()">+ إضافة خدمة</button></div>`;
+}
+function chargeRowHtml(o){
+  const ro=o.ro||"", c=o.c, i=o.i;
+  return `<div class="ig-chg-row"><select class="inp ig-chg-svc" ${ro} onchange="${o.setFn}(${i},'${o.svcKey}',this.value)" aria-label="الخدمة">${o.optionsHtml}</select>`
+    +(o.extraHtml||"")
+    +(o.withName?`<input class="inp ig-chg-name" ${ro} placeholder="اسم الخدمة" value="${escapeAttr(c.name||"")}" oninput="${o.setFn}(${i},'name',this.value)">`:"")
+    +`<input class="inp num ig-chg-amt" ${ro} type="number" min="0" step="0.01" inputmode="decimal" placeholder="المبلغ قبل الضريبة" value="${escapeAttr(c.amount==null?"":c.amount)}" oninput="${o.setFn}(${i},'amount',this.value)">`
+    +`<label class="ig-chg-vat"><input type="checkbox" ${ro} ${c.vat===false?"":"checked"} onchange="${o.setFn}(${i},'vat',this.checked)">تخضع للضريبة</label>`
+    +`<button class="rm-btn ig-trash-btn" ${ro} onclick="${o.delFn}(${i})" title="حذف الخدمة" aria-label="حذف الخدمة">${IG_TRASH_SVG}</button></div>`;
+}
+function policyRenderCharges(){
+  const b=document.getElementById("policyChargesBox"); if(!b||!draft) return;
+  const ch=draft.saleOrderCharges||[], sv=policySvcList(), ro=viewOnly?"disabled":"";
+  const optsFor=c=>{
+    const cur=String(c.serviceCode||"");
+    let h=cur&&!sv.some(x=>String(x.code)===cur)?`<option value="${escapeAttr(cur)}" selected>${escapeHtml(cur+" — "+(c.name||""))} (غير موجودة)</option>`:`<option value="">اختر الخدمة</option>`;
+    return h+sv.map(x=>`<option value="${escapeAttr(x.code)}" ${String(x.code)===cur?"selected":""}>${escapeHtml(x.code+" — "+(x.name||""))}</option>`).join("");
+  };
+  b.innerHTML=chargesHeadHtml({title:"الخدمات المرتبطة بأمر البيع",totalLabel:"إجمالي الخدمات:",totalId:"policyChargesTotal",total:fmt(ch.reduce((a,x)=>a+(+x.amount||0),0)),addFn:"policyAddCharge",ro})
+    +(!sv.length?`<p class="ig-chg-warn">لا توجد خدمات معرفة في البيانات الأساسية.</p>`:"")
+    +(ch.map((c,i)=>chargeRowHtml({c,i,ro,setFn:"policySetCharge",delFn:"policyDelCharge",svcKey:"serviceCode",optionsHtml:optsFor(c),withName:true})).join("")
+      ||`<p class="ig-chg-empty">لا توجد خدمات مضافة. عند سحب أمر البيع ستظهر خدماته هنا تلقائيًا.</p>`);
+}
 function policyAddCharge(){if(viewOnly)return;draft.saleOrderCharges=draft.saleOrderCharges||[];draft.saleOrderCharges.push({serviceCode:"",name:"",amount:"",vat:true});dirty=true;policyRenderCharges();refreshTotals();}
 function policyDelCharge(i){if(viewOnly)return;(draft.saleOrderCharges||[]).splice(i,1);dirty=true;policyRenderCharges();refreshTotals();}
 function policySetCharge(i,k,v){if(viewOnly)return;const c=(draft.saleOrderCharges||[])[i];if(!c)return;if(k==="serviceCode"){const sv=policySvcList().find(x=>String(x.code)===String(v));c.serviceCode=sv?sv.code:"";c.name=sv?(sv.name||""):c.name;}else c[k]=v;dirty=true;payAutoReset();if(k!=="amount")policyRenderCharges();refreshTotals();}
@@ -15532,7 +15598,7 @@ function setI(i,k,v){
     it.unitNo=""; it.unitName=""; it.unitFactor=1;
     delete it.supplyUnitQty; delete it.actualWeightUnitQty;
     policyEnsureUnit(it);
-    const body=document.getElementById("itemsBody"); if(body) body.innerHTML=draft.items.map(itemRow).join("");
+    repaintItems();
   }else if(k==="supplyQty"||k==="actualWeight"){
     const prop=k==="supplyQty"?"supplyUnitQty":"actualWeightUnitQty";
     it[prop]=v===""?"":String(uomRound((Number(v)||0)/policyUnitFactor(it),4));
@@ -15551,23 +15617,72 @@ function applyBulkPrice(k){
   refreshTotals();
   toast(k==="buyPrice"?"تم تطبيق سعر الشراء على كل الأصناف":"تم تطبيق سعر البيع على كل الأصناف","ok");
 }
+function repaintItems(){
+  const body=document.getElementById("itemsBody"); if(!body||!draft) return;
+  const wrap=body.closest(".tbl-wrap,.table-wrap,.tablewrap,[style*='overflow']")||body.parentElement;
+  const sy=window.scrollY, sx=wrap?wrap.scrollLeft:0, sTop=wrap?wrap.scrollTop:0;
+  const ae=document.activeElement, tr=ae&&ae.closest?ae.closest("#itemsBody tr"):null;
+  const ri=tr?[...body.children].indexOf(tr):-1, k=ae&&ae.dataset?ae.dataset.k:null;
+  body.innerHTML=draft.items.map(itemRow).join("");
+  if(wrap){ wrap.scrollLeft=sx; wrap.scrollTop=sTop; }
+  window.scrollTo(window.scrollX,sy);
+  if(ri>=0&&k){ const el=body.children[ri]&&body.children[ri].querySelector(`[data-k="${k}"]`); if(el&&!el.disabled) el.focus({preventScroll:true}); }
+}
+// مستمع واحد لأزرار صفوف الأصناف (بدل onclick في كل صف) — بيشتغل صح حتى لو النص فيه علامات تنصيص
+document.addEventListener("click",e=>{
+  const b=e.target.closest&&e.target.closest("#itemsBody [data-act]"); if(!b||b.disabled) return;
+  const i=parseInt(b.dataset.i,10); if(!Number.isInteger(i)) return;
+  const fn={copy:copyRow,del:delRow,note:openItemNote}[b.dataset.act]; if(fn) fn(i);
+});
 function addRow(){
   const last=draft.items[draft.items.length-1];
   draft.items.push(blankItem(last&&last.factory)); dirty=true;
-  document.getElementById("itemsBody").innerHTML=draft.items.map(itemRow).join(""); refreshTotals();
+  repaintItems(); refreshTotals();
+  const tr=document.querySelector("#itemsBody tr:last-child"), el=tr&&tr.querySelector("select:not([disabled]),input:not([disabled])");
+  if(el){ el.focus(); try{ el.scrollIntoView({block:"nearest",behavior:"smooth"}); }catch(_){} }
 }
 function copyRow(i){
   if(viewOnly||!draft.items[i]) return;
   const copy=JSON.parse(JSON.stringify(draft.items[i]));
   draft.items.splice(i+1,0,copy); dirty=true; payAutoReset();
-  const body=document.getElementById("itemsBody"); if(body) body.innerHTML=draft.items.map(itemRow).join("");
+  repaintItems();
   refreshTotals(); toast("تم نسخ الصنف — عدّل بيانات الصف الجديد حسب الحاجة","ok");
 }
-function delRow(i){
-  if(draft.items.length===1){ draft.items=[blankItem()]; } else draft.items.splice(i,1);
-  dirty=true; payAutoReset();
-  document.getElementById("itemsBody").innerHTML=draft.items.map(itemRow).join(""); refreshTotals();
+async function delRow(i){
+  const it=draft&&draft.items[i]; if(!it||viewOnly) return;
+  if(rowUsed(it) && !(await askConfirm("حذف الصنف #"+(i+1)+"؟",{ok:"حذف"}))) return;
+  if(!draft.items[i]||draft.items[i]!==it) return;
+  const backup={it:JSON.parse(JSON.stringify(it)),i,only:draft.items.length===1,draft};
+  if(backup.only) draft.items=[blankItem()]; else draft.items.splice(i,1);
+  dirty=true; payAutoReset(); repaintItems(); refreshTotals();
+  rowUndoShow(backup);
 }
+function rowUndoHide(){ clearTimeout(window.__rowUndoT); const b=document.getElementById("rowUndoBar"); if(b) b.remove(); }
+function rowUndoShow(b){
+  rowUndoHide(); window.__undoRow=b;
+  const bar=document.createElement("div"); bar.id="rowUndoBar";
+  bar.style.cssText="position:fixed;bottom:22px;inset-inline-start:22px;z-index:99999;background:#0f2447;color:#fff;border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:9px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:13px";
+  bar.innerHTML='<span>تم حذف الصنف</span><button type="button" style="background:#F4C542;color:#0a1a35;border:0;border-radius:7px;padding:5px 12px;font-weight:800;cursor:pointer">تراجع (Ctrl+Z)</button>';
+  bar.querySelector("button").onclick=rowUndo;
+  document.body.appendChild(bar);
+  window.__rowUndoT=setTimeout(()=>{ window.__undoRow=null; rowUndoHide(); },8000);
+}
+function rowUndo(){
+  const b=window.__undoRow; if(!b) return;
+  window.__undoRow=null; rowUndoHide();
+  if(viewOnly||draft!==b.draft||!document.getElementById("itemsBody")) return;
+  if(b.only&&draft.items.length===1&&!rowUsed(draft.items[0])) draft.items=[b.it];
+  else draft.items.splice(Math.min(b.i,draft.items.length),0,b.it);
+  dirty=true; payAutoReset(); repaintItems(); refreshTotals(); toast("تم استرجاع الصنف","ok");
+}
+document.addEventListener("keydown",e=>{
+  if(!(e.ctrlKey||e.metaKey)||e.key.toLowerCase()!=="z"||!window.__undoRow) return;
+  const t=e.target; if(t&&/^(INPUT|TEXTAREA)$/.test(t.tagName)&&!t.disabled&&t.type!=="checkbox") return; // لا نعطّل تراجع الكتابة العادي
+  e.preventDefault(); rowUndo();
+});
+// تنظيف تمييز الخطأ أول ما المستخدم يعدّل الخانة
+document.addEventListener("input",e=>{ const t=e.target; if(t&&t.classList&&t.classList.contains("bad")&&t.closest&&t.closest("#itemsBody")){ t.classList.remove("bad"); const r=t.closest("tr"); if(r&&!r.querySelector(".bad")) r.classList.remove("is-invalid"); } });
+document.addEventListener("change",e=>{ const t=e.target; if(t&&t.classList&&t.classList.contains("bad")&&t.closest&&t.closest("#itemsBody")){ t.classList.remove("bad"); const r=t.closest("tr"); if(r&&!r.querySelector(".bad")) r.classList.remove("is-invalid"); } });
 // ملاحظة على مستوى الصنف — تفتح في مودال
 function openItemNote(i){
   if(viewOnly) return;
@@ -15581,7 +15696,7 @@ function openItemNote(i){
   `, ()=>{
     const v = (document.getElementById("itemNoteInp")?.value || "").trim();
     draft.items[i].notes = v; dirty = true;
-    document.getElementById("itemsBody").innerHTML = draft.items.map(itemRow).join("");
+    repaintItems();
     refreshTotals();
     toast(v?"تم حفظ الملاحظة":"تم مسح الملاحظة","ok");
     return true;
@@ -15876,6 +15991,11 @@ function refreshTotals(){
         +`<td colspan="2"></td></tr>`;
     }
   }
+  { const tb=document.getElementById("igTotBar");
+    if(tb){
+      const ch=policyChargesCalc(draft);
+      tb.innerHTML=SS?`<div class="tb-i"><small>قبل الضريبة</small><b>${fmt(t.subtotal)}</b></div><div class="tb-i"><small>الخصم</small><b>${fmt(t.discount)}</b></div><div class="tb-i"><small>الضريبة</small><b>${fmt(t.tax)}</b></div>${ch.sub>0?`<div class="tb-i"><small>خدمات</small><b>${fmt(ch.sub)}</b></div>`:""}<div class="tb-i tb-grand"><small>الإجمالي (${escapeHtml(String(cur||""))})</small><b>${fmt(t.grandTotal)}</b></div>`:"";
+    } }
   renderSoFullCard(t);
   const de=document.getElementById("policyDiscountError"); if(de) de.textContent=DC.err||"";
   const ce=document.getElementById("policyChargesTotal"); if(ce) ce.textContent=fmt(policyChargesCalc(draft).sub);
@@ -15895,6 +16015,10 @@ function refreshTotals(){
 
 // ---------- أزرار الشاشة ----------
 async function guard(){ return !(dirty&&!viewOnly) || await askConfirm("فيه تعديلات لم تُحفظ. تكمل وتتجاهلها؟"); }
+// حقول السطر المعروفة (بتتعامل معاها الشاشة) والمحسوبة (بتتحسب تاني من الأرقام) — أي حقل تاني محفوظ على السطر بيرجع ويتحفظ زي ما هو
+const IG_ITEM_KNOWN=new Set(["factory","diameter","type","agingStatus","supplyQty","actualWeight","weightTon","unitNo","unitName","unitFactor","supplyUnitQty","actualWeightUnitQty","buyPrice","sellPrice","discVal","discType","notes"]);
+const IG_ITEM_DERIVED=new Set(["tax","discount","customerDiscount","tradeDiscount","total","id","shipment_id","line_no","extra","created_at","updated_at"]);
+function igItemExtras(it){ const o={}; Object.keys(it||{}).forEach(k=>{ if(!IG_ITEM_KNOWN.has(k)&&!IG_ITEM_DERIVED.has(k)&&it[k]!==undefined) o[k]=it[k]; }); return o; }
 function toDraft(r){
   return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",warehouseId:String(r.warehouseId||whDefaultId()),directIssue:!!r.directIssue,deliveryNoteId:r.deliveryNoteId||"",directDeliveryId:r.directDeliveryId||"",repCode:r.repCode||"",repName:r.repName||"",deptCode:r.deptCode||"",glEntryId:r.glEntryId||null,glPostedAt:r.glPostedAt||null,glPostedBy:r.glPostedBy||null,
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
@@ -15908,7 +16032,11 @@ function toDraft(r){
     applyProfitTax: r.applyProfitTax ?? !!r.applyDiscount,
     profitTaxPct: r.profitTaxPct ?? (+state.settings.profitTax||1),
     notes:r.notes||"", invDiscVal:r.invDiscVal??"", invDiscType:r.invDiscType||"pct", saleOrderCharges:Array.isArray(r.saleOrderCharges)?JSON.parse(JSON.stringify(r.saleOrderCharges)):[], saleOrderDiscountSnapshot:r.saleOrderDiscountSnapshot||null,
-    items:r.items.map(it=>({factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??0,sellPrice:it.sellPrice??0,discVal:it.discVal??"",discType:it.discType||"pct",notes:it.notes||""}))};
+    items:r.items.map(it=>({...igItemExtras(it),factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??0,sellPrice:it.sellPrice??0,discVal:it.discVal??"",discType:it.discType||"pct",notes:it.notes||"",
+      // وحدة القياس المختارة للسطر (كانت بتتحفظ ومش بترجع عند فتح البوليصة، فكانت بترجع للوحدة الافتراضية)
+      unitNo:it.unitNo||"",unitName:it.unitName||"",unitFactor:(Number(it.unitFactor)>0?Number(it.unitFactor):1),
+      ...((it.supplyUnitQty!==null&&it.supplyUnitQty!==undefined&&it.supplyUnitQty!=="")?{supplyUnitQty:it.supplyUnitQty}:{}),
+      ...((it.actualWeightUnitQty!==null&&it.actualWeightUnitQty!==undefined&&it.actualWeightUnitQty!=="")?{actualWeightUnitQty:it.actualWeightUnitQty}:{})}))};
 }
 function loadRecord(src,id,editMode){
   const r=(src==="shipments"?state.shipments:state.policies).find(x=>x.id===id); if(!r) return;
@@ -15972,20 +16100,28 @@ function buildRecord(strict){
   const rows=d.items.filter(rowUsed);
   if(!rows.length) return err("أضف صنف واحد على الأقل");
   const has=v=>v!==""&&v!=null, num=v=>has(v)?+v:null;
+  // يحدد الصف والخانة اللي فيها الخطأ (تلوين + تمرير + تركيز) بدل رسالة عامة
+  const ierr=(it,field,m)=>{
+    const ix=d.items.indexOf(it), trs=document.querySelectorAll("#itemsBody tr"), tr=trs[ix];
+    if(tr){ tr.classList.add("is-invalid"); const el=tr.querySelector(`[data-k="${field}"]`)||tr.querySelector("select:not([disabled]),input:not([disabled])");
+      if(el){ el.classList.add("bad"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); }catch(_){} try{ el.focus({preventScroll:true}); }catch(_){} } }
+    return err("صف "+(ix+1)+": "+m);
+  };
   for(const it of rows){
-    if(!it.factory) return err("اختر المصنع لكل صنف");
-    if(!it.diameter||!it.type) return err("اختر الصنف والنوع لكل صنف");
-    if(!(+it.supplyQty>0)) return err("اكتب كمية التوريد (أكبر من صفر)");
-    if(has(it.actualWeight)&&!(+it.actualWeight>0)) return err("الوزن الفعلي لازم يكون أكبر من صفر");
-    if(has(it.sellPrice)&&!(+it.sellPrice>=0)) return err("سعر البيع لا يمكن أن يكون أقل من صفر");
-    if(has(it.buyPrice)&&+it.buyPrice<0) return err("سعر الشراء لا يمكن أن يكون أقل من صفر");
+    if(!it.factory) return ierr(it,"factory","اختر المصنع");
+    if(!it.diameter) return ierr(it,"diameter","اختر الصنف");
+    if(!it.type) return ierr(it,"type","اختر النوع");
+    if(!(+it.supplyQty>0)) return ierr(it,"supplyQty","اكتب كمية التوريد (أكبر من صفر)");
+    if(has(it.actualWeight)&&!(+it.actualWeight>0)) return ierr(it,"actualWeight","الوزن الفعلي لازم يكون أكبر من صفر");
+    if(has(it.sellPrice)&&!(+it.sellPrice>=0)) return ierr(it,"sellPrice","سعر البيع لا يمكن أن يكون أقل من صفر");
+    if(has(it.buyPrice)&&+it.buyPrice<0) return ierr(it,"buyPrice","سعر الشراء لا يمكن أن يكون أقل من صفر");
   }
   if(strict){ const m=missingList(d); if(m.length){ showMissing(m); return null; } }
   const DC=policyDiscountCalc(d); if(DC.err) return err(DC.err);
   const opts = draftCalcOpts();
   const items=rows.map(it=>{
     const ix=d.items.indexOf(it), c=calcItem(it,{...opts,lineDiscount:DC.lines[ix]?.disc||0});
-    return {factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
+    return {...igItemExtras(it),factory:it.factory,diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:+it.supplyQty,
       actualWeight:num(it.actualWeight),weightTon:num(it.actualWeight),
       // حفظ وحدة الصنف ومعامل التحويل والكميات المعروضة بها داخل extra في shipment_items.
       unitNo:it.unitNo||"",unitName:it.unitName||policyUnitName(it),unitFactor:Number(policyUnitFactor(it))||1,
@@ -16070,11 +16206,27 @@ function saveShipment(){
   // نحتفظ بنسخة من البوليصة قبل التعديل عشان نقارن buyPrice (للربط التلقائي بإعادة التسعير)
   const oldRec=(idx>=0)?JSON.parse(JSON.stringify(list[idx])):null;
   const wasPosted=(editingSrc==="shipments");
-  if(idx>=0) list[idx]=rec; else list.push(rec);
-  if(editingSrc==="new") editingSrc="policies";
-  commitOrderTerms(rec);
-  syncOrderDate(rec.saleOrderNo); if(prevSoNo&&soKey(prevSoNo)!==soKey(rec.saleOrderNo)) syncOrderDate(prevSoNo);
-  editingId=rec.id; saveState();
+  // لقطة للرجوع لها لو الحفظ فشل: السجل نفسه + شروط الأمر + شروط بوالص الأمر + أول حالة للمحرر
+  const prevObj=idx>=0?list[idx]:null, prevSrc=editingSrc, prevEditingId=editingId;
+  const termsSnap=JSON.stringify((state.orderTerms)||{});
+  const docsSnap=[]; try{ [rec.saleOrderNo,prevSoNo].forEach(no=>{ if(no) orderDocs(no).forEach(x=>docsSnap.push([x,x.terms===undefined?undefined:JSON.stringify(x.terms)])); }); }catch(_){}
+  try{
+    if(idx>=0) list[idx]=rec; else list.push(rec);
+    if(editingSrc==="new") editingSrc="policies";
+    commitOrderTerms(rec);
+    syncOrderDate(rec.saleOrderNo); if(prevSoNo&&soKey(prevSoNo)!==soKey(rec.saleOrderNo)) syncOrderDate(prevSoNo);
+    editingId=rec.id;
+    if(saveState()===false) throw new Error("تعذر الحفظ في المتصفح");
+  }catch(e){
+    // رجوع كامل: الذاكرة ترجع لحالتها قبل الضغط على حفظ، والمستخدم يفضل في وضع التعديل
+    const j=list.indexOf(rec); if(j>=0){ if(prevObj) list[j]=prevObj; else list.splice(j,1); }
+    try{ state.orderTerms=JSON.parse(termsSnap); }catch(_){}
+    docsSnap.forEach(([x,t])=>{ if(t===undefined) delete x.terms; else x.terms=JSON.parse(t); });
+    editingSrc=prevSrc; editingId=prevEditingId;
+    console.error("saveShipment failed",e);
+    toast("لم يتم الحفظ: "+((e&&e.message)||e),"err");
+    return;
+  }
   draft=toDraft(rec); viewOnly=true; dirty=false;
   toast(`تم حفظ ${SI_MODE?"الفاتورة":"البوليصة"} ${rec.policyNo}`,"ok");
   // ربط تلقائي: لو البوليصة مرحّلة وسعر شراء أي صنف اتغيّر → ننده إعادة التسعير تلقائياً
@@ -16154,7 +16306,11 @@ async function persistPolicySnapshotForMovement(rec){
   if(del.error) throw del.error;
   if(packed.items.length){
     const ins=await sb.from("shipment_items").insert(packed.items);
-    if(ins.error) throw ins.error;
+    if(ins.error){
+      const m=String(ins.error.message||ins.error);
+      if(/unit_no|unit_name|unit_factor|supply_unit_qty|actual_weight_unit_qty/i.test(m)) throw new Error("أعمدة وحدات القياس غير موجودة في shipment_items. شغّل ملف policy-units.sql في Supabase SQL Editor ثم أعد تحميل النظام. التفاصيل: "+m);
+      throw ins.error;
+    }
   }
 }
 async function postShipment(){
@@ -19169,9 +19325,9 @@ function soRenderCharges(){
     else h+=`<option value="">اختر الخدمة</option>`;
     return h+sv.map(s=>`<option value="${escapeAttr(s.code)}" ${String(s.code)===cur?"selected":""}>${escapeHtml(s.code)} — ${escapeHtml(s.name||"")}</option>`).join("");
   };
-  b.innerHTML=`<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>خدمات ومصاريف إضافية (نقل / تحميل …)</b><span style="margin-inline-start:auto;font-size:12px">إجمالي الخدمات قبل الضريبة: <b id="soTChg">0.00</b></span><button class="btn sm ghost" onclick="soAddCharge()">+ إضافة خدمة</button></div>`
-    +(!sv.length?`<div style="margin-top:8px;font-size:12px;color:var(--danger)">لا توجد خدمات معرّفة — أضفها من المبيعات ← البيانات الأساسية ← الخدمات.</div>`:"")
-    +ch.map((c,i)=>`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px"><select class="inp" onchange="soSetCharge(${i},'service',this.value)" aria-label="الخدمة" style="flex:2;min-width:200px">${optsFor(c)}</select><span style="min-width:120px">${soSvcAccHtml(c)}</span><input class="inp num" type="number" min="0" step="0.01" inputmode="decimal" placeholder="المبلغ قبل الضريبة" value="${escapeAttr(c.amount==null?"":c.amount)}" oninput="soSetCharge(${i},'amount',this.value)" style="flex:1;min-width:120px"><label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox" ${c.vat===false?"":"checked"} onchange="soSetCharge(${i},'vat',this.checked)">تخضع للضريبة</label><button class="rm-btn ig-trash-btn" onclick="soDelCharge(${i})" title="حذف الخدمة" aria-label="حذف الخدمة"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v7m4-7v7"/></svg></button></div>`).join("");
+  b.innerHTML=chargesHeadHtml({title:"خدمات ومصاريف إضافية (نقل / تحميل …)",totalLabel:"إجمالي الخدمات قبل الضريبة:",totalId:"soTChg",total:"0.00",addFn:"soAddCharge"})
+    +(!sv.length?`<div class="ig-chg-warn">لا توجد خدمات معرّفة — أضفها من المبيعات ← البيانات الأساسية ← الخدمات.</div>`:"")
+    +ch.map((c,i)=>chargeRowHtml({c,i,setFn:"soSetCharge",delFn:"soDelCharge",svcKey:"service",optionsHtml:optsFor(c),extraHtml:`<span class="ig-chg-acc">${soSvcAccHtml(c)}</span>`})).join("");
 }
 function soAddCharge(){ soDraft.charges=soDraft.charges||[]; soDraft.charges.push({serviceCode:"",name:"",amount:"",vat:true}); soRenderCharges(); soPriceRefresh(); }
 function soDelCharge(i){ (soDraft.charges||[]).splice(i,1); soRenderCharges(); soPriceRefresh(); }
@@ -36302,7 +36458,11 @@ input[type=checkbox],input[type=radio]{accent-color:var(--gold)!important}
     if(!faCan('print'))return toast('لا تملك صلاحية الطباعة','err');
     const t=document.querySelector('#faRepTbl table');if(!t)return;
     const w=window.open('','_blank');if(!w)return toast('اسمح بالنوافذ المنبثقة للطباعة','err');
-    w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>تقارير الأصول الثابتة</title><style>body{font-family:Tahoma,Arial;padding:16px}h3{text-align:center}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #999;padding:4px 6px;white-space:nowrap}th{background:#eee}td.n{text-align:left;direction:ltr}tfoot td{font-weight:bold;background:#f5f5f5}</style></head><body><h3>تقارير الأصول الثابتة — إهلاك ${esc(R.from)} إلى ${esc(R.to)}</h3>${t.outerHTML}
+    w.document.write(`<html dir="rtl"><head><meta charset="utf-8"><title>تقارير الأصول الثابتة</title><style>body{font-family:Tahoma,Arial;padding:16px}h3{text-align:center}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border:1px solid #999;padding:4px 6px;white-space:nowrap}th{background:#eee}td.n{text-align:left;direction:ltr}tfoot td{font-weight:bold;background:#f5f5f5}</style></head><body><h3>تقارير الأصول الثابتة — إهلاك ${esc(R.from)} إلى ${esc(R.to)}</h3>${t.outerHTML}</body></html>`);
+    w.document.close();setTimeout(()=>{try{w.focus();w.print();}catch(_){}},300);
+  };
+})();
+</script>
 <style id="ig-sidebar-final">
 /* ===== القائمة الجانبية — تنسيق نهائي موحّد (يغلب كل ما قبله) ===== */
 html body .layout:not(.collapsed) aside nav{padding:10px 10px 16px!important;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:rgba(212,160,23,.4) transparent}
