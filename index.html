@@ -2746,11 +2746,17 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
     #aiChatHead h3{margin:0;font-size:14.5px;font-weight:800;flex:1;display:flex;align-items:center;gap:7px;color:#EDD69E;letter-spacing:1px}
     #aiChatLive{background:#1f9d55;color:#fff;font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:999px;white-space:nowrap}
     #aiChatX{width:32px;height:32px;border-radius:50%;border:1px solid rgba(204,172,119,.35);background:rgba(0,0,0,.25);color:#EDD69E;font-size:17px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
-    #aiChatBody{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 8px;display:flex;flex-direction:column;gap:4px;background:#f3ecdd}
+    #aiChatBody{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 8px;display:flex;flex-direction:column;gap:7px;background:#f3ecdd}
     .aichat-hint{align-self:center;background:#fff3c4;color:#5b4a10;border-radius:9px;padding:8px 12px;font-size:11.5px;line-height:1.75;text-align:center;max-width:94%;box-shadow:0 1px 1px rgba(0,0,0,.12)}
-    .aichat-msg{max-width:88%;padding:5px 9px 3px;border-radius:9px;font-size:12.5px;line-height:1.55;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;box-shadow:0 1px 1px rgba(0,0,0,.13);color:#111}
+    .aichat-msg{max-width:88%;padding:8px 11px 5px;border-radius:12px;font-size:12.5px;line-height:1.7;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap;box-shadow:0 2px 5px rgba(15,23,42,.09);color:#111}
     .aichat-msg.user{align-self:flex-start;background:#d9fdd3;border-top-right-radius:2px}
-    .aichat-msg.ai{align-self:flex-end;background:#fff;border-top-left-radius:2px;border:1px solid rgba(204,172,119,.25)}
+    .aichat-msg.ai{align-self:flex-end;background:linear-gradient(180deg,#fff,#fbfdff);border-top-left-radius:4px;border:1px solid #e2e8f0}
+    .aichat-msg .ai-num{display:inline-block;direction:ltr;unicode-bidi:isolate;font-weight:900;font-variant-numeric:tabular-nums;padding:1px 4px;margin:0 1px;border-radius:5px;white-space:nowrap}
+    .aichat-msg .ai-num.red{color:#b42318;background:#fee4e2}
+    .aichat-msg .ai-num.green{color:#067647;background:#d1fadf}
+    .aichat-msg .ai-num.blue{color:#175cd3;background:#dbeafe}
+    .aichat-msg .ai-num.orange{color:#b54708;background:#fef0c7}
+    .aichat-msg .ai-num.balance{font-size:1.08em;padding:3px 7px;border:1px solid currentColor}
     .aichat-msg .who{display:block;font-size:10.5px;font-weight:800;color:#14213d;margin-bottom:1px}
     .aichat-msg .tm{display:block;font-size:9.5px;color:#7a7a7a;text-align:left;margin-top:1px;direction:ltr}
     #aiChatBar{flex:0 0 auto;display:flex;align-items:flex-end;gap:7px;padding:6px 8px;padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));background:#f3ecdd;border-top:1px solid rgba(204,172,119,.3)}
@@ -2832,11 +2838,38 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
         localStorage.setItem(k,JSON.stringify(trimmed));
       }catch(_){}
     }
-    function aiChatClear(){
-      if(!confirm('بدء محادثة جديدة؟ سيتم مسح الرسائل السابقة لك.'))return;
+    async function aiChatClear(){
+      const ok=await askConfirm('سيتم حذف سجل المحادثة المحفوظ على هذا الجهاز لهذا المستخدم فقط. لن يؤثر ذلك على بيانات الشركة أو حسابك. هل تريد المتابعة؟',{title:'🗑 حذف سجل المحادثة',ok:'حذف المحادثة',cancel:'الاحتفاظ بالمحادثة',danger:true});
+      if(!ok)return;
       const k=aiChatKey();if(k){try{localStorage.removeItem(k)}catch(_){}}
       const body=document.getElementById('aiChatBody');if(body)body.innerHTML='';
       aiChatShowHint();
+    }
+    function aiChatColorizeNumbers(host){
+      if(!host)return;
+      const walker=document.createTreeWalker(host,NodeFilter.SHOW_TEXT);
+      const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+      const re=/(?<![\w/])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![\w/])[-+]?\d+(?:\.\d+)?/g;
+      nodes.forEach(node=>{
+        const value=node.nodeValue||'',parent=node.parentElement;
+        if(!/[0-9]/.test(value)||!parent||parent.closest('.tm,.ai-num,script,style,code'))return;
+        const frag=document.createDocumentFragment();let last=0,m,changed=false;
+        re.lastIndex=0;
+        while((m=re.exec(value))){
+          const token=m[0],start=m.index,end=start+token.length;
+          if(value[start-1]==='-'||value[end]==='-'||value[start-1]===':'||value[end]===':')continue;
+          const before=value.slice(Math.max(0,start-55),start);
+          let tone='blue';
+          if(/متأخر|متاخر|مستحق|مدين|عليه|عليهم/.test(before))tone='red';
+          else if(/دائن|محصل|تحصيل|مدفوع|سداد|إيراد|ايراد/.test(before))tone='green';
+          else if(/رصيد/.test(before))tone=(Number(token.replace(/,/g,''))<0?'red':'green');
+          else if(/عدد|أقساط|اقساط|عميل|عملاء|فاتورة|فواتير|يوم|حركة|حركات/.test(before))tone='orange';
+          frag.appendChild(document.createTextNode(value.slice(last,start)));
+          const span=document.createElement('span');span.className='ai-num '+tone+(/رصيد/.test(before)?' balance':'');span.textContent=token;
+          frag.appendChild(span);last=end;changed=true;
+        }
+        if(changed){frag.appendChild(document.createTextNode(value.slice(last)));node.parentNode.replaceChild(frag,node);}
+      });
     }
     function aiChatShowHint(){
       const body=document.getElementById('aiChatBody');if(!body)return;
@@ -2854,6 +2887,7 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
         const div=document.createElement('div');
         div.className='aichat-msg '+(m.role==='user'?'user':'ai');
         const txt=document.createElement('span');txt.innerHTML=String(m.text||'').replace(/</g,'&lt;');
+        if(m.role!=='user')aiChatColorizeNumbers(txt);
         const tm=document.createElement('span');tm.className='tm';
         tm.textContent=m.t?new Date(m.t).toLocaleTimeString('ar-EG',{hour:'2-digit',minute:'2-digit'}):'';
         div.appendChild(txt);div.appendChild(tm);
@@ -2906,15 +2940,19 @@ body.page-shipments #content:has(#paySchedBox) .ig-items-card .col-menu-btn{opac
       let answer='';
       try{
         const url=SB_URL+'/functions/v1/app-chat-ai';
+        const sessionResult=await sb.auth.getSession();
+        const accessToken=sessionResult&&sessionResult.data&&sessionResult.data.session&&sessionResult.data.session.access_token;
+        if(!accessToken) throw new Error('جلسة الدخول غير متاحة. سجّل الدخول مرة أخرى.');
         const r=await fetch(url,{
           method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':'Bearer '+SB_KEY,'apikey':SB_KEY,'x-company-id':w.c},
-          body:JSON.stringify({question:q,userNo:w.u,company:w.c})
+          headers:{'Content-Type':'application/json','Authorization':'Bearer '+accessToken,'apikey':SB_KEY,'x-company-id':w.c},
+          body:JSON.stringify({question:q,userNo:w.u,company:w.c,history:hist.slice(-8)})
         });
         const j=await r.json();
         answer = j.error ? ('❌ '+j.error) : (j.text||j.answer||'(مفيش رد)');
       }catch(e){answer='❌ خطأ في الاتصال: '+String(e.message||e);}
       loading.innerHTML=answer.replace(/</g,'&lt;');
+      aiChatColorizeNumbers(loading);
       // خزّن رد الـAI
       const hist2=aiChatLoad(); hist2.push({role:'ai',text:answer,t:Date.now()}); aiChatSave(hist2);
       btn.disabled=false;
@@ -39282,7 +39320,7 @@ function viewBotCaller(){
       '<details><summary>📖 شوف كل الصيغ اللي البوت بيفهمها</summary>'+
       '<div class="bc-help-body">'+
         '<div class="bc-help-sec"><b>⚖ الرصيد من ميزان المراجعة:</b><code>رصيد [عميل/مورد] &lt;الاسم&gt;</code></div>'+
-        '<div class="bc-help-sec"><b>⚠ الأقساط المتأخرة:</b><code>متأخرات [عميل] &lt;الاسم&gt;</code> · <code>متأخرات</code> (كل العملاء)</div>'+
+        '<div class="bc-help-sec"><b>⚠ الأقساط المتأخرة:</b><code>متأخرات [عميل] &lt;الاسم&gt;</code> · <code>متأخرات ويكادي تفصيلي</code> (جدول كل قسط)</div>'+
         '<div class="bc-help-sec"><b>🧾 أوراق القبض المستحقة:</b><code>شيكات مستحقة [عميل] &lt;الاسم&gt;</code> · <code>شيكات مستحقة</code> (الأسبوع الجاي)</div>'+
         '<div class="bc-help-sec"><b>💰 المبيعات في فترة:</b><code>مبيعات &lt;الاسم&gt; من 2026-01-01 لـ 2026-12-31</code><br>بدلاً من التاريخ تقدر تقول: <b>اليوم / أمس / الشهر / الشهر الماضي / الأسبوع / السنة</b></div>'+
         '<div class="bc-help-sec"><b>📅 ملخص اليوم:</b><code>ملخص اليوم</code> أو <code>ملخص النهاردة</code></div>'+
@@ -39331,10 +39369,40 @@ function _bcCss(){
     .bc-reply .bc-balance-main{display:inline-block;padding:5px 10px;border-radius:9px;font-size:14px;font-weight:900;border:1px solid currentColor}
     .bc-reply .bc-kpi{font-variant-numeric:tabular-nums}
     .bc-reply b{color:#92400e}
-    .bc-reply .bc-tbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px}
-    .bc-reply .bc-tbl th{background:#1e293b;color:#F4C542;padding:6px;text-align:right}
-    .bc-reply .bc-tbl td{padding:6px;border-bottom:1px solid #e5e7eb}
-    .bc-reply .bc-tbl tr:nth-child(even) td{background:#f9fafb}
+    .bc-reply .bc-table-wrap{width:100%;overflow-x:auto;margin-top:12px;border:1px solid #dbe3ef;border-radius:12px;background:#fff;box-shadow:0 3px 12px rgba(15,23,42,.06)}
+    .bc-reply .bc-tbl{width:100%;min-width:440px;border-collapse:separate;border-spacing:0;font-size:12px;overflow:hidden}
+    .bc-reply .bc-tbl th{background:linear-gradient(135deg,#10213f,#244675);color:#f8d56b;padding:11px 9px;text-align:right;font-weight:900;white-space:nowrap;border-bottom:2px solid #d4a017}
+    .bc-reply .bc-tbl td{padding:10px 9px;border-bottom:1px solid #edf1f6;color:#263449;white-space:nowrap}
+    .bc-reply .bc-tbl tbody tr:nth-child(even) td{background:#f7f9fc}
+    .bc-reply .bc-tbl tbody tr:hover td{background:#fff8e5}
+    .bc-reply .bc-tbl .bc-order-no{font-weight:900;color:#1d4ed8}
+    .bc-reply .bc-tbl .bc-invoice-total{font-weight:800;color:#334155;font-variant-numeric:tabular-nums;direction:ltr;text-align:right}
+    .bc-reply .bc-tbl .bc-due-date{color:#475569;font-weight:700}
+    .bc-reply .bc-tbl .bc-overdue-value{color:#b91c1c;background:#fff1f2!important;font-weight:900;font-variant-numeric:tabular-nums;direction:ltr;text-align:right}
+    .bc-reply .bc-tbl tfoot td{background:#fff7df;color:#78350f;font-weight:900;border-top:2px solid #e8c45a;border-bottom:0}
+    .bc-reply .bc-overdue-summary{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 2px}
+    .bc-reply .bc-overdue-summary span{display:inline-flex;gap:5px;align-items:center;padding:6px 10px;border-radius:8px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}
+    .bc-reply .bc-overdue-summary .bc-overdue-total{background:#fee2e2;color:#991b1b}
+
+    .bc-reply .bc-api-table-card{margin-top:12px;border:1px solid #d9e2ef;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 5px 18px rgba(15,23,42,.08)}
+    .bc-reply .bc-api-table-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:12px 14px;background:linear-gradient(135deg,#10213f,#244675);color:#fff}
+    .bc-reply .bc-api-table-head strong{font-size:13px;color:#f8d56b}
+    .bc-reply .bc-api-table-head small{font-size:10px;color:#dbeafe}
+    .bc-reply .bc-api-table-scroll{width:100%;overflow-x:auto}
+    .bc-reply .bc-api-table{width:100%;min-width:560px;border-collapse:separate;border-spacing:0;font-size:12px}
+    .bc-reply .bc-api-table th{background:#edf3fb;color:#183153;padding:11px 10px;text-align:right;white-space:nowrap;border-bottom:1px solid #dbe3ef}
+    .bc-reply .bc-api-table td{padding:11px 10px;border-bottom:1px solid #edf1f6;color:#263449;white-space:nowrap}
+    .bc-reply .bc-api-table tbody tr:nth-child(even) td{background:#f8fafc}
+    .bc-reply .bc-api-table .api-order{font-weight:900;color:#1d4ed8}
+    .bc-reply .bc-api-table .api-money{direction:ltr;unicode-bidi:isolate;text-align:left;font-variant-numeric:tabular-nums;font-weight:800}
+    .bc-reply .bc-api-table .api-overdue{color:#b91c1c;background:#fff1f2!important;font-weight:900}
+    .bc-reply .bc-api-table tfoot td{background:#fff7df;color:#78350f;font-weight:900;border-top:2px solid #e8c45a}
+    .bc-reply .bc-api-reconcile{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+    .bc-reply .bc-api-reconcile span{padding:7px 10px;border-radius:9px;background:#f1f5f9;color:#334155;font-size:11px;font-weight:800}
+    .bc-reply .bc-api-reconcile .ok{background:#dcfce7;color:#166534}
+    .bc-reply .bc-api-reconcile .warn{background:#fee2e2;color:#991b1b}
+
+    @media(max-width:600px){.bc-reply .bc-tbl{font-size:11px}.bc-reply .bc-tbl th,.bc-reply .bc-tbl td{padding:8px 7px}}
     .bc-reply .bc-kpi{display:inline-block;background:#fef3c7;color:#92400e;padding:4px 10px;border-radius:999px;font-weight:800;margin:3px 3px 0 0;font-size:11px}
     .bc-empty{text-align:center;color:#94a3b8;padding:30px;font-size:13px}
     .bc-input-wrap{display:flex;gap:8px;background:#fff;border:2px solid #d4a017;border-radius:12px;padding:6px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
@@ -39410,6 +39478,85 @@ function bindBotCaller(){
 }
 function bcClear(){ if(!confirm("مسح كل المحادثة؟")) return; botCallerHistory=[]; var el=document.getElementById("bcMessages"); if(el) el.innerHTML=_bcRenderHistory(); }
 function bcSend(){ var inp=document.getElementById("bcInput"); if(!inp) return; var t=inp.value.trim(); if(!t) return; inp.value=""; bcSendText(t); }
+
+async function _bcGetApiAccessToken(){
+  try{
+    if(typeof sb === "undefined" || !sb.auth || !sb.auth.getSession) return "";
+    var sessionResult=await sb.auth.getSession();
+    return sessionResult&&sessionResult.data&&sessionResult.data.session
+      ? String(sessionResult.data.session.access_token||"") : "";
+  }catch(_){ return ""; }
+}
+function _bcGetApiIdentity(){
+  var u="", c="";
+  try{
+    if(window.CUR_USER && window.CUR_USER.user_no) u=String(window.CUR_USER.user_no);
+    if(window.CUR_CO) c=String(window.CUR_CO);
+  }catch(_){}
+  if(!u){
+    var ue=document.getElementById("loginUserNo");
+    u=String(ue&&ue.value||"").trim();
+  }
+  if(!c){
+    var ce=document.getElementById("loginCompany");
+    c=String(ce&&ce.value||"01").trim();
+  }
+  return {u:u,c:c||"01"};
+}
+function _bcRenderApiOverdueTable(payload){
+  var t=payload&&payload.table;
+  if(!t || t.type!=="overdue_installments") return null;
+  var rows=Array.isArray(t.rows)?t.rows:[];
+  var escv=function(v){return esc(String(v==null?"":v));};
+  var money=function(v){return Number(v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var body=rows.map(function(r){
+    return '<tr>'+
+      '<td class="api-order">'+escv(r.order_no||"—")+'</td>'+
+      '<td class="api-money">'+money(r.invoice_total)+'</td>'+
+      '<td>'+escv(r.due_date||"—")+'</td>'+
+      '<td class="api-money api-overdue">'+money(r.overdue_amount)+'</td>'+
+    '</tr>';
+  }).join("");
+  var reconciled=!!t.reconciled;
+  var html='<pre>📋 <b>'+escv(t.title||"تفاصيل الأقساط المتأخرة")+'</b></pre>'+
+    '<div class="bc-api-table-card">'+
+      '<div class="bc-api-table-head"><strong>تفاصيل كل قسط متأخر</strong><small>عدد الأقساط: '+Number(t.count||rows.length)+'</small></div>'+
+      '<div class="bc-api-table-scroll"><table class="bc-api-table">'+
+        '<thead><tr><th>رقم أمر البيع</th><th>إجمالي الفاتورة (ج.م)</th><th>تاريخ الاستحقاق</th><th>القيمة المتأخرة (ج.م)</th></tr></thead>'+
+        '<tbody>'+body+'</tbody>'+
+        '<tfoot><tr><td colspan="3">إجمالي القيمة المتأخرة</td><td class="api-money api-overdue">'+money(t.total)+'</td></tr></tfoot>'+
+      '</table></div></div>'+
+      '<div class="bc-api-reconcile">'+
+        '<span>🧾 عدد الأقساط: '+Number(t.count||rows.length)+'</span>'+
+        '<span>💰 إجمالي التفاصيل: '+money(t.total)+' ج.م</span>'+
+        '<span>📌 إجمالي الملخص: '+money(t.snapshot_total)+' ج.م</span>'+
+        (reconciled?'<span class="ok">✓ الإجمالي مطابق</span>':'<span class="warn">⚠ يوجد فرق: '+money(Number(t.snapshot_total||0)-Number(t.total||0))+' ج.م</span>')+
+      '</div>';
+  return html;
+}
+async function _bcFetchOverdueDetail(question, history){
+  var who=_bcGetApiIdentity();
+  if(!who.c) throw new Error("لم يتم تحديد الشركة الحالية.");
+  var accessToken=await _bcGetApiAccessToken();
+  if(!accessToken) throw new Error("جلسة الدخول غير متاحة. سجّل الدخول مرة أخرى.");
+  var url=SB_URL+"/functions/v1/app-chat-ai";
+  var response=await fetch(url,{
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "Authorization":"Bearer "+accessToken,
+      "apikey":SB_KEY,
+      "x-company-id":who.c
+    },
+    body:JSON.stringify({question:question,userNo:who.u,company:who.c,history:(history||[]).slice(-8).map(function(m){return {who:m.who,text:m.text||''};})})
+  });
+  var payload=await response.json();
+  if(!response.ok || payload.error) throw new Error(payload.error||payload.text||"تعذر الاتصال بخدمة تفاصيل المتأخرات");
+  var tableHtml=_bcRenderApiOverdueTable(payload);
+  if(tableHtml) return (payload.text?'<pre>'+esc(payload.text)+'</pre>':'')+tableHtml;
+  return payload.text?'<pre>'+esc(payload.text)+'</pre>':"لم يتم إرجاع نتيجة من المساعد.";
+}
+
 async function bcSendText(text){
   botCallerHistory.push({who:"user",text:text,ts:Date.now()});
   var box=document.getElementById("bcMessages"); if(!box) return;
@@ -39418,7 +39565,13 @@ async function bcSendText(text){
   box.insertAdjacentHTML("beforeend",'<div class="bc-msg bot" id="bcLoadMsg"><div class="bc-msg-av">🤖</div><div class="bc-msg-body"><div class="bc-loading"><span></span><span></span><span></span></div></div></div>');
   box.scrollTop=box.scrollHeight;
   try{
-    var html = await bcAnswer(text);
+    var parsedLocal = bcParseIntent(text);
+    var isOverdueDetail = /متاخر|متأخر/.test(bcNorm(text)) && /تفصيلي|تفاصيل|بالتفصيل|تفصيل|كشف|جدول/.test(bcNorm(text));
+    var isNaturalFollowup = /^(طب|طيب|وكمان|وماذا|ليه|ازاي|اعرض|هات|كمل)/.test(bcNorm(text));
+    var needsAiUnderstanding = parsedLocal.intent === "unknown" || isNaturalFollowup || isOverdueDetail;
+    var html = needsAiUnderstanding
+      ? await _bcFetchOverdueDetail(text, botCallerHistory.slice(-8))
+      : await bcAnswer(text);
     html = _bcColorizeReplyNumbers(html, text);
     var lm=document.getElementById("bcLoadMsg"); if(lm) lm.remove();
     botCallerHistory.push({who:"bot",html:html,ts:Date.now()});
@@ -39444,7 +39597,7 @@ function bcParseIntent(text){
   return {intent:"unknown"};
 }
 function bcExtractName(text){
-  return text.replace(/رصيد|متاخر(ات)?|متأخر(ات)?|شيكات?|مستحقه|مستحقة|مبيعات|عميل|مورد|ميزان|اوراق|قبض|دفع/gi," ")
+  return text.replace(/رصيد|متاخر(ات)?|متأخر(ات)?|اقساط|أقساط|قسط|تفصيلي|تفصيلا|بالتفصيل|تفاصيل|شيكات?|مستحقه|مستحقة|مبيعات|عميل|مورد|ميزان|اوراق|قبض|دفع/gi," ")
     .replace(/من\s*\d{4}-\d{2}-\d{2}|الى\s*\d{4}-\d{2}-\d{2}|لـ?\s*\d{4}-\d{2}-\d{2}/g," ")
     .replace(/الشهر الماضي|الشهر الفات|الشهر|السنه|السنة|العام|الاسبوع|الأسبوع|امس|أمس|اليوم|النهارده|النهاردة/g," ")
     .replace(/\s+/g," ").trim();
@@ -39500,9 +39653,18 @@ async function bcAnswer(text){
       var cols = p.target ? ['#','العميل','أمر البيع','الاستحقاق','المتبقي','أيام التأخير'] : ['#','العميل','عدد الأقساط','إجمالي المتأخر'];
       var body;
       if(p.target){
-        body = rows.slice(0,30).map(function(r,i){
-          return '<tr><td>'+(i+1)+'</td><td>'+esc(r.customer||"—")+'</td><td>'+esc(r.orderNo||"—")+'</td><td>'+esc(r.due||"—")+'</td><td>'+money(r.remaining)+'</td><td style="color:#b91c1c;font-weight:800">'+(r.days||0)+' يوم</td></tr>';
+        var detailRows=rows.slice().sort(function(a,b){return String(a.due||"").localeCompare(String(b.due||""))||String(a.orderNo||"").localeCompare(String(b.orderNo||""),undefined,{numeric:true});});
+        var detailBody=detailRows.map(function(r){
+          return '<tr><td class="bc-order-no">'+esc(r.orderNo||"—")+'</td><td class="bc-invoice-total">'+money(r.total||0)+'</td><td class="bc-due-date">'+esc(r.due||"—")+'</td><td class="bc-overdue-value">'+money(r.remaining)+'</td></tr>';
         }).join("");
+        var detailCount=detailRows.length;
+        var detailTotal=detailRows.reduce(function(a,r){return a+(+r.remaining||0);},0);
+        var invoiceTotalsByOrder={}; detailRows.forEach(function(r){var k=String(r.orderNo||r.orderId||""); if(!Object.prototype.hasOwnProperty.call(invoiceTotalsByOrder,k)) invoiceTotalsByOrder[k]=+r.total||0;});
+        var detailInvoiceTotal=Object.keys(invoiceTotalsByOrder).reduce(function(a,k){return a+invoiceTotalsByOrder[k];},0);
+        var detailTitle='تفاصيل الأقساط المتأخرة — '+esc(bcFindParty(p.target)?.name||p.target);
+        return '<pre>📋 <b>'+detailTitle+'</b>\nكل صف يمثل قسطًا متأخرًا، والقيمة المتأخرة هي المتبقي من هذا القسط.</pre>'+
+          '<div class="bc-overdue-summary"><span>📄 عدد الأقساط: '+detailCount+'</span><span>🧾 إجمالي الفواتير المرتبطة: '+money(detailInvoiceTotal)+' ج.م</span><span class="bc-overdue-total">⚠ إجمالي المتأخرات: '+money(detailTotal)+' ج.م</span></div>'+
+          '<div class="bc-table-wrap"><table class="bc-tbl"><thead><tr><th>رقم أمر البيع</th><th>إجمالي الفاتورة (ج.م)</th><th>تاريخ الاستحقاق</th><th>القيمة المتأخرة (ج.م)</th></tr></thead><tbody>'+detailBody+'</tbody><tfoot><tr><td colspan="3">إجمالي القيمة المتأخرة</td><td class="bc-overdue-value">'+money(detailTotal)+'</td></tr></tfoot></table></div>';
       } else {
         // group by customer
         var byCust={}; rows.forEach(function(r){var c=r.customer||"—"; (byCust[c]=byCust[c]||{n:0,s:0}).n++; byCust[c].s+=r.remaining;});
