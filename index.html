@@ -44067,10 +44067,11 @@ function igTrackEligibleOrders(){
   }).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.orderNo||"").localeCompare(String(a.orderNo||""),undefined,{numeric:true}));
 }
 function igTrackData(order){
-  if(!order.tracking || typeof order.tracking!=="object") order.tracking={stage:-1,history:[],attachments:[],vehicle:{},token:""};
+  if(!order.tracking || typeof order.tracking!=="object") order.tracking={stage:-1,history:[],attachments:[],vehicle:{},shipmentInfo:{},token:""};
   if(!Array.isArray(order.tracking.history)) order.tracking.history=[];
   if(!Array.isArray(order.tracking.attachments)) order.tracking.attachments=[];
   if(!order.tracking.vehicle || typeof order.tracking.vehicle!=="object") order.tracking.vehicle={};
+  if(!order.tracking.shipmentInfo || typeof order.tracking.shipmentInfo!=="object") order.tracking.shipmentInfo={};
   if(!Number.isInteger(order.tracking.stage)) order.tracking.stage=-1;
   return order.tracking;
 }
@@ -44226,12 +44227,20 @@ function igTrackDetailHtml(order){
             ${can("shipmentTracking","edit")?`<button class="btn" onclick="igTrackAddStage('${igTrackEsc(order.id)}')">حفظ التحديث</button>`:`<div class="trk-link-note">👁️ لديك صلاحية مشاهدة الشحنة فقط. لا يمكنك تحديث مراحلها.</div>`}
           </div>
         </section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>بيانات النقل</h3></div><div class="trk-form">
+        <section class="trk-panel"><div class="trk-panel-head"><h3>بيانات النقل والتنفيذ</h3><span class="muted">تُحفظ على أمر البيع الأصلي</span></div><div class="trk-form">
+          <div><label>نوع السيارة</label><input class="inp" id="igTrackTruckType" value="${igTrackEsc(t.vehicle.truckType||"")}" placeholder="تريلا / جامبو / نقل"></div>
           <div><label>رقم السيارة</label><input class="inp" id="igTrackTruck" value="${igTrackEsc(t.vehicle.truck||"")}" placeholder="رقم السيارة"></div>
           <div><label>اسم السائق</label><input class="inp" id="igTrackDriver" value="${igTrackEsc(t.vehicle.driver||"")}" placeholder="اسم السائق"></div>
           <div><label>هاتف السائق</label><input class="inp" id="igTrackPhone" value="${igTrackEsc(t.vehicle.phone||"")}" placeholder="رقم الهاتف"></div>
           <div><label>موعد الوصول المتوقع</label><input class="inp" id="igTrackEta" type="datetime-local" value="${igTrackEsc(t.vehicle.eta||"")}"></div>
-          ${can("shipmentTracking","edit")?`<button class="btn ghost" onclick="igTrackSaveVehicle('${igTrackEsc(order.id)}')">حفظ بيانات النقل</button>`:""}
+          <div class="trk-link-note"><b>بيانات التحميل والتسليم</b></div>
+          <div><label>رقم إذن التحميل</label><input class="inp" id="igTrackPermitNo" value="${igTrackEsc(t.shipmentInfo.loadingPermitNo||"")}" placeholder="رقم إذن التحميل"></div>
+          <div><label>تاريخ ووقت التحميل</label><input class="inp" id="igTrackLoadingAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.loadingAt||"")}"></div>
+          <div><label>الكمية المحملة فعليًا (طن)</label><input class="inp" id="igTrackLoadedQty" type="number" min="0" step="0.001" value="${igTrackEsc(t.shipmentInfo.loadedQty??"")}" placeholder="0.000"></div>
+          <div><label>تاريخ ووقت التسليم</label><input class="inp" id="igTrackDeliveredAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.deliveredAt||"")}"></div>
+          <div><label>اسم مستلم الشحنة</label><input class="inp" id="igTrackReceiver" value="${igTrackEsc(t.shipmentInfo.receiver||"")}" placeholder="اسم المستلم"></div>
+          <div><label>ملاحظات التسليم</label><textarea class="inp" id="igTrackDeliveryNote" placeholder="ملاحظات أو تحفظات الاستلام">${igTrackEsc(t.shipmentInfo.deliveryNote||"")}</textarea></div>
+          ${can("shipmentTracking","edit")?`<button class="btn ghost" onclick="igTrackSaveVehicle('${igTrackEsc(order.id)}')">💾 حفظ بيانات النقل والتحميل والتسليم</button>`:""}
         </div></section>
         <section class="trk-panel"><div class="trk-panel-head"><h3>مستندات الشحنة</h3><span class="muted">PDF أو صورة</span></div><div class="trk-form">
           <div><label>نوع المستند</label><select class="inp" id="igTrackDocCat"><option>إذن التحميل</option><option>بوليصة النقل</option><option>إثبات التسليم</option><option>مستند آخر</option></select></div>
@@ -44275,7 +44284,9 @@ function igTrackSaveVehicle(id){
   if(!can("shipmentTracking","edit")){toast("لا تملك صلاحية تعديل بيانات النقل","err");return;}
   const o=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!o)return;
   const t=igTrackData(o);
-  t.vehicle={truck:String(document.getElementById("igTrackTruck")?.value||"").trim(),driver:String(document.getElementById("igTrackDriver")?.value||"").trim(),phone:String(document.getElementById("igTrackPhone")?.value||"").trim(),eta:String(document.getElementById("igTrackEta")?.value||"")};
+  t.vehicle={truckType:String(document.getElementById("igTrackTruckType")?.value||"").trim(),truck:String(document.getElementById("igTrackTruck")?.value||"").trim(),driver:String(document.getElementById("igTrackDriver")?.value||"").trim(),phone:String(document.getElementById("igTrackPhone")?.value||"").trim(),eta:String(document.getElementById("igTrackEta")?.value||"")};
+  t.shipmentInfo={loadingPermitNo:String(document.getElementById("igTrackPermitNo")?.value||"").trim(),loadingAt:String(document.getElementById("igTrackLoadingAt")?.value||""),loadedQty:document.getElementById("igTrackLoadedQty")?.value===""?null:Number(document.getElementById("igTrackLoadedQty")?.value),deliveredAt:String(document.getElementById("igTrackDeliveredAt")?.value||""),receiver:String(document.getElementById("igTrackReceiver")?.value||"").trim(),deliveryNote:String(document.getElementById("igTrackDeliveryNote")?.value||"").trim()};
+  if(t.shipmentInfo.loadedQty!==null&&(!Number.isFinite(t.shipmentInfo.loadedQty)||t.shipmentInfo.loadedQty<0))return toast("أدخل كمية محملة صحيحة","err");
   igTrackSave(o);
 }
 function igTrackUpload(id){
