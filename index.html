@@ -11307,17 +11307,28 @@ function tbAllNames(kind){
 }
 // كل الحركات (بنفس قواعد كشف الحساب) بدون فلتر تاريخ — الفلترة بتحصل في tbCompute
 function tbMovements(kind){
-  const customer=kind==='clientTB', out=[];
+  const customer=kind==='clientTB', out=[], seen=new Set();
+  // توحيد منع التكرار مع كشف حساب العميل/المورد؛ بعض مزامنة البيانات قد تعيد
+  // نفس البوليصة أو سند الخزينة أكثر من مرة داخل الذاكرة.
   (state.shipments||[]).forEach(s=>{
     const name=customer?s.customer:s.supplier; if(!name||!s.date) return;
-    (s.items||[]).forEach(it=>{
+    const order=String(s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||'بدون أمر بيع');
+    (s.items||[]).forEach((it,idx)=>{
+      const unique=`supply:${s.id||s.policyNo||s.date+'|'+order+'|'+name}:${idx}`;
+      if(seen.has(unique)) return; seen.add(unique);
       const a=supplyAmounts(s,it), amt=customer?(+a.total||0):(+a.buyTotal||0); if(!amt) return;
       out.push({party:name,date:s.date,debit:customer?amt:0,credit:customer?0:amt});
     });
   });
-  if(!customer)(igPurchaseDocs.invoices||[]).forEach(inv=>{if(inv.status!=="posted")return;const amount=Number((inv.totals||igPcalc(inv)).net)||0;if(inv.supplier&&inv.date&&amount)out.push({party:inv.supplier,date:inv.date,debit:0,credit:amount});});
+  if(!customer)(igPurchaseDocs.invoices||[]).forEach(inv=>{
+    if(inv.status!=="posted")return;
+    const unique="purchase-invoice:"+inv.id; if(seen.has(unique))return; seen.add(unique);
+    const amount=Number((inv.totals||igPcalc(inv)).net)||0;
+    if(inv.supplier&&inv.date&&amount)out.push({party:inv.supplier,date:inv.date,debit:0,credit:amount});
+  });
   (state.treasuryEntries||[]).forEach(e=>{
     if(e.direction!==(customer?'in':'out')) return;
+    const unique='treasury:'+e.id; if(seen.has(unique)) return; seen.add(unique);
     const name=customer?e.customer:e.supplier; if(!name||!e.date) return;
     if(e.status==="guarantee") return;
     const amount=+e.amount||0; if(!amount) return;
