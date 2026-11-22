@@ -44111,6 +44111,31 @@ function igTrackEnsureToken(order){
   if(!t.token){t.token=igTrackToken();order.tracking=t;saveState();}
   return t.token;
 }
+async function igTrackCreatePublicLink(id){
+  if(!can("shipmentTracking","manage")||curU()?.role!=="admin")return toast("إنشاء روابط العملاء متاح لمدير النظام فقط حاليًا","err");
+  if(CUR_CO==="*")return toast("اختر شركة محددة قبل إنشاء رابط التتبع","err");
+  const o=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!o)return;
+  try{
+    const sess=await sb.auth.getSession(),access=sess?.data?.session?.access_token;
+    if(!access)throw new Error("انتهت جلسة الدخول؛ سجل الدخول مرة أخرى");
+    const r=await fetch(SB_URL+"/functions/v1/shipment-track",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+access,"apikey":SB_KEY},body:JSON.stringify({action:"create",company_id:CUR_CO,sale_order_id:String(o.id)})});
+    const d=await r.json().catch(()=>({}));if(!r.ok||!d.url)throw new Error(d.error||"تعذر إنشاء رابط العميل. تأكد من نشر خدمة التتبع الآمنة.");
+    try{await navigator.clipboard.writeText(d.url);toast("تم إنشاء رابط العميل ونسخه","ok");}catch(_){prompt("انسخ رابط متابعة العميل:",d.url);}
+  }catch(e){toast("تعذر إنشاء الرابط: "+(e.message||e),"err");}
+}
+async function igTrackRevokePublicLink(id){
+  if(!can("shipmentTracking","manage")||curU()?.role!=="admin")return toast("إلغاء روابط العملاء متاح لمدير النظام فقط حاليًا","err");
+  if(CUR_CO==="*")return toast("اختر شركة محددة أولًا","err");
+  if(!await askConfirm("سيتم إيقاف رابط العميل الحالي فورًا. هل تريد المتابعة؟"))return;
+  const o=(state.saleOrders||[]).find(x=>String(x.id)===String(id));if(!o)return;
+  try{
+    const sess=await sb.auth.getSession(),access=sess?.data?.session?.access_token;
+    if(!access)throw new Error("انتهت جلسة الدخول؛ سجل الدخول مرة أخرى");
+    const r=await fetch(SB_URL+"/functions/v1/shipment-track",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+access,"apikey":SB_KEY},body:JSON.stringify({action:"revoke",company_id:CUR_CO,sale_order_id:String(o.id)})});
+    const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"تعذر إلغاء الرابط");
+    toast("تم إلغاء رابط العميل","ok");
+  }catch(e){toast("تعذر إلغاء الرابط: "+(e.message||e),"err");}
+}
 function igTrackingView(){
   const cfg=igTrackSettings();
   const selected=window.igTrackingSelectedOrderId;
@@ -44248,7 +44273,7 @@ function igTrackDetailHtml(order){
           ${can("shipmentTracking","edit")?`<button class="btn ghost" onclick="igTrackUpload('${igTrackEsc(order.id)}')">إرفاق المستند</button>`:""}
           <div>${docs}</div>
         </div></section>
-        <div class="trk-link-note"><b>كود التتبع الداخلي:</b><br><span dir="ltr" style="font-family:monospace">${igTrackEsc(token)}</span><br>تم تجهيز كود فريد لهذا الأمر. رابط العميل العام لن يتم تفعيله قبل إعداد صفحة عرض آمنة ومخزن ملفات خاص، حتى لا نرسل رابطًا غير صالح أو نكشف بيانات داخلية.</div>
+        <div class="trk-link-note"><b>رابط متابعة العميل</b><br><span>يمكن إنشاء رابط قراءة فقط بعد نشر خدمة التتبع الآمنة وصفحة العميل.</span><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">${(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<button class="btn primary sm" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔗 إنشاء / تجديد رابط العميل</button><button class="btn ghost sm" onclick="igTrackRevokePublicLink('${igTrackEsc(order.id)}')">⛔ إلغاء الرابط الحالي</button>`:""}</div><small style="display:block;margin-top:8px">كود داخلي: <span dir="ltr" style="font-family:monospace">${igTrackEsc(token)}</span> — لا ترسل الكود الداخلي للعميل.</small></div>
       </div>
     </div>
   </div>`;
@@ -44263,7 +44288,11 @@ function igTrackingRender(){
   igTrackData(o);
 }
 function igTrackSave(order){
-  order.tracking=igTrackData(order);
+  const t=igTrackData(order);
+  // لقطة من المسميات والأيقونات حتى تظهر للعميل بنفس إعدادات الشركة وقت التحديث
+  t.stageLabels=[...IG_TRACK_STAGES];
+  t.stageIcons=[...(igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS)];
+  order.tracking=t;
   saveState();
   const c=document.getElementById("content");
   if(c) c.innerHTML=igTrackingView();
