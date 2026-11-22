@@ -4339,7 +4339,7 @@ function subscribeSharedRealtime(){
   if(!currentUser) return;
   let ch=sb.channel("irongate-shared-"+currentUser.no);
   SHARED_REALTIME_TABLES.forEach(table=>{
-    ch=ch.on("postgres_changes",{event:"*",schema:"public",table},()=>scheduleRemoteRefresh());
+    ch=ch.on("postgres_changes",{event:"*",schema:"public",table},()=>{ scheduleRemoteRefresh(); if(table==="sale_orders"||table==="sale_order_items"){ try{ igSoLightSyncSoon(); }catch(e){} } });
   });
   sharedRealtimeChannel=ch.subscribe(status=>{
     if(status==="CHANNEL_ERROR"||status==="TIMED_OUT") console.warn("Supabase Realtime status:",status);
@@ -4461,7 +4461,7 @@ function permsGrant(p, scr, acts){
   return p;
 }
 // بنود قائمة "+ جديد" في الشريط العلوي (كل بند يحتاج صلاحية "إضافة" في شاشته + السماح له من نموذج المستخدم)
-const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","txGo('receipts',txQuickScope());txNew('in')"],["↑","دفعة","payments","txGo('payments',txQuickScope());txNew('out')"],["💼","تسجيل عهدة","custodyLedger","cgOpenMine()"]];
+const QUICK_NEW_ITEMS=[["📝","أمر بيع","saleOrder","soNew()"],["💲","عرض سعر","quote","qtNew()"],["📦","بوليصة","shipments","newPolicy()"],["↓","تحصيل","receipts","txPickScopeAndNew('in')"],["↑","دفعة","payments","txPickScopeAndNew('out')"],["💼","تسجيل عهدة","custodyLedger","cgOpenMine()"]];
 const quickOn=(p,id)=>!p||!p.quick||typeof p.quick!=="object"||p.quick[id]!==false;
 // ---------- صلاحيات الإشعارات الخارجية (أيقونات شمال شاشة الدخول) ----------
 // كل أيقونة مرتبطة بشاشة (أو أكثر): لو الأدمن ما حددش صلاحية الأيقونة للمستخدم، بتتبع صلاحية مشاهدة الشاشة المرتبطة.
@@ -5128,6 +5128,7 @@ const navGroups = [
     { sep:"البيانات الأساسية للمبيعات" },
     { id:"master", tab:"quoteDescs", icon:"📝", label:"أوصاف عرض السعر" },
     { id:"master", tab:"services", icon:"🧰", label:"الخدمات" },
+    { id:"shipmentTrackingSettings", icon:"🚚", label:"إعدادات مراحل الشحن" },
     { id:"settings", tab:"sales", icon:"⚙", label:"إعدادات المبيعات" },
     { id:"settings", tab:"customers", icon:"⚙", label:"إعدادات العملاء" }
   ]},
@@ -5421,6 +5422,60 @@ function stmtOpenTx(id){
   txGo(dirIn?"receipts":"payments","all");
 }
 function txGo(page,scope){ window.__txScopeNext=scope||"all"; go(page); }
+// بعد ما يدوس على زرار + تحصيل أو + دفعة، يسأله نقدي ولا بنكي
+function txPickScopeAndNew(direction){
+  const isIn = direction === "in";
+  const page = isIn ? "receipts" : "payments";
+  const title = isIn ? "اختر نوع التحصيل" : "اختر نوع الدفع";
+  const cashLabel = isIn ? "💵 تحصيل نقدي" : "💵 دفع نقدي";
+  const cashHint = isIn ? "من العميل — يُسجَّل على الخزنة" : "للمورد — يُصرف من الخزنة";
+  const bankLabel = isIn ? "🏦 تحصيل بنكي" : "🏦 دفع بنكي";
+  const bankHint = isIn ? "شيك / تحويل / إيداع — على البنك" : "شيك / تحويل — من البنك";
+  const color = isIn ? "#16a34a" : "#dc2626";
+
+  // أزل أي picker مفتوح
+  document.getElementById("txScopePickerOv")?.remove();
+
+  const ov = document.createElement("div");
+  ov.id = "txScopePickerOv";
+  ov.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.65);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(4px);direction:rtl";
+  ov.innerHTML = `
+    <div style="width:min(440px,100%);background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.4);animation:tsp-in .2s ease">
+      <div style="padding:16px 20px;background:linear-gradient(135deg,${color},${color}dd);color:#fff;display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0;font-size:16px;font-weight:800;letter-spacing:.3px">${title}</h3>
+        <button type="button" onclick="document.getElementById('txScopePickerOv').remove()" style="background:rgba(255,255,255,.22);border:none;color:#fff;width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:17px">✕</button>
+      </div>
+      <div style="padding:18px;display:grid;gap:10px">
+        <button type="button" onclick="txScopePickedGo('cash','${direction}')" style="display:flex;align-items:center;gap:14px;padding:16px;background:linear-gradient(135deg,#fffbf0,#fef3c7);border:2px solid #fde68a;border-radius:14px;cursor:pointer;text-align:right;font:inherit;transition:.15s" onmouseover="this.style.borderColor='#c99a24';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='#fde68a';this.style.transform=''">
+          <span style="font-size:32px;flex:0 0 auto">💵</span>
+          <div style="flex:1">
+            <b style="display:block;font-size:15px;color:#92400e;font-weight:800">${cashLabel}</b>
+            <small style="display:block;font-size:11.5px;color:#78350f;margin-top:3px">${cashHint}</small>
+          </div>
+          <span style="font-size:20px;color:#c99a24">←</span>
+        </button>
+        <button type="button" onclick="txScopePickedGo('bank','${direction}')" style="display:flex;align-items:center;gap:14px;padding:16px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border:2px solid #bfdbfe;border-radius:14px;cursor:pointer;text-align:right;font:inherit;transition:.15s" onmouseover="this.style.borderColor='#3b82f6';this.style.transform='translateY(-2px)'" onmouseout="this.style.borderColor='#bfdbfe';this.style.transform=''">
+          <span style="font-size:32px;flex:0 0 auto">🏦</span>
+          <div style="flex:1">
+            <b style="display:block;font-size:15px;color:#1e40af;font-weight:800">${bankLabel}</b>
+            <small style="display:block;font-size:11.5px;color:#1e3a8a;margin-top:3px">${bankHint}</small>
+          </div>
+          <span style="font-size:20px;color:#3b82f6">←</span>
+        </button>
+      </div>
+    </div>
+    <style>@keyframes tsp-in{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}</style>
+  `;
+  ov.addEventListener("click", e => { if (e.target === ov) ov.remove(); });
+  document.addEventListener("keydown", function esc(e){ if(e.key==="Escape"){document.getElementById("txScopePickerOv")?.remove();document.removeEventListener("keydown",esc);} });
+  document.body.appendChild(ov);
+}
+function txScopePickedGo(scope, direction){
+  document.getElementById("txScopePickerOv")?.remove();
+  const page = direction === "in" ? "receipts" : "payments";
+  txGo(page, scope);
+  setTimeout(() => txNew(direction), 50);
+}
 // نطاق الزر السريع (+ تحصيل / + دفعة): بيتبع النظام اللي إنت فيه — بنوك ← بنكي، خزينة ← نقدي، غير كده ← الكل
 function txQuickScope(){ try{ const m=modOfPage(); return m==="banking"?"bank":m==="treasury"?"cash":"all"; }catch(_){ return "all"; } }
 function navTagGroups(){ try{ navGroups.forEach(g=>(g.items||[]).forEach(it=>{ if(it&&!it.sep) it.grp=g.id; })); }catch(_){} }
@@ -6223,6 +6278,7 @@ function go(page){
   else if(page==="salesApproval"){ c.innerHTML = saSplit(viewSalesApproval()); }
   else if(page==="accountsApproval"){ c.innerHTML = saSplit(viewAcctApproval()); }
   else if(page==="shipmentTracking"){ c.innerHTML = igTrackingView(); igTrackingRender(); }
+  else if(page==="shipmentTrackingSettings"){ window.igTrackingSettingsOpen=true; window.igTrackingSelectedOrderId=null; c.innerHTML = igTrackSettingsView(); }
   else if(page==="purchaseOrders"||page==="purchaseInvoices"){ c.innerHTML = igPurchaseView(); igPurchaseLoad(); }
   else if(page==="shipments"||page==="salesInvoices"){ c.innerHTML = viewShipments(); bindShipments(); }
   else if(page==="supply"){ c.innerHTML = viewSupply(); renderSupply(); }
@@ -11390,6 +11446,8 @@ function tbMovements(kind){
     }
     if(!chqStmtCounts(e,customer)) return;
     const reversed=e.status==='returned';
+    // شيك عميل اتحصّل واتردّ: سطر التحصيل (دائن) + سطر الارتداد (مدين) → صافي صفر (زي كشف حساب الخزينة/البنك)
+    if(customer&&reversed&&e.wasCollected){ out.push({party:name,date:e.date,debit:0,credit:amount}); out.push({party:name,date:e.date,debit:amount,credit:0}); return; }
     out.push({party:name,date:e.date,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0)});
   });
   return out;
@@ -11612,6 +11670,12 @@ function partyStatementRows(kind,opts){
       allocs.forEach(a=>{const v=+a.amount||0;if(!(v>0))return;allocated+=v;const inv=(state.shipments||[]).find(x=>String(x.id)===String(a.invoice_id));const invNo=inv?.policyNo||a.invoice_id;const adesc='تحصيل عميل — مخصص على فاتورة مبيعات '+invNo+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');if(q&&!(internalRef+' '+adesc+' '+(e.notes||'')).toLowerCase().includes(q))return;rows.push({date:e.date,party,ref:'',order:'فاتورة '+invNo,orderKey:'tx:'+e.id+':invoice:'+a.invoice_id,diameter:'—',type:'تحصيل مخصص',factory:'—',desc:adesc,debit:0,credit:v,inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',entryNo:e.postedEntryNo||'',glEntryId:e.postedEntryId||null,sortRef:String(e.no||e.id||'')+'-'+invNo,unique:unique+':'+a.id});});
       const left=Math.max(0,amount-allocated);
       if(left>0.005){const adesc='تحصيل عميل — رصيد غير مخصص'+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');if(!q||(internalRef+' '+adesc+' '+(e.notes||'')).toLowerCase().includes(q))rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id+':unallocated',diameter:'—',type:'تحصيل غير مخصص',factory:'—',desc:adesc,debit:0,credit:left,inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',entryNo:e.postedEntryNo||'',glEntryId:e.postedEntryId||null,sortRef:String(e.no||e.id||'')+'-z',unique:unique+':unallocated'});}
+      return;
+    }
+    if(customer&&reversed&&e.wasCollected){
+      const bs={date:e.date,party,ref:'',order:'—',diameter:'—',type:'—',factory:'—',inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',entryNo:e.postedEntryNo||'',glEntryId:e.postedEntryId||null};
+      rows.push({...bs,orderKey:'tx:'+e.id+':col',desc:'تحصيل عميل — محصل شيك'+(e.notes?' — '+e.notes:''),debit:0,credit:amount,sortRef:String(e.no||e.id||''),unique:unique+':col'});
+      rows.push({...bs,orderKey:'tx:'+e.id+':ret',desc:'ارتداد شيك'+(e.notes?' — '+e.notes:''),debit:amount,credit:0,sortRef:String(e.no||e.id||'')+'-r',unique:unique+':ret'});
       return;
     }
     rows.push({date:e.date,party,ref:'',order:'—',orderKey:'tx:'+e.id,diameter:'—',type:'—',factory:'—',desc,debit:customer?(reversed?amount:0):(!reversed?amount:0),credit:customer?(!reversed?amount:0):(reversed?amount:0),inclusiveTotal:0,quantity:0,actualWeight:0,source:'treasury',entryNo:e.postedEntryNo||'',glEntryId:e.postedEntryId||null,sortRef:String(e.no||e.id||''),unique});
@@ -19260,7 +19324,8 @@ function saMiniHtml(){
 const SA_FLOAT_EVERY_MIN=10, SA_FLOAT_OPEN_MIN=2;   // تفتح كل 10 دقائق وتتقفل بعد دقيقتين
 let saFloatLastAuto=0, saFloatAutoClose=0, saFloatAutoOpened=false;
 function saFloatItems(){
-  const out={sales:[],acct:[]};
+  const out={sales:[],acct:[],mine:[]};
+  try{ out.mine=saMyResults(); }catch(e){}
   try{ if(soApprCfg().enabled) out.sales=(state.saleOrders||[]).filter(soApprIsApprover); }catch(e){}
   try{ if(soApprCfg().enabled&&acctCan()&&!acctSkip()) out.acct=(state.saleOrders||[]).filter(o=>soApprAllows(o)&&acctStatus(o)==='pending'); }catch(e){}
   return out;
@@ -19273,9 +19338,11 @@ function saSeenKey(){ let n=''; try{ n=(curU()||{}).no||''; }catch(e){} return '
 function saNotify(newKeys,it){
   try{
     if(!('Notification' in window)||Notification.permission!=='granted'||!document.hidden||!newKeys.length) return;
-    const all=[...it.sales.map(o=>({k:'s:'+o.id,o})),...it.acct.map(o=>({k:'a:'+o.id,o}))];
+    const all=[...it.sales.map(o=>({k:'s:'+o.id,o})),...it.acct.map(o=>({k:'a:'+o.id,o})),...(it.mine||[]).map(r=>({k:r.key,o:r.o,r}))];
     const fresh=all.filter(x=>newKeys.includes(x.k)), names=[...new Set(fresh.map(x=>x.o.customer||'—'))].slice(0,3).join('، ');
-    const n=new Notification(fresh.length>1?fresh.length+' طلبات اعتماد جديدة':'طلب اعتماد جديد',{body:names,tag:'ig-sa',renotify:true,dir:'rtl',lang:'ar'});
+    const rs=fresh.filter(x=>x.r), onlyRes=rs.length&&rs.length===fresh.length;
+    const title=onlyRes?(rs.length>1?rs.length+' ردود على طلباتك':(rs[0].r.st==='approved'?'✅ تم اعتماد أمر البيع':'⛔ تم رفض أمر البيع')):(fresh.length>1?fresh.length+' طلبات اعتماد جديدة':'طلب اعتماد جديد');
+    const n=new Notification(title,{body:names,tag:'ig-sa',renotify:true,dir:'rtl',lang:'ar'});
     n.onclick=()=>{ try{ window.focus(); saFabGo(); n.close(); }catch(e){} };
   }catch(e){}
 }
@@ -19316,6 +19383,7 @@ function saFabGo(){
   try{ it=saFloatItems(); }catch(e){}
   try{ canS=!!saMiniAllowed(); }catch(e){}
   try{ canA=!!(acctCan()&&!acctSkip()); }catch(e){}
+  if(!canS&&!canA){ saFloatToggle(); return; }   // صاحب طلب بس (مش معتمد): الجرس يفتح قايمة الردود
   let pg='salesApproval';
   if(it.sales.length&&canS) pg='salesApproval';
   else if(it.acct.length&&canA) pg='accountsApproval';
@@ -19327,7 +19395,10 @@ function saDockBodyHtml(){
   const it=saFloatItems(), q=x=>escapeAttr(x.id);
   const row=(o,k)=>`<div class="sam-it" onclick="saFloatGo('${k}','${q(o)}')" title="${escapeAttr('#'+String(o.orderNo||'')+' — '+(k==='s'?soApprLvText(o):'بانتظار اعتماد إدارة الحسابات'))}"><b>${k==='a'?'اعتماد إدارة الحسابات':'اعتماد أمر البيع'}</b><i>—</i><span>${escapeHtml(o.customer||'—')}</span></div>`;
   const sec=(t,list,k,pg)=>list.length?`<div class="sam-sec" onclick="saFloatPage('${pg}')"><span>${t} (${list.length})</span><span>فتح الشاشة ‹</span></div>`+list.slice().sort(saFloatOrdSort).slice(0,30).map(o=>row(o,k)).join('')+(list.length>30?`<div class="sam-e">و ${list.length-30} أمر آخر — افتح الشاشة لعرض الكل</div>`:''):'';
-  return {n:it.sales.length+it.acct.length, html:sec('اعتماد أمر البيع',it.sales,'s','salesApproval')+sec('اعتماد إدارة الحسابات',it.acct,'a','accountsApproval')||'<div class="sam-e">لا يوجد شيء بانتظار اعتمادك ✓</div>'};
+  const unread=(it.mine||[]).filter(r=>!r.read).length;
+  const mrow=r=>`<div class="sam-it ${r.st==='approved'?'sam-ok':'sam-no'}${r.read?' sam-rd':''}" onclick="saMineGo('${q(r.o)}','${escapeAttr(r.key)}')" title="${escapeAttr((r.st==='approved'?'اعتمده: ':'رفضه: ')+r.by+(r.note?' — '+r.note:''))}"><b>${r.st==='approved'?'✅ تم اعتماد أمر البيع':'⛔ تم رفض أمر البيع'}</b><i>—</i><span>${escapeHtml('#'+String(r.o.orderNo||'')+' '+(r.o.customer||'—'))}</span></div>`;
+  const mineSec=(it.mine||[]).length?`<div class="sam-sec" style="cursor:default"><span>ردود على طلباتك (${unread} جديد)</span>${unread?'<span style="cursor:pointer;text-decoration:underline" onclick="event.stopPropagation();saMineAckAll()">تحديد الكل كمقروء</span>':'<span></span>'}</div>`+it.mine.slice(0,30).map(mrow).join(''):'';
+  return {n:it.sales.length+it.acct.length+unread, html:mineSec+sec('اعتماد أمر البيع',it.sales,'s','salesApproval')+sec('اعتماد إدارة الحسابات',it.acct,'a','accountsApproval')||'<div class="sam-e">لا يوجد شيء بانتظار اعتمادك ✓</div>'};
 }
 // لوحة الطلبات: جزء من صفحة الاعتماد (مش عائمة) وتاخد نص الصفحة
 function saDockHtml(){
@@ -19345,13 +19416,13 @@ function saFloatRender(){
   const old=document.getElementById('saMini'); if(old&&!saMiniOpen) old.remove();
   const lg=document.getElementById('login'), cs=lg?getComputedStyle(lg):null;
   const onLogin=!!(cs&&cs.display!=='none'&&cs.visibility!=='hidden');
-  let allowed=false; try{ allowed=!!curU()&&!onLogin&&soApprCfg().enabled&&(saMiniAllowed()||(acctCan()&&!acctSkip())); }catch(e){}
+  let allowed=false; try{ allowed=!!curU()&&!onLogin&&soApprCfg().enabled&&(saMiniAllowed()||(acctCan()&&!acctSkip())||saMyResults().length>0); }catch(e){}
   if(!allowed){ if(fab) fab.style.display='none'; const _m=document.getElementById('saMini'); if(_m) _m.remove(); return; }
   saCss();
   if(!fab){ fab=document.createElement('button'); fab.id='saFab'; fab.type='button'; fab.title='فتح شاشة الاعتماد'; fab.setAttribute('aria-label','فتح شاشة الاعتماد'); fab.onclick=saFabGo; fab.onmouseenter=saHoverOpen; fab.onmouseleave=saHoverClose; document.body.appendChild(fab); }
   fab.style.display='';
-  const it=saFloatItems(), n=it.sales.length+it.acct.length;
-  const keys=new Set([...it.sales.map(o=>'s:'+o.id),...it.acct.map(o=>'a:'+o.id)]);
+  const it=saFloatItems(), n=it.sales.length+it.acct.length+it.mine.filter(r=>!r.read).length;
+  const keys=new Set([...it.sales.map(o=>'s:'+o.id),...it.acct.map(o=>'a:'+o.id),...it.mine.filter(r=>!r.read).map(r=>r.key)]);
   // الرنّة والإشعار للطلبات الجديدة بس: بنقارن بآخر قايمة شافها المستخدم (محفوظة في المتصفح) مش بكل مرة الصفحة تفتح
   if(!saSeenInit){ saSeenInit=true; try{ const st=JSON.parse(localStorage.getItem(saSeenKey())||'null'); saSeen=Array.isArray(st)?new Set(st):new Set(keys); }catch(e){ saSeen=new Set(keys); } }
   const newKeys=[...keys].filter(k=>!saSeen.has(k)); let hasNew=newKeys.length>0; saSeen=keys;
@@ -19382,6 +19453,75 @@ function saFloatTick(){
   }catch(e){ console.warn('saFloat',e); }
 }
 setInterval(saFloatTick,4000); setTimeout(saFloatTick,2000);
+
+// ===== إشعار صاحب الطلب: لما أمر البيع يتعتمد (نهائيًا) أو يترفض، ييجي في نفس الجرس =====
+// الحساب بيتم من سجل الاعتماد نفسه (appr.log) فبيشتغل على أي جهاز بدون جداول جديدة. حالة «مقروء» محفوظة في المتصفح لكل مستخدم.
+const SA_RES_DAYS=7;
+let saAck=null, saAckFor='';
+function saAckKey(){ let n=''; try{ n=(curU()||{}).no||''; }catch(e){} return 'irongate_sa_ack_'+n; }
+function saAckGet(){ const k=saAckKey(); if(!saAck||saAckFor!==k){ saAckFor=k; try{ const a=JSON.parse(localStorage.getItem(k)||'[]'); saAck=new Set(Array.isArray(a)?a:[]); }catch(e){ saAck=new Set(); } } return saAck; }
+function saAckAdd(keys){ const s=saAckGet(); keys.forEach(k=>s.add(k)); try{ localStorage.setItem(saAckKey(),JSON.stringify([...s].slice(-300))); }catch(e){} }
+function saOwner(o){ const lg=(o.appr&&o.appr.log)||[]; for(let i=lg.length-1;i>=0;i--){ if(lg[i].act==='submit'||lg[i].act==='reset') return String(lg[i].by||''); } return ''; }
+function saMyResults(){
+  const u=curU(); if(!u||!soApprCfg().enabled) return [];
+  const me=String(u.no), ack=saAckGet(), lim=Date.now()-SA_RES_DAYS*864e5, out=[];
+  (state.saleOrders||[]).forEach(o=>{
+    const a=o.appr; if(!a||(a.status!=='approved'&&a.status!=='rejected')) return;
+    const lg=a.log||[], last=lg[lg.length-1]; if(!last||last.act!==(a.status==='approved'?'approve':'reject')) return;
+    if(saOwner(o)!==me||String(last.by)===me) return;          // مش بنبعت لنفس الشخص اللي اعتمد
+    if((Date.parse(last.at)||0)<lim) return;
+    const key='r:'+o.id+':'+last.at;
+    out.push({o,st:a.status,by:last.name||soApprUserName(last.by),at:last.at,note:last.note||'',key,read:ack.has(key)});
+  });
+  return out.sort((x,y)=>String(y.at).localeCompare(String(x.at)));
+}
+function saMineGo(id,key){ saAckAdd([key]); saMiniOpen=false; saFloatAutoClose=0; saFloatRender(); saReturnId=null; acctReturnId=null; soLoad(id); }
+function saMineAckAll(){ saAckAdd(saMyResults().map(r=>r.key)); saFloatRender(); }
+(function(){ if(document.getElementById('saCss2')) return; const s=document.createElement('style'); s.id='saCss2';
+  s.textContent='.sam-it.sam-ok{border-right-color:#16a34a!important}.sam-it.sam-ok b{color:#15803d!important}.sam-it.sam-no{border-right-color:#dc2626!important}.sam-it.sam-no b{color:#b91c1c!important}.sam-it.sam-rd{opacity:.55}';
+  (document.head||document.documentElement).appendChild(s); })();
+
+// ===== مزامنة تلقائية خفيفة لأوامر البيع (بدون ريفرش): طلب جديد / اعتماد / رفض يظهر في الجرس لحظيًا =====
+// بتجيب بس الأوامر اللي اتغيّرت (updated_at) كل 5 ثواني + فورًا لما Realtime يبلّغ، وبتتخطى أي أمر عليه تعديل محلي غير محفوظ.
+let igSoSince=0, igSoSyncBusy=false, igSoSyncT=0, igSoWriteAt=0, igSoWriting=0;
+(function(){ const w=igSoWriteHeads; igSoWriteHeads=async function(h){ igSoWriting++; igSoWriteAt=Date.now(); try{ return await w(h); } finally{ igSoWriting--; igSoWriteAt=Date.now(); } }; })();
+function igSoLightSyncSoon(){ clearTimeout(igSoSyncT); igSoSyncT=setTimeout(igSoLightSync,400); }
+async function igSoLightSync(){
+  if(igSoSyncBusy) return;
+  try{
+    if(!currentUser||!masterLoaded||!docsReady||!docSnaps.so||!soApprCfg().enabled||syncBusy||igSoWriting) return;
+    igSoSyncBusy=true;
+    const t0=Date.now(), stale=()=>syncBusy||igSoWriting||igSoWriteAt>t0-1500;
+    const since=new Date((igSoSince||t0-5*60*1000)-120000).toISOString();
+    const r=await sb.from('sale_orders').select('*').gte('updated_at',since).order('updated_at',{ascending:true}).limit(500);
+    if(r.error||stale()) return;
+    const rows=r.data||[]; let changed=false;
+    if(rows.length){
+      const ir=await sb.from('sale_order_items').select('*').in('sale_order_id',rows.map(x=>String(x.id))).order('line_no');
+      if(ir.error||stale()) return;
+      const li=groupBy(ir.data||[],'sale_order_id'), snap=docSnaps.so;
+      rows.forEach(h=>{
+        const id=String(h.id), list=state.saleOrders||(state.saleOrders=[]), idx=list.findIndex(x=>String(x.id)===id), loc=idx>=0?list[idx]:null;
+        if(loc&&snap.get(id)!==JSON.stringify(loc)) return;            // عليه تعديل محلي لسه ما اتحفظش
+        if(h.deleted_at){ if(loc){ list.splice(idx,1); snap.delete(id); changed=true; } return; }
+        const rec=unpackSO(h); rec.items=(li.get(h.id)||[]).map(x=>unpackObj(x,SO_ITEM_SPEC));
+        const j=JSON.stringify(rec); if(loc&&JSON.stringify(loc)===j) return;
+        if(loc) list[idx]=rec; else list.push(rec);
+        snap.set(id,j);
+        if(soDraft&&soLoadedId===id&&rec.appr) soDraft.appr=JSON.parse(JSON.stringify(rec.appr));
+        changed=true;
+      });
+    }
+    igSoSince=t0;
+    if(changed){
+      try{ acctNavRefresh(); }catch(e){}
+      try{ if(currentPage==='salesApproval') saRender(); else if(currentPage==='accountsApproval') acctRender(); }catch(e){}
+    }
+  }catch(e){ console.warn('igSoLightSync',e); }
+  finally{ igSoSyncBusy=false; }
+}
+setInterval(()=>{ if(!document.hidden) igSoLightSync(); },5000);
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) igSoLightSyncSoon(); });
 function saFind(id){ return (state.saleOrders||[]).find(x=>x.id===id); }
 function saRows(){
   const f=saF, q=f.cust.trim().toLowerCase();
@@ -43761,6 +43901,17 @@ body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items th
   padding:12px 6px!important;border-bottom:3px solid #c99a1c!important;
   border-left:1px solid rgba(255,255,255,.2)!important;
 }
+/* Safety-net: أي خلية رأس جدول في الأصناف لازم تبقى كحلي + نص أبيض (مش فاتح) */
+body.page-shipments .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th,
+body.page-salesInvoices .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th{
+  background:#13294b!important;color:#ffffff!important;
+  font-weight:800!important;font-size:12.5px!important;
+  text-shadow:none!important;opacity:1!important;filter:none!important;
+}
+body.page-shipments .ig-items-card table.items thead tr.ig-bulk-price-row th,
+body.page-salesInvoices .ig-items-card table.items thead tr.ig-bulk-price-row th{
+  background:#fff6dc!important;color:#13294b!important;border-bottom:1px solid #e5c76b!important;
+}
 /* أعمدة التسعير (سعر البيع / خصم الصنف / نوع الخصم) بلون مختلف عشان الجزء ده يتميّز */
 body.page-salesInvoices #content:has(#paySchedBox) .ig-items-card table.items thead tr:not(.ig-bulk-price-row) th.c-price:not(.c-calc):not(.c-total){
   background:#13294b!important;
@@ -44098,6 +44249,8 @@ function igTrackOpenSettings(){
 }
 function igTrackCloseSettings(){
   window.igTrackingSettingsOpen=false;
+  // لو فُتحت من قائمة البيانات الأساسية، ارجع لها؛ غير كده ارجع لشاشة التتبع
+  if(typeof currentPage!=="undefined" && currentPage==="shipmentTrackingSettings"){ go("shipmentTracking"); return; }
   const c=document.getElementById("content"); if(c)c.innerHTML=igTrackingView();
 }
 function igTrackSaveSettings(){
@@ -44116,8 +44269,10 @@ function igTrackSaveSettings(){
   (state.saleOrders||[]).forEach(o=>{if(o&&o.tracking&&typeof o.tracking==="object"){o.tracking.stageLabels=[...stages];o.tracking.stageIcons=[...icons];o.tracking.stageVisible=[...stageVisible];}});
   saveState();
   window.igTrackingSettingsOpen=false;
-  const c=document.getElementById("content");if(c)c.innerHTML=igTrackingView();
   toast("تم حفظ مسميات مراحل الشحنة وحالات التحديث","ok");
+  // ارجع للمكان الصحيح حسب نقطة الفتح
+  if(typeof currentPage!=="undefined" && currentPage==="shipmentTrackingSettings"){ go("shipmentTracking"); return; }
+  const c=document.getElementById("content");if(c)c.innerHTML=igTrackingView();
 }
 
 function igTrackIsInvoice(doc){
@@ -44280,15 +44435,33 @@ async function igTrackCreateOpenPolicy(orderId){
     draft.company=String(order.company||draft.company||"");
     draft.site=String(order.site||order.address||draft.site||"");
     draft.warehouseId=String(order.warehouseId||draft.warehouseId||whDefaultId());
-    // The tracking screen stores one aggregate loaded quantity. Do not spread it over multiple products.
+    // Reset per-item factory + weight; will be re-assigned below based on loaded qty + supply ratio.
     (draft.items||[]).forEach(it=>{
       it.factory="";
       it.actualWeight="";it.actualWeightUnitQty="";
       policyEnsureUnit(it);
     });
-    if((draft.items||[]).length===1&&Number(sh.loadedQty)>0){
-      draft.items[0].actualWeight=String(Number(sh.loadedQty));
-      policyEnsureUnit(draft.items[0]);
+    // Smart distribution of loaded quantity on items:
+    //  - single item → whole loaded qty
+    //  - multi item  → proportionally based on supplyQty (so user just reviews & tweaks)
+    const loaded=Number(sh.loadedQty);
+    if(Number.isFinite(loaded)&&loaded>0&&(draft.items||[]).length){
+      const items=draft.items;
+      if(items.length===1){
+        items[0].actualWeight=String(loaded);
+      }else{
+        const supTotals=items.map(it=>Math.max(0,Number(it.supplyQty)||0));
+        const sumSup=supTotals.reduce((a,b)=>a+b,0);
+        if(sumSup>0){
+          let allocated=0;
+          items.forEach((it,i)=>{
+            const share=i===items.length-1?Math.max(0,loaded-allocated):Math.round((supTotals[i]/sumSup)*loaded*1000)/1000;
+            it.actualWeight=share>0?String(share):"";
+            allocated+=share;
+          });
+        }
+      }
+      items.forEach(it=>policyEnsureUnit(it));
     }
     const notes=[
       `تم إنشاء البوليصة من شاشة تتبع الشحنات — أمر البيع #${order.orderNo||order.id}`,
@@ -44396,6 +44569,95 @@ async function igTrackSharePublicLink(id){
     else {await navigator.clipboard.writeText(`${title}\n${text}\n${url}`);toast("تم نسخ بيانات المشاركة مع اسم العميل ورقم أمر البيع والرابط","ok");}
   }catch(e){if(e&&e.name==="AbortError")return;try{await navigator.clipboard.writeText(`${title}\n${text}\n${url}`);toast("تم نسخ بيانات المشاركة مع اسم العميل ورقم أمر البيع والرابط","ok");}catch(_){prompt("انسخ بيانات مشاركة الشحنة:",`${title}\n${text}\n${url}`);}}
 }
+
+// ======== أدوات احترافية لشاشة تتبع الشحنات ========
+
+// تنظيف تلقائي لرقم الهاتف (أرقام عربية → لاتينية + إزالة الرموز الزائدة)
+function igTrackPhoneNorm(input){
+  if(!input) return;
+  const ar="٠١٢٣٤٥٦٧٨٩";
+  let v=String(input.value||"").replace(/[٠-٩]/g,d=>ar.indexOf(d)).replace(/[^\d+]/g,"");
+  if(input.value!==v) input.value=v;
+}
+
+// شريط تقدم مرئي بالنسبة المئوية
+function igTrackProgressBar(order){
+  const visible=igTrackVisibleStageIndices();
+  const last=igTrackLastVisibleStage();
+  const currentIdx=igTrackCurrentVisibleStage(order);
+  const posInVisible=visible.indexOf(currentIdx);
+  const total=visible.length||1;
+  const done=currentIdx>=last?total:Math.max(0,posInVisible+1);
+  const pct=Math.round((done/total)*100);
+  const color=pct===100?"#16865b":pct>60?"#c99a24":"#3b82f6";
+  return `<div style="margin:12px 0 18px;background:#fff;border:1px solid #e7eaf0;border-radius:12px;padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:12px;color:#6b7280"><span>تقدم الشحنة</span><b style="color:${color};font-size:14px">${pct}% · ${done}/${total} مراحل</b></div>
+    <div style="height:8px;background:#f1f3f6;border-radius:99px;overflow:hidden"><div style="width:${pct}%;height:100%;background:linear-gradient(90deg,${color},${color}dd);transition:width .4s ease"></div></div>
+  </div>`;
+}
+
+// تنبيه الشحنات العالقة (أكثر من 48 ساعة في نفس المرحلة ولم تُسلّم)
+function igTrackStuckBadge(order){
+  const t=igTrackData(order);
+  if(t.stage<0||t.stage>=igTrackLastVisibleStage()) return "";
+  const last=t.history[t.history.length-1];
+  if(!last||!last.at) return "";
+  const hours=(Date.now()-new Date(last.at).getTime())/3600000;
+  if(hours<48) return "";
+  const days=Math.floor(hours/24);
+  return `<span class="chip" style="background:#fff1f0;color:#b91c1c;border:1px solid #fecaca;font-size:11px;font-weight:800">⚠ عالق ${days} يوم</span>`;
+}
+
+// عد تنازلي لـETA
+function igTrackEtaBadge(etaStr){
+  if(!etaStr) return "";
+  const eta=new Date(etaStr).getTime(); if(isNaN(eta)) return "";
+  const diff=eta-Date.now();
+  const abs=Math.abs(diff);
+  const hours=Math.floor(abs/3600000);
+  const mins=Math.floor((abs%3600000)/60000);
+  if(diff>0){
+    const txt=hours>=24?`${Math.floor(hours/24)} يوم و${hours%24} س`:(hours>0?`${hours}س ${mins}د`:`${mins} دقيقة`);
+    return `<span class="chip" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;font-size:11px;font-weight:800">⏰ باقي ${txt}</span>`;
+  } else {
+    const txt=hours>=24?`${Math.floor(hours/24)} يوم`:(hours>0?`${hours} ساعة`:`${mins} دقيقة`);
+    return `<span class="chip" style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;font-size:11px;font-weight:800">🔴 تأخر ${txt}</span>`;
+  }
+}
+
+// QR Code للرابط العام (باستخدام API مجاني من qrserver)
+function igTrackQRCodeHtml(url,size=140){
+  if(!url) return "";
+  const u=encodeURIComponent(url);
+  return `<div style="display:inline-block;padding:8px;background:#fff;border:1px solid #e7eaf0;border-radius:12px;text-align:center"><img src="https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${u}&margin=4" alt="QR Code" width="${size}" height="${size}" loading="lazy" style="display:block;border-radius:6px"><small style="display:block;margin-top:6px;color:#6b7280;font-size:10px">امسح للمتابعة</small></div>`;
+}
+
+// معاينة صفحة العميل في iframe منبثق
+function igTrackPreviewCustomerPage(url){
+  if(!url) return toast("مفيش رابط للمعاينة","err");
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+  ov.innerHTML=`<div style="width:min(420px,96vw);height:min(820px,94vh);background:#fff;border-radius:16px;overflow:hidden;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.5)"><div style="position:absolute;top:0;left:0;right:0;padding:10px 14px;background:linear-gradient(135deg,#182437,#263c5c);color:#fff;display:flex;justify-content:space-between;align-items:center;z-index:2"><b style="font-size:13px">👁 معاينة صفحة العميل</b><button onclick="this.closest('div[style*=\\'position:fixed\\']').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:16px">✕</button></div><iframe src="${igTrackEsc(url)}" style="width:100%;height:100%;border:none;padding-top:44px" loading="lazy" referrerpolicy="no-referrer"></iframe></div>`;
+  ov.onclick=e=>{if(e.target===ov)ov.remove();};
+  document.body.appendChild(ov);
+}
+
+// فحص حجم الملف قبل الرفع (max 5MB)
+function igTrackCheckFileSize(input,maxMB=5){
+  const f=input&&input.files&&input.files[0];if(!f)return true;
+  const mb=f.size/(1024*1024);
+  if(mb>maxMB){toast(`الملف حجمه ${mb.toFixed(1)} ميجا. الحد الأقصى ${maxMB} ميجا`,"err");input.value="";return false;}
+  return true;
+}
+
+// فلتر سريع للـKPI (ضغطة على كارت → يفلتر القائمة)
+function igTrackKpiFilter(status){
+  igTrackStatus=status;
+  const sel=document.getElementById("igTrackStatus");if(sel)sel.value=status;
+  igTrackRenderList();
+  document.getElementById("igTrackListBody")?.scrollIntoView({behavior:"smooth",block:"start"});
+}
+
 function igTrackingView(){
   const cfg=igTrackSettings();
   const selected=window.igTrackingSelectedOrderId;
@@ -44411,13 +44673,13 @@ function igTrackingView(){
     <div class="trk-hero">
       <div class="trk-hero-ic">🚚</div>
       <div><h2>تتبع الشحنات</h2><p>متابعة أوامر البيع المعتمدة وربط تحديثات الشحنة بأمر البيع الأصلي</p></div>
-      <div style="margin-inline-start:auto;display:flex;gap:8px;align-items:center">${can("shipmentTracking","manage")?`<button class="btn ghost sm" onclick="igTrackOpenSettings()">⚙ إعدادات المراحل والمسميات</button>`:""}<span class="chip gold">نظام المبيعات</span></div>
+      <div style="margin-inline-start:auto;display:flex;gap:8px;align-items:center">${can("shipmentTracking","manage")?`<button class="btn ghost sm" onclick="igTrackOpenSettings()" title="موجود كمان في: المبيعات → البيانات الأساسية → إعدادات مراحل الشحن">⚙ إعدادات المراحل</button>`:""}<span class="chip gold">نظام المبيعات</span></div>
     </div>
     <div class="trk-kpis">
-      <div class="trk-kpi"><span class="ic">📋</span><div><small>أوامر مؤهلة للتتبع</small><b>${rows.length}</b></div></div>
-      <div class="trk-kpi"><span class="ic">⏳</span><div><small>${igTrackEsc(cfg.statusLabels.new)}</small><b>${waiting}</b></div></div>
-      <div class="trk-kpi"><span class="ic">🚛</span><div><small>${igTrackEsc(cfg.statusLabels.active)}</small><b>${Math.max(0,started-delivered)}</b></div></div>
-      <div class="trk-kpi"><span class="ic">✓</span><div><small>${igTrackEsc(cfg.statusLabels.done)}</small><b>${delivered}</b></div></div>
+      <div class="trk-kpi" onclick="igTrackKpiFilter('all')" style="cursor:pointer"><span class="ic">📋</span><div><small>أوامر مؤهلة للتتبع</small><b>${rows.length}</b></div></div>
+      <div class="trk-kpi" onclick="igTrackKpiFilter('new')" style="cursor:pointer"><span class="ic">⏳</span><div><small>${igTrackEsc(cfg.statusLabels.new)}</small><b>${waiting}</b></div></div>
+      <div class="trk-kpi" onclick="igTrackKpiFilter('active')" style="cursor:pointer"><span class="ic">🚛</span><div><small>${igTrackEsc(cfg.statusLabels.active)}</small><b>${Math.max(0,started-delivered)}</b></div></div>
+      <div class="trk-kpi" onclick="igTrackKpiFilter('done')" style="cursor:pointer"><span class="ic">✓</span><div><small>${igTrackEsc(cfg.statusLabels.done)}</small><b>${delivered}</b></div></div>
     </div>
     <section class="trk-panel">
       <div class="trk-panel-head">
@@ -44469,9 +44731,9 @@ function igTrackListHtml(rows){
       <td data-label="التاريخ">${igTrackEsc(o.date||"—")}</td>
       <td data-label="العميل"><span class="trk-customer">${igTrackEsc(o.customer||"—")}</span><div class="trk-sub">${igTrackEsc(o.address||"")}</div></td>
       <td data-label="عدد الأصناف">${(o.items||[]).length}</td>
-      <td data-label="حالة الشحنة"><span class="trk-status ${igTrackStatusClass(o)}">${igTrackEsc(igTrackStageText(o))}</span></td>
-      <td data-label="آخر تحديث">${last?igTrackFmt(last.at):"—"}</td>
-      <td data-label="التفاصيل"><button class="trk-open" onclick="igTrackViewOrder('${igTrackEsc(o.id)}')">فتح التتبع ←</button></td>
+      <td data-label="حالة الشحنة"><span class="trk-status ${igTrackStatusClass(o)}">${igTrackEsc(igTrackStageText(o))}</span> ${igTrackStuckBadge(o)}</td>
+      <td data-label="آخر تحديث">${last?igTrackFmt(last.at):"—"} ${igTrackEtaBadge(t.vehicle?.eta)}</td>
+      <td data-label="التفاصيل"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center">${igTrackData(o).publicUrl?`<button class="btn ghost sm" title="مشاركة الرابط" onclick="igTrackSharePublicLink('${igTrackEsc(o.id)}')" style="padding:4px 8px">📤</button>`:""}<button class="trk-open" onclick="igTrackViewOrder('${igTrackEsc(o.id)}')">فتح ←</button></div></td>
     </tr>`;}).join("")}
     </tbody></table></div>`;
 }
@@ -44481,67 +44743,387 @@ function igTrackRenderList(){
 }
 function igTrackDetailHtml(order){
   const t=igTrackData(order), current=t.stage;
-  const items=(order.items||[]).map((it,i)=>`<tr class="trk-item-row"><td data-label="م">${i+1}</td><td data-label="القطر">${igTrackEsc(it.diameter||"—")}</td><td data-label="النوع">${igTrackEsc(it.type||"—")}</td><td data-label="المواصفة">${igTrackEsc(it.spec||"—")}</td><td data-label="الكمية">${igTrackEsc(it.qty??"—")}</td></tr>`).join("");
+  const items=(order.items||[]).map((it,i)=>`<tr><td>${i+1}</td><td>${igTrackEsc(it.diameter||"—")}</td><td>${igTrackEsc(it.type||"—")}</td><td>${igTrackEsc(it.spec||"—")}</td><td>${igTrackEsc(it.qty??"—")}</td></tr>`).join("");
   const visibleStages=igTrackVisibleStageIndices();
   const hist=[...t.history].filter(h=>visibleStages.includes(Number(h.stage))).reverse();
-  const docs=t.attachments.map((a,i)=>`<div class="trk-doc"><span class="doc-ic">${String(a.mime||"").includes("pdf")?"📕":"🖼️"}</span><div class="doc-meta"><b>${igTrackEsc(a.name||"مستند الشحنة")}</b><small>${igTrackEsc(a.category||"مرفق")} · ${igTrackFmt(a.at)}${a.storageId?" · محفوظ بأمان":""}</small></div><button class="btn ghost sm" onclick="igTrackOpenDoc(${i})">فتح</button></div>`).join("")||`<div class="trk-sub">لا توجد مستندات مرفقة حتى الآن. اختر نوع المستند ثم أرفق الملف واحفظه.</div>`;
+  const docs=t.attachments.map((a,i)=>`<div class="trkd-doc"><span class="trkd-doc-ic">${String(a.mime||"").includes("pdf")?"📕":"🖼️"}</span><div class="trkd-doc-meta"><b>${igTrackEsc(a.name||"مستند الشحنة")}</b><small>${igTrackEsc(a.category||"مرفق")} · ${igTrackFmt(a.at)}</small></div><button class="trkd-btn-ghost" onclick="igTrackOpenDoc(${i})">فتح</button></div>`).join("")||`<div class="trkd-empty-mini">📂 لا توجد مستندات بعد</div>`;
   const stageIcons=igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS;
   const visibleCurrent=igTrackCurrentVisibleStage(order),lastVisible=igTrackLastVisibleStage();
-  const steps=visibleStages.map(i=>{const name=IG_TRACK_STAGES[i],done=i<visibleCurrent||(current>=lastVisible&&i<=lastVisible),now=i===visibleCurrent&&current<lastVisible;const entry=[...t.history].reverse().find(h=>Number(h.stage)===i);return `<div class="trk-step ${done?"done":""} ${now?"current":""}"><span class="trk-dot">${done?"✓":igTrackEsc(stageIcons[i]||IG_TRACK_DEFAULT_STAGE_ICONS[i])}</span><div><b>${igTrackEsc(name)}</b>${entry?`<small>${igTrackFmt(entry.at)}${entry.note?" — "+igTrackEsc(entry.note):""}</small>`:now?`<small>الحالة الحالية</small>`:""}</div></div>`;}).join("");
+  const total=visibleStages.length||1;
+  const posInVisible=visibleStages.indexOf(visibleCurrent);
+  const doneCount=current>=lastVisible?total:Math.max(0,posInVisible+1);
+  const pct=Math.round((doneCount/total)*100);
+  const barColor=pct===100?"#16865b":pct>60?"#c99a24":"#3b82f6";
+  const steps=visibleStages.map((i,idx)=>{const name=IG_TRACK_STAGES[i],done=i<visibleCurrent||(current>=lastVisible&&i<=lastVisible),now=i===visibleCurrent&&current<lastVisible;const entry=[...t.history].reverse().find(h=>Number(h.stage)===i);return `<div class="trkd-step ${done?"done":""} ${now?"now":""}"><div class="trkd-step-dot">${done?"✓":igTrackEsc(stageIcons[i]||IG_TRACK_DEFAULT_STAGE_ICONS[i])}</div><div class="trkd-step-body"><b>${igTrackEsc(name)}</b>${entry?`<small>${igTrackFmt(entry.at)}${entry.note?" · "+igTrackEsc(entry.note):""}</small>`:now?`<small>⏳ الحالة الحالية</small>`:`<small style="opacity:.5">لم تبدأ بعد</small>`}</div></div>`;}).join("");
   const publicUrl=String(t.publicUrl||"");
-  return `<div id="igTrackingPage">
+  const phone=String(t.vehicle.phone||t.vehicle.driverPhone||t.vehicle.mobile||"").replace(/[^0-9+]/g,"");
+  const wa=phone?phone.replace(/^0/,'20').replace(/^\+/,''):"";
+  const statusClass=igTrackStatusClass(order);
+  const statusText=igTrackStageText(order);
+  const linked=igTrackPolicyRecords(order.id),open=linked.find(x=>!x.posted),posted=linked.filter(x=>x.posted);
+
+  return `<div id="igTrackingPage" class="trkd">
+    <style>
+    /* ============ TRACKING DETAIL — Professional Mobile-First ============ */
+    .trkd{--navy:#182437;--gold:#c99a24;--muted:#6b7280;--line:#e7eaf0;--bg:#f4f6f9;--green:#16865b;--red:#dc2626;--blue:#3b82f6;max-width:1320px;margin:0 auto}
+    .trkd-topbar{display:flex;gap:10px;align-items:center;padding:12px 4px;flex-wrap:wrap}
+    .trkd-back{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px 14px;font:inherit;font-weight:800;color:var(--navy);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+    .trkd-back:hover{background:#f8fafc;border-color:var(--gold)}
+    .trkd-hero{background:linear-gradient(135deg,#182437 0%,#263c5c 60%,#2d4a74 100%);color:#fff;border-radius:18px;padding:22px 24px;position:relative;overflow:hidden;box-shadow:0 10px 30px rgba(24,36,55,.15)}
+    .trkd-hero::before{content:"";position:absolute;top:-60px;left:-40px;width:220px;height:220px;background:radial-gradient(circle,rgba(201,154,36,.22),transparent 70%);pointer-events:none}
+    .trkd-hero-top{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;position:relative}
+    .trkd-hero-main{flex:1 1 300px;min-width:0}
+    .trkd-hero-eyebrow{font-size:11px;color:#c9d4e8;letter-spacing:2px;font-weight:700;margin-bottom:4px}
+    .trkd-hero h1{font-size:22px;font-weight:900;margin:0 0 6px;overflow-wrap:anywhere}
+    .trkd-hero-sub{font-size:13px;color:#d6dde8;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .trkd-hero-sub span{display:inline-flex;align-items:center;gap:4px}
+    .trkd-badges{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .trkd-badges .trk-status{padding:5px 12px;border-radius:999px;font-size:12px;font-weight:800;white-space:nowrap;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25)}
+    .trkd-badges .trk-status.active{background:#fff3cf;color:#8a6500;border-color:#efd48c}
+    .trkd-badges .trk-status.done{background:#d4f4e2;color:#105f3f;border-color:#86d5a9}
+    .trkd-hero-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    .trkd-ha{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:10px;padding:8px 14px;font:inherit;font-weight:700;font-size:13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:.15s}
+    .trkd-ha:hover{background:rgba(255,255,255,.22)}
+    .trkd-ha.primary{background:var(--gold);border-color:var(--gold);color:#1a150c}
+    .trkd-ha.primary:hover{background:#d8a62d;border-color:#d8a62d}
+    .trkd-hero-progress{margin-top:16px;position:relative}
+    .trkd-pbar-info{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px;color:#d6dde8}
+    .trkd-pbar-info b{color:#fff;font-size:14px;font-weight:900}
+    .trkd-pbar{height:10px;background:rgba(255,255,255,.14);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,.2)}
+    .trkd-pbar-fill{height:100%;background:linear-gradient(90deg,${barColor},${barColor}cc);border-radius:999px;transition:width .5s ease;box-shadow:0 0 12px ${barColor}66}
+
+    /* === Tabs === */
+    .trkd-tabs{display:flex;gap:4px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:5px;margin:16px 0;overflow-x:auto;scrollbar-width:none}
+    .trkd-tabs::-webkit-scrollbar{display:none}
+    .trkd-tab{background:transparent;border:none;padding:10px 16px;font:inherit;font-weight:700;color:var(--muted);font-size:13px;cursor:pointer;border-radius:10px;white-space:nowrap;transition:.15s;display:inline-flex;align-items:center;gap:6px;flex-shrink:0}
+    .trkd-tab:hover{background:#f8fafc;color:var(--navy)}
+    .trkd-tab.active{background:linear-gradient(135deg,var(--navy),#263c5c);color:#fff;box-shadow:0 2px 8px rgba(24,36,55,.2)}
+    .trkd-tab-badge{background:rgba(255,255,255,.25);padding:1px 7px;border-radius:999px;font-size:10px;font-weight:800;min-width:18px;text-align:center}
+    .trkd-tab:not(.active) .trkd-tab-badge{background:#f1f5f9;color:var(--navy)}
+
+    /* === Panel === */
+    .trkd-panel{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(24,36,55,.04)}
+    .trkd-panel-head{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#fafbfc}
+    .trkd-panel-head h3{margin:0;font-size:15px;font-weight:800;color:var(--navy);display:flex;align-items:center;gap:7px}
+    .trkd-panel-head small{color:var(--muted);font-size:11.5px}
+    .trkd-panel-body{padding:18px}
+    .trkd-section{display:grid;gap:14px}
+
+    /* === Grid layout === */
+    .trkd-layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:14px;align-items:start;direction:rtl}
+    @media(max-width:960px){.trkd-layout{grid-template-columns:1fr}}
+
+    /* === Info grid === */
+    .trkd-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+    .trkd-info-cell{background:linear-gradient(145deg,#fafbfc,#f4f6f9);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-width:0}
+    .trkd-info-cell small{display:block;color:var(--muted);font-size:10.5px;font-weight:700;margin-bottom:4px;text-transform:uppercase;letter-spacing:.3px}
+    .trkd-info-cell b{display:block;color:var(--navy);font-size:14px;font-weight:800;overflow-wrap:anywhere}
+
+    /* === Timeline === */
+    .trkd-timeline{position:relative}
+    .trkd-step{display:flex;gap:14px;padding:12px 0;position:relative}
+    .trkd-step:not(:last-child)::before{content:"";position:absolute;right:19px;top:48px;bottom:-4px;width:2px;background:var(--line)}
+    .trkd-step.done:not(:last-child)::before{background:var(--green)}
+    .trkd-step-dot{width:38px;height:38px;flex:0 0 38px;border-radius:50%;display:grid;place-items:center;background:#f1f5f9;color:var(--muted);font-size:15px;font-weight:900;border:2px solid var(--line);z-index:1;transition:.2s}
+    .trkd-step.done .trkd-step-dot{background:linear-gradient(135deg,#dcfce7,#bbf7d0);color:var(--green);border-color:#86d5a9}
+    .trkd-step.now .trkd-step-dot{background:linear-gradient(135deg,#fef3c7,#fde68a);color:#8a6500;border-color:var(--gold);box-shadow:0 0 0 4px rgba(201,154,36,.2);animation:pulse 2s infinite}
+    @keyframes pulse{0%,100%{box-shadow:0 0 0 4px rgba(201,154,36,.2)}50%{box-shadow:0 0 0 8px rgba(201,154,36,.1)}}
+    .trkd-step-body{flex:1;padding-top:6px;min-width:0}
+    .trkd-step-body b{display:block;font-size:13.5px;color:var(--navy);font-weight:800}
+    .trkd-step-body small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+    .trkd-step.now .trkd-step-body b{color:#8a6500}
+
+    /* === Table === */
+    .trkd-table{width:100%;border-collapse:collapse;font-size:13px}
+    .trkd-table th{background:#f8fafc;color:var(--navy);padding:10px 12px;text-align:right;font-weight:800;font-size:11.5px;border-bottom:1px solid var(--line);text-transform:uppercase;letter-spacing:.3px}
+    .trkd-table td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:var(--navy)}
+    .trkd-table tr:last-child td{border-bottom:none}
+    .trkd-table tr:hover td{background:#fafbfc}
+    .trkd-table-wrap{overflow-x:auto;border-radius:12px;border:1px solid var(--line)}
+
+    /* === Form === */
+    .trkd-form{display:grid;gap:12px}
+    .trkd-form-row{display:grid;gap:10px}
+    .trkd-form-row.grid-2{grid-template-columns:1fr 1fr}
+    @media(max-width:560px){.trkd-form-row.grid-2{grid-template-columns:1fr}}
+    .trkd-field label{display:block;font-size:11.5px;font-weight:800;color:var(--muted);margin-bottom:5px;letter-spacing:.2px}
+    .trkd-field .inp{width:100%;min-height:40px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--navy);font:inherit;font-size:13.5px;transition:.15s}
+    .trkd-field .inp:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,154,36,.14)}
+    .trkd-field textarea.inp{min-height:70px;resize:vertical}
+    .trkd-field-hint{display:block;color:var(--muted);font-size:10.5px;margin-top:4px}
+    .trkd-phone-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+    .trkd-phone-btn{background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 10px;font:inherit;font-size:12px;font-weight:700;color:var(--navy);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:.15s}
+    .trkd-phone-btn:hover{border-color:var(--gold);background:#fffbf1}
+    .trkd-phone-btn.call{color:var(--green);border-color:#bbf7d0}
+    .trkd-phone-btn.call:hover{background:#f0fdf4}
+    .trkd-phone-btn.wa{color:#25d366;border-color:#86efac}
+    .trkd-phone-btn.wa:hover{background:#f0fdf4}
+
+    /* === Buttons === */
+    .trkd-btn{background:linear-gradient(135deg,var(--navy),#263c5c);color:#fff;border:1px solid var(--navy);border-radius:10px;padding:11px 18px;font:inherit;font-weight:800;font-size:13.5px;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:6px;justify-content:center;text-decoration:none}
+    .trkd-btn:hover{background:linear-gradient(135deg,#1f2d44,#2d4466);transform:translateY(-1px);box-shadow:0 4px 12px rgba(24,36,55,.2)}
+    .trkd-btn.gold{background:linear-gradient(135deg,var(--gold),#d8a62d);border-color:var(--gold);color:#1a150c}
+    .trkd-btn.gold:hover{background:linear-gradient(135deg,#d8a62d,#e5b43a)}
+    .trkd-btn-ghost{background:#fff;border:1px solid var(--line);color:var(--navy);border-radius:9px;padding:7px 12px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:.15s;display:inline-flex;align-items:center;gap:4px;text-decoration:none}
+    .trkd-btn-ghost:hover{border-color:var(--gold);background:#fffbf1}
+
+    /* === Documents === */
+    .trkd-doc{display:flex;align-items:center;gap:10px;padding:11px 13px;background:#fafbfc;border:1px solid var(--line);border-radius:11px;margin-bottom:8px;transition:.15s}
+    .trkd-doc:hover{border-color:var(--gold);background:#fffbf1}
+    .trkd-doc-ic{font-size:22px;flex:0 0 auto}
+    .trkd-doc-meta{flex:1;min-width:0}
+    .trkd-doc-meta b{display:block;font-size:12.5px;color:var(--navy);overflow-wrap:anywhere;font-weight:800}
+    .trkd-doc-meta small{display:block;font-size:10.5px;color:var(--muted);margin-top:2px}
+    .trkd-empty-mini{text-align:center;padding:24px;color:var(--muted);font-size:12.5px;background:#fafbfc;border-radius:10px;border:1px dashed var(--line)}
+
+    /* === Public Link === */
+    .trkd-link-card{background:linear-gradient(145deg,#fffbf0,#fff8e1);border:1px solid #f0d88c;border-radius:14px;padding:16px}
+    .trkd-link-title{font-size:14px;font-weight:900;color:#8a6500;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+    .trkd-link-url{display:block;color:#8a6500;font-weight:800;font-size:12.5px;padding:8px 12px;background:#fff;border:1px dashed #c99a24;border-radius:9px;text-decoration:none;word-break:break-all;margin-bottom:10px;direction:ltr;text-align:left;font-family:ui-monospace,monospace}
+    .trkd-link-url:hover{border-style:solid;background:#fffdf0}
+    .trkd-link-grid{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:flex-start}
+    @media(max-width:480px){.trkd-link-grid{grid-template-columns:1fr}.trkd-link-grid>div:first-child{text-align:center}}
+    .trkd-link-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+    .trkd-link-none{text-align:center;padding:20px;color:var(--muted)}
+
+    /* === Divider === */
+    .trkd-divider{height:1px;background:var(--line);margin:14px 0;position:relative}
+    .trkd-divider::before{content:attr(data-label);position:absolute;top:-10px;right:14px;background:#fff;padding:0 8px;font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+
+    /* === History timeline === */
+    .trkd-history-row{padding:11px 0;border-bottom:1px solid #f1f5f9}
+    .trkd-history-row:last-child{border-bottom:none}
+    .trkd-history-row b{display:block;font-size:12.5px;color:var(--navy);font-weight:800}
+    .trkd-history-row small{display:block;font-size:11px;color:var(--muted);margin-top:3px}
+
+    /* Hide inactive tab content */
+    .trkd-pane{display:none}
+    .trkd-pane.active{display:block;animation:fadeIn .25s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+    @media(max-width:560px){
+      .trkd-hero{padding:18px 16px;border-radius:14px}
+      .trkd-hero h1{font-size:18px}
+      .trkd-ha{padding:7px 12px;font-size:12.5px}
+      .trkd-panel-body{padding:14px}
+      .trkd-tab{padding:9px 12px;font-size:12px}
+    }
+    </style>
+
     ${igTrackBrandHtml()}
-    <div class="trk-detail-head"><button class="trk-back" onclick="igTrackBack()">→ رجوع للقائمة</button><div><h2>متابعة أمر البيع #${igTrackEsc(order.orderNo)}</h2><div class="trk-sub">${igTrackEsc(order.customer||"—")} · ${igTrackEsc(order.date||"")}</div></div><span class="trk-status ${igTrackStatusClass(order)}">${igTrackEsc(igTrackStageText(order))}</span></div>
-    <div class="trk-detail-grid">
-      <div>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>بيانات أمر البيع الأصلي</h3><span class="muted">مرجع التتبع الرئيسي</span></div>
-          <div class="trk-info-grid">
-            <div class="trk-info"><small>رقم أمر البيع</small><b>#${igTrackEsc(order.orderNo)}</b></div>
-            <div class="trk-info"><small>العميل</small><b>${igTrackEsc(order.customer||"—")}</b></div>
-            <div class="trk-info"><small>تاريخ الأمر</small><b>${igTrackEsc(order.date||"—")}</b></div>
-            <div class="trk-info"><small>عنوان التسليم</small><b>${igTrackEsc(order.address||"—")}</b></div>
-            <div class="trk-info"><small>عدد الأصناف</small><b>${(order.items||[]).length}</b></div>
-            <div class="trk-info"><small>حالة أمر البيع</small><b>معتمد — مفتوح</b></div>
+
+    <div class="trkd-topbar">
+      <button class="trkd-back" onclick="igTrackBack()">← رجوع للقائمة</button>
+    </div>
+
+    <!-- HERO -->
+    <div class="trkd-hero">
+      <div class="trkd-hero-top">
+        <div class="trkd-hero-main">
+          <div class="trkd-hero-eyebrow">📦 متابعة أمر بيع</div>
+          <h1>#${igTrackEsc(order.orderNo)} — ${igTrackEsc(order.customer||"—")}</h1>
+          <div class="trkd-hero-sub">
+            <span>📅 ${igTrackEsc(order.date||"—")}</span>
+            <span>📍 ${igTrackEsc(order.address||"بدون عنوان")}</span>
+            <span>🧾 ${(order.items||[]).length} صنف</span>
           </div>
-        </section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>مراحل الشحنة</h3><span class="muted">يظهر آخر تحديث في أعلى الصفحة</span></div><div class="trk-progress">${steps}</div></section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>أصناف أمر البيع</h3></div><div class="trk-table-wrap"><table style="min-width:520px"><thead><tr><th>م</th><th>القطر</th><th>النوع</th><th>المواصفة</th><th>الكمية</th></tr></thead><tbody>${items||'<tr><td colspan="5">لا توجد أصناف</td></tr>'}</tbody></table></div></section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>سجل التحديثات</h3></div><div class="trk-history">${hist.map(h=>`<div class="trk-history-row"><b>${igTrackEsc((igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS)[h.stage]||"🔔")} ${igTrackEsc(IG_TRACK_STAGES[h.stage]||"تحديث")}</b><small>${igTrackFmt(h.at)} · ${igTrackEsc(h.by||"")}${h.note?" · "+igTrackEsc(h.note):""}</small></div>`).join("")||'<div class="trk-sub">لم يتم تسجيل تحديثات بعد.</div>'}</div></section>
+          <div class="trkd-badges">
+            <span class="trk-status ${statusClass}">${igTrackEsc(statusText)}</span>
+            ${igTrackStuckBadge(order)}
+            ${igTrackEtaBadge(t.vehicle?.eta)}
+          </div>
+        </div>
       </div>
-      <div>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>تحديث حالة الشحنة</h3></div>
-          <div class="trk-form">
-            <div><label>المرحلة الجديدة</label><select class="inp" id="igTrackStage">${visibleStages.map(i=>`<option value="${i}" ${i===igTrackNextVisibleStage(current)?"selected":""}>${igTrackEsc((igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS)[i]||"🔹")} ${igTrackEsc(IG_TRACK_STAGES[i])}</option>`).join("")}</select></div>
-            <div><label>ملاحظات التحديث</label><textarea class="inp" id="igTrackNote" placeholder="اكتب تفاصيل إضافية تظهر في سجل الشحنة..."></textarea></div>
-            ${can("shipmentTracking","edit")?`<button class="btn" onclick="igTrackAddStage('${igTrackEsc(order.id)}')">حفظ التحديث</button>`:`<div class="trk-link-note">👁️ لديك صلاحية مشاهدة الشحنة فقط. لا يمكنك تحديث مراحلها.</div>`}
-          </div>
-        </section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>بيانات النقل والتنفيذ</h3><span class="muted">تُحفظ على أمر البيع الأصلي</span></div><div class="trk-form">
-          <div><label>نوع السيارة</label><input class="inp" id="igTrackTruckType" value="${igTrackEsc(t.vehicle.truckType||"")}" placeholder="تريلا / جامبو / نقل"></div>
-          <div><label>رقم السيارة</label><input class="inp" id="igTrackTruck" value="${igTrackEsc(t.vehicle.truck||"")}" placeholder="رقم السيارة"></div>
-          <div><label>اسم السائق</label><input class="inp" id="igTrackDriver" value="${igTrackEsc(t.vehicle.driver||"")}" placeholder="اسم السائق"></div>
-          <div><label>هاتف السائق</label><input class="inp" id="igTrackPhone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" value="${igTrackEsc(t.vehicle.phone||t.vehicle.driverPhone||t.vehicle.mobile||"")}" placeholder="01XXXXXXXXX"><small class="trk-field-hint">اكتب رقم الهاتف مع مفتاح الدولة عند الحاجة</small></div>
-          <div><label>موعد الوصول المتوقع</label><input class="inp" id="igTrackEta" type="datetime-local" value="${igTrackEsc(t.vehicle.eta||"")}"></div>
-          <div class="trk-link-note"><b>بيانات التحميل والتسليم</b></div>
-          <div><label>رقم إذن التحميل</label><input class="inp" id="igTrackPermitNo" value="${igTrackEsc(t.shipmentInfo.loadingPermitNo||"")}" placeholder="رقم إذن التحميل"></div>
-          <div><label>تاريخ ووقت التحميل</label><input class="inp" id="igTrackLoadingAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.loadingAt||"")}"></div>
-          <div><label>الكمية المحملة فعليًا (طن)</label><input class="inp" id="igTrackLoadedQty" type="number" min="0" step="0.001" value="${igTrackEsc(t.shipmentInfo.loadedQty??"")}" placeholder="0.000"></div>
-          <div><label>تاريخ ووقت التسليم</label><input class="inp" id="igTrackDeliveredAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.deliveredAt||"")}"></div>
-          <div><label>اسم مستلم الشحنة</label><input class="inp" id="igTrackReceiver" value="${igTrackEsc(t.shipmentInfo.receiver||"")}" placeholder="اسم المستلم"></div>
-          <div><label>ملاحظات التسليم</label><textarea class="inp" id="igTrackDeliveryNote" placeholder="ملاحظات أو تحفظات الاستلام">${igTrackEsc(t.shipmentInfo.deliveryNote||"")}</textarea></div>
-          ${can("shipmentTracking","edit")?`<button class="btn ghost" onclick="igTrackSaveVehicle('${igTrackEsc(order.id)}')">💾 حفظ بيانات النقل والتحميل والتسليم</button>`:""}
-        </div></section>
-        <section class="trk-panel"><div class="trk-panel-head"><h3>مستندات الشحنة (${t.attachments.length})</h3><span class="muted">PDF أو JPG أو PNG أو WEBP · حتى 5 ميجابايت</span></div><div class="trk-form">
-          <div><label>نوع المستند</label><select class="inp" id="igTrackDocCat"><option>إذن التحميل</option><option>بوليصة النقل</option><option>إثبات التسليم</option><option>مستند آخر</option></select></div>
-          <div><label>إرفاق ملف</label><input class="inp" id="igTrackFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp"></div>
-          ${can("shipmentTracking","edit")?`<button class="btn ghost" onclick="igTrackUpload('${igTrackEsc(order.id)}')">📎 إرفاق المستند وحفظه</button>`:""}
-          <div class="trk-docs-list">${docs}</div>
-        </div></section>
-        ${(()=>{const linked=igTrackPolicyRecords(order.id),open=linked.find(x=>!x.posted),posted=linked.filter(x=>x.posted);return `<section class="trk-panel"><div class="trk-panel-head"><h3>البوليصة المرتبطة بالتتبع</h3><span class="muted">إنشاء في أي وقت — مفتوحة للمراجعة</span></div><div class="trk-form"><p class="trk-sub">إنشاء البوليصة غير مرتبط بأي مرحلة من مراحل الشحنة. ستُحفظ كبوليصة غير مُرحّلة وتظهر في بوالص التوريد العادية.</p>${open?`<div class="trk-doc"><span class="doc-ic">📄</span><div class="doc-meta"><b>بوليصة مفتوحة رقم ${igTrackEsc(open.r.policyNo)}</b><small>من أمر البيع الحالي — غير مُرحّلة</small></div><button class="btn sm" onclick="igTrackOpenPolicyRecord('${igTrackEsc(open.r.id)}',false)">فتح للمراجعة</button></div>`:`${can("shipmentTracking","edit")&&can("shipments","add")&&can("shipments","view")?`<button class="btn primary" onclick="igTrackCreateOpenPolicy('${igTrackEsc(order.id)}')">📄 ترحيل إلى البوليصة</button>`:`<div class="trk-link-note">تحتاج صلاحيات تعديل التتبع وإضافة وعرض البوالص.</div>`}`}${posted.length?`<div class="trk-sub" style="margin-top:8px">بوالص سابقة تم ترحيلها من هذا التتبع: ${posted.map(x=>`<button class="btn ghost sm" onclick="igTrackOpenPolicyRecord('${igTrackEsc(x.r.id)}',true)">${igTrackEsc(x.r.policyNo)}</button>`).join(" ")}</div>`:""}</div></section>`;})()}
-        <div class="trk-link-note"><b>🔗 رابط متابعة العميل</b><br>${publicUrl?`<a class="trk-public-url" href="${escapeAttr(publicUrl)}" target="_blank" rel="noopener noreferrer" title="فتح رابط متابعة الشحنة">${igTrackEsc(String(order.customer||"العميل")+" — أمر بيع #"+String(order.orderNo||order.id))}</a><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" onclick="igTrackSharePublicLink('${igTrackEsc(order.id)}')">📤 مشاركة الرابط</button><button class="btn ghost sm" onclick="igTrackCopyPublicLink('${igTrackEsc(order.id)}')">📋 نسخ الرابط</button><a class="btn ghost sm" href="${igTrackEsc(publicUrl)}" target="_blank" rel="noopener">فتح الرابط</a>${(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<button class="btn ghost sm" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔄 تجديد الرابط</button><button class="btn ghost sm" onclick="igTrackRevokePublicLink('${igTrackEsc(order.id)}')">⛔ إلغاء الرابط</button>`:""}</div><small style="display:block;margin-top:8px">يمكن للمستخدمين أصحاب صلاحية مشاهدة التتبع نسخ الرابط أو مشاركته.</small>`:`<span>لم يتم إنشاء رابط للعميل بعد.</span>${(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn primary sm" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔗 إنشاء رابط العميل</button></div>`:`<small style="display:block;margin-top:8px">اطلب من مدير النظام إنشاء الرابط؛ سيظهر هنا تلقائيًا بعد المزامنة.</small>`}`}</div>
+      <div class="trkd-hero-actions">
+        ${publicUrl?`<button class="trkd-ha primary" onclick="igTrackSharePublicLink('${igTrackEsc(order.id)}')">📤 مشاركة الرابط</button>`:""}
+        ${publicUrl?`<button class="trkd-ha" onclick="igTrackCopyPublicLink('${igTrackEsc(order.id)}')">📋 نسخ الرابط</button>`:""}
+        ${publicUrl?`<button class="trkd-ha" onclick="igTrackPreviewCustomerPage('${igTrackEsc(publicUrl)}')">👁 معاينة العميل</button>`:""}
+        ${!publicUrl&&(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<button class="trkd-ha primary" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔗 إنشاء رابط العميل</button>`:""}
+      </div>
+      <div class="trkd-hero-progress">
+        <div class="trkd-pbar-info"><span>تقدم الشحنة</span><b>${pct}% · ${doneCount}/${total} مراحل</b></div>
+        <div class="trkd-pbar"><div class="trkd-pbar-fill" style="width:${pct}%"></div></div>
       </div>
     </div>
+
+    <!-- TABS -->
+    <div class="trkd-tabs" role="tablist">
+      <button type="button" class="trkd-tab active" data-tab="timeline" onclick="igTrackSwitchTab(this,'timeline')">🚦 المراحل</button>
+      ${can("shipmentTracking","edit")?`<button type="button" class="trkd-tab" data-tab="update" onclick="igTrackSwitchTab(this,'update')">✏️ تحديث</button>`:""}
+      <button type="button" class="trkd-tab" data-tab="vehicle" onclick="igTrackSwitchTab(this,'vehicle')">🚛 النقل والتسليم</button>
+      <button type="button" class="trkd-tab" data-tab="docs" onclick="igTrackSwitchTab(this,'docs')">📎 المستندات <span class="trkd-tab-badge">${t.attachments.length}</span></button>
+      <button type="button" class="trkd-tab" data-tab="info" onclick="igTrackSwitchTab(this,'info')">ℹ️ الأمر والأصناف</button>
+      <button type="button" class="trkd-tab" data-tab="link" onclick="igTrackSwitchTab(this,'link')">🔗 رابط العميل</button>
+    </div>
+
+    <!-- PANE: timeline -->
+    <div class="trkd-pane active" data-pane="timeline">
+      <div class="trkd-layout">
+        <section class="trkd-panel">
+          <div class="trkd-panel-head"><h3>🚦 مراحل الشحنة</h3><small>${doneCount} من ${total} مكتملة</small></div>
+          <div class="trkd-panel-body"><div class="trkd-timeline">${steps}</div></div>
+        </section>
+        <section class="trkd-panel">
+          <div class="trkd-panel-head"><h3>📜 سجل التحديثات</h3><small>${hist.length} تحديث</small></div>
+          <div class="trkd-panel-body">${hist.map(h=>`<div class="trkd-history-row"><b>${igTrackEsc((igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS)[h.stage]||"🔔")} ${igTrackEsc(IG_TRACK_STAGES[h.stage]||"تحديث")}</b><small>${igTrackFmt(h.at)} · ${igTrackEsc(h.by||"")}${h.note?" · "+igTrackEsc(h.note):""}</small></div>`).join("")||'<div class="trkd-empty-mini">📝 لم يتم تسجيل تحديثات بعد</div>'}</div>
+        </section>
+      </div>
+    </div>
+
+    ${can("shipmentTracking","edit")?`
+    <!-- PANE: update -->
+    <div class="trkd-pane" data-pane="update">
+      <section class="trkd-panel">
+        <div class="trkd-panel-head"><h3>✏️ تحديث حالة الشحنة</h3><small>اختر المرحلة الجديدة واحفظ</small></div>
+        <div class="trkd-panel-body">
+          <div class="trkd-form">
+            <div class="trkd-field"><label>المرحلة الجديدة</label><select class="inp" id="igTrackStage">${visibleStages.map(i=>`<option value="${i}" ${i===igTrackNextVisibleStage(current)?"selected":""}>${igTrackEsc((igTrackSettings().stageIcons||IG_TRACK_DEFAULT_STAGE_ICONS)[i]||"🔹")} ${igTrackEsc(IG_TRACK_STAGES[i])}</option>`).join("")}</select></div>
+            <div class="trkd-field"><label>ملاحظات التحديث (اختياري)</label><textarea class="inp" id="igTrackNote" placeholder="اكتب أي تفاصيل إضافية — ستظهر في سجل الشحنة ولرابط العميل"></textarea></div>
+            <div><button class="trkd-btn gold" onclick="igTrackAddStage('${igTrackEsc(order.id)}')">💾 حفظ التحديث</button></div>
+          </div>
+        </div>
+      </section>
+    </div>`:""}
+
+    <!-- PANE: vehicle -->
+    <div class="trkd-pane" data-pane="vehicle">
+      <div class="trkd-layout">
+        <section class="trkd-panel">
+          <div class="trkd-panel-head"><h3>🚛 بيانات النقل</h3><small>تُحفظ على أمر البيع الأصلي</small></div>
+          <div class="trkd-panel-body">
+            <div class="trkd-form">
+              <div class="trkd-form-row grid-2">
+                <div class="trkd-field"><label>نوع السيارة</label><input class="inp" id="igTrackTruckType" value="${igTrackEsc(t.vehicle.truckType||"")}" placeholder="تريلا / جامبو / نقل"></div>
+                <div class="trkd-field"><label>رقم السيارة</label><input class="inp" id="igTrackTruck" value="${igTrackEsc(t.vehicle.truck||"")}" placeholder="رقم السيارة"></div>
+              </div>
+              <div class="trkd-field"><label>اسم السائق</label><input class="inp" id="igTrackDriver" value="${igTrackEsc(t.vehicle.driver||"")}" placeholder="اسم السائق"></div>
+              <div class="trkd-field">
+                <label>📱 هاتف السائق</label>
+                <input class="inp" id="igTrackPhone" type="tel" inputmode="tel" autocomplete="tel" dir="ltr" value="${igTrackEsc(phone)}" placeholder="01XXXXXXXXX" oninput="igTrackPhoneNorm(this)">
+                ${phone?`<div class="trkd-phone-actions"><a class="trkd-phone-btn call" href="tel:${igTrackEsc(phone)}">📞 اتصال</a><a class="trkd-phone-btn wa" href="https://wa.me/${igTrackEsc(wa)}" target="_blank" rel="noopener">💬 واتساب</a><button type="button" class="trkd-phone-btn" onclick="navigator.clipboard.writeText('${igTrackEsc(phone)}').then(()=>toast('تم نسخ الرقم'))">📋 نسخ</button></div>`:`<small class="trkd-field-hint">اكتب الرقم — هتظهر أزرار اتصال وواتساب تلقائياً</small>`}
+              </div>
+              <div class="trkd-field"><label>⏰ موعد الوصول المتوقع</label><input class="inp" id="igTrackEta" type="datetime-local" value="${igTrackEsc(t.vehicle.eta||"")}"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="trkd-panel">
+          <div class="trkd-panel-head"><h3>📦 بيانات التحميل والتسليم</h3></div>
+          <div class="trkd-panel-body">
+            <div class="trkd-form">
+              <div class="trkd-form-row grid-2">
+                <div class="trkd-field"><label>رقم إذن التحميل</label><input class="inp" id="igTrackPermitNo" value="${igTrackEsc(t.shipmentInfo.loadingPermitNo||"")}" placeholder="رقم إذن التحميل"></div>
+                <div class="trkd-field"><label>الكمية المحملة (طن)</label><input class="inp" id="igTrackLoadedQty" type="number" min="0" step="0.001" value="${igTrackEsc(t.shipmentInfo.loadedQty??"")}" placeholder="0.000"></div>
+              </div>
+              <div class="trkd-form-row grid-2">
+                <div class="trkd-field"><label>تاريخ ووقت التحميل</label><input class="inp" id="igTrackLoadingAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.loadingAt||"")}"></div>
+                <div class="trkd-field"><label>تاريخ ووقت التسليم</label><input class="inp" id="igTrackDeliveredAt" type="datetime-local" value="${igTrackEsc(t.shipmentInfo.deliveredAt||"")}"></div>
+              </div>
+              <div class="trkd-field"><label>اسم مستلم الشحنة</label><input class="inp" id="igTrackReceiver" value="${igTrackEsc(t.shipmentInfo.receiver||"")}" placeholder="اسم المستلم"></div>
+              <div class="trkd-field"><label>ملاحظات التسليم</label><textarea class="inp" id="igTrackDeliveryNote" placeholder="ملاحظات أو تحفظات الاستلام">${igTrackEsc(t.shipmentInfo.deliveryNote||"")}</textarea></div>
+              ${can("shipmentTracking","edit")?`<div><button class="trkd-btn" onclick="igTrackSaveVehicle('${igTrackEsc(order.id)}')">💾 حفظ كل البيانات</button></div>`:""}
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- PANE: docs -->
+    <div class="trkd-pane" data-pane="docs">
+      <section class="trkd-panel">
+        <div class="trkd-panel-head"><h3>📎 مستندات الشحنة</h3><small>PDF / JPG / PNG / WEBP — حتى 5 MB</small></div>
+        <div class="trkd-panel-body">
+          ${can("shipmentTracking","edit")?`
+          <div class="trkd-form">
+            <div class="trkd-form-row grid-2">
+              <div class="trkd-field"><label>نوع المستند</label><select class="inp" id="igTrackDocCat"><option>إذن التحميل</option><option>بوليصة النقل</option><option>إثبات التسليم</option><option>مستند آخر</option></select></div>
+              <div class="trkd-field"><label>اختر الملف</label><input class="inp" id="igTrackFile" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onchange="igTrackCheckFileSize(this,5)"></div>
+            </div>
+            <div><button class="trkd-btn gold" onclick="igTrackUpload('${igTrackEsc(order.id)}')">📎 رفع المستند</button></div>
+          </div>
+          <div class="trkd-divider" data-label="المستندات (${t.attachments.length})"></div>`:""}
+          ${docs}
+        </div>
+      </section>
+
+      ${(()=>{return `
+      <section class="trkd-panel" style="margin-top:14px">
+        <div class="trkd-panel-head"><h3>🧾 البوليصة المرتبطة</h3><small>غير مرتبط بأي مرحلة</small></div>
+        <div class="trkd-panel-body">
+          ${open?`<div class="trkd-doc"><span class="trkd-doc-ic">📄</span><div class="trkd-doc-meta"><b>بوليصة مفتوحة رقم ${igTrackEsc(open.r.policyNo)}</b><small>من أمر البيع الحالي — غير مُرحّلة</small></div><button class="trkd-btn-ghost" onclick="igTrackOpenPolicyRecord('${igTrackEsc(open.r.id)}',false)">فتح للمراجعة</button></div>`:(can("shipmentTracking","edit")&&can("shipments","add")&&can("shipments","view"))?`<button class="trkd-btn" onclick="igTrackCreateOpenPolicy('${igTrackEsc(order.id)}')">📄 ترحيل إلى البوليصة</button>`:`<div class="trkd-empty-mini">تحتاج صلاحيات تعديل التتبع وإضافة البوالص</div>`}
+          ${posted.length?`<div style="margin-top:10px;font-size:12px;color:var(--muted)">بوالص سابقة مرحّلة: ${posted.map(x=>`<button class="trkd-btn-ghost" onclick="igTrackOpenPolicyRecord('${igTrackEsc(x.r.id)}',true)">${igTrackEsc(x.r.policyNo)}</button>`).join(" ")}</div>`:""}
+        </div>
+      </section>`;})()}
+    </div>
+
+    <!-- PANE: info -->
+    <div class="trkd-pane" data-pane="info">
+      <section class="trkd-panel">
+        <div class="trkd-panel-head"><h3>ℹ️ بيانات أمر البيع</h3></div>
+        <div class="trkd-panel-body">
+          <div class="trkd-info">
+            <div class="trkd-info-cell"><small>رقم أمر البيع</small><b>#${igTrackEsc(order.orderNo)}</b></div>
+            <div class="trkd-info-cell"><small>العميل</small><b>${igTrackEsc(order.customer||"—")}</b></div>
+            <div class="trkd-info-cell"><small>تاريخ الأمر</small><b>${igTrackEsc(order.date||"—")}</b></div>
+            <div class="trkd-info-cell"><small>عنوان التسليم</small><b>${igTrackEsc(order.address||"—")}</b></div>
+            <div class="trkd-info-cell"><small>عدد الأصناف</small><b>${(order.items||[]).length}</b></div>
+            <div class="trkd-info-cell"><small>حالة أمر البيع</small><b style="color:var(--green)">✓ معتمد — مفتوح</b></div>
+          </div>
+        </div>
+      </section>
+      <section class="trkd-panel" style="margin-top:14px">
+        <div class="trkd-panel-head"><h3>📦 أصناف أمر البيع</h3><small>${(order.items||[]).length} صنف</small></div>
+        <div class="trkd-panel-body">
+          <div class="trkd-table-wrap">
+            <table class="trkd-table">
+              <thead><tr><th>م</th><th>القطر</th><th>النوع</th><th>المواصفة</th><th>الكمية</th></tr></thead>
+              <tbody>${items||'<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">لا توجد أصناف</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- PANE: link -->
+    <div class="trkd-pane" data-pane="link">
+      <section class="trkd-panel">
+        <div class="trkd-panel-head"><h3>🔗 رابط متابعة العميل</h3><small>مشاركة آمنة للعميل بدون تسجيل دخول</small></div>
+        <div class="trkd-panel-body">
+          ${publicUrl?`
+          <div class="trkd-link-card">
+            <div class="trkd-link-title">🌐 الرابط نشط ومتاح للعميل</div>
+            <a class="trkd-link-url" href="${escapeAttr(publicUrl)}" target="_blank" rel="noopener noreferrer">${igTrackEsc(publicUrl)}</a>
+            <div class="trkd-link-grid">
+              <div>${igTrackQRCodeHtml(publicUrl,150)}</div>
+              <div>
+                <p style="margin:0 0 10px;color:#5b4a10;font-size:13px;line-height:1.7">اطبع كود QR على البوليصة — العميل يمسحها بالموبايل ويفتح الرابط تلقائياً.<br>أو شارك الرابط عبر واتساب أو SMS.</p>
+                <div class="trkd-link-actions">
+                  <button class="trkd-btn gold" onclick="igTrackSharePublicLink('${igTrackEsc(order.id)}')">📤 مشاركة</button>
+                  <button class="trkd-btn-ghost" onclick="igTrackCopyPublicLink('${igTrackEsc(order.id)}')">📋 نسخ الرابط</button>
+                  <button class="trkd-btn-ghost" onclick="igTrackPreviewCustomerPage('${igTrackEsc(publicUrl)}')">👁 معاينة</button>
+                  <a class="trkd-btn-ghost" href="${igTrackEsc(publicUrl)}" target="_blank" rel="noopener">↗ فتح</a>
+                  ${(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<button class="trkd-btn-ghost" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔄 تجديد</button><button class="trkd-btn-ghost" onclick="igTrackRevokePublicLink('${igTrackEsc(order.id)}')">⛔ إلغاء</button>`:""}
+                </div>
+              </div>
+            </div>
+          </div>`:`
+          <div class="trkd-link-none">
+            <div style="font-size:48px;margin-bottom:10px;opacity:.4">🔗</div>
+            <p style="color:var(--muted);margin:0 0 14px">لم يتم إنشاء رابط متابعة للعميل بعد</p>
+            ${(can("shipmentTracking","manage")&&curU()?.role==="admin")?`<button class="trkd-btn gold" onclick="igTrackCreatePublicLink('${igTrackEsc(order.id)}')">🔗 إنشاء رابط العميل الآن</button>`:`<p style="font-size:12px;color:var(--muted)">اطلب من مدير النظام إنشاء الرابط</p>`}
+          </div>`}
+        </div>
+      </section>
+    </div>
+
   </div>`;
+}
+
+// Tab switcher for the redesigned tracking detail
+function igTrackSwitchTab(btn,tab){
+  const root=btn?.closest("#igTrackingPage"); if(!root) return;
+  root.querySelectorAll(".trkd-tab").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));
+  root.querySelectorAll(".trkd-pane").forEach(p=>p.classList.toggle("active",p.dataset.pane===tab));
 }
 function igTrackingRender(){
   const c=document.getElementById("content");
