@@ -25523,13 +25523,33 @@ function siCell(r,c){
     case "due": return r.due||"—"; case "label": {
       const inst=+r.installment||0;
       if(inst===0) return "مستحق (كاش)";
-      // مدة القسط = periodDays المحفوظة في شروط الأمر (زي بيانات التوريد) × رقم القسط
+      // 1) المدة من شروط الأمر المحفوظة (زي بيانات التوريد) × رقم القسط
       let days=0;
       try{
         const t=termsFromOrder(r.orderNo);
         const pd=t&&t.periodDays!==""&&t.periodDays!=null?+t.periodDays:0;
         if(pd>0) days=pd*inst;
       }catch(e){}
+      // 2) لو مفيش، احسبها من فرق تاريخ الفاتورة وتاريخ الاستحقاق ثم قرّبها لأقرب قيمة قياسية
+      if(!(days>0)){
+        try{
+          if(r.due&&r.date){
+            const d1=new Date(String(r.date).slice(0,10)+"T00:00:00");
+            const d2=new Date(String(r.due).slice(0,10)+"T00:00:00");
+            if(!isNaN(d1)&&!isNaN(d2)){
+              const raw=Math.round((d2-d1)/86400000);
+              if(raw>0){
+                // التقريب لأقرب مدة قياسية: 30 / 45 / 60 / 90
+                const base=[30,45,60,90];
+                const steps=[];
+                base.forEach(b=>{ for(let k=1;k<=12;k++) steps.push(b*k); });
+                steps.sort((a,b)=>a-b);
+                days=steps.reduce((best,s)=>Math.abs(s-raw)<Math.abs(best-raw)?s:best,steps[0]);
+              }
+            }
+          }
+        }catch(e){}
+      }
       return days>0?"مستحق ("+days+" يوم)":"مستحق (آجل)";
     } case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":"-"; case "lateRemaining": return dash(r.lateRemaining);
