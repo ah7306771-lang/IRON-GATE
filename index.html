@@ -17035,9 +17035,14 @@ function igItemExtras(it){ const o={}; Object.keys(it||{}).forEach(k=>{ if(!IG_I
 function toDraft(r){
   return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",warehouseId:String(r.warehouseId||whDefaultId()),trackingSourceOrderId:r.trackingSourceOrderId||"",trackingSourceOrderNo:r.trackingSourceOrderNo||"",trackingSource:r.trackingSource?JSON.parse(JSON.stringify(r.trackingSource)):null,directIssue:!!r.directIssue,deliveryNoteId:r.deliveryNoteId||"",directDeliveryId:r.directDeliveryId||"",repCode:r.repCode||"",repName:r.repName||"",deptCode:r.deptCode||"",glEntryId:r.glEntryId||null,glPostedAt:r.glPostedAt||null,glPostedBy:r.glPostedBy||null,
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
-    paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
-    payScheduleReset:!!r.paymentScheduleReset, payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
-    terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo); if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
+    paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);
+      /* لو شروط الأمر فيها فترة القسط 0 والبوليصة مكتوب عليها فترة فعلية: ناخد من البوليصة ونتجاهل الجدول القديم المحفوظ */
+      if(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0) return null;
+      const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
+    payScheduleReset:!!r.paymentScheduleReset||(()=>{const ot=orderTermsFor(r.saleOrderNo);return !!(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0);})(), payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
+    terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo);
+      if(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0&&r.terms.cashPct!=null) return {cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays};
+      if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
       return (r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:0,installments:0,periodDays:0}; })(),
     applyDiscount:r.applyDiscount,
     applyVat: r.applyVat !== false,
@@ -25927,6 +25932,7 @@ function viewOverdueSummary(){return `<section class="card overdue-summary-page 
     <th>متوسط التأخير (يوم)</th>
     <th>عدد الأقساط المتأخرة</th>
     <th>عدد أوامر البيع</th>
+    <th>طباعة</th>
   </tr></thead>
   <tbody id="osBody"></tbody>
   <tfoot id="osFoot"></tfoot>
@@ -25962,7 +25968,8 @@ function renderOverdueSummary(){
       <td class="os-days">${x.avg.toFixed(1)} يوم</td>
       <td class="os-n">${x.count}</td>
       <td class="os-n">${x.orders}</td>
-    </tr>`).join(""):'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-dim)">لا توجد متأخرات مطابقة</td></tr>';
+      <td class="os-n"><button type="button" class="btn ghost sm" data-c="${escapeAttr(x.customer)}" onclick="overdueCustomerPrint(this.dataset.c)" title="طباعة الأقساط المتأخرة لهذا العميل">🖨 الأقساط</button></td>
+    </tr>`).join(""):'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-dim)">لا توجد متأخرات مطابقة</td></tr>';
   const foot=document.getElementById("osFoot");
   if(foot) foot.innerHTML=rows.length?`<tr class="os-foot-row">
       <td class="os-foot-lbl">الإجمالي العام (${rows.length} عميل)</td>
@@ -25971,9 +25978,30 @@ function renderOverdueSummary(){
       <td class="os-days os-foot-days">${avg.toFixed(1)} يوم (متوسط)</td>
       <td class="os-n os-foot-n">${totalInst}</td>
       <td class="os-n os-foot-n">${totalOrders}</td>
+      <td></td>
     </tr>`:"";
   const count=document.getElementById("osCount");
   if(count) count.innerHTML=`<span>عدد العملاء بعد البحث: <b>${rows.length}</b></span> · <span>العملة: <b>${escapeHtml(cur)}</b></span> · <span>الأقساط المستحقة حتى تاريخ: <b>${asOf}</b></span>`;
+}
+// طباعة الأقساط المتأخرة لعميل واحد — نفس شروط تقرير المتأخرات/الأقساط (متأخر + متبقي)، فمجموعها = رقم العميل في التقرير
+function overdueCustomerPrint(customer){
+  const asOf=document.getElementById("osAsOf")?.value||overdueAsOf||overdueTodayStr();
+  const cut=/^\d{4}-\d{2}-\d{2}$/.test(asOf)?asOf:overdueTodayStr(), cd=new Date(cut+"T00:00:00");
+  const name=String(customer||"").trim();
+  const rows=salesInstallmentBaseRows().filter(r=>String(r.customer||"بدون اسم").trim()===name&&r.due&&r.due<=cut&&r.remaining>0.004)
+    .map(r=>Object.assign({},r,{days:Math.max(0,Math.floor((cd-new Date(r.due+"T00:00:00"))/86400000))}))
+    .filter(r=>!(r.remaining<SI_SMALL_BALANCE&&r.days>0))
+    .sort((a,b)=>String(a.due).localeCompare(String(b.due))||String(a.orderNo).localeCompare(String(b.orderNo),"ar"));
+  if(!rows.length) return toast("لا توجد أقساط متأخرة لهذا العميل","warn");
+  const m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const cur=state.settings.currency||"ج.م";
+  const tot=rows.reduce((a,r)=>a+(+r.remaining||0),0), totAmt=rows.reduce((a,r)=>a+(+r.amount||0),0), totPaid=rows.reduce((a,r)=>a+(+r.paid||0),0);
+  const rep=overdueSummaryRows(asOf).find(x=>x.customer===name);
+  const match=rep?Math.abs((+rep.amount||0)-tot)<0.01:true;
+  const body=rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(String(r.orderNo||""))}</td><td>${escapeHtml(r.label||"")}</td><td>${escapeHtml(String(r.due||""))}</td><td>${m(r.amount)}</td><td>${m(r.paid)}</td><td><b>${m(r.remaining)}</b></td><td>${r.days}</td></tr>`).join("");
+  const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>الأقساط المتأخرة — ${escapeHtml(name)}</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63;margin-bottom:4px}p{text-align:center;margin:4px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:8px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#fde68a;font-weight:800}.sum{margin:14px auto 0;max-width:420px;border:2px solid #b91c1c;border-radius:10px;padding:10px;text-align:center;color:#991b1b;font-size:18px;font-weight:800}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>الأقساط المتأخرة</h1><p><b>العميل: ${escapeHtml(name)}</b></p><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")} · الأقساط المستحقة حتى: ${cut}</p><table><thead><tr><th>م</th><th>أمر البيع</th><th>القسط</th><th>تاريخ الاستحقاق</th><th>قيمة القسط</th><th>المسدد</th><th>المتبقي</th><th>أيام التأخير</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="4">الإجمالي (${rows.length} قسط)</td><td>${m(totAmt)}</td><td>${m(totPaid)}</td><td>${m(tot)}</td><td></td></tr></tfoot></table><div class="sum">إجمالي المتأخر المستحق: ${m(tot)} ${escapeHtml(cur)}</div></html>`;
+  if(!match) toast("تنبيه: مجموع الأقساط لا يطابق رقم العميل في التقرير — راجع البيانات","warn");
+  openReportPreview(html,"الأقساط المتأخرة — "+name);
 }
 function overdueSummaryExport(format){const asOf=document.getElementById("osAsOf")?.value||overdueAsOf||overdueTodayStr(),rows=overdueSummaryRows(asOf),cur=state.settings.currency||"ج.م",m=v=>(+v||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});const body=rows.map(x=>`<tr><td>${escapeHtml(x.customer)}</td><td>${m(x.amount)}</td><td>${m(x.balance)}</td><td>${x.avg.toFixed(1)}</td><td>${x.count}</td><td>${x.orders}</td></tr>`).join("");const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>إجمالي المتأخرات</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63}p{text-align:center}table{width:100%;border-collapse:collapse}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:9px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>إجمالي المتأخرات المستحقة لكل عميل</h1><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")} · الأقساط المستحقة حتى: ${asOf}</p><table><thead><tr><th>العميل</th><th>إجمالي المبلغ المستحق</th><th>رصيد العميل من الميزان</th><th>متوسط التأخير (يوم)</th><th>عدد الأقساط</th><th>عدد أوامر البيع</th></tr></thead><tbody>${body}</tbody></table></html>`;if(format==="excel")igSaveXlsx(html,igSafeFileName("إجمالي_المتأخرات_"+new Date().toISOString().slice(0,10)));else openReportPreview(html,"إجمالي المتأخرات");}
 
@@ -45685,6 +45713,9 @@ body.page-shipments .ig-items-card table.items thead{display:table-header-group!
 .os-tbl tfoot .os-foot-bal{color:#fff!important;direction:ltr}
 .os-tbl tfoot .os-foot-bal.os-bal-neg{color:#86efac!important}
 .os-tbl tfoot .os-foot-days,.os-tbl tfoot .os-foot-n{color:#fcd34d!important}
+.os-tbl thead th,.os-tbl tbody td:not(.os-cust),.os-tbl tfoot .os-foot-row td:not(.os-foot-lbl){text-align:center!important;vertical-align:middle}
+.os-tbl tfoot .os-foot-row td{white-space:nowrap}
+.os-tbl .os-amt,.os-tbl .os-bal{unicode-bidi:plaintext}
 
 .os-count{margin-top:10px;color:#475569;font-size:12px;font-weight:600;background:#fff;border:1px solid #d7deea;border-radius:8px;padding:8px 12px}
 .os-count b{color:#1e3a66;font-weight:800}
