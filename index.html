@@ -16870,6 +16870,8 @@ function setPayScheduleField(id,field,value){
   if(fp) fp.textContent=pct(sum); if(fa) fa.textContent=fmt(sum);
   const sumEl=document.getElementById("paySchedSummary");
   if(sumEl) sumEl.innerHTML=`إجمالي الجدول: <b>${fmt(sum)}</b> — إجمالي الفواتير/الخطة: <b>${fmt(r.total||0)}</b> — الفرق: <b style="color:${Math.abs(diff)>0.01?'var(--danger)':'var(--ok)'}">${fmt(diff)}</b>`;
+  // حدّث سطر ملخص الشروط (نقدي/أقساط/أيام) لحظيًا مع تعديل الجدول
+  try{ igSiSectionSummaries(t,policyDiscountCalc(draft)); }catch(e){}
 }
 
 // ===== تنسيق الأرقام العشرية داخل خانات الجداول (فواصل آلاف + كسور ثابتة) =====
@@ -16971,6 +16973,19 @@ function igSiSectionSummaries(t,DC){
   set("sumTerms",termsBlank(draft.terms)?"غير محددة":(()=>{
     // اعرض كل الأقساط بالتفصيل: نقدي X% — قسط 1: Y% بعد N يوم — قسط 2: Y% بعد 2N يوم …
     const parts=[];
+    // لو في جدول استحقاقات محفوظ في البوليصة: الأيام والنسب منه (مش من الفترة المبدئية)
+    try{
+      const pv=policyPaySchedule(t), rws=(pv&&pv.rows)||[];
+      const inst=rws.filter(x=>(+x.no||0)>0&&x.id!=="cash").sort((x,y)=>(+x.no||0)-(+y.no||0));
+      if(inst.length){
+        const tot=rws.reduce((a,x)=>a+(+x.amount||0),0), base=payBaseDate();
+        const pc=v=>tot>0?String(+(Math.round((+v||0)/tot*10000)/100).toFixed(2)):"0";
+        const cashAmt=rws.filter(x=>(+x.no||0)===0||x.id==="cash").reduce((a,x)=>a+(+x.amount||0),0);
+        const out=[]; if(cashAmt>0) out.push("نقدي "+pc(cashAmt)+"%");
+        inst.forEach((x,i)=>{ const d=payDaysBetween(base,x.due); out.push("قسط "+(i+1)+": "+pc(x.amount)+"%"+(d===""?"":" بعد "+d+" يوم")); });
+        return out.join(" — ");
+      }
+    }catch(e){}
     if(cp>0) parts.push("نقدي "+cp+"%");
     if(n>0&&cp<100){
       const rest=100-cp, each=r2(rest/n);
@@ -18047,7 +18062,15 @@ function supManualPlanForOrder(orderNo){
   const cp=total>0?r2(cashValue/total*100):(ot.cashPct==null?null:(+ot.cashPct||0));
   const creditValue=r2(schedule.reduce((a,x)=>a+(+x.amount||0),0));
   return {total,cashPct:cp,cashValue,cashDueDate,creditValue,installmentsText:String(schedule.length||parseInt(ot.installments,10)||0),
-    periodDaysText:String(+ot.periodDays||0),method:"حسب جدول السداد المعدل",schedule,source:"order",
+    periodDaysText:(()=>{
+      // لو في جدول سداد محفوظ: الأيام الفعلية لكل قسط من تاريخ الأساس (مثلاً 45 / 75) بدل الفترة المبدئية
+      if(Array.isArray(ot.paymentSchedule)){
+        const base=String(orderLastDate(orderNo)||"").slice(0,10);
+        const ds=schedule.map(x=>base&&x.date?payDaysBetween(base,x.date):"").filter(v=>v!==""&&Number.isFinite(+v));
+        if(ds.length) return ds.join(" / ");
+      }
+      return String(+ot.periodDays||0);
+    })(),method:"حسب جدول السداد المعدل",schedule,source:"order",
     customer:(imp&&imp.customer)||docs[0].customer||"",policyNo:docs.map(x=>x.policyNo).join(" / ")};
 }
 function supPaymentPlanForOrder(orderNo){
@@ -18628,7 +18651,8 @@ function supPreviewOrderTerms(no){
     const rows=[];
     if(cashVal>0||credit<=0){
       const sc=hasSaved?savedAll.filter(isCashRow):[];
-      rows.push({label:'نقدي',cash:true,amount:cashVal,due:base,
+      const scDue=sc.length?String(sc[0].due||sc[0].date||'').slice(0,10):'';
+      rows.push({label:'نقدي',cash:true,amount:cashVal,due:scDue||base,
         saved:sc.length?{amount:r2(sc.reduce((a,x)=>a+(+x.amount||0),0)),due:String(sc[0].due||sc[0].date||'')}:null});
     }
     if(credit>0&&count>0){
@@ -18637,7 +18661,9 @@ function supPreviewOrderTerms(no){
         const amount=i===count?r2(left):r2(credit/count);
         left=r2(left-amount);
         const sv=savedSched?savedSched[i-1]:null;
-        rows.push({label:'قسط '+i,cash:false,amount,due:supPaymentDateAdd(base,days*i),saved:sv?{amount:+sv.amount||0,due:String(sv.due||sv.date||'')}:null});
+        // التاريخ والأيام من جدول البوليصة المحفوظ لو موجود، وإلا نحسبها من الفترة
+        const svDue=sv?String(sv.due||sv.date||'').slice(0,10):'';
+        rows.push({label:'قسط '+i,cash:false,amount,due:svDue||supPaymentDateAdd(base,days*i),saved:sv?{amount:+sv.amount||0,due:String(sv.due||sv.date||'')}:null});
       }
     }
     rows.forEach(r=>{ r.diff=hasSaved&&(!r.saved||Math.abs(r.saved.amount-r.amount)>0.5||String(r.saved.due||'').slice(0,10)!==String(r.due||'').slice(0,10)); });
