@@ -16799,7 +16799,28 @@ function renderPolicyPaySchedule(t){
   if(!r.rows.length){ box.innerHTML=`<p style="color:var(--text-dim);font-size:13px">${draft.saleOrderNo?"لا توجد شروط سداد مسجلة لأمر البيع المختار.":"لا يوجد أمر بيع مرتبط؛ جدول الاستحقاقات اختياري ويمكن استكماله لاحقًا."}</p>`; return; }
   const base=+r.total||r.rows.reduce((a,x)=>a+(+x.amount||0),0), sum=r.rows.reduce((a,x)=>a+(+x.amount||0),0), diff=r2(sum-base);
   const pct=v=>base>0?fmt(v/base*100,2)+"%":"—", ro=viewOnly?"disabled":"", baseD=payBaseDate();
-  box.innerHTML=`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:6px 0 8px">
+  // تحذير: هل في جدول سداد يدوي مخزّن مختلف عن نسبة النقدي/الأقساط؟
+  let overrideWarn='';
+  try{
+    const no=draft&&draft.saleOrderNo?String(draft.saleOrderNo).trim():'';
+    const ot=no?orderTermsFor(no):null;
+    if(ot&&Array.isArray(ot.paymentSchedule)&&ot.paymentSchedule.length){
+      const cp=(ot.cashPct===''||ot.cashPct==null)?NaN:+ot.cashPct;
+      if(Number.isFinite(cp)&&cp>=0&&cp<=100&&base>0){
+        const n=Math.max(0,parseInt(ot.installments,10)||0);
+        const expCash=r2(base*cp/100), expCredit=r2(base-expCash);
+        const storedCash=r2(ot.paymentSchedule.filter(x=>(+x.no||0)===0).reduce((a,x)=>a+(+x.amount||0),0));
+        const storedCredit=r2(ot.paymentSchedule.filter(x=>(+x.no||0)>0).reduce((a,x)=>a+(+x.amount||0),0));
+        if(Math.abs(storedCash-expCash)>1||Math.abs(storedCredit-expCredit)>1){
+          overrideWarn=`<div style="margin:8px 0;padding:10px 12px;background:#fef3c7;border:1px solid #d4a017;border-radius:9px;font-size:12.5px;color:#92400e;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="flex:1;min-width:220px">⚠ <b>جدول سداد يدوي مخزّن</b> يتعارض مع نسبة الأمر (${cp}% نقدي / ${n} قسط). المحفوظ: نقدي ${fmt(storedCash,2)} + آجل ${fmt(storedCredit,2)} — المتوقّع: نقدي ${fmt(expCash,2)} + آجل ${fmt(expCredit,2)}.</span>
+            ${!viewOnly?`<button type="button" class="btn sm" style="background:#92400e;color:#fff;border-color:#92400e" onclick="supRedistributeOrderInstallments('${escapeAttr(no)}')&&refreshPayScheduleView()">🔁 إعادة توزيع الآن</button>`:''}
+          </div>`;
+        }
+      }
+    }
+  }catch(e){}
+  box.innerHTML=overrideWarn+`<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:6px 0 8px">
     <div style="font-size:12px;color:var(--text-dim)">يتحدّث الجدول تلقائيًا. ويمكنك تعديل قيمة أي دفعة أو عدد أيامها أو تاريخها يدويًا — لو غيّرت الأيام يتحدّث التاريخ لوحده (الأيام محسوبة من تاريخ الفاتورة). يُعاد الحساب عند تغيير التاريخ أو الأصناف أو الشروط.</div>
     ${!viewOnly?`<button type="button" class="btn ghost sm" onclick="clearPayScheduleEdits()">↺ تجاهل التعديل اليدوي</button>`:""}
   </div>
@@ -17537,6 +17558,7 @@ function viewSupply(){
     <div class="spacer"></div>
     <button class="btn ghost sm" onclick="supExportExcel()">⬇ تصدير Excel</button>
     <button class="btn ghost sm" onclick="supExportPdf()">🖨 PDF / طباعة</button>
+    <button class="btn ghost sm" id="supAuditBtn" onclick="supOpenPaymentAudit()" title="فحص جميع الأوامر للكشف عن تعارض بين جدول السداد اليدوي ونسبة النقدي/الأقساط" style="background:#fff6dc;color:#92400e;border-color:#e6c36b;font-weight:800">🛡 فحص الأقساط</button>
     <button class="btn" onclick="newPolicy()">＋ بوليصة جديدة</button>
     <button class="btn ghost sm" id="supTermsToggleBtn" type="button" style="display:none" onclick="supTogglePaymentColumns(this)" title="يمكن إخفاء الأعمدة من نسبة النقدي حتى آخر قسط"></button></div>
   <div class="supply-tabs" role="tablist" aria-label="طرق عرض بيانات التوريد">
@@ -18315,6 +18337,70 @@ function supRedistributeOrderInstallments(orderNo, opts){
   try{ renderSupply(); }catch(e){}
   if(!silent) toast('تم إعادة توزيع أقساط أمر البيع '+no,'ok');
   return true;
+}
+
+// فحص جماعي لكل الأوامر: مين فيه جدول سداد يدوي بيتعارض مع نسبة النقدي/الأقساط
+function supAuditPaymentOverrides(){
+  const out=[]; const orderTerms=state.orderTerms||{};
+  Object.keys(orderTerms).forEach(k=>{
+    const ot=orderTerms[k]; if(!ot||!Array.isArray(ot.paymentSchedule)||!ot.paymentSchedule.length) return;
+    const cp=(ot.cashPct===''||ot.cashPct==null)?NaN:+ot.cashPct;
+    if(!Number.isFinite(cp)||cp<0||cp>100) return;
+    // استخرج رقم الأمر من البوالص (لإن المفتاح k معمول بـ soKey)
+    const docSample=[...(state.shipments||[]),...(state.policies||[])].find(x=>soKey(x.saleOrderNo)===k);
+    const no=docSample?String(docSample.saleOrderNo||''):k;
+    if(!no) return;
+    const docs=supOrderDocsForEdit(no); const imp=supImportedPaymentPlan(no);
+    const total=supOrderTermsBaseTotal(no,docs,imp); if(!(total>0)) return;
+    const n=Math.max(0,parseInt(ot.installments,10)||0);
+    const expectedCash=r2(total*cp/100), expectedCredit=r2(total-expectedCash);
+    const expectedInst=n>0?r2(expectedCredit/n):0;
+    const storedCash=r2(ot.paymentSchedule.filter(x=>(+x.no||0)===0).reduce((a,x)=>a+(+x.amount||0),0));
+    const storedCredit=r2(ot.paymentSchedule.filter(x=>(+x.no||0)>0).reduce((a,x)=>a+(+x.amount||0),0));
+    const storedMaxInst=ot.paymentSchedule.filter(x=>(+x.no||0)>0).reduce((m,x)=>Math.max(m,+x.amount||0),0);
+    const storedMinInst=ot.paymentSchedule.filter(x=>(+x.no||0)>0).reduce((m,x)=>Math.min(m,+x.amount||0),Infinity);
+    const diffCash=Math.abs(storedCash-expectedCash), diffCredit=Math.abs(storedCredit-expectedCredit);
+    const unevenInst=n>1&&storedMaxInst-storedMinInst>Math.max(1,expectedInst*0.001);
+    if(diffCash>1||diffCredit>1||unevenInst){
+      out.push({orderNo:no,key:k,cashPct:cp,installments:n,periodDays:+ot.periodDays||0,total,
+        expectedCash,expectedCredit,expectedInst,storedCash,storedCredit,
+        diffCash:r2(storedCash-expectedCash),diffCredit:r2(storedCredit-expectedCredit),
+        customer:docSample?.customer||'',updatedAt:ot.updatedAt||'',updatedBy:ot.updatedBy||'',hasCollections:orderHasCollections(no)});
+    }
+  });
+  out.sort((a,b)=>Math.abs(b.diffCash+b.diffCredit)-Math.abs(a.diffCash+a.diffCredit));
+  return out;
+}
+
+function supOpenPaymentAudit(){
+  const list=supAuditPaymentOverrides();
+  if(!list.length){ toast('✓ كل الأوامر مطابقة — لا يوجد تعارض بين الجدول اليدوي ونسبة النقدي','ok'); return; }
+  const body=list.map((r,i)=>`<tr>
+    <td>${i+1}</td>
+    <td><b>${escapeHtml(r.orderNo)}</b></td>
+    <td>${escapeHtml(r.customer||'—')}</td>
+    <td class="num">${fmt(r.total,2)}</td>
+    <td>${r.cashPct}% / ${r.installments} قسط / ${r.periodDays} يوم</td>
+    <td class="num" title="المحفوظ حاليًا">${fmt(r.storedCash,2)} + ${fmt(r.storedCredit,2)}</td>
+    <td class="num" title="المتوقّع حسب النسبة">${fmt(r.expectedCash,2)} + ${fmt(r.expectedCredit,2)}</td>
+    <td class="num" style="color:${Math.abs(r.diffCash+r.diffCredit)>1?'#b91c1c':'#64748b'};font-weight:800">${fmt(r.diffCash,2)} / ${fmt(r.diffCredit,2)}</td>
+    <td>${r.hasCollections?'<span class="chip warn">عليه تحصيلات</span>':'<span class="chip">متاح</span>'}</td>
+    <td><button type="button" class="btn sm" onclick="if(supRedistributeOrderInstallments('${escapeAttr(r.orderNo)}')){this.closest('tr').style.opacity=0.4;this.disabled=true;this.textContent='✓ تم';}">🔁 إصلاح</button></td>
+  </tr>`).join('');
+  openModal('فحص الأقساط — '+list.length+' أمر فيه تعارض', `
+    <p style="font-size:13px;color:var(--text-dim);margin:0 0 12px">الأوامر التالية فيها جدول سداد يدوي مخزّن مختلف عن نسبة النقدي/الأقساط المحفوظة. يمكنك إصلاحها فرديًا أو دفعة واحدة. أي إصلاح لا يمس التحصيلات.</p>
+    <div class="tbl-wrap" style="max-height:60vh;overflow:auto"><table class="tbl" style="font-size:12.5px"><thead><tr>
+      <th>#</th><th>أمر البيع</th><th>العميل</th><th>الإجمالي</th><th>الشروط</th><th>المحفوظ (نقدي+آجل)</th><th>المتوقّع (نقدي+آجل)</th><th>الفرق</th><th>الحالة</th><th>إجراء</th>
+    </tr></thead><tbody>${body}</tbody></table></div>
+  `, ()=>{
+    if(!confirm('سيتم إعادة توزيع '+list.length+' أمر دفعة واحدة حسب نسبة النقدي والأقساط المحفوظة. لن يُحذف أي تحصيل. تأكيد؟')) return false;
+    let ok=0,fail=0;
+    list.forEach(r=>{ try{ if(supRedistributeOrderInstallments(r.orderNo,{silent:true})) ok++; else fail++; }catch(e){ fail++; } });
+    toast('تم إصلاح '+ok+' أمر'+(fail?' · فشل '+fail:''),ok>0?'ok':'err');
+    return true;
+  });
+  // بدّل تسمية زرار الحفظ في المودال
+  setTimeout(()=>{ try{ const btn=document.querySelector('#modalBackdrop .mfoot .btn:not(.ghost)'); if(btn) btn.textContent='🔁 إصلاح الكل دفعة واحدة'; const cancel=document.querySelector('#modalBackdrop .mfoot .btn.ghost'); if(cancel) cancel.textContent='إغلاق'; }catch(e){} },0);
 }
 
 function supOpenOrderTermsEdit(orderNo){
@@ -25434,7 +25520,18 @@ function siCell(r,c){
   const m=salesInstallmentMoney, dash=v=>v>0.004?m(v):"-";
   switch(c.k){
     case "order": return r.orderNo; case "customer": return partyWithCode("customers",r.customer); case "date": return r.date||"—"; case "total": return m(r.total);
-    case "due": return r.due||"—"; case "label": return r.label; case "amount": return m(r.amount); case "paid": return dash(r.paid);
+    case "due": return r.due||"—"; case "label": {
+      const inst=+r.installment||0;
+      if(inst===0) return "مستحق (كاش)";
+      // مدة القسط = periodDays المحفوظة في شروط الأمر (زي بيانات التوريد) × رقم القسط
+      let days=0;
+      try{
+        const t=termsFromOrder(r.orderNo);
+        const pd=t&&t.periodDays!==""&&t.periodDays!=null?+t.periodDays:0;
+        if(pd>0) days=pd*inst;
+      }catch(e){}
+      return days>0?"مستحق ("+days+" يوم)":"مستحق (آجل)";
+    } case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":"-"; case "lateRemaining": return dash(r.lateRemaining);
     case "status": {
       if(r.status==="قادم" && r.due){
