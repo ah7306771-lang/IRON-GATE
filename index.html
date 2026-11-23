@@ -17102,11 +17102,9 @@ function commitOrderTerms(rec){
     if(!sameTerms(cur,nt)){
       const u0=(typeof curU==="function"&&curU())||null, at0=new Date().toISOString();
       const hist=((existing&&existing.history)||[]).slice(-19); hist.push({at:(existing&&existing.updatedAt)||"",by:(existing&&existing.updatedBy)||"",cashPct:cur.cashPct,installments:cur.installments,periodDays:cur.periodDays});
-      // آخر تعديل يفوز: مع تعديل الشروط من البوليصة، احذف أي جدول سداد يدوي مخزّن على الأمر
-      state.orderTerms[k]={...(existing||{}),...nt,updatedAt:at0,updatedBy:u0?u0.name:"",source:"policy-edit",history:hist,paymentScheduleUpdatedAt:at0};
-      delete state.orderTerms[k].paymentSchedule;
-      delete state.orderTerms[k].paymentScheduleOverrideOnly;
-      orderDocs(rec.saleOrderNo).forEach(x=>{ x.terms={...nt}; x.paymentSchedule=null; x.paymentScheduleReset=true; x.paymentScheduleResetImported=false; });
+      // تعديل الشروط من البوليصة: يحدّث النسبة/العدد/الفترة لكن ما يمسّش جدول السداد اليدوي (الجدول اللي تحت = الأساس)
+      state.orderTerms[k]={...(existing||{}),...nt,updatedAt:at0,updatedBy:u0?u0.name:"",source:"policy-edit",history:hist};
+      orderDocs(rec.saleOrderNo).forEach(x=>{ x.terms={...nt}; });
       rec.terms={...nt};
       try{ audit("order_terms","تعديل شروط السداد من بوليصة "+rec.policyNo+" — أمر بيع "+rec.saleOrderNo+": "+cur.cashPct+"%/"+cur.installments+"/"+cur.periodDays+" ← "+nt.cashPct+"%/"+nt.installments+"/"+nt.periodDays); }catch(e){}
       existing=orderTermsFor(rec.saleOrderNo);
@@ -18457,7 +18455,10 @@ function supOpenOrderTermsEdit(orderNo){
       <div class="fld"><label>قيمة النقدي يدويًا</label><input id="sot_cash_value" class="inp num" type="number" min="0" step="0.01" value="${escapeAttr(cashInitial)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
       <div class="fld"><label>قيمة الآجل يدويًا</label><input id="sot_credit_value" class="inp num" type="number" min="0" step="0.01" value="${escapeAttr(creditInitial)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
       <div class="fld"><label>عدد الأقساط</label><input id="sot_count" class="inp num" type="number" min="0" max="60" step="1" value="${escapeAttr(n)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
-      <div class="fld"><label>الفترة بين الأقساط (يوم)</label><input id="sot_days" class="inp num" type="number" min="1" max="365" step="1" value="${escapeAttr(days||30)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
+      <div class="fld" id="sot_days_wrap"><label id="sot_days_lbl">الفترة بين الأقساط (يوم)</label><input id="sot_days" class="inp num" type="number" min="1" max="365" step="1" value="${escapeAttr(days||30)}" oninput="supPreviewOrderTerms('${escapeAttr(no)}')"></div>
+    </div>
+    <div id="sot_multi_note" style="display:none;margin-top:10px;padding:10px 12px;background:#e0f2fe;border:1px solid #38bdf8;border-radius:8px;font-size:12.5px;color:#0c4a6e">
+      <b>📝 أكثر من قسط:</b> حقل "الفترة بين الأقساط" ده قيمة مبدئية بس. عدّل مبلغ وتاريخ كل قسط على حدة من داخل البوليصة بعد الحفظ (جدول "شروط السداد وجدول الاستحقاقات").
     </div>
     <div class="card sot-summary" style="margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--panel, #fff)">
       <div class="fgrid sot-kpis" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
@@ -18480,35 +18481,42 @@ function supOpenOrderTermsEdit(orderNo){
     const k=soKey(no), old=orderTermsFor(no), nt={cashPct:cash, cashValue:r2(cashValue), creditValue:r2(creditValue), installments:creditValue>0?count:0, periodDays:creditValue>0?period:0};
     const u=(typeof curU==='function'&&curU())||null, at=new Date().toISOString();
     const hist=((old&&old.history)||[]).slice(-19); if(old) hist.push({at:old.updatedAt||'',by:old.updatedBy||'',cashPct:old.cashPct,installments:old.installments,periodDays:old.periodDays});
-    // آخر تعديل يفوز: احذف أي جدول سداد يدوي مخزّن حتى لا يتجاوز الشروط الجديدة
-    const merged={...(old||{}),...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist,paymentScheduleUpdatedAt:at};
-    delete merged.paymentSchedule;
-    delete merged.paymentScheduleOverrideOnly;
+    // تعديل الشروط: يحدّث النسبة/العدد/الفترة فقط، ما يمسّش جدول السداد اليدوي
+    // (الجدول اللي تحت في البوليصة = الأساس). علشان تمسح الجدول اليدوي استخدم زرار 🔁 إعادة توزيع صراحةً.
+    const merged={...(old||{}),...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist};
     state.orderTerms[k]=merged;
-    docs.forEach(x=>{
-      x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
-      x.paymentSchedule=null;
-      x.paymentScheduleReset=true;
-      x.paymentScheduleResetImported=false;
-    });
-    // لو في بوليصة مفتوحة في المحرر لنفس الأمر، صفّر الـ draft كمان
+    docs.forEach(x=>{ x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays}; });
+    // لو في بوليصة مفتوحة في المحرر لنفس الأمر، حدّث شروطها فقط (من غير ما تلمس جدولها)
     try{
       if(typeof draft!=='undefined'&&draft&&soKey(draft.saleOrderNo)===k){
         draft.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
-        draft.paySchedule=null; draft.payScheduleReset=true; draft.payScheduleResetImported=false;
-        draft.payScheduleResetOrderNo=String(draft.saleOrderNo||'');
         try{ if(typeof refreshTotals==='function') refreshTotals(); }catch(e){}
         try{ if(typeof refreshPayScheduleView==='function') refreshPayScheduleView(); }catch(e){}
       }
     }catch(e){}
     audit('order_terms','تعديل شروط السداد من شاشة التجميع — أمر بيع '+no);
-    saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع وإعادة توزيع الأقساط','ok'); return true;
+    saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع (الجدول اليدوي محفوظ كما هو)','ok'); return true;
   });
   supPreviewOrderTerms(no);
 }
 function supPreviewOrderTerms(no){
   const el=document.getElementById('sot_preview'); if(!el)return;
   const cash=Number(document.getElementById('sot_cash')?.value), count=Math.max(0,parseInt(document.getElementById('sot_count')?.value,10)||0), days=Math.max(0,parseInt(document.getElementById('sot_days')?.value,10)||0);
+  // لو أكثر من قسط: نخفي/نعدّل الفترة ونوضح أن التفصيل يتم من البوليصة
+  try{
+    const note=document.getElementById('sot_multi_note'), lbl=document.getElementById('sot_days_lbl'), wrap=document.getElementById('sot_days_wrap');
+    if(note&&lbl&&wrap){
+      if(count>1){
+        note.style.display='';
+        lbl.innerHTML='فترة مبدئية (يوم) <small style="color:#0c4a6e;font-weight:700">— القيم الفعلية من البوليصة</small>';
+        wrap.style.opacity='0.6';
+      } else {
+        note.style.display='none';
+        lbl.textContent='الفترة بين الأقساط (يوم)';
+        wrap.style.opacity='';
+      }
+    }
+  }catch(e){}
   const docs=supOrderDocsForEdit(no), imp=supImportedPaymentPlan(no);
   const total=supOrderTermsBaseTotal(no,docs,imp);
   const base=orderLastDate(no);
