@@ -11591,7 +11591,13 @@ function orderReportData(){
       return r; });
     g.tot=g.rows.reduce((t,r)=>{ ["qty","weight","sub","tax","disc","total"].forEach(k=>t[k]+=r[k]); return t; },{qty:0,weight:0,sub:0,tax:0,disc:0,total:0});
     const ot=orderTermsFor(g.no);
-    g.termsText=ot?(ot.cashPct+"% نقدي"+((+ot.installments>0&&+ot.cashPct<100)?" + "+ot.installments+" قسط كل "+ot.periodDays+" يوم":"")):(imp?(imp.method||"من شيت الإكسيل"):"—");
+    g.termsText=ot?((()=>{
+      const cp=+ot.cashPct||0, nn=+ot.installments||0, dd=+ot.periodDays||0, parts=[];
+      if(cp>0) parts.push("نقدي "+cp+"%");
+      if(nn>0&&cp<100){ const each=r2((100-cp)/nn); for(let i=1;i<=nn;i++) parts.push("قسط "+i+": "+each+"% بعد "+(dd*i)+" يوم"); }
+      else if(cp<100) parts.push((100-cp)+"% آجل");
+      return parts.join(" — ");
+    })()):(imp?(imp.method||"من شيت الإكسيل"):"—");
     g.status=so?(so.closed?"مقفول":"مفتوح"):"—";
     g.exec=null; try{ if(so){ const r=soComputeRemaining(so); g.exec={planned:soUnitSummary(r,"planned"),used:soUnitSummary(r,"used"),rem:soUnitSummary(r,"remaining")}; } }catch(e){}
     g.inst=[]; try{ if(g.customer&&real) g.inst=txInvoiceRowsForCustomer(g.customer).filter(r=>soKey(r.orderNo)===g.key); }catch(e){}
@@ -16872,7 +16878,18 @@ function igSiSectionSummaries(t,DC){
   if(err){ const e=document.getElementById("sumTax"); if(e&&e.closest("details")) e.closest("details").open=true; }
   set("sumChg",nCh?nCh+" خدمة — "+fmt(ch.sub):"لا توجد خدمات");
   const cp=+draft.terms.cashPct||0, n=parseInt(draft.terms.installments)||0, days=+draft.terms.periodDays||0;
-  set("sumTerms",termsBlank(draft.terms)?"غير محددة":("نقدي "+cp+"%"+(n>0&&cp<100?" — "+n+" قسط كل "+days+" يوم":" — بدون أقساط")));
+  set("sumTerms",termsBlank(draft.terms)?"غير محددة":(()=>{
+    // اعرض كل الأقساط بالتفصيل: نقدي X% — قسط 1: Y% بعد N يوم — قسط 2: Y% بعد 2N يوم …
+    const parts=[];
+    if(cp>0) parts.push("نقدي "+cp+"%");
+    if(n>0&&cp<100){
+      const rest=100-cp, each=r2(rest/n);
+      for(let i=1;i<=n;i++) parts.push("قسط "+i+": "+each+"% بعد "+(days*i)+" يوم");
+    } else if(cp<100){
+      parts.push((100-cp)+"% آجل");
+    }
+    return parts.join(" — ");
+  })());
 }
 function refreshTotals(){
   applyTermsLock();
@@ -17085,8 +17102,11 @@ function commitOrderTerms(rec){
     if(!sameTerms(cur,nt)){
       const u0=(typeof curU==="function"&&curU())||null, at0=new Date().toISOString();
       const hist=((existing&&existing.history)||[]).slice(-19); hist.push({at:(existing&&existing.updatedAt)||"",by:(existing&&existing.updatedBy)||"",cashPct:cur.cashPct,installments:cur.installments,periodDays:cur.periodDays});
-      state.orderTerms[k]={...nt,updatedAt:at0,updatedBy:u0?u0.name:"",source:"policy-edit",history:hist};
-      orderDocs(rec.saleOrderNo).forEach(x=>{ x.terms={...nt}; });
+      // آخر تعديل يفوز: مع تعديل الشروط من البوليصة، احذف أي جدول سداد يدوي مخزّن على الأمر
+      state.orderTerms[k]={...(existing||{}),...nt,updatedAt:at0,updatedBy:u0?u0.name:"",source:"policy-edit",history:hist,paymentScheduleUpdatedAt:at0};
+      delete state.orderTerms[k].paymentSchedule;
+      delete state.orderTerms[k].paymentScheduleOverrideOnly;
+      orderDocs(rec.saleOrderNo).forEach(x=>{ x.terms={...nt}; x.paymentSchedule=null; x.paymentScheduleReset=true; x.paymentScheduleResetImported=false; });
       rec.terms={...nt};
       try{ audit("order_terms","تعديل شروط السداد من بوليصة "+rec.policyNo+" — أمر بيع "+rec.saleOrderNo+": "+cur.cashPct+"%/"+cur.installments+"/"+cur.periodDays+" ← "+nt.cashPct+"%/"+nt.installments+"/"+nt.periodDays); }catch(e){}
       existing=orderTermsFor(rec.saleOrderNo);
@@ -18332,6 +18352,18 @@ function supRedistributeOrderInstallments(orderNo, opts){
     x.paymentScheduleReset=true;
     x.paymentScheduleResetImported=false;
   });
+  // لو في بوليصة مفتوحة في المحرر لنفس الأمر، صفّر الـ draft كمان علشان التواريخ القديمة ما تفضلش
+  try{
+    if(typeof draft!=='undefined'&&draft&&soKey(draft.saleOrderNo)===k){
+      draft.terms={cashPct:cp,installments:nt.installments,periodDays:nt.periodDays};
+      draft.paySchedule=null;
+      draft.payScheduleReset=true;
+      draft.payScheduleResetImported=false;
+      draft.payScheduleResetOrderNo=String(draft.saleOrderNo||'');
+      try{ if(typeof refreshTotals==='function') refreshTotals(); }catch(e){}
+      try{ if(typeof refreshPayScheduleView==='function') refreshPayScheduleView(); }catch(e){}
+    }
+  }catch(e){}
   try{ audit('order_terms','إعادة توزيع الأقساط — أمر بيع '+no+' ('+cp+'% نقدي · '+n+' قسط · '+days+' يوم · إجمالي '+fmt(total,2)+')'); }catch(e){}
   saveState();
   try{ renderSupply(); }catch(e){}
@@ -18448,8 +18480,27 @@ function supOpenOrderTermsEdit(orderNo){
     const k=soKey(no), old=orderTermsFor(no), nt={cashPct:cash, cashValue:r2(cashValue), creditValue:r2(creditValue), installments:creditValue>0?count:0, periodDays:creditValue>0?period:0};
     const u=(typeof curU==='function'&&curU())||null, at=new Date().toISOString();
     const hist=((old&&old.history)||[]).slice(-19); if(old) hist.push({at:old.updatedAt||'',by:old.updatedBy||'',cashPct:old.cashPct,installments:old.installments,periodDays:old.periodDays});
-    state.orderTerms[k]={...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist};
-    docs.forEach(x=>{x.terms={...nt};});
+    // آخر تعديل يفوز: احذف أي جدول سداد يدوي مخزّن حتى لا يتجاوز الشروط الجديدة
+    const merged={...(old||{}),...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist,paymentScheduleUpdatedAt:at};
+    delete merged.paymentSchedule;
+    delete merged.paymentScheduleOverrideOnly;
+    state.orderTerms[k]=merged;
+    docs.forEach(x=>{
+      x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
+      x.paymentSchedule=null;
+      x.paymentScheduleReset=true;
+      x.paymentScheduleResetImported=false;
+    });
+    // لو في بوليصة مفتوحة في المحرر لنفس الأمر، صفّر الـ draft كمان
+    try{
+      if(typeof draft!=='undefined'&&draft&&soKey(draft.saleOrderNo)===k){
+        draft.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
+        draft.paySchedule=null; draft.payScheduleReset=true; draft.payScheduleResetImported=false;
+        draft.payScheduleResetOrderNo=String(draft.saleOrderNo||'');
+        try{ if(typeof refreshTotals==='function') refreshTotals(); }catch(e){}
+        try{ if(typeof refreshPayScheduleView==='function') refreshPayScheduleView(); }catch(e){}
+      }
+    }catch(e){}
     audit('order_terms','تعديل شروط السداد من شاشة التجميع — أمر بيع '+no);
     saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع وإعادة توزيع الأقساط','ok'); return true;
   });
@@ -18466,7 +18517,29 @@ function supPreviewOrderTerms(no){
   const sum=r2(cashVal+credit);
   let html=`<div style="font-weight:700;margin-bottom:6px">معاينة التوزيع — نقدي ${fmt(cashVal,2)} · آجل ${fmt(credit,2)} · الإجمالي ${fmt(sum,2)}</div>`;
   if(Math.abs(sum-total)>0.01) html+=`<p style="color:var(--danger)">تنبيه: مجموع النقدي والآجل يختلف عن إجمالي الأمر بمقدار ${fmt(sum-total,2)}</p>`;
-  if(credit>0&&count>0&&base){let left=credit;html+='<div class="tbl-wrap"><table><thead><tr><th>القسط</th><th>القيمة</th><th>تاريخ الاستحقاق</th></tr></thead><tbody>';for(let i=1;i<=count;i++){const amount=i===count?r2(left):r2(credit/count);left=r2(left-amount);const due=supPaymentDateAdd(base,days*i);html+=`<tr><td>${i}</td><td class="num">${fmt(amount,2)}</td><td><span class="sup-due-date sup-due-future">${escapeHtml(supPaymentDateLabel(due))}</span></td></tr>`;}html+='</tbody></table></div>';}
+  // لو في جدول سداد يدوي محفوظ، نعرضه كمان جنب التوزيع المحسوب — علشان يبان الفرق الحقيقي بين النظري والمحفوظ
+  const savedOt=orderTermsFor(no);
+  const savedSched=savedOt&&Array.isArray(savedOt.paymentSchedule)?savedOt.paymentSchedule.filter(x=>(+x.no||0)>0):null;
+  if(credit>0&&count>0&&base){
+    let left=credit;
+    html+='<div class="tbl-wrap"><table><thead><tr><th>القسط</th><th>القيمة المتوقّعة</th><th>تاريخ الاستحقاق المتوقّع (حسب النسبة)</th>'+(savedSched&&savedSched.length?'<th style="background:#fef3c7">قيمة محفوظة</th><th style="background:#fef3c7">تاريخ محفوظ</th>':'')+'</tr></thead><tbody>';
+    for(let i=1;i<=count;i++){
+      const amount=i===count?r2(left):r2(credit/count);
+      left=r2(left-amount);
+      const due=supPaymentDateAdd(base,days*i);
+      const saved=savedSched?savedSched[i-1]:null;
+      const savedDiff=saved&&(Math.abs((+saved.amount||0)-amount)>0.5||String(saved.due||'').slice(0,10)!==String(due||'').slice(0,10));
+      html+=`<tr><td>${i}</td><td class="num">${fmt(amount,2)}</td><td><span class="sup-due-date sup-due-future">${escapeHtml(supPaymentDateLabel(due))}</span></td>`
+        +(savedSched&&savedSched.length?`<td class="num" style="background:${savedDiff?'#fef3c7':'#f8fafc'};color:${savedDiff?'#92400e':'#64748b'};font-weight:${savedDiff?'800':'600'}">${saved?fmt(+saved.amount||0,2):'—'}</td><td style="background:${savedDiff?'#fef3c7':'#f8fafc'};color:${savedDiff?'#92400e':'#64748b'};font-weight:${savedDiff?'800':'600'}">${saved&&saved.due?escapeHtml(supPaymentDateLabel(saved.due)):'—'}</td>`:'')
+        +`</tr>`;
+    }
+    html+='</tbody></table></div>';
+    if(savedSched&&savedSched.length){
+      const anyDiff=savedSched.some((s,i)=>{const amt=i===count-1?credit-savedSched.slice(0,i).reduce((a,x)=>a+(+x.amount||0),0):credit/count; const due=supPaymentDateAdd(base,days*(i+1)); return Math.abs((+s.amount||0)-amt)>0.5||String(s.due||'').slice(0,10)!==String(due||'').slice(0,10);});
+      if(anyDiff) html+='<p style="margin-top:8px;padding:8px 10px;background:#fef3c7;border:1px solid #d4a017;border-radius:7px;color:#92400e;font-size:12px"><b>⚠ ملاحظة:</b> الأعمدة الصفراء تبيّن الجدول المحفوظ على الأمر — مختلف عن التوزيع النظري حسب النسبة والفترة. الحفظ هنا هيعيد ضبط الأقساط حسب النسبة. لو عايز تحتفظ بالتواريخ/القيم المحفوظة، ارجع من زرار إلغاء.</p>';
+      else html+='<p style="margin-top:8px;color:var(--ok);font-size:12px">✓ الجدول المحفوظ مطابق للتوزيع النظري.</p>';
+    }
+  }
   else if(credit>0) html+='<p style="color:var(--warn)">يلزم وجود تاريخ أساس من البوالص المرتبطة حتى نحسب تواريخ الأقساط.</p>';
   else html+='<p style="color:var(--ok)">السداد نقدي بالكامل — لا توجد أقساط.</p>';
   el.innerHTML=html;
@@ -25522,7 +25595,7 @@ function siCell(r,c){
     case "order": return r.orderNo; case "customer": return partyWithCode("customers",r.customer); case "date": return r.date||"—"; case "total": return m(r.total);
     case "due": return r.due||"—"; case "label": {
       const inst=+r.installment||0;
-      if(inst===0) return "مستحق (كاش)";
+      if(inst===0) return "مستحق — كاش";
       // 1) المدة من شروط الأمر المحفوظة (زي بيانات التوريد) × رقم القسط
       let days=0;
       try{
@@ -25539,7 +25612,6 @@ function siCell(r,c){
             if(!isNaN(d1)&&!isNaN(d2)){
               const raw=Math.round((d2-d1)/86400000);
               if(raw>0){
-                // التقريب لأقرب مدة قياسية: 30 / 45 / 60 / 90
                 const base=[30,45,60,90];
                 const steps=[];
                 base.forEach(b=>{ for(let k=1;k<=12;k++) steps.push(b*k); });
@@ -25550,7 +25622,8 @@ function siCell(r,c){
           }
         }catch(e){}
       }
-      return days>0?"مستحق ("+days+" يوم)":"مستحق (آجل)";
+      // استخدم فاصلة بدل الأقواس — الأقواس بتتعكس في الـ RTL أثناء الطباعة
+      return days>0?("مستحق — "+days+" يوم"):"مستحق — آجل";
     } case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":"-"; case "lateRemaining": return dash(r.lateRemaining);
     case "status": {
