@@ -5203,15 +5203,19 @@ async function logout(){ if(!await askConfirm("تسجيل الخروج؟")) retu
 const IDLE_MS = 15*60*1000;
 let lastActivity = Date.now();
 ["click","keydown","mousemove","touchstart","scroll","pointerdown","wheel"].forEach(ev=>document.addEventListener(ev,()=>{ lastActivity=Date.now(); },{passive:true}));
+// مستخدمو الاعتماد: حد خمول أطول علشان الجرس والإشعارات تفضل شغالة (غيّر SA_IDLE_MS لو عايز مدة تانية)
+const SA_IDLE_MS = 12*60*60*1000;
+function igIdleMs(){ try{ if(curU()&&(saMiniAllowed()||(acctCan()&&!acctSkip()))) return SA_IDLE_MS; }catch(e){} return IDLE_MS; }
+function igIdleTxt(){ return igIdleMs()===SA_IDLE_MS?"12 ساعة":"15 دقيقة"; }
 setInterval(()=>{
   if(!currentUser){ idleWarn(0); return; }
-  const idle=Date.now()-lastActivity;
-  if(idle>IDLE_MS){ idleWarn(0); doLogout("انتهت الجلسة بعد 15 دقيقة من عدم النشاط"); }
-  else if(idle>IDLE_MS-60000) idleWarn(Math.ceil((IDLE_MS-idle)/1000));
+  const idle=Date.now()-lastActivity, lim=igIdleMs();
+  if(idle>lim){ idleWarn(0); doLogout("انتهت الجلسة بعد "+igIdleTxt()+" من عدم النشاط"); }
+  else if(idle>lim-60000) idleWarn(Math.ceil((lim-idle)/1000));
   else idleWarn(0);
 },1000);
 // المتصفح بيبطّئ المؤقتات في التبويب الخلفي: أول ما المستخدم يرجع للتبويب نفحص الخمول فورًا
-document.addEventListener("visibilitychange",()=>{ if(!document.hidden&&currentUser&&Date.now()-lastActivity>IDLE_MS){ idleWarn(0); doLogout("انتهت الجلسة بعد 15 دقيقة من عدم النشاط"); } });
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden&&currentUser&&Date.now()-lastActivity>igIdleMs()){ idleWarn(0); doLogout("انتهت الجلسة بعد "+igIdleTxt()+" من عدم النشاط"); } });
 
 function roleLabel(u){ return u.role==="admin" ? "أدمن" : ((ROLE_PRESETS[u.role]||{}).label||"مخصّص"); }
 function updateTopbarUser(){
@@ -20285,6 +20289,110 @@ function saFloatTick(){
   }catch(e){ console.warn('saFloat',e); }
 }
 setInterval(saFloatTick,4000); setTimeout(saFloatTick,2000);
+
+// ===== جرس الاعتماد في شاشة الدخول =====
+// أوامر البيع مصدرها Supabase وبتتحمّل بعد تسجيل الدخول بس (مش بتتخزّن في المتصفح)، فمش ممكن نعرف طلبات جديدة وإحنا في شاشة الدخول.
+// الحل: وإحنا جوه النظام بنخزّن «آخر عدد» طلبات اعتماد (رقم بس، من غير أي اسم عميل أو مبلغ) لكل مستخدم في المتصفح،
+// وفي شاشة الدخول بنعرض الجرس بالعدد ده لما رقم المستخدم + كلمة المرور يطابقوا حساب معروف على الجهاز (نفس شرط أيقونات الإشعارات الشمال).
+// الضغط على الجرس = دخول مباشر وفتح شاشة الاعتماد.
+(function(){
+  const SK=n=>'irongate_sa_snap_'+n;
+  function snapGet(no){ try{ return JSON.parse(localStorage.getItem(SK(no))||'null'); }catch(e){ return null; } }
+  function snapSave(){
+    try{
+      const u=curU(); if(!u) return;
+      const fab=document.getElementById('saFab');
+      if(!fab||fab.style.display==='none'){ localStorage.removeItem(SK(u.no)); return; }
+      localStorage.setItem(SK(u.no),JSON.stringify({n:+fab.getAttribute('data-n')||0,t:Date.now()}));
+    }catch(e){}
+  }
+  const r0=saFloatRender;
+  saFloatRender=function(){ const x=r0.apply(this,arguments); snapSave(); return x; };
+
+  if(!document.getElementById('saLoginBellCss')){
+    const s=document.createElement('style'); s.id='saLoginBellCss';
+    s.textContent='#saLoginBell{position:fixed;right:18px;top:18px;z-index:120;width:50px;height:50px;border-radius:50%;padding:0;font-size:22px;cursor:pointer;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,.1);border:1px solid rgba(204,172,119,.55);color:#fff;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 20px rgba(0,0,0,.45);-webkit-tap-highlight-color:transparent;transition:transform .15s ease,border-color .15s ease}'
+      +'#saLoginBell:hover{transform:scale(1.06);border-color:#EDD69E}#saLoginBell:active{transform:scale(.94)}'
+      +'#saLoginBell .slb-n{position:absolute;top:-3px;right:-3px;background:#e0433a;color:#fff;font-size:11px;font-weight:800;min-width:19px;height:19px;border-radius:10px;display:none;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 0 2px #120f08}'
+      +'#saLoginBell.has-n{animation:slbRing 2.4s ease-in-out infinite}'
+      +'@keyframes slbRing{0%,60%,100%{transform:rotate(0)}65%{transform:rotate(14deg)}70%{transform:rotate(-12deg)}75%{transform:rotate(9deg)}80%{transform:rotate(-6deg)}85%{transform:rotate(0)}}'
+      +'@media (max-width:480px){#saLoginBell{right:14px;top:14px;width:44px;height:44px;font-size:19px}}'
+      +'@media (prefers-reduced-motion:reduce){#saLoginBell.has-n{animation:none}}';
+    (document.head||document.documentElement).appendChild(s);
+  }
+  function ago(t){
+    const m=Math.max(0,Math.round((Date.now()-t)/60000));
+    if(m<1) return 'دلوقتي'; if(m<60) return 'من '+m+' دقيقة';
+    const h=Math.round(m/60); if(h<24) return 'من '+h+' ساعة';
+    return 'من '+Math.round(h/24)+' يوم';
+  }
+  function bellEl(){
+    let b=document.getElementById('saLoginBell');
+    if(!b){
+      b=document.createElement('button'); b.id='saLoginBell'; b.type='button';
+      b.setAttribute('aria-label','طلبات الاعتماد'); b.onclick=window.saLoginBellGo;
+      b.innerHTML='🔔<span class="slb-n" id="saLoginBellN">0</span>';
+      document.body.appendChild(b);
+    }
+    return b;
+  }
+  window.saLoginBellGo=function(){
+    try{ sessionStorage.setItem('ig_sa_go',String(Date.now())); }catch(e){}
+    const p=document.getElementById('loginPass');
+    if(p&&p.value){ doLogin(); }
+    else{ try{ toast('اكتب كلمة المرور وادخل لعرض طلبات الاعتماد','ok'); }catch(e){} if(p) p.focus(); }
+  };
+  function sync(){
+    try{
+      const lg=document.getElementById('login');
+      const vis=!!(lg&&lg.style.display!=='none'&&getComputedStyle(lg).visibility!=='hidden');
+      let sn=null;
+      if(vis){ const who=extNotifIdentify(); if(who) sn=snapGet(who.no); }
+      const b=document.getElementById('saLoginBell');
+      if(!sn){ if(b) b.style.display='none'; return; }
+      const el=bellEl(), n=+sn.n||0, nb=document.getElementById('saLoginBellN');
+      el.style.display='flex';
+      el.classList.toggle('has-n',n>0);
+      nb.textContent=n>99?'99+':String(n); nb.style.display=n?'flex':'none';
+      el.title=(n?('طلبات اعتماد بانتظارك: '+n):'لا توجد طلبات اعتماد')+' — آخر تحديث '+ago(sn.t||0)+(sn.srv?'':' (ادخل لتحديث العدد)');
+    }catch(e){}
+  }
+  ['loginUserNo','loginPass'].forEach(id=>{ const el=document.getElementById(id); if(el) ['input','change','keyup','blur'].forEach(ev=>el.addEventListener(ev,sync)); });
+  setInterval(sync,600);
+  // عدّاد لحظي من السيرفر (دالة approval_pending_count — سكربت irongate_approval_bell.sql): بيتسأل كل 20 ثانية وإنت في شاشة الدخول
+  let lastSrv=-1, srvBusy=false, srvFor='';
+  async function srvPoll(){
+    if(srvBusy) return; srvBusy=true;
+    try{
+      const lg=document.getElementById('login');
+      if(!(lg&&lg.style.display!=='none'&&getComputedStyle(lg).visibility!=='hidden')) return;
+      const who=extNotifIdentify(); if(!who||!snapGet(who.no)) return;
+      if(srvFor!==String(who.no)){ srvFor=String(who.no); lastSrv=-1; }
+      const r=await sb.rpc('approval_pending_count',{p_company:CUR_CO,p_user_no:who.no});
+      if(r.error||r.data==null) return;
+      const n=+(r.data.total!=null?r.data.total:r.data)||0;
+      const sn=snapGet(who.no)||{};
+      try{ localStorage.setItem(SK(who.no),JSON.stringify({n:n,t:Date.now(),srv:1})); }catch(e){}
+      if(lastSrv>=0&&n>lastSrv){
+        try{ saBell(); }catch(e){}
+        try{ if('Notification' in window&&Notification.permission==='granted'&&document.hidden) new Notification('طلب اعتماد جديد',{body:'سجّل الدخول لعرض التفاصيل',tag:'ig-sa-login',renotify:true,dir:'rtl',lang:'ar'}); }catch(e){}
+      }
+      lastSrv=n; sync();
+    }catch(e){} finally{ srvBusy=false; }
+  }
+  setInterval(srvPoll,20000); setTimeout(srvPoll,1500);
+  ['loginUserNo','loginPass'].forEach(id=>{ const el=document.getElementById(id); if(el) el.addEventListener('change',()=>setTimeout(srvPoll,200)); });
+  // بعد الدخول من الجرس: افتح شاشة الاعتماد تلقائيًا
+  const e0=enterApp;
+  enterApp=function(u,restored){
+    const r=e0.apply(this,arguments);
+    try{
+      const t=+sessionStorage.getItem('ig_sa_go')||0; sessionStorage.removeItem('ig_sa_go');
+      if(t&&Date.now()-t<120000) setTimeout(()=>{ try{ saFloatRender(); saFabGo(); }catch(e){} },900);
+    }catch(e){}
+    return r;
+  };
+})();
 
 // ===== إشعار صاحب الطلب: لما أمر البيع يتعتمد (نهائيًا) أو يترفض، ييجي في نفس الجرس =====
 // الحساب بيتم من سجل الاعتماد نفسه (appr.log) فبيشتغل على أي جهاز بدون جداول جديدة. حالة «مقروء» محفوظة في المتصفح لكل مستخدم.
