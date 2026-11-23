@@ -18614,22 +18614,38 @@ function supPreviewOrderTerms(no){
   // لو في جدول سداد يدوي محفوظ، نعرضه كمان جنب التوزيع المحسوب — علشان يبان الفرق الحقيقي بين النظري والمحفوظ
   const savedOt=orderTermsFor(no);
   const savedSched=savedOt&&Array.isArray(savedOt.paymentSchedule)?savedOt.paymentSchedule.filter(x=>(+x.no||0)>0):null;
-  if(credit>0&&count>0&&base){
-    let left=credit;
-    html+='<div class="tbl-wrap"><table><thead><tr><th>القسط</th><th>القيمة المتوقّعة</th><th>تاريخ الاستحقاق المتوقّع (حسب النسبة)</th>'+(savedSched&&savedSched.length?'<th style="background:#fef3c7">قيمة محفوظة</th><th style="background:#fef3c7">تاريخ محفوظ</th>':'')+'</tr></thead><tbody>';
-    for(let i=1;i<=count;i++){
-      const amount=i===count?r2(left):r2(credit/count);
-      left=r2(left-amount);
-      const due=supPaymentDateAdd(base,days*i);
-      const saved=savedSched?savedSched[i-1]:null;
-      const savedDiff=saved&&(Math.abs((+saved.amount||0)-amount)>0.5||String(saved.due||'').slice(0,10)!==String(due||'').slice(0,10));
-      html+=`<tr><td>${i}</td><td class="num">${fmt(amount,2)}</td><td><span class="sup-due-date sup-due-future">${escapeHtml(supPaymentDateLabel(due))}</span></td>`
-        +(savedSched&&savedSched.length?`<td class="num" style="background:${savedDiff?'#fef3c7':'#f8fafc'};color:${savedDiff?'#92400e':'#64748b'};font-weight:${savedDiff?'800':'600'}">${saved?fmt(+saved.amount||0,2):'—'}</td><td style="background:${savedDiff?'#fef3c7':'#f8fafc'};color:${savedDiff?'#92400e':'#64748b'};font-weight:${savedDiff?'800':'600'}">${saved&&saved.due?escapeHtml(supPaymentDateLabel(saved.due)):'—'}</td>`:'')
-        +`</tr>`;
+  const savedAll=savedOt&&Array.isArray(savedOt.paymentSchedule)?savedOt.paymentSchedule:null;
+  const isCashRow=x=>(+x.no||0)===0||x.id==='cash';
+  const hasSaved=!!(savedAll&&savedAll.length);
+  const pctOf=v=>sum>0?String(+(Math.round(v/sum*10000)/100).toFixed(2))+'%':'—';
+  if((cashVal>0||credit>0)&&base&&(credit<=0||count>0)){
+    // صفوف التوزيع: النقدي أولًا ثم الأقساط، وكل صف بنسبته
+    const rows=[];
+    if(cashVal>0||credit<=0){
+      const sc=hasSaved?savedAll.filter(isCashRow):[];
+      rows.push({label:'نقدي',cash:true,amount:cashVal,due:base,
+        saved:sc.length?{amount:r2(sc.reduce((a,x)=>a+(+x.amount||0),0)),due:String(sc[0].due||sc[0].date||'')}:null});
     }
-    html+='</tbody></table></div>';
-    if(savedSched&&savedSched.length){
-      const anyDiff=savedSched.some((s,i)=>{const amt=i===count-1?credit-savedSched.slice(0,i).reduce((a,x)=>a+(+x.amount||0),0):credit/count; const due=supPaymentDateAdd(base,days*(i+1)); return Math.abs((+s.amount||0)-amt)>0.5||String(s.due||'').slice(0,10)!==String(due||'').slice(0,10);});
+    if(credit>0&&count>0){
+      let left=credit;
+      for(let i=1;i<=count;i++){
+        const amount=i===count?r2(left):r2(credit/count);
+        left=r2(left-amount);
+        const sv=savedSched?savedSched[i-1]:null;
+        rows.push({label:'قسط '+i,cash:false,amount,due:supPaymentDateAdd(base,days*i),saved:sv?{amount:+sv.amount||0,due:String(sv.due||sv.date||'')}:null});
+      }
+    }
+    rows.forEach(r=>{ r.diff=hasSaved&&(!r.saved||Math.abs(r.saved.amount-r.amount)>0.5||String(r.saved.due||'').slice(0,10)!==String(r.due||'').slice(0,10)); });
+    const stl=d=>`background:${d?'#fef3c7':'#f8fafc'};color:${d?'#92400e':'#64748b'};font-weight:${d?'800':'600'}`;
+    html+='<div class="tbl-wrap"><table><thead><tr><th>القسط</th><th>النسبة</th><th>القيمة المتوقّعة</th><th>تاريخ الاستحقاق المتوقّع (حسب النسبة)</th>'+(hasSaved?'<th style="background:#fef3c7">قيمة محفوظة</th><th style="background:#fef3c7">تاريخ محفوظ</th>':'')+'</tr></thead><tbody>';
+    rows.forEach(r=>{
+      html+=`<tr${r.cash?' style="background:#f0fdf4"':''}><td><b>${r.label}</b></td><td class="num"><b>${pctOf(r.amount)}</b></td><td class="num">${fmt(r.amount,2)}</td><td><span class="sup-due-date sup-due-future">${escapeHtml(supPaymentDateLabel(r.due))}</span></td>`
+        +(hasSaved?`<td class="num" style="${stl(r.diff)}">${r.saved?fmt(r.saved.amount,2)+' <small>('+pctOf(r.saved.amount)+')</small>':'—'}</td><td style="${stl(r.diff)}">${r.saved&&r.saved.due?escapeHtml(supPaymentDateLabel(r.saved.due)):'—'}</td>`:'')
+        +`</tr>`;
+    });
+    html+=`</tbody><tfoot><tr style="font-weight:800"><td>الإجمالي</td><td class="num">${pctOf(sum)}</td><td class="num">${fmt(sum,2)}</td><td></td>${hasSaved?'<td></td><td></td>':''}</tr></tfoot></table></div>`;
+    if(hasSaved){
+      const anyDiff=rows.some(r=>r.diff);
       if(anyDiff) html+='<p style="margin-top:8px;padding:8px 10px;background:#fef3c7;border:1px solid #d4a017;border-radius:7px;color:#92400e;font-size:12px"><b>⚠ ملاحظة:</b> الأعمدة الصفراء تبيّن الجدول المحفوظ على الأمر — مختلف عن التوزيع النظري حسب النسبة والفترة. الحفظ هنا هيعيد ضبط الأقساط حسب النسبة. لو عايز تحتفظ بالتواريخ/القيم المحفوظة، ارجع من زرار إلغاء.</p>';
       else html+='<p style="margin-top:8px;color:var(--ok);font-size:12px">✓ الجدول المحفوظ مطابق للتوزيع النظري.</p>';
     }
@@ -18652,6 +18668,28 @@ function supSyncTermsBtn(){
 function supStripPayNote(n){ return String(n||"").replace(PAY_NOTE_RE,"").replace(/\s*\|\s*\|\s*/g," | ").replace(/^\s*\|\s*|\s*\|\s*$/g,"").trim(); }
 // نص السداد من آخر شروط على مستوى أمر البيع (وإلا من الشروط الاحتياطية)
 function supOrderPayNote(orderNo,fb){
+  // جدول سداد يدوي: النسبة من المبالغ والمدة من فرق التواريخ (periodDays بيبقى 0 بعد التعديل اليدوي)
+  try{
+    const mo=orderNo?orderTermsFor(orderNo):null;
+    if(mo&&Array.isArray(mo.paymentSchedule)&&mo.paymentSchedule.length){
+      const rows=mo.paymentSchedule.filter(x=>(+x.amount||0)>0), tot=rows.reduce((a,x)=>a+(+x.amount||0),0);
+      if(tot>0){
+        const pf2=v=>"\u200E"+String(+(Math.round(v/tot*10000)/100).toFixed(2))+"%\u200E";
+        const cashRow=rows.find(x=>(+x.no||0)===0||x.id==="cash");
+        const dOf=x=>String((x&&(x.due||x.date))||"");
+        let base=cashRow?dOf(cashRow):"";
+        if(!base){ try{ base=orderDocs(orderNo).map(x=>x.date||"").filter(Boolean).sort().pop()||""; }catch(e){} }
+        const inst=rows.filter(x=>x!==cashRow);
+        const parts=[]; if(cashRow) parts.push(pf2(+cashRow.amount)+" كاش");
+        inst.forEach((x,i)=>{
+          let d=null; if(base&&dOf(x)) d=Math.round((new Date(dOf(x))-new Date(base))/864e5);
+          if(!(d>=0)){ const pd=+mo.periodDays||0; d=pd>0?pd*((+x.no||i+1)):null; }
+          parts.push(pf2(+x.amount)+" "+(inst.length===1?"أجل":"بعد")+(d!=null&&d>=0?" "+d+" يوم":""));
+        });
+        if(parts.length) return parts.join(" - ");
+      }
+    }
+  }catch(e){}
   let t=null; try{ const o=orderNo?orderTermsFor(orderNo):null; if(o&&o.cashPct!==""&&o.cashPct!=null) t=o; }catch(e){}
   if(!t&&fb&&fb.cashPct!==""&&fb.cashPct!=null) t=fb;
   if(!t||!Number.isFinite(+t.cashPct)) return "";
