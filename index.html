@@ -15982,7 +15982,8 @@ function viewShipments(){
   </details>`}
 
   <div class="card ig-items-card"><div class="head"><div><h3>الأصناف <span class="count" id="itemsCountTag">${d.items.length}</span></h3><small class="ig-section-hint">${SI_MODE?"اسحب حافة عنوان أي عمود لتكبيره أو تصغيره (دبل كليك = الرجوع للأصل)":"أسعار موحّدة أو تعديل كل صنف بشكل مستقل"}</small></div>
-    <button class="btn sm" style="margin-right:auto" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
+    <button class="btn ghost sm" type="button" onclick="resetItemsColumns()" title="إظهار كل الأعمدة (المصنع، الصنف، كمية التوريد، الوزن الفعلي…) ومسح أي إخفاء/ترتيب سابق" style="margin-right:auto;background:#fff6dc;color:#92400e;border-color:#e6c36b;font-weight:800">↺ عرض كل الأعمدة</button>
+    <button class="btn sm" onclick="addRow()" ${viewOnly?"disabled":""}>+ إضافة صنف</button></div>
     <div class="tbl-wrap" style="border:none;border-radius:0"><table class="items" data-rs-key="shipment-item-lines"${SI_MODE?' data-rs-default-hide="المصنع|حالة التعتيق|كمية التوريد|الفرق"':""}>
       <thead>
         <tr class="ig-bulk-price-row"><th colspan="${SI_MODE?10:9}"></th>${showBuy("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkBuyPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('buyPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر الشراء على كل الأصناف" aria-label="تطبيق سعر الشراء على كل الأصناف">✓</button></div></div></th>`:""}${showSell("shipments")?`<th><div class="ig-bulk-price"><div><input class="inp num" id="bulkSellPrice" type="number" min="0" step="0.01" placeholder="السعر" ${viewOnly?"disabled":""}><button type="button" class="ig-apply-price" onclick="applyBulkPrice('sellPrice')" ${viewOnly?"disabled":""} title="تطبيق سعر البيع على كل الأصناف" aria-label="تطبيق سعر البيع على كل الأصناف">✓</button></div></div></th><th colspan="6"></th>`:""}<th colspan="2"></th></tr>
@@ -16104,7 +16105,7 @@ function itemRow(it,i){
   const v=x=>escapeAttr(x??"");
   // السعر دايمًا لوحدة الصنف الافتراضية حتى لو اتغيّرت وحدة عرض الكمية — بنوضّحها تحت الخانة
   let duN=""; try{ duN=it.diameter?(iuDefaultUnitName(it.diameter)||""):""; }catch(_){}
-  const pu=duN?`<small class="ig-pu">لكل ${escapeHtml(duN)}</small>`:"", puT=duN?` title="السعر لكل ${escapeAttr(duN)} (الوحدة الافتراضية للصنف)"`:"";
+  const pu="", puT=duN?` title="السعر لكل ${escapeAttr(duN)} (الوحدة الافتراضية للصنف)"`:"";
   return `<tr>
     <td>${i+1}</td>
     <td><select class="inp" data-k="factory" ${ro} onchange="setI(${i},'factory',this.value)">${opts(state.factories,it.factory,"المصنع")}</select></td>
@@ -16517,6 +16518,26 @@ function addRow(){
   const tr=document.querySelector("#itemsBody tr:last-child"), el=tr&&tr.querySelector("select:not([disabled]),input:not([disabled])");
   if(el){ el.focus(); try{ el.scrollIntoView({block:"nearest",behavior:"smooth"}); }catch(_){} }
 }
+// إعادة ضبط أعمدة جدول الأصناف — يمسح أي إخفاء/ترتيب/عرض مخزّن ويعرض كل الأعمدة من جديد
+function resetItemsColumns(){
+  try{
+    const KC="colCfg_v2";
+    let cfg={}; try{ cfg=JSON.parse(localStorage.getItem(KC)||"{}"); }catch(e){}
+    delete cfg["shipment-item-lines"];
+    try{ localStorage.setItem(KC,JSON.stringify(cfg)); }catch(e){}
+    const t=document.querySelector('table.items[data-rs-key="shipment-item-lines"]');
+    if(t){
+      const cg=t.querySelector(":scope>colgroup.rs-cg"); if(cg) cg.remove();
+      t.classList.remove("rs-fixed"); t.style.width="";
+      try{ delete t._rs; }catch(e){}
+      t.querySelectorAll("th,td").forEach(c=>{ c.style.display=""; c.style.visibility=""; });
+    }
+    try{ if(typeof repaintItems==="function") repaintItems(); }catch(e){}
+    try{ if(typeof refreshTotals==="function") refreshTotals(); }catch(e){}
+    toast("✓ تم إظهار كل الأعمدة — لو لسه فيه حاجة ناقصة اعمل refresh للصفحة","ok");
+  }catch(e){ toast("تعذّر إعادة الضبط: "+(e&&e.message||e),"err"); }
+}
+if(typeof window!=="undefined") window.resetItemsColumns=resetItemsColumns;
 function copyRow(i){
   if(viewOnly||!draft.items[i]) return;
   const copy=JSON.parse(JSON.stringify(draft.items[i]));
