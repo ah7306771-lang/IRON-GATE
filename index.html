@@ -20346,6 +20346,28 @@ function saApplyApprove(o,note){
   o.appr.log.push(e); o.appr.level+=1; if(o.appr.level>=Math.max(1,c.levels.length)) o.appr.status='approved';
   if(o.appr.status==='approved'&&acctSkip()){ acctLog(o,'approve','تلقائي مع اعتماد المبيعات — السماح بتعدي اعتماد الحسابات'); o.acct.status='approved'; o.acct.auto=true; }
   if(soDraft&&soLoadedId===o.id) soDraft.appr=JSON.parse(JSON.stringify(o.appr));
+  // تفعيل تلقائي لمرحلة التتبع الأولى (تم تأكيد أمر البيع) عند الاعتماد النهائي
+  if(o.appr.status==='approved') try{ igTrackAutoAdvanceOnApproval(o,u); }catch(_){}
+}
+// يضبط مرحلة التتبع لأمر البيع تلقائيًا بعد الاعتماد النهائي:
+// مرحلة 0 (تم تأكيد أمر البيع) → ثم مرحلة 1 (جاري تجهيز الطلب)
+function igTrackAutoAdvanceOnApproval(order, user){
+  if(!order) return;
+  const t=(typeof igTrackData==="function")?igTrackData(order):(order.tracking=order.tracking||{stage:-1,history:[]});
+  if(!t) return;
+  const cur=Number.isFinite(+t.stage)?+t.stage:-1;
+  if(cur>=1) return;   // المرحلة بدأت فعلًا ووصلت لـ "جاري التجهيز" أو بعدها — ما نلمسش
+  if(!Array.isArray(t.history)) t.history=[];
+  const now=new Date().toISOString();
+  const by=(user&&user.no)||null, nm=(user&&user.name)||'';
+  // أضف المرحلة 0 لو لسه مش مُسجّلة
+  if(cur<0){
+    t.history.push({stage:0, at:now, by, name:nm, note:'بدء التتبع تلقائيًا بعد اعتماد أمر البيع', auto:true});
+  }
+  // أضف المرحلة 1 (جاري تجهيز الطلب)
+  t.history.push({stage:1, at:now, by, name:nm, note:'جاري تجهيز الطلب تلقائيًا بعد الاعتماد', auto:true});
+  t.stage=1;
+  try{ audit('shipment_tracking','بدء تتبع أمر البيع '+(order.orderNo||order.id)+' تلقائيًا (المراحل 0 و 1) بعد الاعتماد'); }catch(_){}
 }
 function saApplyReject(o,note){
   const u=curU(); o.appr.status='rejected'; o.appr.log.push({act:'reject',lv:o.appr.level+1,by:u.no,name:u.name,at:new Date().toISOString(),note});
@@ -21720,6 +21742,12 @@ function soSave(){
     state.saleOrders.push(rec); soLoadedId = rec.id;
     const n = parseInt(rec.orderNo,10); if(!isNaN(n) && n>=state.soNextNum) state.soNextNum = n+1;
   }
+  // تفعيل تلقائي لمرحلة التتبع الأولى (تم تأكيد أمر البيع) لو الأمر معتمد (أو لو دورة الاعتماد مش مفعّلة)
+  try{
+    const apprEnabled=(typeof soApprCfg==="function")?soApprCfg().enabled:false;
+    const isApproved=!apprEnabled || (rec.appr&&rec.appr.status==='approved');
+    if(isApproved) igTrackAutoAdvanceOnApproval(rec, curU());
+  }catch(_){}
   igRepCascade(rec);
   soDraft._termsEdited=false; soDraft.date=rec.date; saveState(); soStatus("تم الحفظ ✓"); if(typeof igSoReset==="function") igSoReset(); go("saleOrder");
 }
