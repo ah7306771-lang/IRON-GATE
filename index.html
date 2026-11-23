@@ -18575,18 +18575,29 @@ function supOpenOrderTermsEdit(orderNo){
     // تعديل الشروط: يحدّث النسبة/العدد/الفترة فقط، ما يمسّش جدول السداد اليدوي
     // (الجدول اللي تحت في البوليصة = الأساس). علشان تمسح الجدول اليدوي استخدم زرار 🔁 إعادة توزيع صراحةً.
     const merged={...(old||{}),...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist};
+    // لو الجدول المحفوظ على الأمر مختلف عن التوزيع حسب النسبة والفترة (تواريخ/أيام قديمة): نمسحه ونخلي الجدول يتحسب من الشروط ومن تاريخ البوليصة
+    let staleSched=false;
+    try{
+      const sv=Array.isArray(merged.paymentSchedule)?merged.paymentSchedule.filter(x=>(+x.no||0)>0):null;
+      const baseD=orderLastDate(no);
+      if(sv&&sv.length&&baseD&&nt.installments>0){
+        staleSched = sv.length!==nt.installments || sv.some((x,i)=>String(x.due||x.date||'').slice(0,10)!==String(supPaymentDateAdd(baseD,nt.periodDays*(i+1))||'').slice(0,10));
+      }
+    }catch(e){}
+    if(staleSched){ delete merged.paymentSchedule; delete merged.paymentScheduleOverrideOnly; merged.paymentScheduleUpdatedAt=at; }
     state.orderTerms[k]=merged;
-    docs.forEach(x=>{ x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays}; });
+    docs.forEach(x=>{ x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays}; if(staleSched){ x.paymentSchedule=null; x.paymentScheduleReset=true; x.paymentScheduleResetImported=false; } });
     // لو في بوليصة مفتوحة في المحرر لنفس الأمر، حدّث شروطها فقط (من غير ما تلمس جدولها)
     try{
       if(typeof draft!=='undefined'&&draft&&soKey(draft.saleOrderNo)===k){
+        if(staleSched){ draft.paySchedule=null; draft.payScheduleReset=true; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo=String(draft.saleOrderNo||''); }
         draft.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
         try{ if(typeof refreshTotals==='function') refreshTotals(); }catch(e){}
         try{ if(typeof refreshPayScheduleView==='function') refreshPayScheduleView(); }catch(e){}
       }
     }catch(e){}
     audit('order_terms','تعديل شروط السداد من شاشة التجميع — أمر بيع '+no);
-    saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع (الجدول اليدوي محفوظ كما هو)','ok'); return true;
+    saveState(); renderSupply(); toast(staleSched?'تم تحديث الشروط وإعادة حساب الأقساط والتواريخ حسب الفترة':'تم تحديث شروط أمر البيع (الجدول اليدوي محفوظ كما هو)','ok'); return true;
   });
   supPreviewOrderTerms(no);
 }
