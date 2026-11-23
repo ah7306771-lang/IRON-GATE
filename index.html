@@ -17035,14 +17035,9 @@ function igItemExtras(it){ const o={}; Object.keys(it||{}).forEach(k=>{ if(!IG_I
 function toDraft(r){
   return {policyNo:r.policyNo,date:r.date,supplier:r.supplier,customer:r.customer,company:r.company||"",site:r.site||"",warehouseId:String(r.warehouseId||whDefaultId()),trackingSourceOrderId:r.trackingSourceOrderId||"",trackingSourceOrderNo:r.trackingSourceOrderNo||"",trackingSource:r.trackingSource?JSON.parse(JSON.stringify(r.trackingSource)):null,directIssue:!!r.directIssue,deliveryNoteId:r.deliveryNoteId||"",directDeliveryId:r.directDeliveryId||"",repCode:r.repCode||"",repName:r.repName||"",deptCode:r.deptCode||"",glEntryId:r.glEntryId||null,glPostedAt:r.glPostedAt||null,glPostedBy:r.glPostedBy||null,
     saleOrderId:r.saleOrderId||"", saleOrderNo:r.saleOrderNo||"",
-    paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);
-      /* لو شروط الأمر فيها فترة القسط 0 والبوليصة مكتوب عليها فترة فعلية: ناخد من البوليصة ونتجاهل الجدول القديم المحفوظ */
-      if(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0) return null;
-      const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
-    payScheduleReset:!!r.paymentScheduleReset||(()=>{const ot=orderTermsFor(r.saleOrderNo);return !!(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0);})(), payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
-    terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo);
-      if(ot&&(+ot.periodDays||0)===0&&r.terms&&(+r.terms.periodDays||0)>0&&r.terms.cashPct!=null) return {cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays};
-      if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
+    paySchedule:(()=>{const ot=orderTermsFor(r.saleOrderNo);const ps=(ot&&ot.paymentSchedule)||r.paymentSchedule;return Array.isArray(ps)?{orderNo:r.saleOrderNo,rows:JSON.parse(JSON.stringify(ps))}:null;})(),
+    payScheduleReset:!!r.paymentScheduleReset, payScheduleResetImported:!!r.paymentScheduleResetImported, payScheduleResetOrderNo:r.saleOrderNo||"",
+    terms:(()=>{ const ot=orderTermsFor(r.saleOrderNo); if(ot) return {cashPct:ot.cashPct,installments:ot.installments,periodDays:ot.periodDays};
       return (r.terms&&r.terms.cashPct!=null)?{cashPct:r.terms.cashPct,installments:r.terms.installments||1,periodDays:r.terms.periodDays}:{cashPct:0,installments:0,periodDays:0}; })(),
     applyDiscount:r.applyDiscount,
     applyVat: r.applyVat !== false,
@@ -18575,29 +18570,18 @@ function supOpenOrderTermsEdit(orderNo){
     // تعديل الشروط: يحدّث النسبة/العدد/الفترة فقط، ما يمسّش جدول السداد اليدوي
     // (الجدول اللي تحت في البوليصة = الأساس). علشان تمسح الجدول اليدوي استخدم زرار 🔁 إعادة توزيع صراحةً.
     const merged={...(old||{}),...nt,updatedAt:at,updatedBy:u?u.name:'',source:'grouped-edit',history:hist};
-    // لو الجدول المحفوظ على الأمر مختلف عن التوزيع حسب النسبة والفترة (تواريخ/أيام قديمة): نمسحه ونخلي الجدول يتحسب من الشروط ومن تاريخ البوليصة
-    let staleSched=false;
-    try{
-      const sv=Array.isArray(merged.paymentSchedule)?merged.paymentSchedule.filter(x=>(+x.no||0)>0):null;
-      const baseD=orderLastDate(no);
-      if(sv&&sv.length&&baseD&&nt.installments>0){
-        staleSched = sv.length!==nt.installments || sv.some((x,i)=>String(x.due||x.date||'').slice(0,10)!==String(supPaymentDateAdd(baseD,nt.periodDays*(i+1))||'').slice(0,10));
-      }
-    }catch(e){}
-    if(staleSched){ delete merged.paymentSchedule; delete merged.paymentScheduleOverrideOnly; merged.paymentScheduleUpdatedAt=at; }
     state.orderTerms[k]=merged;
-    docs.forEach(x=>{ x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays}; if(staleSched){ x.paymentSchedule=null; x.paymentScheduleReset=true; x.paymentScheduleResetImported=false; } });
+    docs.forEach(x=>{ x.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays}; });
     // لو في بوليصة مفتوحة في المحرر لنفس الأمر، حدّث شروطها فقط (من غير ما تلمس جدولها)
     try{
       if(typeof draft!=='undefined'&&draft&&soKey(draft.saleOrderNo)===k){
-        if(staleSched){ draft.paySchedule=null; draft.payScheduleReset=true; draft.payScheduleResetImported=false; draft.payScheduleResetOrderNo=String(draft.saleOrderNo||''); }
         draft.terms={cashPct:nt.cashPct,installments:nt.installments,periodDays:nt.periodDays};
         try{ if(typeof refreshTotals==='function') refreshTotals(); }catch(e){}
         try{ if(typeof refreshPayScheduleView==='function') refreshPayScheduleView(); }catch(e){}
       }
     }catch(e){}
     audit('order_terms','تعديل شروط السداد من شاشة التجميع — أمر بيع '+no);
-    saveState(); renderSupply(); toast(staleSched?'تم تحديث الشروط وإعادة حساب الأقساط والتواريخ حسب الفترة':'تم تحديث شروط أمر البيع (الجدول اليدوي محفوظ كما هو)','ok'); return true;
+    saveState(); renderSupply(); toast('تم تحديث شروط أمر البيع (الجدول اليدوي محفوظ كما هو)','ok'); return true;
   });
   supPreviewOrderTerms(no);
 }
@@ -26009,8 +25993,8 @@ function overdueCustomerPrint(customer){
   const tot=rows.reduce((a,r)=>a+(+r.remaining||0),0), totAmt=rows.reduce((a,r)=>a+(+r.amount||0),0), totPaid=rows.reduce((a,r)=>a+(+r.paid||0),0);
   const rep=overdueSummaryRows(asOf).find(x=>x.customer===name);
   const match=rep?Math.abs((+rep.amount||0)-tot)<0.01:true;
-  const body=rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(String(r.orderNo||""))}</td><td>${escapeHtml(r.label||"")}</td><td>${escapeHtml(String(r.due||""))}</td><td>${m(r.amount)}</td><td>${m(r.paid)}</td><td><b>${m(r.remaining)}</b></td><td>${r.days}</td></tr>`).join("");
-  const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>الأقساط المتأخرة — ${escapeHtml(name)}</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63;margin-bottom:4px}p{text-align:center;margin:4px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:8px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#fde68a;font-weight:800}.sum{margin:14px auto 0;max-width:420px;border:2px solid #b91c1c;border-radius:10px;padding:10px;text-align:center;color:#991b1b;font-size:18px;font-weight:800}@media print{@page{size:A4 portrait;margin:12mm}}</style><h1>الأقساط المتأخرة</h1><p><b>العميل: ${escapeHtml(name)}</b></p><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")} · الأقساط المستحقة حتى: ${cut}</p><table><thead><tr><th>م</th><th>أمر البيع</th><th>القسط</th><th>تاريخ الاستحقاق</th><th>قيمة القسط</th><th>المسدد</th><th>المتبقي</th><th>أيام التأخير</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="4">الإجمالي (${rows.length} قسط)</td><td>${m(totAmt)}</td><td>${m(totPaid)}</td><td>${m(tot)}</td><td></td></tr></tfoot></table><div class="sum">إجمالي المتأخر المستحق: ${m(tot)} ${escapeHtml(cur)}</div></html>`;
+  const body=rows.map((r,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(String(r.orderNo||""))}</td><td>${escapeHtml((()=>{try{return siCell(r,{k:"label"});}catch(e){return r.label||"";}})())}</td><td>${escapeHtml(String(r.due||""))}</td><td>${m(r.amount)}</td><td>${m(r.paid)}</td><td><b>${m(r.remaining)}</b></td><td>${r.days}</td></tr>`).join("");
+  const html=`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><title>الأقساط المتأخرة — ${escapeHtml(name)}</title><style>body{font-family:Tahoma,Arial;padding:20px;color:#172b4d}h1{text-align:center;color:#203b63;margin-bottom:4px}p{text-align:center;margin:4px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#203b63;color:white}td,th{border:1px solid #cbd5e1;padding:8px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#fde68a;font-weight:800}.sum{margin:14px auto 0;max-width:420px;border:2px solid #b91c1c;border-radius:10px;padding:10px;text-align:center;color:#991b1b;font-size:18px;font-weight:800}@media print{@page{size:A4 portrait;margin:12mm}}</style>${(()=>{let lg='';try{lg=(window.coLogoCur&&window.coLogoCur())||(typeof QT_LOGO!=="undefined"?QT_LOGO:"");}catch(e){}return lg?`<div style="text-align:center;margin-bottom:6px"><img src="${lg}" alt="" style="max-height:80px;max-width:240px;object-fit:contain"></div>`:"";})()}<h1>الأقساط المتأخرة</h1><p><b>العميل: ${escapeHtml(name)}</b></p><p>IRON GATE SUPPLIES · العملة: ${escapeHtml(cur)} · تاريخ التقرير: ${new Date().toLocaleDateString("en-GB")} · الأقساط المستحقة حتى: ${cut}</p><table><thead><tr><th>م</th><th>أمر البيع</th><th>الاستحقاق</th><th>تاريخ الاستحقاق</th><th>قيمة القسط</th><th>المسدد</th><th>المتبقي</th><th>أيام التأخير</th></tr></thead><tbody>${body}</tbody><tfoot><tr><td colspan="4">الإجمالي (${rows.length} قسط)</td><td>${m(totAmt)}</td><td>${m(totPaid)}</td><td>${m(tot)}</td><td></td></tr></tfoot></table><div class="sum">إجمالي المتأخر المستحق: ${m(tot)} ${escapeHtml(cur)}</div></html>`;
   if(!match) toast("تنبيه: مجموع الأقساط لا يطابق رقم العميل في التقرير — راجع البيانات","warn");
   openReportPreview(html,"الأقساط المتأخرة — "+name);
 }
@@ -42170,6 +42154,45 @@ if(typeof _renderSupply==="function") window.renderSupply=function(){
 };
 /* لو الصفحة مفتوحة بالفعل */
 setTimeout(function(){ try{ if(currentPage==="supply") renderSupply(); }catch(e){} },600);
+})();
+</script>
+
+<script id="ig-sticky-hscroll-grouped">
+(function(){
+"use strict";
+/* بيانات التوريد (مجمع): شريط تمرير أفقي ثابت أسفل الشاشة لما الشريط الأصلي يبقى تحت حدود الشاشة */
+var proxy=null, inner=null, lock=false, wrapEl=null, raf=0;
+function build(){
+  if(proxy) return;
+  proxy=document.createElement("div"); proxy.id="igStickyH";
+  proxy.style.cssText="position:fixed;bottom:0;height:18px;overflow-x:auto;overflow-y:hidden;z-index:60;display:none;background:#e7ebf1;border-top:2px solid #c99724;box-shadow:0 -2px 8px rgba(0,0,0,.12)";
+  inner=document.createElement("div"); inner.style.cssText="height:1px"; proxy.appendChild(inner);
+  document.body.appendChild(proxy);
+  proxy.addEventListener("scroll",function(){ if(lock||!wrapEl) return; lock=true; wrapEl.scrollLeft=proxy.scrollLeft; lock=false; },{passive:true});
+}
+function bindWrap(w){
+  if(w===wrapEl) return;
+  wrapEl=w; if(!w) return;
+  w.addEventListener("scroll",function(){ if(lock||!proxy) return; lock=true; proxy.scrollLeft=w.scrollLeft; lock=false; },{passive:true});
+}
+function upd(){
+  raf=0; build();
+  var w=document.querySelector("#content .supply-page .sup-grouped-wrap");
+  if(!w||!w.offsetParent||w.scrollWidth-w.clientWidth<=2){ proxy.style.display="none"; return; }
+  bindWrap(w);
+  var r=w.getBoundingClientRect(), vh=window.innerHeight;
+  if(r.bottom<=vh-1||r.top>=vh-40||r.bottom<0){ proxy.style.display="none"; return; }
+  proxy.style.display="block";
+  proxy.style.left=Math.max(0,r.left)+"px";
+  proxy.style.width=Math.min(r.width,window.innerWidth-Math.max(0,r.left))+"px";
+  proxy.style.direction=getComputedStyle(w).direction;
+  inner.style.width=w.scrollWidth+"px";
+  if(Math.abs(proxy.scrollLeft-w.scrollLeft)>1){ lock=true; proxy.scrollLeft=w.scrollLeft; lock=false; }
+}
+function sched(){ if(!raf) raf=requestAnimationFrame(upd); }
+window.addEventListener("resize",sched);
+document.addEventListener("scroll",sched,true);
+setInterval(sched,800);
 })();
 </script>
 
