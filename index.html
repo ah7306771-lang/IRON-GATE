@@ -24517,6 +24517,16 @@ function txInvoiceRowsForCustomer(customer, excludeEntryId){
       total=plan.total!=null?+plan.total:(cash+sched.reduce((s,d)=>s+d.amount,0));
       if(cash>0||!sched.length) parts.push({no:0,amount:cash||total,due:plan.cashDueDate||docDate});   // قسط نقدي
       sched.forEach((d,i)=>parts.push({no:i+1,amount:d.amount,due:d.date||docDate})); // أقساط الأجل
+      // نفس أساس تقرير الأقساط وكشف الحساب: لو إجمالي الخطة أكبر من قيمة التوريد الفعلية، الأقساط تتوزع على الفعلي بنفس النسب
+      try{
+        const supTot=(state.shipments||[]).filter(x=>(so&&String(x.saleOrderId)===String(so.id))||txOrderKey(x.saleOrderNo)===k)
+          .reduce((sum,x)=>sum+(x.items||[]).reduce((a,it)=>a+(+supplyAmounts(x,it).total||0),0),0);
+        if(parts.length&&supTot>0.004&&total>supTot+1){
+          const kk=supTot/total; let acc=0;
+          parts.forEach((pt,i)=>{ pt.amount=i===parts.length-1?r2(supTot-acc):r2(pt.amount*kk); acc+=pt.amount; });
+          total=supTot;
+        }
+      }catch(e){}
     }else if(so){
       total=linked.reduce((sum,x)=>sum+(x.items||[]).reduce((a,it)=>a+(+it.total||0),0),0);
       const n=Math.max(1,parseInt(so.terms?.installments)||1), days=+so.terms?.periodDays||30;
@@ -24701,8 +24711,11 @@ function settlementRows(){
   const out=[];
   customers.forEach(name=>{
     const invoices = settlementCustomerInvoiceTotal(name);
-    const paid     = settlementCustomerPaid(name);
-    const credit   = settlementCustomerCredit(name);
+    let paid       = settlementCustomerPaid(name);
+    let credit     = settlementCustomerCredit(name);
+    // تسكين زائد عن قيمة فواتير العميل الفعلية (زي كشف الحساب) يظهر كرصيد دائن بدل ما يختفي جوه "المسدد"
+    const over = paid - invoices;
+    if(over>0.009){ paid=invoices; credit+=over; }
     const remaining= Math.max(0, invoices - paid);
     const settle   = Math.min(credit, remaining);
     const status   = credit > remaining ? "دائن" : (remaining > credit ? "مدين" : (invoices>0?"متزن":"—"));
@@ -25236,7 +25249,8 @@ function salesInstallmentBaseRows(){
     const plan=supGroupedPaymentInfo(g.items,g.orderNo)||{};
     const invoiceDate=String(g.so?.date||g.date||"").slice(0,10);
     const supplyTotal=g.items.reduce((sum,x)=>sum+(+supplyAmounts(x.s,x.it).total||0),0);
-    const total=plan.total!=null&&Number.isFinite(+plan.total)?+plan.total:supplyTotal;
+    let total=plan.total!=null&&Number.isFinite(+plan.total)?+plan.total:supplyTotal;
+    const planTotal=total;
     const parts=[];
     let cash=plan.cashValue;
     if(cash==null&&plan.cashPct!=null&&Number.isFinite(+plan.cashPct)) cash=total*(+plan.cashPct)/100;
@@ -25245,6 +25259,13 @@ function salesInstallmentBaseRows(){
       const amount=+d.amount||0;
       if(amount>0.004) parts.push({no:i+1,label:"قسط "+(i+1),amount,due:String(d.date||d.dueDate||"").slice(0,10)});
     });
+    // لو إجمالي الخطة (قيمة أمر البيع / ملف الاستيراد) أكبر من قيمة التوريد الفعلية (نفس أساس كشف حساب العميل)،
+    // الأقساط تتحسب على الفعلي وبنفس نسب الخطة — عشان ما يظهرش متأخر على قيمة ما اتوردتش.
+    if(parts.length && supplyTotal>0.004 && planTotal>supplyTotal+1){
+      const k=supplyTotal/planTotal; let acc=0;
+      parts.forEach((pt,i)=>{ pt.amount = i===parts.length-1 ? r2(supplyTotal-acc) : r2(pt.amount*k); acc+=pt.amount; });
+      total=supplyTotal;
+    }
     // في حالة عدم توافر خطة مكتملة من مجمّع التوريد، نقرأ نفس الصفوف المعتمدة في شاشة أمر البيع إن وجدت.
     if(!parts.length){
       try{
