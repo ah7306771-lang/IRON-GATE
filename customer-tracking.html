@@ -46,6 +46,11 @@ body{background:var(--bg);font-family:'Cairo',Tahoma,Arial,sans-serif;color:var(
 .hero-eyebrow{font-size:11px;color:#eaf3ff;letter-spacing:3px;font-weight:700;margin-bottom:6px;text-transform:uppercase}
 .hero h1{font-size:24px;font-weight:900;margin:0 0 6px;letter-spacing:-.3px;overflow-wrap:anywhere}
 .hero-eta{margin-top:10px;display:inline-flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(255,255,255,.24);border:1px solid rgba(255,255,255,.45);border-radius:14px;backdrop-filter:blur(10px)}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.hero-meta-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);border-radius:10px;font-size:12.5px;font-weight:700;color:#fff;backdrop-filter:blur(6px)}
+.hero-meta-chip b{color:#fcd34d;font-weight:900;font-variant-numeric:tabular-nums}
+.hero-meta-chip.hero-total{background:rgba(252,211,77,.25);border-color:#fcd34d}
+.hero-meta-chip.hero-total b{color:#fff;font-size:14px}
 .hero-eta .ic{font-size:20px}
 .hero-eta b{font-size:16px;font-weight:800}
 .hero-eta small{display:block;font-size:11px;color:#eaf3ff}
@@ -480,18 +485,26 @@ function ccToggle(id) {
 }
 
 function orderItemsTable(s) {
-  const rows = (Array.isArray(s.itemWeights) ? s.itemWeights : []).filter(x => x && Number(x.weight) > 0);
+  // نعرض أي صنف عليه كمية مخطّطة (qty) أو وزن فعلي (weight) — علشان الجدول يظهر قبل التحميل برضه
+  const rows = (Array.isArray(s.itemWeights) ? s.itemWeights : []).filter(x => x && (Number(x.weight) > 0 || Number(x.qty) > 0));
   if (!rows.length) return {html:"", count:0};
   const nf = n => Number(n).toLocaleString("en-US", {minimumFractionDigits:3, maximumFractionDigits:3});
-  const total = rows.reduce((a, x) => a + Number(x.weight), 0);
+  const total = rows.reduce((a, x) => a + Number(x.weight||0), 0);
   const hasQty = rows.some(x => Number(x.qty) > 0);
-  const df = (q, w) => { if (!(Number(q) > 0)) return `<td class="n">—</td>`; const d = Math.round((Number(w) - Number(q)) * 1000) / 1000; return `<td class="n ${d < 0 ? "neg" : d > 0 ? "pos" : ""}">${d > 0 ? "+" : d < 0 ? "−" : ""}${nf(Math.abs(d))}</td>`; };
+  const anyLoaded = rows.some(x => Number(x.weight) > 0);
+  const df = (q, w) => {
+    if (!(Number(q) > 0)) return `<td class="n">—</td>`;
+    if (!(Number(w) > 0)) return `<td class="n" style="color:#9ca3af">—</td>`;
+    const d = Math.round((Number(w) - Number(q)) * 1000) / 1000;
+    return `<td class="n ${d < 0 ? "neg" : d > 0 ? "pos" : ""}">${d > 0 ? "+" : d < 0 ? "−" : ""}${nf(Math.abs(d))}</td>`;
+  };
+  const wCell = w => Number(w) > 0 ? `<td class="n">${nf(w)}</td>` : `<td class="n" style="color:#9ca3af;font-weight:600">قيد التحميل</td>`;
   const totQty = rows.reduce((a, x) => a + (Number(x.qty) > 0 ? Number(x.qty) : 0), 0);
-  const totW = rows.reduce((a, x) => a + (Number(x.qty) > 0 ? Number(x.weight) : 0), 0);
+  const totW = rows.reduce((a, x) => a + (Number(x.weight) > 0 ? Number(x.weight) : 0), 0);
   const html = `<div class="iw-wrap"><table class="iw-table">
       <thead><tr><th>م</th><th>القطر</th><th>النوع</th>${hasQty ? "<th>كمية التوريد (طن)</th>" : ""}<th>الوزن الفعلي (طن)</th>${hasQty ? "<th>الفرق</th>" : ""}</tr></thead>
-      <tbody>${rows.map((x,i) => `<tr><td>${i+1}</td><td>${esc(x.diameter||"—")}</td><td>${esc(x.type||"—")}</td>${hasQty ? `<td class="n">${Number(x.qty) > 0 ? nf(x.qty) : "—"}</td>` : ""}<td class="n">${nf(x.weight)}</td>${hasQty ? df(x.qty, x.weight) : ""}</tr>`).join("")}</tbody>
-      <tfoot><tr><td colspan="3">الإجمالي</td>${hasQty ? `<td class="n">${nf(totQty)}</td>` : ""}<td class="n">${nf(total)}</td>${hasQty ? df(totQty, totW) : ""}</tr></tfoot>
+      <tbody>${rows.map((x,i) => `<tr><td>${i+1}</td><td>${esc(x.diameter||"—")}</td><td>${esc(x.type||"—")}</td>${hasQty ? `<td class="n">${Number(x.qty) > 0 ? nf(x.qty) : "—"}</td>` : ""}${wCell(x.weight)}${hasQty ? df(x.qty, x.weight) : ""}</tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="3">الإجمالي</td>${hasQty ? `<td class="n">${nf(totQty)}</td>` : ""}<td class="n">${anyLoaded ? nf(totW) : '<span style="color:#9ca3af">—</span>'}</td>${hasQty ? df(totQty, totW) : ""}</tr></tfoot>
     </table></div>`;
   return {html, count:rows.length};
 }
@@ -787,8 +800,12 @@ function render(t) {
         <div class="hero-top">
           <div class="hero-main">
             <div class="hero-eyebrow">🚚 متابعة الشحنة</div>
-            <h1>${esc(t.customerName || statusText)}</h1>
-            ${t.orderNo ? `<div class="hero-sub">أمر بيع رقم <b>#${esc(t.orderNo)}</b></div>` : ""}
+            <h1>${esc(t.customerName || "عميل")}</h1>
+            <div class="hero-meta">
+              ${t.orderNo ? `<span class="hero-meta-chip">📄 أمر بيع <b>#${esc(t.orderNo)}</b></span>` : ""}
+              ${t.orderDate ? `<span class="hero-meta-chip">📅 ${esc(fmtDate(t.orderDate))}</span>` : ""}
+              ${s.grandTotal ? `<span class="hero-meta-chip hero-total">💰 الإجمالي: <b>${Number(s.grandTotal).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</b> ${esc(s.currency||"ج.م")}</span>` : ""}
+            </div>
             ${eta && !deliveredNow ? `<div class="hero-eta">
               <span class="ic">${eta.late ? "🔴" : "⏰"}</span>
               <div>
