@@ -489,22 +489,25 @@ function orderItemsTable(s) {
   const rows = (Array.isArray(s.itemWeights) ? s.itemWeights : []).filter(x => x && (Number(x.weight) > 0 || Number(x.qty) > 0));
   if (!rows.length) return {html:"", count:0};
   const nf = n => Number(n).toLocaleString("en-US", {minimumFractionDigits:3, maximumFractionDigits:3});
-  const total = rows.reduce((a, x) => a + Number(x.weight||0), 0);
   const hasQty = rows.some(x => Number(x.qty) > 0);
   const anyLoaded = rows.some(x => Number(x.weight) > 0);
-  const df = (q, w) => {
-    if (!(Number(q) > 0)) return `<td class="n">—</td>`;
+  // الفرق بيتحسب بس لو وحدة الكمية طن (أو غير محددة) — الوزن الفعلي دايمًا بالطن
+  const isTon = u => !u || String(u).includes("طن");
+  const df = (q, w, u) => {
+    if (!(Number(q) > 0) || !isTon(u)) return `<td class="n">—</td>`;
     if (!(Number(w) > 0)) return `<td class="n" style="color:#9ca3af">—</td>`;
     const d = Math.round((Number(w) - Number(q)) * 1000) / 1000;
     return `<td class="n ${d < 0 ? "neg" : d > 0 ? "pos" : ""}">${d > 0 ? "+" : d < 0 ? "−" : ""}${nf(Math.abs(d))}</td>`;
   };
   const wCell = w => Number(w) > 0 ? `<td class="n">${nf(w)}</td>` : `<td class="n" style="color:#9ca3af;font-weight:600">قيد التحميل</td>`;
+  const units = [...new Set(rows.filter(x => Number(x.qty) > 0).map(x => String(x.unit || "")))];
+  const oneUnit = units.length === 1;
   const totQty = rows.reduce((a, x) => a + (Number(x.qty) > 0 ? Number(x.qty) : 0), 0);
   const totW = rows.reduce((a, x) => a + (Number(x.weight) > 0 ? Number(x.weight) : 0), 0);
   const html = `<div class="iw-wrap"><table class="iw-table">
-      <thead><tr><th>م</th><th>القطر</th><th>النوع</th>${hasQty ? "<th>كمية التوريد (طن)</th>" : ""}<th>الوزن الفعلي (طن)</th>${hasQty ? "<th>الفرق</th>" : ""}</tr></thead>
-      <tbody>${rows.map((x,i) => `<tr><td>${i+1}</td><td>${esc(x.diameter||"—")}</td><td>${esc(x.type||"—")}</td>${hasQty ? `<td class="n">${Number(x.qty) > 0 ? nf(x.qty) : "—"}</td>` : ""}${wCell(x.weight)}${hasQty ? df(x.qty, x.weight) : ""}</tr>`).join("")}</tbody>
-      <tfoot><tr><td colspan="3">الإجمالي</td>${hasQty ? `<td class="n">${nf(totQty)}</td>` : ""}<td class="n">${anyLoaded ? nf(totW) : '<span style="color:#9ca3af">—</span>'}</td>${hasQty ? df(totQty, totW) : ""}</tr></tfoot>
+      <thead><tr><th>م</th><th>القطر</th><th>النوع</th>${hasQty ? "<th>كمية التوريد</th><th>الوحدة</th>" : ""}<th>الوزن الفعلي (طن)</th>${hasQty ? "<th>الفرق (طن)</th>" : ""}</tr></thead>
+      <tbody>${rows.map((x,i) => `<tr><td>${i+1}</td><td>${esc(x.diameter||"—")}</td><td>${esc(x.type||"—")}</td>${hasQty ? `<td class="n">${Number(x.qty) > 0 ? nf(x.qty) : "—"}</td><td>${esc(x.unit||"—")}</td>` : ""}${wCell(x.weight)}${hasQty ? df(x.qty, x.weight, x.unit) : ""}</tr>`).join("")}</tbody>
+      <tfoot><tr><td colspan="3">الإجمالي</td>${hasQty ? (oneUnit ? `<td class="n">${nf(totQty)}</td><td>${esc(units[0]||"—")}</td>` : `<td class="n">—</td><td>—</td>`) : ""}<td class="n">${anyLoaded ? nf(totW) : '<span style="color:#9ca3af">—</span>'}</td>${hasQty ? (oneUnit ? df(totQty, totW, units[0]) : `<td class="n">—</td>`) : ""}</tr></tfoot>
     </table></div>`;
   return {html, count:rows.length};
 }
