@@ -329,6 +329,22 @@ body{font-size:13px;line-height:1.45}
 .tb-bell.ring .bd{animation:badgePulse 1.4s ease-out infinite}
 .tb-bell-tip{position:absolute;top:52px;inset-inline-start:0;white-space:nowrap;background:#dc2626;color:#fff;font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:8px;animation:tipFloat 1.6s ease-in-out infinite;z-index:5;pointer-events:none}
 .tb-bell-tip::before{content:"";position:absolute;top:-5px;inset-inline-start:16px;border:5px solid transparent;border-top:0;border-bottom-color:#dc2626}
+.tb-bell-tip{inset-inline-start:auto;inset-inline-end:0}
+.tb-bell-tip::before{inset-inline-start:auto;inset-inline-end:16px}
+.cc,.cc-body,.card-body{min-width:0;max-width:100%}
+.iw-wrap{max-width:100%}
+@media(max-width:820px){.grid-main{grid-template-columns:minmax(0,1fr)}}
+.grid-main>*{min-width:0}
+.hero-tools{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:12px}
+.hero-upd{font-size:12.5px;font-weight:700;opacity:.92;min-width:0}
+.hero-btns{display:flex;gap:8px;flex-wrap:wrap}
+.hero-btn{border:1px solid rgba(255,255,255,.38);background:rgba(255,255,255,.12);color:#fff;border-radius:10px;padding:8px 14px;min-height:40px;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.hero-btn:disabled{opacity:.6;cursor:default}
+.hero-contact{flex:1 0 100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12.5px;font-weight:700}.hero-contact .hero-btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+.hero-msg{flex:1 0 100%;font-size:12px;font-weight:700;min-height:0}
+@media print{.topbar,.hero-btns,.hero-contact,.dr-actions,.hero-msg,.sig-card,.cc-arrow,.cc-head small,#ntBack,.tb-bell-tip{display:none!important}.cc-body{display:block!important}.card,.cc,.hero{box-shadow:none!important;break-inside:avoid}body{background:#fff}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+@media(max-width:400px){.iw-table{font-size:11.5px}.iw-table th{padding:6px 4px;font-size:10px}.iw-table td{padding:7px 4px}}
+@media(max-width:340px){.iw-table{font-size:10.5px}.iw-table th{padding:5px 2px;font-size:9.5px}.iw-table td{padding:6px 2px}}
 @keyframes bellRing{0%,45%,100%{transform:rotate(0)}5%{transform:rotate(18deg)}10%{transform:rotate(-16deg)}15%{transform:rotate(13deg)}20%{transform:rotate(-11deg)}25%{transform:rotate(7deg)}30%{transform:rotate(-4deg)}35%{transform:rotate(2deg)}}
 @keyframes badgePulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.7)}70%,100%{box-shadow:0 0 0 9px rgba(220,38,38,0)}}
 @keyframes tipFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(3px)}}
@@ -796,6 +812,8 @@ function render(t) {
 
   const timelineCard = ccHtml("stages", "🚦", "مراحل الشحنة", "اضغط هنا لترى مراحل الشحنة", `<div class="timeline">${timeline || `<div class="empty">لا توجد مراحل</div>`}</div>`, `${doneCount} من ${visIdx.length} مكتملة`, "sky");
 
+  // آخر تحديث لحالة الشحنة = تاريخ آخر مرحلة مسجّلة (مش وقت فتح الصفحة)
+  const lastUpd = (Array.isArray(t.stages) ? t.stages : []).map(x => x && x.at).filter(a => a && !Number.isNaN(new Date(a).getTime())).sort((a, b) => new Date(a) - new Date(b)).pop() || "";
   document.getElementById("app").innerHTML = `
     <!-- Hero -->
     <section class="hero">
@@ -829,6 +847,18 @@ function render(t) {
           <div class="hp-track"><div class="hp-fill" style="width:${pct}%"></div></div>
           <div class="hp-pct"><b>${pct}%</b> · مرحلة ${doneCount} من ${visIdx.length}</div>
         </div>
+        <div class="hero-tools">
+          ${lastUpd ? `<div class="hero-upd">🕒 آخر تحديث لحالة الشحنة: ${esc(fmt(lastUpd))}</div>` : "<div></div>"}
+          <div class="hero-btns">
+            <button type="button" class="hero-btn" id="refreshBtn" onclick="refreshStatus()">🔄 تحديث الحالة</button>
+            ${deliveredNow ? `<button type="button" class="hero-btn" onclick="window.print()">🖨 طباعة / حفظ الإيصال</button>` : ""}
+          </div>
+          <div class="hero-contact"><span>خدمة عملاء الشركة:</span>
+            <a class="hero-btn" href="tel:+201002120899" dir="ltr">📞 01002120899</a>
+            <a class="hero-btn" href="https://wa.me/201002120899" target="_blank" rel="noopener">💬 واتساب</a>
+          </div>
+          <div class="hero-msg" id="refreshMsg" role="status"></div>
+        </div>
       </div>
     </section>
 
@@ -854,6 +884,21 @@ function render(t) {
   `;
 
   if (deliveredNow && !alreadySigned) setTimeout(sigInit, 100);
+}
+
+async function refreshStatus() {
+  const btn = document.getElementById("refreshBtn"), msg = document.getElementById("refreshMsg");
+  if (SIG_HAS_INK) { if (msg) { msg.style.color = "#fde68a"; msg.textContent = "أنهِ التوقيع أو امسحه أولًا ثم حدّث الحالة."; } return; }
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ جاري التحديث..."; }
+  try {
+    await load();
+    const m2 = document.getElementById("refreshMsg");
+    if (m2) { m2.textContent = "✓ تم التحديث " + fmt(new Date().toISOString()); }
+  } catch (e) {
+    const b2 = document.getElementById("refreshBtn"), m2 = document.getElementById("refreshMsg");
+    if (b2) { b2.disabled = false; b2.textContent = "🔄 تحديث الحالة"; }
+    if (m2) { m2.style.color = "#fecaca"; m2.textContent = "تعذر التحديث الآن، حاول مرة أخرى بعد قليل."; }
+  }
 }
 
 load().catch(e => {
