@@ -2,7 +2,9 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#14213d">
 <title>متابعة الشحنة | Iron Gate</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -360,6 +362,26 @@ body{font-size:13px;line-height:1.45}
 .nt-item p{margin:0 0 4px;font-weight:700;color:var(--navy);line-height:1.7;overflow-wrap:anywhere}
 .nt-item small{color:var(--muted);font-size:11px}
 @media(prefers-reduced-motion:reduce){.tb-bell.ring .bi,.tb-bell.ring .bd,.tb-bell-tip{animation:none}}
+
+.sig-fields{display:grid;gap:10px;margin-top:14px}
+.sig-fields input[type=text],.sig-fields textarea{width:100%;border:1px solid var(--border);border-radius:10px;padding:11px 12px;font:inherit;font-size:14px;background:#fff}
+.sig-fields textarea{min-height:70px;resize:vertical;display:none}
+.sig-fields.issue textarea{display:block}
+.sig-fields .chk{display:flex;gap:8px;align-items:center;font-size:13.5px;font-weight:700;color:#8a4b00}
+.iw-note{font-size:11.5px;color:var(--muted);margin-top:8px}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:12px}
+.gal a{display:block;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:#f3f5f9}
+.gal img{width:100%;height:100%;object-fit:cover;display:block}
+.sig-done .who{font-weight:600;font-size:12.5px;margin-top:4px}
+.print-head{display:none}
+@media print{.print-head{display:block;text-align:center;margin-bottom:10px;font-weight:800;color:#14213d}}
+.rate-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+.rate-card h2{margin:0 0 10px;font-size:16px;color:var(--navy)}
+.rate-stars{display:flex;gap:6px;direction:ltr;justify-content:center;margin-bottom:10px;font-size:30px;color:var(--gold)}
+.rate-stars button{border:0;background:none;font-size:34px;line-height:1;color:var(--gold);cursor:pointer;padding:2px 4px}
+.rate-card textarea{width:100%;min-height:70px;border:1px solid var(--border);border-radius:10px;padding:11px 12px;font:inherit;font-size:14px;margin-bottom:10px}
+.rate-card.done{text-align:center}
+@media print{.rate-card{display:none!important}}
 </style>
 </head>
 <body>
@@ -400,6 +422,25 @@ body{font-size:13px;line-height:1.45}
 const API = "https://wadovjghevemdmqkhhml.supabase.co/functions/v1/shipment-track";
 let CURRENT_TOKEN = "";
 let LATEST = null;
+let SIG_BUSY = false;
+const SUPPORT_DEFAULT = "01002120899";
+function supportInfo(t) {
+  let raw = String((t && (t.supportPhone || (t.shipment && t.shipment.supportPhone))) || "").replace(/[^0-9]/g, "");
+  if (raw.length < 10) raw = SUPPORT_DEFAULT;
+  const intl = raw.startsWith("20") ? raw : raw.replace(/^0/, "20");
+  return {intl, local: "0" + intl.slice(2)};
+}
+async function shareLink() {
+  const url = location.href, msg = document.getElementById("refreshMsg");
+  try {
+    if (navigator.share) { await navigator.share({title: "متابعة الشحنة", url}); return; }
+    await navigator.clipboard.writeText(url);
+    if (msg) { msg.style.color = ""; msg.textContent = "✓ تم نسخ الرابط"; }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+    prompt("انسخ الرابط:", url);
+  }
+}
 
 const esc = s => String(s??"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt = v => {
@@ -524,7 +565,7 @@ function orderItemsTable(s) {
       <thead><tr><th>م</th><th>القطر</th><th>النوع</th>${hasQty ? "<th>كمية التوريد</th><th>الوحدة</th>" : ""}<th>الوزن الفعلي (طن)</th>${hasQty ? "<th>الفرق (طن)</th>" : ""}</tr></thead>
       <tbody>${rows.map((x,i) => `<tr><td>${i+1}</td><td>${esc(x.diameter||"—")}</td><td>${esc(x.type||"—")}</td>${hasQty ? `<td class="n">${Number(x.qty) > 0 ? nf(x.qty) : "—"}</td><td>${esc(x.unit||"—")}</td>` : ""}${wCell(x.weight)}${hasQty ? df(x.qty, x.weight, x.unit) : ""}</tr>`).join("")}</tbody>
       <tfoot><tr><td colspan="3">الإجمالي</td>${hasQty ? (oneUnit ? `<td class="n">${nf(totQty)}</td><td>${esc(units[0]||"—")}</td>` : `<td class="n">—</td><td>—</td>`) : ""}<td class="n">${anyLoaded ? nf(totW) : '<span style="color:#9ca3af">—</span>'}</td>${hasQty ? (oneUnit ? df(totQty, totW, units[0]) : `<td class="n">—</td>`) : ""}</tr></tfoot>
-    </table></div>`;
+    </table></div>${hasQty && anyLoaded ? `<div class="iw-note">الفرق = الوزن الفعلي − كمية التوريد (بالطن)</div>` : ""}`;
   return {html, count:rows.length};
 }
 
@@ -533,10 +574,13 @@ function renderDocs(docs) {
   if (!items.length) {
     return `<div class="empty"><div class="emoji">📂</div>لا توجد مستندات متاحة حاليًا</div>`;
   }
-  return `<div class="docs-list">${items.map((doc,i) => {
+  const safeUrl = u => { u = String(u||""); return /^https:\/\//i.test(u) && !/["'<>]/.test(u) ? u : ""; };
+  const isImg = d => String(d.mimeType||d.mime||"").toLowerCase().includes("image") && safeUrl(d.url);
+  const imgs = items.filter(isImg), rest = items.filter(d => !isImg(d));
+  const gal = imgs.length ? `<div class="gal">${imgs.map((d,i) => `<a href="${esc(safeUrl(d.url))}" target="_blank" rel="noopener noreferrer" aria-label="${esc(d.fileName||d.name||("صورة "+(i+1)))}"><img loading="lazy" src="${esc(safeUrl(d.url))}" alt="${esc(d.category||"صورة")}"></a>`).join("")}</div>` : "";
+  const list = rest.length ? `<div class="docs-list">${rest.map((doc,i) => {
     const name = esc(doc.fileName || doc.name || `مستند ${i+1}`);
-    const url = String(doc.url||"");
-    const safe = /^https:\/\//i.test(url) && !/["'<>]/.test(url) ? esc(url) : "";
+    const safe = esc(safeUrl(doc.url));
     return `<div class="doc-item">
       <div class="doc-ic ${docIconClass(doc)}">${docIcon(doc)}</div>
       <div class="doc-meta">
@@ -545,7 +589,8 @@ function renderDocs(docs) {
       </div>
       ${safe ? `<a href="${safe}" target="_blank" rel="noopener noreferrer">عرض</a>` : `<small style="color:var(--muted)">غير متاح</small>`}
     </div>`;
-  }).join("")}</div>`;
+  }).join("")}</div>` : "";
+  return gal + list;
 }
 
 // ============ Signature Capture ============
@@ -557,11 +602,16 @@ function signatureCardHtml() {
       <canvas class="sig-canvas" id="sigCanvas"></canvas>
       <div class="sig-placeholder" id="sigPlaceholder">وقّع هنا ✍️</div>
     </div>
+    <div class="sig-fields" id="sigFields">
+      <input type="text" id="sigName" maxlength="80" placeholder="اسم المستلم (مطلوب)" autocomplete="name" oninput="sigCheck()">
+      <label class="chk"><input type="checkbox" id="sigIssue" onchange="sigIssueToggle()"> استلمت بملاحظات (نقص أو تلف)</label>
+      <textarea id="sigNote" maxlength="500" placeholder="اكتب الملاحظة هنا..." oninput="sigCheck()"></textarea>
+    </div>
     <div class="sig-actions">
       <button type="button" class="sig-btn ghost" onclick="sigClear()">🧹 مسح</button>
       <button type="button" class="sig-btn primary" id="sigSubmit" onclick="sigSubmit()" disabled>✅ تأكيد الاستلام</button>
     </div>
-    <div id="sigMsg" style="margin-top:10px;font-size:13px;font-weight:700;text-align:center;min-height:18px"></div>
+    <div id="sigMsg" role="status" aria-live="polite" style="margin-top:10px;font-size:13px;font-weight:700;text-align:center;min-height:18px"></div>
   </section>`;
 }
 function existingSignatureHtml(docs) {
@@ -571,16 +621,18 @@ function existingSignatureHtml(docs) {
   const safe = /^https:\/\//i.test(url) && !/["'<>]/.test(url) ? url : "";
   return `<div class="sig-done">
     <div class="ic">✓</div>
-    <div class="txt">تم استلام الشحنة وتوقيعها إلكترونيًا<br><small>${esc(fmt(sig.createdAt||sig.at))}</small></div>
+    <div class="txt">تم استلام الشحنة وتوقيعها إلكترونيًا<br><small>${esc(fmt(sig.createdAt||sig.at))}</small>${sig.receiverName ? `<div class="who">المستلم: ${esc(sig.receiverName)}</div>` : ""}${sig.note ? `<div class="who">ملاحظات: ${esc(sig.note)}</div>` : ""}</div>
     ${safe ? `<img src="${esc(safe)}" alt="التوقيع">` : ""}
   </div>`;
 }
 let SIG_CTX=null, SIG_CANVAS=null, SIG_DRAWING=false, SIG_HAS_INK=false, SIG_LAST=null;
-function sigInit() {
-  SIG_CANVAS = document.getElementById('sigCanvas');
+function sigSize(keepInk) {
   if (!SIG_CANVAS) return;
-  const dpr = window.devicePixelRatio || 1;
   const rect = SIG_CANVAS.getBoundingClientRect();
+  if (!rect.width) return;
+  let snap = null;
+  if (keepInk && SIG_HAS_INK) { snap = new Image(); snap.src = SIG_CANVAS.toDataURL(); }
+  const dpr = window.devicePixelRatio || 1;
   SIG_CANVAS.width = Math.floor(rect.width * dpr);
   SIG_CANVAS.height = Math.floor(rect.height * dpr);
   SIG_CTX = SIG_CANVAS.getContext('2d');
@@ -589,7 +641,27 @@ function sigInit() {
   SIG_CTX.lineCap = 'round';
   SIG_CTX.lineJoin = 'round';
   SIG_CTX.strokeStyle = '#14213d';
+  if (snap) snap.onload = () => SIG_CTX.drawImage(snap, 0, 0, rect.width, rect.height);
+}
+function sigResize() { if (SIG_CANVAS && document.body.contains(SIG_CANVAS)) sigSize(true); }
+window.addEventListener('resize', sigResize);
+window.addEventListener('orientationchange', () => setTimeout(sigResize, 250));
+function sigCheck() {
+  const b = document.getElementById('sigSubmit'); if (!b) return;
+  const name = (document.getElementById('sigName')?.value || '').trim();
+  const issue = !!document.getElementById('sigIssue')?.checked;
+  const note = (document.getElementById('sigNote')?.value || '').trim();
+  b.disabled = !(SIG_HAS_INK && name.length >= 2 && (!issue || note.length >= 3));
+}
+function sigIssueToggle() {
+  document.getElementById('sigFields')?.classList.toggle('issue', !!document.getElementById('sigIssue')?.checked);
+  sigCheck();
+}
+function sigInit() {
+  SIG_CANVAS = document.getElementById('sigCanvas');
+  if (!SIG_CANVAS) return;
   SIG_HAS_INK = false;
+  sigSize(false);
   const getPos = e => {
     const r = SIG_CANVAS.getBoundingClientRect();
     const p = e.touches ? e.touches[0] : e;
@@ -611,7 +683,7 @@ function sigInit() {
     SIG_CTX.stroke();
     SIG_LAST = p;
     SIG_HAS_INK = true;
-    document.getElementById('sigSubmit').disabled = false;
+    sigCheck();
   };
   const end = e => {
     if (e) e.preventDefault();
@@ -632,11 +704,16 @@ function sigClear() {
   SIG_CTX.clearRect(0, 0, SIG_CANVAS.width, SIG_CANVAS.height);
   SIG_CTX.restore();
   SIG_HAS_INK = false;
-  document.getElementById('sigSubmit').disabled = true;
+  sigCheck();
   document.getElementById('sigPlaceholder')?.classList.remove('hidden');
 }
 async function sigSubmit() {
-  if (!SIG_CANVAS || !SIG_HAS_INK) return;
+  if (!SIG_CANVAS || !SIG_HAS_INK || SIG_BUSY) return;
+  const name = (document.getElementById('sigName')?.value || '').trim().slice(0, 80);
+  const issue = !!document.getElementById('sigIssue')?.checked;
+  const note = issue ? (document.getElementById('sigNote')?.value || '').trim().slice(0, 500) : '';
+  if (name.length < 2) { sigCheck(); return; }
+  SIG_BUSY = true;
   const btn = document.getElementById('sigSubmit');
   const msg = document.getElementById('sigMsg');
   btn.disabled = true;
@@ -655,7 +732,7 @@ async function sigSubmit() {
     const r = await fetch(API, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action:'customer_signature', token:CURRENT_TOKEN, signature:dataUrl})
+      body: JSON.stringify({action:'customer_signature', token:CURRENT_TOKEN, signature:dataUrl, receiverName:name, hasIssue:issue, note})
     });
     const j = await r.json();
     if (!r.ok || j.error) {
@@ -673,7 +750,7 @@ async function sigSubmit() {
     msg.textContent = '❌ خطأ في الاتصال: ' + (e.message || e);
     btn.disabled = false;
     btn.textContent = '✅ تأكيد الاستلام';
-  }
+  } finally { SIG_BUSY = false; }
 }
 
 async function load() {
@@ -814,7 +891,13 @@ function render(t) {
 
   // آخر تحديث لحالة الشحنة = تاريخ آخر مرحلة مسجّلة (مش وقت فتح الصفحة)
   const lastUpd = (Array.isArray(t.stages) ? t.stages : []).map(x => x && x.at).filter(a => a && !Number.isNaN(new Date(a).getTime())).sort((a, b) => new Date(a) - new Date(b)).pop() || "";
-  document.getElementById("app").innerHTML = `
+  const _app = document.getElementById("app");
+  const _keep = (document.getElementById("sigCanvas") && (SIG_HAS_INK || (document.getElementById("sigName")?.value || "").trim())) ? document.getElementById("sigCard") : null;
+  if (_keep) _keep.remove();
+  const sup = supportInfo(t);
+  const reportMsg = `السلام عليكم، لدي ملاحظة/مشكلة بخصوص أمر البيع #${t.orderNo || ""} (${t.customerName || ""}):`;
+  _app.innerHTML = `
+    <div class="print-head">${esc(t.companyName || "")} — إيصال متابعة الشحنة · ${esc(fmt(new Date().toISOString()))}</div>
     <!-- Hero -->
     <section class="hero">
       <div class="hero-inner">
@@ -851,11 +934,13 @@ function render(t) {
           ${lastUpd ? `<div class="hero-upd">🕒 آخر تحديث لحالة الشحنة: ${esc(fmt(lastUpd))}</div>` : "<div></div>"}
           <div class="hero-btns">
             <button type="button" class="hero-btn" id="refreshBtn" onclick="refreshStatus()">🔄 تحديث الحالة</button>
+            <button type="button" class="hero-btn" onclick="shareLink()">🔗 مشاركة الرابط</button>
             ${deliveredNow ? `<button type="button" class="hero-btn" onclick="window.print()">🖨 طباعة / حفظ الإيصال</button>` : ""}
           </div>
           <div class="hero-contact"><span>خدمة عملاء الشركة:</span>
-            <a class="hero-btn" href="tel:+201002120899" dir="ltr">📞 01002120899</a>
-            <a class="hero-btn" href="https://wa.me/201002120899" target="_blank" rel="noopener">💬 واتساب</a>
+            <a class="hero-btn" href="tel:+${sup.intl}" dir="ltr">📞 ${esc(sup.local)}</a>
+            <a class="hero-btn" href="https://wa.me/${sup.intl}" target="_blank" rel="noopener">💬 واتساب</a>
+            <a class="hero-btn" href="https://wa.me/${sup.intl}?text=${encodeURIComponent(reportMsg)}" target="_blank" rel="noopener">⚠️ إبلاغ عن مشكلة</a>
           </div>
           <div class="hero-msg" id="refreshMsg" role="status"></div>
         </div>
@@ -881,14 +966,47 @@ function render(t) {
     </div>
 
     ${sigBlock ? `<div class="sig-bottom">${sigBlock}</div>` : ""}
+    ${ratingHtml(t, deliveredNow && alreadySigned)}
   `;
 
-  if (deliveredNow && !alreadySigned) setTimeout(sigInit, 100);
+  if (_keep) { const slot = _app.querySelector(".sig-bottom"); if (slot) slot.replaceChildren(_keep); }
+  else if (deliveredNow && !alreadySigned) setTimeout(sigInit, 100);
+}
+
+let RATE_VAL = 0, RATE_NOTE = "";
+function ratingHtml(t, show) {
+  if (!show) return "";
+  const esc2 = esc;
+  if (t.rating && t.rating.stars) {
+    const r = Math.max(1, Math.min(5, Number(t.rating.stars)));
+    return `<section class="rate-card done"><b>شكرًا لتقييمك 🙏</b><div class="rate-stars" aria-label="${r} من 5">${"★".repeat(r)}${"☆".repeat(5 - r)}</div>${t.rating.comment ? `<small>${esc2(t.rating.comment)}</small>` : ""}</section>`;
+  }
+  return `<section class="rate-card" id="rateCard"><h2>⭐ قيّم تجربتك</h2>
+    <div class="rate-stars" id="rateStars">${[1,2,3,4,5].map(n => `<button type="button" onclick="rateSet(${n})" aria-label="${n} من 5">${n <= RATE_VAL ? "★" : "☆"}</button>`).join("")}</div>
+    <textarea id="rateNote" maxlength="500" placeholder="ملاحظاتك (اختياري)" oninput="RATE_NOTE=this.value">${esc2(RATE_NOTE)}</textarea>
+    <button type="button" class="sig-btn primary" id="rateBtn" onclick="rateSubmit()" ${RATE_VAL ? "" : "disabled"}>إرسال التقييم</button>
+    <div id="rateMsg" role="status" aria-live="polite" style="margin-top:8px;font-size:13px;font-weight:700;text-align:center"></div></section>`;
+}
+function rateSet(n) {
+  RATE_VAL = n;
+  document.querySelectorAll("#rateStars button").forEach((b, i) => { b.textContent = i < n ? "★" : "☆"; });
+  const btn = document.getElementById("rateBtn"); if (btn) btn.disabled = false;
+}
+async function rateSubmit() {
+  if (!RATE_VAL) return;
+  const btn = document.getElementById("rateBtn"), msg = document.getElementById("rateMsg");
+  btn.disabled = true; btn.textContent = "⏳ جاري الإرسال...";
+  try {
+    const r = await fetch(API, {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({action: "customer_rating", token: CURRENT_TOKEN, stars: RATE_VAL, comment: RATE_NOTE})});
+    const j = await r.json();
+    if (!r.ok || j.error) { msg.style.color = "#b91c1c"; msg.textContent = "❌ " + (j.error || "تعذر الإرسال"); btn.disabled = false; btn.textContent = "إرسال التقييم"; return; }
+    await load();
+  } catch (e) { msg.style.color = "#b91c1c"; msg.textContent = "❌ خطأ في الاتصال"; btn.disabled = false; btn.textContent = "إرسال التقييم"; }
 }
 
 async function refreshStatus() {
   const btn = document.getElementById("refreshBtn"), msg = document.getElementById("refreshMsg");
-  if (SIG_HAS_INK) { if (msg) { msg.style.color = "#fde68a"; msg.textContent = "أنهِ التوقيع أو امسحه أولًا ثم حدّث الحالة."; } return; }
   if (btn) { btn.disabled = true; btn.textContent = "⏳ جاري التحديث..."; }
   try {
     await load();
@@ -900,6 +1018,14 @@ async function refreshStatus() {
     if (m2) { m2.style.color = "#fecaca"; m2.textContent = "تعذر التحديث الآن، حاول مرة أخرى بعد قليل."; }
   }
 }
+
+function autoRefresh() {
+  if (document.hidden || SIG_BUSY || !CURRENT_TOKEN) return;
+  if (LATEST && hasSignature(LATEST.documents)) return;
+  load().catch(() => {});
+}
+setInterval(autoRefresh, 75000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) autoRefresh(); });
 
 load().catch(e => {
   document.getElementById("app").innerHTML = `
