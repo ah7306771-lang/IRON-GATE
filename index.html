@@ -16570,6 +16570,24 @@ function policyUnitFactor(it){
   const f=Number(uomFactorToDefaultUnit(it.diameter,it));
   return Number.isFinite(f)&&f>0?f:1;
 }
+// معامل وحدة السطر المختارة إلى الوحدة الأساسية للصنف (null لو الصنف مالوش وحدات)
+function policyBaseFactor(it){
+  try{
+    if(!it||!it.diameter) return null;
+    const e=uomResolve(it.diameter,it); if(!e) return null;
+    // الكمية المخزّنة بوحدة الصنف الافتراضية => نحوّلها للأساس بمعاملها
+    const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:null;
+  }catch(_){ return null; }
+}
+// وحدة العرض المرجعية للإجماليات: وحدة أول سطر فيه صنف
+function policyRefUnit(){
+  try{
+    const it=(draft.items||[]).find(x=>x&&x.diameter); if(!it) return null;
+    const e=uomResolve(it.diameter,it); if(!e) return null;
+    const b=Number(iuFactorToBase(it.diameter,e.unitNo));
+    return Number.isFinite(b)&&b>0?{name:iuUnitName(e.unitNo),baseF:b}:null;
+  }catch(_){ return null; }
+}
 function policyUnitName(it){
   return it&&it.diameter?uomLineName(it.diameter,it):(it?.unitName||iuDefaultUnitName(it?.diameter)||"");
 }
@@ -16588,7 +16606,13 @@ function policyPriceShown(it,key){
   const n=Number(raw); if(!Number.isFinite(n)) return raw;
   return String(uomRound(n*policyUnitFactor(it),6));
 }
-function policyPriceDec(it){ return policyUnitFactor(it)===1?2:4; }
+// خانات السعر: دايمًا خانتين عشريتين (44,300.00)، وبتزيد لحد 4 بس لو القيمة فعلًا فيها كسور أدق (مثلاً سعر الكيلو 44.3333)
+function policyPriceDec(it){ return 2; }
+function fnvp(x){
+  if(x===""||x==null||!isFinite(+x)) return "";
+  const n=+x, r=Math.round(n*100)/100, d=Math.abs(n-r)<0.000001?2:4;
+  return escapeAttr(fmt(n,d));
+}
 function policySetPrice(i,key,value){
   if(viewOnly) return;
   const it=draft.items[i]; if(!it) return;
@@ -16685,8 +16709,8 @@ function itemRow(it,i){
     <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الكمية بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'supplyQty'),3)}" data-k="supplyQty" oninput="policySetQty(${i},'supplyQty',this.value)"></td>
     <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الوزن بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'actualWeight'),3)}" data-k="actualWeight" oninput="policySetQty(${i},'actualWeight',this.value)"></td>
     <td class="num c-calc" id="rdf${i}"></td>
-    ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="${policyPriceDec(it)}" type="text" inputmode="decimal" ${ro} value="${fnv(policyPriceShown(it,'buyPrice'),policyPriceDec(it))}" data-k="buyPrice"${puT} oninput="policySetPrice(${i},'buyPrice',this.value)">${pu}</td>`:""}
-    ${showSell("shipments")?`<td class="c-price c-sep"><input class="inp num fmtnum" data-dec="${policyPriceDec(it)}" type="text" inputmode="decimal" ${ro} value="${fnv(policyPriceShown(it,'sellPrice'),policyPriceDec(it))}" data-k="sellPrice"${puT} oninput="policySetPrice(${i},'sellPrice',this.value)">${pu}</td>
+    ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="2" data-maxdec="4" type="text" inputmode="decimal" ${ro} value="${fnvp(policyPriceShown(it,'buyPrice'))}" data-k="buyPrice"${puT} oninput="policySetPrice(${i},'buyPrice',this.value)">${pu}</td>`:""}
+    ${showSell("shipments")?`<td class="c-price c-sep"><input class="inp num fmtnum" data-dec="2" data-maxdec="4" type="text" inputmode="decimal" ${ro} value="${fnvp(policyPriceShown(it,'sellPrice'))}" data-k="sellPrice"${puT} oninput="policySetPrice(${i},'sellPrice',this.value)">${pu}</td>
     <td class="c-price"><input class="inp num" type="number" min="0" step="0.01" ${ro} value="${v(it.discVal)}" placeholder="0" style="width:76px" oninput="setI(${i},'discVal',this.value)"></td>
     <td class="c-price"><select class="inp" ${ro} style="width:64px" onchange="setI(${i},'discType',this.value)"><option value="pct" ${(it.discType||"pct")==="pct"?"selected":""}>%</option><option value="amt" ${it.discType==="amt"?"selected":""}>ج</option></select></td>`:""}
     ${showSell("shipments")?`<td class="num c-calc c-sep" id="rsub${i}"></td><td class="num c-calc" id="rtax${i}"></td><td class="num c-calc" id="rdis${i}"></td>
@@ -17112,7 +17136,7 @@ function applyBulkPrice(k){
   const raw=String(input.value??"").trim();
   if(raw==="" || !Number.isFinite(+raw) || +raw<0){ toast("أدخل سعرًا صحيحًا أولًا","err"); input.focus(); return; }
   draft.items.forEach(it=>{ it[k]=String(uomRound((+raw)/policyUnitFactor(it),8)); }); dirty=true; if(k==="sellPrice") payAutoReset();
-  document.querySelectorAll(`#itemsBody input[data-k="${k}"]`).forEach((el,ix)=>{ const it=draft.items[ix]; el.value=it?fnv(policyPriceShown(it,k),policyPriceDec(it)):fnv(raw,2); });
+  document.querySelectorAll(`#itemsBody input[data-k="${k}"]`).forEach((el,ix)=>{ const it=draft.items[ix]; el.value=it?fnvp(policyPriceShown(it,k)):fnv(raw,2); });
   refreshTotals();
   toast(k==="buyPrice"?"تم تطبيق سعر الشراء على كل الأصناف":"تم تطبيق سعر البيع على كل الأصناف","ok");
 }
@@ -17258,17 +17282,23 @@ function draftCalcOpts(){
   };
 }
 function draftTotals(){
-  const t={supply:0,weight:0,subtotal:0,tax:0,discount:0,grandTotal:0,buyTotal:0};
+  const t={supply:0,weight:0,supplyBase:0,weightBase:0,subtotal:0,tax:0,discount:0,grandTotal:0,buyTotal:0};
   const opts = draftCalcOpts();
   const DC=policyDiscountCalc(draft);
   draft.items.forEach((it,i)=>{
     const c=calcItem(it,{...opts,lineDiscount:DC.lines[i]?.disc||0});
     t.supply+=+it.supplyQty||0; t.weight+=+it.actualWeight||0;
+    { const bf=policyBaseFactor(it); if(bf!==null){ t.supplyBase+=(+it.supplyQty||0)*bf; t.weightBase+=(+it.actualWeight||0)*bf; } else { t.supplyBase=NaN; t.weightBase=NaN; } }
     t.subtotal+=c.subtotal; t.tax+=c.tax; t.discount+=c.discount+(DC.lines[i]?.disc||0); t.grandTotal+=c.total; t.buyTotal+=c.buyTotal;
   });
   const CH=policyChargesCalc(draft); t.subtotal+=CH.sub; t.tax+=CH.tax; t.grandTotal+=CH.total;
   ['subtotal','tax','discount','grandTotal','buyTotal'].forEach(k=>t[k]=r2(t[k]));
   t.supply=Math.round(t.supply*1000)/1000; t.weight=Math.round(t.weight*1000)/1000;
+  // إجمالي الكمية والوزن بوحدة العرض: كل سطر بيتحول للوحدة الأساسية ثم لوحدة أول سطر (فمفيش جمع كيلو مع طن)
+  const ref=policyRefUnit();
+  if(ref&&Number.isFinite(t.supplyBase)&&Number.isFinite(t.weightBase)&&ref.baseF>0){
+    t.unitName=ref.name; t.supplyShown=Math.round(t.supplyBase/ref.baseF*1000)/1000; t.weightShown=Math.round(t.weightBase/ref.baseF*1000)/1000;
+  }else{ t.unitName=""; t.supplyShown=t.supply; t.weightShown=t.weight; }
   return t;
 }
 function soNoOptions(){
@@ -17476,7 +17506,7 @@ function setPayScheduleField(id,field,value){
     if(t&&t.tagName==="INPUT"&&t.type==="number"&&polPage()&&!t.disabled&&!t.readOnly&&t.step!=="1"){ const v=t.value; t.type="text"; t.inputMode="decimal"; t.dataset.calc="1"; t.value=v; if(!t.dataset.calcState) t.dataset.calcPrev=v; setTimeout(()=>{try{t.select();}catch(_){}},0); return; }
     if(isC(t)&&t.dataset.calcState) return;
     if(!isF(t)||t.disabled) return; const c=clean(t.value); t.value=(c!==""&&isFinite(+c))?String(+c):c; if(isC(t)) t.dataset.calcPrev=t.value; setTimeout(()=>{try{t.select();}catch(_){}},0); });
-  document.addEventListener("focusout",e=>{ const t=e.target; if(isC(t)&&(t.dataset.calcState||!isPlain(t.value))){ if(!commitSum(t)) return; } if(!isF(t)) return; const c=clean(t.value); if(c===""||!isFinite(+c)){ t.value=c===""?"":t.value; return; } const d=+t.dataset.dec||2; t.value=Number(c).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d}); });
+  document.addEventListener("focusout",e=>{ const t=e.target; if(isC(t)&&(t.dataset.calcState||!isPlain(t.value))){ if(!commitSum(t)) return; } if(!isF(t)) return; const c=clean(t.value); if(c===""||!isFinite(+c)){ t.value=c===""?"":t.value; return; } const d=+t.dataset.dec||2, md=Math.max(d,+t.dataset.maxdec||d); t.value=Number(c).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:md}); });
 })();
 function refreshPayScheduleView(){ renderPolicyPaySchedule(draftTotals()); }
 function clearPayScheduleEdits(){
@@ -17609,7 +17639,7 @@ function refreshTotals(){
     if(ft){
       const cell=(v,cls,cap,tt)=>`<td class="num ${cls||""}"${tt?` title="${tt}"`:""}>${cap?`<small class="ft-cap">${cap}</small>`:""}<strong>${v}</strong></td>`;
       ft.innerHTML=`<tr class="ig-foot-row"><td colspan="5" class="ft-lbl">الإجماليات</td>`
-        +cell(fmt(t.supply,3),"")+cell(fmt(t.weight,3),"")+cell(fmt(t.weight-t.supply,3),"c-calc")
+        +cell(fmt(t.supplyShown,3),"",t.unitName||null)+cell(fmt(t.weightShown,3),"",t.unitName||null)+cell(fmt(t.weightShown-t.supplyShown,3),"c-calc",t.unitName||null)
         +(SB?cell(fmt(t.buyTotal),"","إجمالي الشراء"):"")
         +(SS?(SB?cell(fmt(t.subtotal-t.buyTotal),"","هامش قبل الضريبة"):`<td></td>`)
             +cell(fmt(t.subtotal),"c-calc")+cell(fmt(t.tax),"c-calc",null,"قيمة مضافة"+(draft.applyVat!==false?" ("+(draft.vatPct||0)+"%)":" (موقوفة)"))
@@ -17621,7 +17651,7 @@ function refreshTotals(){
   { const tb=document.getElementById("igTotBar");
     if(tb){
       const ch=policyChargesCalc(draft);
-      tb.innerHTML=SS?`<div class="tb-i"><small>إجمالي الكمية</small><b>${fmt(t.weight,3)}</b></div><div class="tb-i"><small>الإجمالي قبل الضريبة</small><b>${fmt(t.subtotal)}</b></div><div class="tb-i"><small>الخدمات</small><b>${fmt(ch.sub)}</b></div><div class="tb-i"><small>الضريبة</small><b>${fmt(t.tax)}</b></div><div class="tb-i"><small>الخصم</small><b>${fmt(t.discount)}</b></div><div class="tb-i tb-grand"><small>الصافي (${escapeHtml(String(cur||""))})</small><b>${fmt(t.grandTotal)}</b></div>`:"";
+      tb.innerHTML=SS?`<div class="tb-i"><small>إجمالي الكمية${t.unitName?" ("+escapeHtml(t.unitName)+")":""}</small><b>${fmt(t.weightShown,3)}</b></div><div class="tb-i"><small>الإجمالي قبل الضريبة</small><b>${fmt(t.subtotal)}</b></div><div class="tb-i"><small>الخدمات</small><b>${fmt(ch.sub)}</b></div><div class="tb-i"><small>الضريبة</small><b>${fmt(t.tax)}</b></div><div class="tb-i"><small>الخصم</small><b>${fmt(t.discount)}</b></div><div class="tb-i tb-grand"><small>الصافي (${escapeHtml(String(cur||""))})</small><b>${fmt(t.grandTotal)}</b></div>`:"";
     } }
   renderSoFullCard(t);
   try{ igSiSectionSummaries(t,DC); }catch(e){}
