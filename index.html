@@ -2011,6 +2011,7 @@ button.ad-k[onclick]{cursor:pointer}button.ad-k[onclick]:hover{transform:transla
  #igTrackingPage .trk-info{padding:8px}
 }
 
+.base-hint{font-size:10.5px;color:#7a8699;text-align:center;margin-top:2px;direction:rtl;white-space:nowrap}.base-hint:empty{display:none}
 </style>
 
 <style id="quote-layout-requested">
@@ -4057,8 +4058,22 @@ function packShipment(rec,posted){
   const row=packObj(rec,SHIP_SPEC,["id","items"]); row.id=String(rec.id); row.is_posted=!!posted;
   row.gl_entry_id=rec.glEntryId||null; row.gl_posted_at=rec.glPostedAt||null; row.gl_posted_by=rec.glPostedBy||null;
   row.updated_at=new Date().toISOString();
-  const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SHIP_ITEM_SPEC); r.shipment_id=row.id; r.line_no=i+1; return r; });
+  const items=(rec.items||[]).map((it,i)=>{ const r=packObj(it,SHIP_ITEM_SPEC); r.shipment_id=row.id; r.line_no=i+1;
+    // نسخة احتياطية من وحدة السطر داخل extra: لو أعمدة الوحدات مش موجودة في القاعدة تفضل الوحدة محفوظة وترجع عند فتح البوليصة
+    const ux={}; SHIP_UNIT_COLS.forEach(([p,c])=>{ if(it[p]!==undefined&&it[p]!==null) ux[p]=it[p]; });
+    r.extra=Object.assign({},r.extra||{},ux); return r; });
   return { row, items };
+}
+const SHIP_UNIT_COLS=[["unitNo","unit_no"],["unitName","unit_name"],["unitFactor","unit_factor"],["supplyUnitQty","supply_unit_qty"],["actualWeightUnitQty","actual_weight_unit_qty"]];
+// إدخال بنود البوليصة؛ لو أعمدة الوحدات مش موجودة في الجدول نعيد المحاولة من غيرها (الوحدات محفوظة في extra)
+async function insertShipmentItems(rows){
+  let r=await sb.from("shipment_items").insert(rows);
+  if(r.error && /unit_no|unit_name|unit_factor|supply_unit_qty|actual_weight_unit_qty/i.test(String(r.error.message||r.error))){
+    const stripped=rows.map(x=>{ const y={...x}; SHIP_UNIT_COLS.forEach(([p,c])=>{ delete y[c]; }); return y; });
+    r=await sb.from("shipment_items").insert(stripped);
+    try{ if(!r.error) console.warn("أعمدة وحدات القياس غير موجودة في shipment_items — الوحدة محفوظة داخل extra. شغّل policy-units.sql لاحقًا."); }catch(_){}
+  }
+  return r;
 }
 function packSO(rec){
   const row={id:String(rec.id),order_no:String(rec.orderNo||""),so_date:rec.date||null,customer:rec.customer||null,supplier:rec.supplier||null,
@@ -4314,7 +4329,7 @@ async function syncDocs(){
       window.igSyncStep=cfg.it+" (مسح البنود القديمة)";
       r=await sb.from(cfg.it).delete().in(cfg.fk,ids); if(r.error) throw r.error;
       window.igSyncStep=cfg.it+" (إضافة البنود)";
-      for(let j=0;j<items.length;j+=500){ r=await sb.from(cfg.it).insert(items.slice(j,j+500)); if(r.error) throw r.error; }
+      for(let j=0;j<items.length;j+=500){ r=(g==="ship")?await insertShipmentItems(items.slice(j,j+500)):await sb.from(cfg.it).insert(items.slice(j,j+500)); if(r.error) throw r.error; }
     }
     for(let i=0;i<d.del.length;i+=100){
       window.igSyncStep=cfg.t+" (حذف مرن)";
@@ -16588,6 +16603,16 @@ function policyRefUnit(){
     return Number.isFinite(b)&&b>0?{name:iuUnitName(e.unitNo),baseF:b}:null;
   }catch(_){ return null; }
 }
+// الكمية بالوحدة الأساسية تحت خانة الكمية/الوزن (تظهر بس لو الوحدة المختارة غير الأساسية) — علشان الفرق عن أمر البيع يبان
+function policyBaseHint(it,key){
+  try{
+    if(!it||!it.diameter) return "";
+    const raw=Number(it[key]); if(!Number.isFinite(raw)||it[key]===""||it[key]==null) return "";
+    const baseName=iuBaseUnitName(it.diameter), selName=policyUnitName(it);
+    const bf=Number(iuBasePerDefaultUnit(it.diameter)); if(!baseName||baseName===selName||!(bf>0)) return "";
+    return "= "+fmt(raw*bf,3)+" "+escapeHtml(baseName);
+  }catch(_){ return ""; }
+}
 function policyUnitName(it){
   return it&&it.diameter?uomLineName(it.diameter,it):(it?.unitName||iuDefaultUnitName(it?.diameter)||"");
 }
@@ -16706,8 +16731,8 @@ function itemRow(it,i){
     <td><select class="inp" data-k="type" ${ro} onchange="setI(${i},'type',this.value)">${opts(state.types,it.type,"النوع")}</select></td>
     <td><select class="inp" ${ro} onchange="setI(${i},'agingStatus',this.value)">${opts(state.statuses,it.agingStatus,"الحالة")}</select></td>
     <td class="policy-unit-cell">${policyUnitSelectHtml(it,i)}</td>
-    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الكمية بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'supplyQty'),3)}" data-k="supplyQty" oninput="policySetQty(${i},'supplyQty',this.value)"></td>
-    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الوزن بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'actualWeight'),3)}" data-k="actualWeight" oninput="policySetQty(${i},'actualWeight',this.value)"></td>
+    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الكمية بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'supplyQty'),3)}" data-k="supplyQty" oninput="policySetQty(${i},'supplyQty',this.value)"><div class="base-hint" id="rbq${i}">${policyBaseHint(it,'supplyQty')}</div></td>
+    <td><input class="inp num fmtnum" data-dec="3" type="text" inputmode="decimal" ${ro} title="الوزن بالوحدة المختارة: ${escapeAttr(policyUnitName(it))}" value="${fnv(policyUnitShown(it,'actualWeight'),3)}" data-k="actualWeight" oninput="policySetQty(${i},'actualWeight',this.value)"><div class="base-hint" id="rbw${i}">${policyBaseHint(it,'actualWeight')}</div></td>
     <td class="num c-calc" id="rdf${i}"></td>
     ${showBuy("shipments")?`<td><input class="inp num fmtnum" data-dec="2" data-maxdec="4" type="text" inputmode="decimal" ${ro} value="${fnvp(policyPriceShown(it,'buyPrice'))}" data-k="buyPrice"${puT} oninput="policySetPrice(${i},'buyPrice',this.value)">${pu}</td>`:""}
     ${showSell("shipments")?`<td class="c-price c-sep"><input class="inp num fmtnum" data-dec="2" data-maxdec="4" type="text" inputmode="decimal" ${ro} value="${fnvp(policyPriceShown(it,'sellPrice'))}" data-k="sellPrice"${puT} oninput="policySetPrice(${i},'sellPrice',this.value)">${pu}</td>
@@ -16830,8 +16855,16 @@ function igForcePolicyHeaderStyles(){
 }
 
 // ============ ربط أمر البيع بالبوليصة ============
+// وحدة عرض الكميات لأمر البيع: الوحدة «المستخدمة» للصنف (مش الأساسية)، ولو مفيش غير الأساسية يبقى الأساسية
+function soDispUnit(dia){
+  try{
+    const b=iuBase(dia), no=policyUsedUnitNo(dia), ent=no?iuOf(dia).find(e=>String(e.unitNo)===String(no)):null;
+    if(ent&&iuUnitName(ent.unitNo)) return {no:ent.unitNo,name:iuUnitName(ent.unitNo),mul:iuConvertQty(dia,1,b?b.unitNo:undefined,ent.unitNo)};
+    return {no:b?b.unitNo:"",name:iuBaseUnitName(dia)||"",mul:1};
+  }catch(_){ return {no:"",name:"",mul:1}; }
+}
 function soComputeRemaining(so, excludeId){
-  const planned = {}, used = {}, units = {};
+  const planned = {}, used = {}, units = {}, usedDetail = [];
   (so.items||[]).forEach(it=>{
     const key = `${it.diameter}|${it.type}`;
     const raw=parseFloat(String(it.qty).replace(',','.')); if(!Number.isFinite(raw)) return;
@@ -16847,6 +16880,7 @@ function soComputeRemaining(so, excludeId){
       const key = `${it.diameter}|${it.type}`;
       const raw=parseFloat(String(it.actualWeight??it.actual_weight??0).replace(',','.')); if(!Number.isFinite(raw)) return;
       used[key]=(used[key]||0)+iuDefaultQtyToBase(it.diameter,raw);
+      usedDetail.push({policyNo:s.policyNo||s.id,dia:it.diameter,type:it.type,raw,defName:iuDefaultUnitName(it.diameter)||"",selName:it.unitName||"",base:iuDefaultQtyToBase(it.diameter,raw)*soDispUnit(it.diameter).mul,baseName:soDispUnit(it.diameter).name});
       units[key]=iuBaseUnitName(it.diameter)||units[key]||"";
     });
   });
@@ -16854,14 +16888,14 @@ function soComputeRemaining(so, excludeId){
   const keys = new Set([...Object.keys(planned), ...Object.keys(used)]);
   keys.forEach(k=>{
     remaining[k]=Math.round(((planned[k]||0)-(used[k]||0))*1000000)/1000000;
-    const u=units[k]||""; if(!totalsByUnit[u]) totalsByUnit[u]={planned:0,used:0,remaining:0};
-    totalsByUnit[u].planned+=planned[k]||0; totalsByUnit[u].used+=used[k]||0; totalsByUnit[u].remaining+=remaining[k]||0;
+    const du=soDispUnit(k.split("|")[0]), u=du.name||units[k]||"", m=du.mul>0?du.mul:1; if(!totalsByUnit[u]) totalsByUnit[u]={planned:0,used:0,remaining:0};
+    totalsByUnit[u].planned+=(planned[k]||0)*m; totalsByUnit[u].used+=(used[k]||0)*m; totalsByUnit[u].remaining+=(remaining[k]||0)*m;
   });
   Object.values(totalsByUnit).forEach(x=>{x.planned=Math.round(x.planned*1000000)/1000000;x.used=Math.round(x.used*1000000)/1000000;x.remaining=Math.round(x.remaining*1000000)/1000000;});
   // المجاميع الرقمية محفوظة للتوافق القديم؛ استخدم totalsByUnit عند العرض لتجنب جمع وحدات مختلفة.
   const totalPlanned=Object.values(planned).reduce((a,b)=>a+b,0), totalUsed=Object.values(used).reduce((a,b)=>a+b,0);
   const totalRemaining=Math.round((totalPlanned-totalUsed)*1000000)/1000000;
-  return {planned,used,remaining,totalPlanned,totalUsed,totalRemaining,totalsByUnit,units,linkedCount:linked.length};
+  return {planned,used,remaining,totalPlanned,totalUsed,totalRemaining,totalsByUnit,units,usedDetail,linkedCount:linked.length};
 }
 
 function soHasRemaining(r){ return !!(r&&Object.values(r.remaining||{}).some(v=>Number(v)>0.0005)); }
@@ -16941,10 +16975,12 @@ function openSOPicker(){
       <div style="font-size:11px;color:var(--text-dim);direction:ltr;text-align:right">
         المخطط: <b style="color:var(--text)">${escapeHtml(soUnitSummary(r,"planned"))}</b> · المسحوب: <b style="color:var(--warn)">${escapeHtml(soUnitSummary(r,"used"))}</b> · المتبقي: <b style="color:var(--ok)">${escapeHtml(soUnitSummary(r,"remaining"))}</b>
       </div>
+      ${(r.usedDetail&&r.usedDetail.length)?`<details onclick="event.stopPropagation()" style="margin-top:6px;font-size:11px"><summary style="cursor:pointer;color:var(--gold-text)">تفاصيل المسحوب (${r.usedDetail.length} سطر)</summary><div style="margin-top:4px;direction:rtl">${r.usedDetail.map(d=>`<div style="padding:2px 0;border-top:1px dashed var(--line)">بوليصة <b>${escapeHtml(String(d.policyNo))}</b> — ${escapeHtml(d.dia)} / ${escapeHtml(d.type)}: المخزّن <b>${fmt(d.raw,3)}</b> ${escapeHtml(d.defName)} ← <b style="color:var(--warn)">${fmt(d.base,3)}</b> ${escapeHtml(d.baseName)}</div>`).join("")}</div></details>`:""}
       ${!done ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">
         ${Object.entries(r.remaining).filter(([k,v])=>v>0.0005).map(([k,v])=>{
           const [dia,typ] = k.split("|");
-          return `<span style="font-size:10px;background:var(--bg-3);border:1px solid var(--line);border-radius:4px;padding:2px 8px">${escapeHtml(dia)} / ${escapeHtml(typ)}: <b style="color:var(--ok)">${v.toFixed(3)}</b></span>`;
+          const du=soDispUnit(dia);
+          return `<span style="font-size:10px;background:var(--bg-3);border:1px solid var(--line);border-radius:4px;padding:2px 8px">${escapeHtml(dia)} / ${escapeHtml(typ)}: <b style="color:var(--ok)">${fmt(v*du.mul,3)} ${escapeHtml(du.name)}</b></span>`;
         }).join("")}
       </div>`:""}
     </div>
@@ -17631,6 +17667,7 @@ function refreshTotals(){
   draft.items.forEach((it,i)=>{
     const c=calcItem(it,{...opts,lineDiscount:DC.lines[i]?.disc||0});
     const diff=(+it.actualWeight||0)-(+it.supplyQty||0);
+    set("rbq"+i,policyBaseHint(it,"supplyQty")); set("rbw"+i,policyBaseHint(it,"actualWeight"));
     set("rdf"+i,(it.supplyQty===""&&it.actualWeight==="")?"":`<span style="color:${Math.abs(diff)<0.0005?"var(--text-dim)":"var(--warn)"}">${fmt(uomRound(diff/policyUnitFactor(it),6),3)}</span>`);
     set("rsub"+i,fmt(c.subtotal)); set("rtax"+i,fmt(c.tax)); set("rdis"+i,fmt(c.discount+(DC.lines[i]?.disc||0))); set("rtot"+i,`<strong>${fmt(c.total)}</strong>`);
   });
@@ -17974,7 +18011,7 @@ async function persistPolicySnapshotForMovement(rec){
   const del=await sb.from("shipment_items").delete().eq("shipment_id",String(rec.id));
   if(del.error) throw del.error;
   if(packed.items.length){
-    const ins=await sb.from("shipment_items").insert(packed.items);
+    const ins=await insertShipmentItems(packed.items);
     if(ins.error){
       const m=String(ins.error.message||ins.error);
       if(/unit_no|unit_name|unit_factor|supply_unit_qty|actual_weight_unit_qty/i.test(m)) throw new Error("أعمدة وحدات القياس غير موجودة في shipment_items. شغّل ملف policy-units.sql في Supabase SQL Editor ثم أعد تحميل النظام. التفاصيل: "+m);
@@ -46745,7 +46782,7 @@ function iuSaveGroup(){
    السطور القديمة (من غير unitNo) تستخدم الوحدة الافتراضية المعرفة للصنف. */
 function uomEntries(item){ return iuOf(item).filter(e=>e.used!==false&&iuUnitName(e.unitNo)); }
 // الوحدة التلقائية للصنف: الوحدة المستخدمة، ثم الأساسية، ثم أول وحدة معرفة.
-function uomDefault(item){ const a=uomEntries(item); return a.find(e=>e.used)||a.find(e=>e.base)||a[0]||null; }
+function uomDefault(item){ const a=uomEntries(item); /* الوحدة المستخدمة غير الأساسية (طن) تتقدّم على الأساسية (كيلو) حتى لو الكيلو أول في القائمة */ return a.find(e=>e.used&&!e.base)||a.find(e=>e.used)||a.find(e=>e.base)||a[0]||null; }
 function uomResolve(item,it){
   const no=it&&it.unitNo;
   if(no!==undefined&&no!==null&&no!==""){ const e=iuOf(item).find(x=>String(x.unitNo)===String(no)); if(e) return e; }
