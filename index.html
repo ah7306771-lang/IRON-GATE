@@ -19629,7 +19629,12 @@ function renderSupplyGrouped(L){
   }
   groups.forEach(g=>{
     g.totals={sq:0,w:0,buy:0,sub:0,tax:0,dis:0,total:0};
-    g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);g.totals.sq+=(+it.supplyQty||0);g.totals.w+=(+it.actualWeight||0);g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
+    // الكمية والوزن بيتجمّعوا بعد التحويل لوحدة مرجعية واحدة (الوحدة المستخدمة في أغلب الأصناف)، لأن أصناف الأمر ممكن تكون وحداتها الافتراضية مختلفة (طن/كجم/قطعة)
+    const _bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
+    // الوحدة المرجعية = الوحدة المستخدمة في أغلب أصناف الأمر (الأكبر وزنًا، ولو متساوية الأكتر عددًا) مش أول صنف
+    const _refBf=(()=>{ const m=new Map(); g.items.forEach(({it})=>{ const f=_bfOf(it), o=m.get(f)||{w:0,n:0}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0); o.n++; m.set(f,o); });
+      let best=1,bw=-1,bn=-1; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ best=f; bw=o.w; bn=o.n; } }); return best; })();
+    g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);const _k=_bfOf(it)/_refBf;g.totals.sq+=(+it.supplyQty||0)*_k;g.totals.w+=(+it.actualWeight||0)*_k;g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
     g.orderNo=g.so?.orderNo || g.items[0]?.s.saleOrderNo || "";
     const wid=(g.so&&g.so.warehouseId)||whDefaultId();
     g.warehouse=whList().find(w=>String(w.id)===String(wid))||null;
@@ -20286,8 +20291,13 @@ function supOpenGroupPolicy(key){
     <td>${ug.length?ug.map(([nm])=>escapeHtml(nm)).join("<br>"):"طن"}</td>
     <td><button type="button" class="btn sm" onclick="closeModal();editShipment('${escapeAttr(s.id)}')">فتح / تعديل</button></td>
   </tr>`; }).join("");
+  // إجمالي الكميات (لكل وحدة على حدة) وعدد الأصناف
+  const totU=new Map(); let totN=0;
+  list.forEach(({n,its})=>{ totN+=n; unitGroups(its).forEach(([nm,q])=>totU.set(nm,(totU.get(nm)||0)+q)); });
+  const tu=[...totU.entries()];
+  const tfoot=`<tfoot><tr style="font-weight:800;background:var(--bg-3)"><td colspan="2">الإجمالي (${list.length} بوليصة)</td><td class="num">${totN}</td><td class="num">${tu.length?tu.map(([nm,q])=>fmt(q,3)).join("<br>"):fmt(list.reduce((a,x)=>a+x.w,0),3)}</td><td>${tu.length?tu.map(([nm])=>escapeHtml(nm)).join("<br>"):"طن"}</td><td></td></tr></tfoot>`;
   openModal(`اختر البوليصة (${list.length} بوليصة في هذا الأمر)`,
-    `<div class="tbl-wrap"><table style="white-space:nowrap;width:100%"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>عدد الأصناف</th><th>الكمية الفعلية</th><th>الوحدة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
+    `<div class="tbl-wrap"><table style="white-space:nowrap;width:100%"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>عدد الأصناف</th><th>الكمية الفعلية</th><th>الوحدة</th><th></th></tr></thead><tbody>${rows}</tbody>${tfoot}</table></div>`);
   document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)")?.remove();   // مفيش حاجة تتحفظ هنا
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
 }
