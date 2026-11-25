@@ -51361,22 +51361,43 @@ html body aside nav .navsub{overflow:visible!important}
  window.piSettledSave=async function(){const x=window.piEditCtx;if(!x||x.busy)return;if(String(CUR_CO)!==x.company)return toast('تغيرت الشركة، أغلق المحرر وأعد فتح المصدر','err');if(x.lines.some(l=>!Number.isFinite(Number(l.actual_weight))||!(Number(l.actual_weight)>0)||!Number.isFinite(Number(l.buy_price))||Number(l.buy_price)<0))return toast('راجع الكمية وسعر الشراء في كل سطر','err');if(x.sales&&x.lines.some(l=>l._new&&(!(Number(l.sell_price)>0)||l.disc_value===''||!['pct','amt'].includes(l.disc_type))))return toast('أكمل سعر البيع وخصم الصنف الجديد صراحةً، حتى لو الخصم صفر','err');x.busy=true;try{if(!await askConfirm('سيُحفظ نفس المصدر وحركاته في معاملة واحدة. تغيير الوزن أو إضافة صنف يعيد حساب قيم البيع والضريبة والخصومات، دون تغيير أسعار البيع القديمة أو قيود مرحّلة. هل تريد الحفظ؟',{title:'حفظ تعديل المصدر',ok:'حفظ',cancel:'رجوع'}))return;if(typeof syncBusy!=='undefined'&&(syncBusy||docsChanged()))throw new Error('توجد تغييرات محلية أخرى. أكمل المزامنة ثم أعد فتح التعديل');const r=await sb.rpc('ig_purchase_settled_edit_review',{p_source:x.id,p_expected:x.fingerprint,p_lines:x.lines.map(({_new,...l})=>l)});if(r.error)throw r.error;if(!r.data?.ok)throw new Error('لم تؤكد قاعدة البيانات الحفظ');closeModal();window.piEditCtx=null;await loadDocs();await pmLoad();if(currentPage==='purchaseInvoices'){const d=pmInvoices().find(d=>String(d._shipment)===x.id);if(d)pmOpen(d.id);else igPurchaseBack()}else if(currentPage==='supply')renderSupply();toast('حُفظ المصدر وحركاته معًا، بدون فاتورة أو قيد إضافي','ok')}catch(e){toast('لم يُحفظ التعديل: '+(e.message||e),'err')}finally{x.busy=false}};
  const view=window.pmProfessionalView;window.pmProfessionalView=function(d){let h=view(d);if(perm())h=h.replace('<span class="pi-readonly">',`<button class="btn ghost" onclick="piSettledEdit(decodeURIComponent('${encodeURIComponent(String(d._shipment)).replace(/'/g,'%27')}'))">تعديل المشتريات بأمان</button><span class="pi-readonly">`);return h};
  // Settled records must not use the legacy multi-request stock rewrite path.
+ // حالة البوليصة في المخزن من قاعدة البيانات مباشرة (وارد / منصرف). null لو تعذّر التحقق.
+async function piPolicyStockState(id){
+  try{
+   const sh=(state.shipments||[]).find(s=>String(s.id)===String(id)); if(!sh)return null;
+   const co=sh.company_id||sh.companyId||null;
+   let q=sb.from('inventory_movements').select('movement_type').eq('source_type','policy').eq('source_id',String(sh.id));
+   if(co)q=q.eq('company_id',String(co));
+   const r=await q; if(r.error)return null;
+   const rows=r.data||[];
+   return {r:rows.some(m=>m.movement_type==='receipt'),i:rows.some(m=>m.movement_type==='issue')};
+  }catch(e){return null}
+ }
+ const partialMsg=x=>toast('البوليصة مسوّاة جزئيًا ('+(x.r?'وارد بدون منصرف':'منصرف بدون وارد')+'). من بيانات التوريد: كمّل التسوية أو اضغط «إلغاء التسوية» وبعدها عدّل.','err');
+ // مسار «المسوّاة» محتاج وارد + منصرف مسجّلين للبوليصة. لو البوليصة مش مسوّاة (مفيش حركات مخزن) نستخدم التعديل والحفظ العاديين.
  const start=window.startEdit;window.startEdit=function(){
-   if(editingSrc==='shipments'&&!SI_MODE){
-    const id=editingId,self=this,args=arguments;
-    // مسار «المسوّاة» محتاج وارد + منصرف مسجّلين للبوليصة. لو البوليصة مش مسوّاة (مفيش حركات مخزن) نستخدم التعديل العادي، ولو مسوّاة جزئيًا نوقف برسالة.
-    const decide=()=>{
-     let x=null;try{const sh=(state.shipments||[]).find(s=>String(s.id)===String(id));x=sh?invPendInfo(sh):null}catch(e){}
-     if(typeof inventoryError!=='undefined'&&inventoryError)x=null;   // لو تعذّر تحميل حركات المخزن نكمل بالسلوك القديم الآمن
-     if(!x||(x.r&&x.i))return piSettledEdit(id);
-     if(!x.r&&!x.i)return start.apply(self,args);
-     return toast('البوليصة مسوّاة جزئيًا ('+(x.r?'وارد بدون منصرف':'منصرف بدون وارد')+'). من بيانات التوريد: كمّل التسوية أو اضغط «إلغاء التسوية» وبعدها عدّل.','err');
-    };
-    return Promise.resolve(typeof inventoryLoad==='function'?inventoryLoad():null).catch(()=>{}).then(decide);
-   }
-   return start.apply(this,arguments)
-  };
- const save=window.saveShipment;window.saveShipment=function(){if(editingSrc==='shipments'&&!SI_MODE){toast('لتعديل مشتريات مصدر مسوّى، استخدم محرر المشتريات الآمن. لا يمكن حفظه بالمسار القديم.','err');return piSettledEdit(editingId)}return save.apply(this,arguments)};
+  if(editingSrc==='shipments'&&!SI_MODE){
+   const id=editingId,self=this,args=arguments;
+   return piPolicyStockState(id).then(x=>{
+    if(!x||(x.r&&x.i))return piSettledEdit(id);
+    if(!x.r&&!x.i)return start.apply(self,args);
+    return partialMsg(x);
+   });
+  }
+  return start.apply(this,arguments)
+ };
+ const save=window.saveShipment;window.saveShipment=function(){
+  if(editingSrc==='shipments'&&!SI_MODE){
+   const id=editingId,self=this,args=arguments;
+   if(window._piSaveBusy)return; window._piSaveBusy=true;
+   return piPolicyStockState(id).then(x=>{
+    if(!x||(x.r&&x.i)){toast('لتعديل مشتريات مصدر مسوّى، استخدم محرر المشتريات الآمن. لا يمكن حفظه بالمسار القديم.','err');return piSettledEdit(id)}
+    if(!x.r&&!x.i)return save.apply(self,args);
+    return partialMsg(x);
+   }).finally(()=>{window._piSaveBusy=false});
+  }
+  return save.apply(this,arguments)
+ };
  window.piSupplyEditPurchase=function(id){return piSettledEdit(id)};
 })();
 </script>
