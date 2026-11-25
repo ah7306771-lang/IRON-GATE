@@ -26615,34 +26615,27 @@ function siCell(r,c){
       const pctN=(+r.total>0.004&&+r.amount>0)?(Math.round(r.amount/r.total*1000)/10):0;
       const pctS=pctN>0?(" "+String(pctN)+"%"):"";
       if(inst===0) return "مستحق"+pctS+" — كاش";
-      // 1) المدة من شروط الأمر المحفوظة (زي بيانات التوريد) × رقم القسط
-      let days=0;
+      // الأيام = الفرق الفعلي بين تاريخ الفاتورة وتاريخ الاستحقاق (هو الأدق لو الجدول اتعدّل يدوي: 45 / 75 مثلًا).
+      // لو الفرق قريب (±3 أيام) من مدة شروط الأمر × رقم القسط نعرض مدة الشروط، وإلا نقرّب لأقرب مضاعف 15 يوم، وإلا نعرض الفرق كما هو.
+      let days=0, tDays=0, raw=0;
       try{
         const t=termsFromOrder(r.orderNo);
         const pd=t&&t.periodDays!==""&&t.periodDays!=null?+t.periodDays:0;
-        if(pd>0) days=pd*inst;
+        if(pd>0) tDays=pd*inst;
       }catch(e){}
-      // 2) لو مفيش، احسبها من فرق تاريخ الفاتورة وتاريخ الاستحقاق ثم قرّبها لأقرب قيمة قياسية
-      if(!(days>0)){
-        try{
-          if(r.due&&r.date){
-            const d1=new Date(String(r.date).slice(0,10)+"T00:00:00");
-            const d2=new Date(String(r.due).slice(0,10)+"T00:00:00");
-            if(!isNaN(d1)&&!isNaN(d2)){
-              const raw=Math.round((d2-d1)/86400000);
-              if(raw>0){
-                const base=[30,45,60,90];
-                const steps=[];
-                base.forEach(b=>{ for(let k=1;k<=12;k++) steps.push(b*k); });
-                steps.sort((a,b)=>a-b);
-                days=steps.reduce((best,s)=>Math.abs(s-raw)<Math.abs(best-raw)?s:best,steps[0]);
-              }
-            }
-          }
-        }catch(e){}
-      }
+      try{
+        if(r.due&&r.date){
+          const d1=new Date(String(r.date).slice(0,10)+"T00:00:00");
+          const d2=new Date(String(r.due).slice(0,10)+"T00:00:00");
+          if(!isNaN(d1)&&!isNaN(d2)) raw=Math.round((d2-d1)/86400000);
+        }
+      }catch(e){}
+      if(raw>0){
+        const snap=Math.round(raw/15)*15;
+        days=(tDays>0&&Math.abs(raw-tDays)<=3)?tDays:(Math.abs(raw-snap)<=3?snap:raw);
+      } else days=tDays;
       // استخدم فاصلة بدل الأقواس — الأقواس بتتعكس في الـ RTL أثناء الطباعة
-      return days>0?("مستحق"+pctS+" — "+days+" يوم"):("مستحق"+pctS+" — آجل");
+      return days>0?("مستحق"+pctS+" — بعد "+days+" يوم"):("مستحق"+pctS+" — آجل");
     } case "amount": return m(r.amount); case "paid": return dash(r.paid);
     case "remaining": return dash(r.remaining); case "days": return r.days?r.days+" يوم":(r.status==="متأخر"?"1 يوم":"-"); case "lateRemaining": return dash(r.lateRemaining);
     case "status": {
