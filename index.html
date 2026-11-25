@@ -19569,10 +19569,36 @@ function supDetRowHtml(g,cols){
   const pl=pols.map(sh=>{
     const x=ready?invPendInfo(sh):null, done=!!(x&&x.r&&x.i);
     const ck=(ok,l)=>x?`<span class="sup-pchip ${ok?"ok":"bad"}">${ok?"✓":"✗"} ${l}</span>`:`<span class="sup-pchip">… ${l}</span>`;
-    const act=done?`<span class="sup-pchip ok">✓ مسوّاة</span>`:(x&&canS?`<button type="button" class="sup-stk-btn" onclick="supSettlePolicy('${escapeAttr(String(sh.id))}')">⚖ تسوية</button>`:"");
+    const undo=(x&&(x.r||x.i)&&canS)?`<button type="button" class="sup-stk-btn" style="border-color:#dc2626;color:#b91c1c" title="مسح حركات الوارد والمنصرف المسجّلة لهذه البوليصة عشان تقدر تعدّلها وتسوّيها تاني" onclick="supUnsettlePolicy('${escapeAttr(String(sh.id))}')">↶ إلغاء التسوية</button>`:"";
+    const act=done?`<span class="sup-pchip ok">✓ مسوّاة</span> ${undo}`:(x&&canS?`<button type="button" class="sup-stk-btn" onclick="supSettlePolicy('${escapeAttr(String(sh.id))}')">⚖ تسوية</button> ${undo}`:"");
     return `<div class="sup-det-line pol"><b>بوليصة ${escapeHtml(String(sh.policyNo||"—"))}</b><span>${escapeHtml(sh.date||"—")}</span><span>${ck(x&&x.r,"وارد")} ${ck(x&&x.i,"منصرف")}</span><span>${act}</span></div>`;
   }).join("");
   return `<tr class="sup-det-row"><td colspan="${cols}"><div class="sup-det-box"><div class="sup-det-title">تفاصيل الأمر</div><div class="sup-det-line items head"><span>الصنف</span><span>النوع</span><span>المصنع</span><span>الوزن الفعلي</span></div>${itemLines}${totLine}<div class="sup-det-title sub">البوالص وحالة التسوية (${pols.length})</div>${pl}</div></td></tr>`;
+}
+// إلغاء التسوية المخزنية لبوليصة واحدة: بيمسح حركات الوارد والمنصرف المسجّلة لها (source_type=policy) عشان تقدر تعدّلها وتسوّيها من جديد.
+async function supUnsettlePolicy(id){
+  if(window._supSettling) return;
+  if(!can("inventory","post")) return toast("ليس لديك صلاحية تسوية المخزون","err");
+  const sh=(state.shipments||[]).find(x=>String(x.id)===String(id));
+  if(!sh) return toast("البوليصة غير موجودة","err");
+  if(supLockCheck(sh.saleOrderNo)) return;   // أمر اترحّلت حساباته: لازم يتلغي ترحيله الأول
+  const sid=String(sh.id), companyId=sh.company_id||sh.companyId||null;
+  const ok=await askConfirm(`إلغاء التسوية المخزنية للبوليصة ${sh.policyNo||sid}؟\n\nهيتم مسح حركات الوارد والمنصرف المسجّلة لها في المخزن فقط (مفيش تأثير على بوالص تانية). بعد التعديل اضغط «تسوية» تاني.`,{title:"إلغاء التسوية المخزنية",ok:"نعم، ألغِ التسوية",cancel:"رجوع",danger:true});
+  if(!ok) return;
+  window._supSettling=true;
+  try{
+    let q=sb.from("inventory_movements").delete().eq("source_type","policy").eq("source_id",sid);
+    if(companyId) q=q.eq("company_id",String(companyId));
+    const r=await q.select("id");
+    if(r.error) throw r.error;
+    try{ audit("inventory_unsettle","إلغاء التسوية المخزنية للبوليصة "+(sh.policyNo||sid)+" — أمر بيع "+(sh.saleOrderNo||"—")+" — "+((r.data||[]).length)+" حركة"); }catch(e){}
+    try{ await inventoryLoad(); }catch(e){}
+    window._supInvAt=Date.now(); window._supInvReady=true;
+    renderSupply();
+    const n=(r.data||[]).length;
+    toast(n?`✓ اتلغت التسوية (${n} حركة) — تقدر تعدّل البوليصة وتسوّيها تاني`:"مفيش حركات مسجّلة للبوليصة دي","ok");
+  }catch(e){ toast("تعذّر إلغاء التسوية: "+(e&&e.message||e),"err"); }
+  finally{ window._supSettling=false; }
 }
 async function supSettlePolicy(id){
   if(window._supSettling) return;
@@ -51335,7 +51361,21 @@ html body aside nav .navsub{overflow:visible!important}
  window.piSettledSave=async function(){const x=window.piEditCtx;if(!x||x.busy)return;if(String(CUR_CO)!==x.company)return toast('تغيرت الشركة، أغلق المحرر وأعد فتح المصدر','err');if(x.lines.some(l=>!Number.isFinite(Number(l.actual_weight))||!(Number(l.actual_weight)>0)||!Number.isFinite(Number(l.buy_price))||Number(l.buy_price)<0))return toast('راجع الكمية وسعر الشراء في كل سطر','err');if(x.sales&&x.lines.some(l=>l._new&&(!(Number(l.sell_price)>0)||l.disc_value===''||!['pct','amt'].includes(l.disc_type))))return toast('أكمل سعر البيع وخصم الصنف الجديد صراحةً، حتى لو الخصم صفر','err');x.busy=true;try{if(!await askConfirm('سيُحفظ نفس المصدر وحركاته في معاملة واحدة. تغيير الوزن أو إضافة صنف يعيد حساب قيم البيع والضريبة والخصومات، دون تغيير أسعار البيع القديمة أو قيود مرحّلة. هل تريد الحفظ؟',{title:'حفظ تعديل المصدر',ok:'حفظ',cancel:'رجوع'}))return;if(typeof syncBusy!=='undefined'&&(syncBusy||docsChanged()))throw new Error('توجد تغييرات محلية أخرى. أكمل المزامنة ثم أعد فتح التعديل');const r=await sb.rpc('ig_purchase_settled_edit_review',{p_source:x.id,p_expected:x.fingerprint,p_lines:x.lines.map(({_new,...l})=>l)});if(r.error)throw r.error;if(!r.data?.ok)throw new Error('لم تؤكد قاعدة البيانات الحفظ');closeModal();window.piEditCtx=null;await loadDocs();await pmLoad();if(currentPage==='purchaseInvoices'){const d=pmInvoices().find(d=>String(d._shipment)===x.id);if(d)pmOpen(d.id);else igPurchaseBack()}else if(currentPage==='supply')renderSupply();toast('حُفظ المصدر وحركاته معًا، بدون فاتورة أو قيد إضافي','ok')}catch(e){toast('لم يُحفظ التعديل: '+(e.message||e),'err')}finally{x.busy=false}};
  const view=window.pmProfessionalView;window.pmProfessionalView=function(d){let h=view(d);if(perm())h=h.replace('<span class="pi-readonly">',`<button class="btn ghost" onclick="piSettledEdit(decodeURIComponent('${encodeURIComponent(String(d._shipment)).replace(/'/g,'%27')}'))">تعديل المشتريات بأمان</button><span class="pi-readonly">`);return h};
  // Settled records must not use the legacy multi-request stock rewrite path.
- const start=window.startEdit;window.startEdit=function(){if(editingSrc==='shipments'&&!SI_MODE)return piSettledEdit(editingId);return start.apply(this,arguments)};
+ const start=window.startEdit;window.startEdit=function(){
+   if(editingSrc==='shipments'&&!SI_MODE){
+    const id=editingId,self=this,args=arguments;
+    // مسار «المسوّاة» محتاج وارد + منصرف مسجّلين للبوليصة. لو البوليصة مش مسوّاة (مفيش حركات مخزن) نستخدم التعديل العادي، ولو مسوّاة جزئيًا نوقف برسالة.
+    const decide=()=>{
+     let x=null;try{const sh=(state.shipments||[]).find(s=>String(s.id)===String(id));x=sh?invPendInfo(sh):null}catch(e){}
+     if(typeof inventoryError!=='undefined'&&inventoryError)x=null;   // لو تعذّر تحميل حركات المخزن نكمل بالسلوك القديم الآمن
+     if(!x||(x.r&&x.i))return piSettledEdit(id);
+     if(!x.r&&!x.i)return start.apply(self,args);
+     return toast('البوليصة مسوّاة جزئيًا ('+(x.r?'وارد بدون منصرف':'منصرف بدون وارد')+'). من بيانات التوريد: كمّل التسوية أو اضغط «إلغاء التسوية» وبعدها عدّل.','err');
+    };
+    return Promise.resolve(typeof inventoryLoad==='function'?inventoryLoad():null).catch(()=>{}).then(decide);
+   }
+   return start.apply(this,arguments)
+  };
  const save=window.saveShipment;window.saveShipment=function(){if(editingSrc==='shipments'&&!SI_MODE){toast('لتعديل مشتريات مصدر مسوّى، استخدم محرر المشتريات الآمن. لا يمكن حفظه بالمسار القديم.','err');return piSettledEdit(editingId)}return save.apply(this,arguments)};
  window.piSupplyEditPurchase=function(id){return piSettledEdit(id)};
 })();
