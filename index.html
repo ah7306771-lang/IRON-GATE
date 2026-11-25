@@ -18334,7 +18334,7 @@ const SUP_SORT={
   saleOrder:({s})=>s.saleOrderNo||state.saleOrders.find(o=>o.id===s.saleOrderId)?.orderNo||"",
   policy:({s})=>s.policyNo, date:({s})=>s.date, supplier:({s})=>s.supplier, customer:({s})=>s.customer,
   company:({s})=>s.company, site:({s})=>s.site, factory:({s,it})=>itemFactory(s,it), diameter:({it})=>it.diameter, type:({it})=>it.type,
-  qty:({it})=>it.supplyQty, weight:({it})=>it.actualWeight, buy:({it})=>it.buyPrice, sell:({it})=>it.sellPrice,
+  qty:({it})=>it.supplyQty, weight:({it})=>it.actualWeight, unit:({it})=>{ try{ return policyUnitName(it)||""; }catch(_){ return ""; } }, buy:({it})=>it.buyPrice, sell:({it})=>it.sellPrice,
   sub:({s,it})=>supplyAmounts(s,it).subtotal, tax:({s,it})=>supplyAmounts(s,it).tax,
   disc:({s,it})=>supplyAmounts(s,it).discount, total:({s,it})=>supplyAmounts(s,it).total,
   cash:({s})=>s.terms&&s.terms.cashPct, aging:({it})=>it.agingStatus
@@ -18442,15 +18442,40 @@ function supGroup(L,key){
   });
   return m;
 }
+// إجماليات الكمية/الوزن لمجموعة سطور توريد بعد توحيد الوحدة (الوحدة المستخدمة في أغلب الأصناف)،
+// وكمية التوريد بتتاخد من أمر البيع نفسه (لأن كل بوليصة بتشيل كمية الأمر الكاملة في supplyQty فجمعها بيكرّرها)
+function supQtyTotals(lines){
+  const bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
+  const nameOf=it=>{ try{ return String(policyUnitName(it)||it.unitName||iuDefaultUnitName(it.diameter)||"").trim(); }catch(_){ return String(it.unitName||"").trim(); } };
+  const m=new Map(), names=new Set();
+  lines.forEach(({it})=>{ const f=bfOf(it), o=m.get(f)||{w:0,n:0,name:""}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*f; o.n++; if(!o.name) o.name=nameOf(it); m.set(f,o); const nn=nameOf(it); if(nn) names.add(nn); });
+  let ref=1,bw=-1,bn=-1,unit=""; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ ref=f; bw=o.w; bn=o.n; unit=o.name; } });
+  let w=0; const orders=new Map();
+  lines.forEach(({s,it})=>{
+    w+=(+it.actualWeight||0)*bfOf(it)/ref;
+    const k=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id);
+    const o=orders.get(k)||{s,keys:new Set(),max:{}}; const kk=(it.diameter||"")+"|"+(it.type||"");
+    o.keys.add(kk); const v=(+it.supplyQty||0)*bfOf(it)/ref; if(!(v<=(o.max[kk]||0))) o.max[kk]=v; orders.set(k,o);
+  });
+  let sq=0;
+  orders.forEach(o=>{
+    const so=(state.saleOrders||[]).find(x=>(o.s.saleOrderId&&String(x.id)===String(o.s.saleOrderId))||(!o.s.saleOrderId&&o.s.saleOrderNo&&String(x.orderNo)===String(o.s.saleOrderNo)));
+    if(so&&Array.isArray(so.items)&&so.items.length){
+      so.items.forEach(x=>{ if(!o.keys.has((x.diameter||"")+"|"+(x.type||""))) return; const r=parseFloat(String(x.qty??"").replace(",",".")); if(Number.isFinite(r)) sq+=r*bfOf(x)/ref; });
+    } else sq+=Object.values(o.max).reduce((n,v)=>n+v,0);
+  });
+  return {sq:Math.round(sq*1000)/1000,w:Math.round(w*1000)/1000,unit,mixed:names.size>1,names:[...names]};
+}
 function supCompute(){
   const SB=showBuy("supply"), SS=showSell("supply");
   const L=supplyLines(), T={sq:0,w:0,sub:0,tax:0,dis:0,tot:0,buy:0}, orders=new Set();
   L.forEach(({s,it})=>{
     const a=supplyAmounts(s,it);
-    T.sq+=(+it.supplyQty||0); T.w+=(+it.actualWeight||0); T.sub+=a.subtotal;
+    T.sub+=a.subtotal;
     T.tax+=a.tax; T.dis+=a.discount; T.tot+=a.total; T.buy+=a.buyTotal;
     orders.add(s.id);
   });
+  { const q=supQtyTotals(L); T.sq=q.sq; T.w=q.w; T.unit=q.unit; T.mixed=q.mixed; }
   const partial=supPartial();
   const showIn=SS&&!partial&&!igMsNormArr(supFilter.supplier).length, showOut=SB&&!partial&&!igMsNormArr(supFilter.customer).length;
   return {SB,SS,L,T,orders,showIn,showOut,
@@ -18460,8 +18485,8 @@ function supCompute(){
 function supKpiList(C){
   const {SB,SS,T,L,orders,cin,cout}=C, cur=state.settings.currency, out=[];
   out.push({l:"عدد البوالص",n:orders.size,d:0,s:`${L.length} صنف`});
-  out.push({l:"إجمالي كمية التوريد (طن)",n:T.sq,d:3,s:""});
-  out.push({l:"إجمالي الوزن الفعلي (طن)",n:T.w,d:3,s:`الفرق ${fmt(T.w-T.sq,3)}`});
+  out.push({l:"إجمالي كمية التوريد ("+(T.unit||"طن")+")",n:T.sq,d:3,s:T.mixed?"وحدات الأصناف مختلفة — الإجمالي محوّل للوحدة المستخدمة":""});
+  out.push({l:"إجمالي الوزن الفعلي ("+(T.unit||"طن")+")",n:T.w,d:3,s:`الفرق ${fmt(T.w-T.sq,3)}`});
   if(SS){
     out.push({l:"إجمالي المبيعات قبل الضريبة",n:T.sub,d:2,s:"المبلغ الأساسي · "+cur});
     out.push({l:"ضريبة القيمة المضافة",n:T.tax,d:2,s:"مضافة · "+cur});
@@ -18863,6 +18888,7 @@ function supReportHtml(C,xl){
       g.qty+=(+it.supplyQty||0); g.weight+=(+it.actualWeight||0); g.buy+=a.buyTotal; g.sub+=a.subtotal; g.tax+=a.tax; g.discount+=a.discount; g.total+=a.total;
       if(!g.supplier&&s.supplier) g.supplier=s.supplier; if(!g.customer&&s.customer) g.customer=s.customer;
     });
+    groups.forEach(g=>{ const q=supQtyTotals(g.items); g.qty=q.sq; g.weight=q.w; });
     groups.forEach(g=>{ const od=soDateFor(g.order); if(od) g.date=od; });   // تاريخ الأمر نفسه
     const data=[...groups.values()].map(g=>{g.payment=supGroupedPaymentInfo(g.items,g.order);return g;}).sort((a,b)=>supCmp(a.date,b.date,false,1)||grpEntryCmp(a,b)||supCmp(a.order,b.order,false,1));
     const maxSchedule=Math.max(SUP_IMPORTED_MAX_SCHEDULE,supMaxScheduleAcrossAllSupplyOrders(),...data.map(g=>g.payment.schedule.length));
@@ -18954,7 +18980,8 @@ function supBuildProTableHtml(C){
       ${SS?`<td class="n">${nm(+it.sellPrice||0,2)}</td><td class="n">${nm(a.subtotal,2)}</td><td class="n">${nm(a.tax,2)}</td><td class="n">${nm(a.discount,2)}</td><td class="n c-bal">${nm(a.total,2)}</td>`:""}
     </tr>`;
   }).join("");
-  const T = L.reduce((t,{s,it})=>{ const a=supplyAmounts(s,it); t.q+=+it.supplyQty||0; t.w+=+it.actualWeight||0; t.buy+=a.buyTotal; t.sub+=a.subtotal; t.tax+=a.tax; t.dis+=a.discount; t.tot+=a.total; return t; },{q:0,w:0,buy:0,sub:0,tax:0,dis:0,tot:0});
+  const T = L.reduce((t,{s,it})=>{ const a=supplyAmounts(s,it); t.buy+=a.buyTotal; t.sub+=a.subtotal; t.tax+=a.tax; t.dis+=a.discount; t.tot+=a.total; return t; },{q:0,w:0,buy:0,sub:0,tax:0,dis:0,tot:0});
+  { const q=supQtyTotals(L); T.q=q.sq; T.w=q.w; }
   const foot = `<tr>
     <td colspan="8" style="text-align:right">💰 الإجمالي العام</td>
     <td class="n">${nm(T.q,3)}</td>
@@ -19083,16 +19110,16 @@ function renderSupplyFlat(L, T){
       <td data-label="التاريخ">${showOrderData?escapeHtml(displayDate):""}</td><td data-label="أمر البيع">${showOrderData?`<span class="sup-ordcell">${escapeHtml(displayOrderNo||"—")}${displayOrderNo?`<button class="sup-inv-btn" type="button" title="طباعة فاتورة المبيعات — أمر ${escapeAttr(displayOrderNo)}" aria-label="طباعة فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"no:"+displayOrderNo)))}')">🖨</button>`:""}</span>`:""}</td><td data-label="المورد">${showOrderData?escapeHtml(displaySupplier):""}</td><td data-label="العميل">${showOrderData?escapeHtml(displayCustomer):""}</td><td data-label="الشركة">${showOrderData?escapeHtml(displayCompany):""}</td><td data-label="الموقع">${showOrderData?escapeHtml(displaySite):""}</td>
       <td data-label="المصنع">${escapeHtml(itemFactory(s,it))}</td>
       <td data-label="الصنف">${escapeHtml(it.diameter)}</td><td data-label="النوع">${escapeHtml(it.type)}</td>
-      <td data-label="كمية التوريد" class="num">${fmt(it.supplyQty,3)}</td><td data-label="الوزن الفعلي" class="num"><strong>${fmt(it.actualWeight,3)}</strong></td>
+      <td data-label="كمية التوريد" class="num">${fmt(it.supplyQty,3)}</td><td data-label="الوزن الفعلي" class="num"><strong>${fmt(it.actualWeight,3)}</strong></td><td data-label="الوحدة">${(()=>{ let n=""; try{ n=policyUnitName(it)||""; }catch(_){} return n?escapeHtml(n):'<span class="muted">—</span>'; })()}</td>
       ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
       ${SS?`<td class="num">${fmt(sub)}</td><td class="num">${fmt(amounts.tax)}</td><td class="num">${fmt(amounts.discount)}</td><td class="num"><strong>${fmt(amounts.total)}</strong></td>`:""}
       <td data-label="شروط الدفع">${first?supNoteBtn(supJoinNotes(supOrderPayNote(displayOrderNo,termsData),[s],false)):""}</td><td data-label="التعتيق">${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
       <td data-label="الإجراءات">${first?`<div class="td-actions"><button onclick="editShipment('${s.id}')">تعديل</button><button class="del" onclick="delShipment('${s.id}')">حذف</button></div>`:""}</td>
     </tr>`;
   }).join("");
-  const foot = `<tr><td colspan="10">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td>${SB?`<td></td>`:""}${SS?`<td></td><td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
+  const foot = `<tr><td colspan="10">الإجمالي</td><td class="num">${fmt(T.sq,3)}</td><td class="num">${fmt(T.w,3)}</td><td>${T.mixed?'<span style="color:#dc2626;font-weight:800" title="وحدات مختلفة — الإجمالي محوّل للوحدة المستخدمة">—</span>':escapeHtml(T.unit||"")}</td>${SB?`<td></td>`:""}${SS?`<td></td><td class="num">${fmt(T.sub)}</td><td class="num">${fmt(T.tax)}</td><td class="num">${fmt(T.dis)}</td><td class="num">${fmt(T.tot)}</td>`:""}<td colspan="3"></td></tr>`;
   return `<div class="tbl-wrap"><table data-rs-key="supply-flat">
-    <thead><tr>${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("saleOrder","أمر البيع")}${supTh("supplier","المورد")}${supTh("customer","العميل")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","الصنف")}${supTh("type","النوع")}${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع")+supTh("sub","قبل الضريبة")+supTh("tax","الضريبة")+supTh("disc","الخصم")+supTh("total","الإجمالي"):""}${supTh("cash","الدفع")}${supTh("aging","التعتيق")}<th></th></tr></thead>
+    <thead><tr>${supTh("policy","البوليصة")}${supTh("date","التاريخ")}${supTh("saleOrder","أمر البيع")}${supTh("supplier","المورد")}${supTh("customer","العميل")}${supTh("company","الشركة")}${supTh("site","الموقع")}${supTh("factory","المصنع")}${supTh("diameter","الصنف")}${supTh("type","النوع")}${supTh("qty","كمية التوريد")}${supTh("weight","الوزن الفعلي")}${supTh("unit","الوحدة")}${SB?supTh("buy","سعر الشراء"):""}${SS?supTh("sell","سعر البيع")+supTh("sub","قبل الضريبة")+supTh("tax","الضريبة")+supTh("disc","الخصم")+supTh("total","الإجمالي"):""}${supTh("cash","الدفع")}${supTh("aging","التعتيق")}<th></th></tr></thead>
     <tbody>${body}</tbody><tfoot>${foot}</tfoot>
   </table></div>`;
 }
@@ -19619,7 +19646,7 @@ function renderSupplyGrouped(L){
   });
   groups.forEach(g=>{ const f=[...g.policies.values()][0]||{}; const od=soDateFor(f.saleOrderNo, f.saleOrderId); if(od) g.date=od; });   // تاريخ أمر البيع نفسه (بيتحدّث تلقائيًا من آخر بوليصة)
   const GSORT={order:g=>g.orderNo,pol:g=>g.policies.size,date:g=>g.date,supplier:g=>g.supplier,customer:g=>g.customer,company:g=>g.company,site:g=>g.site,
-    qty:g=>g.totals.sq,weight:g=>g.totals.w,buy:g=>g.totals.buy,sub:g=>g.totals.sub,tax:g=>g.totals.tax,dis:g=>g.totals.dis,total:g=>g.totals.total,paid:g=>g.customerPaid,rem:g=>g.remaining,coll:g=>({collected:2,partial:1,pending:0})[g.collectionStatus],status:g=>g.so?.closed?1:0,stock:g=>({settled:2,partial:1,unsettled:0})[g.stockStatus]??-1};
+    qty:g=>g.totals.sq,weight:g=>g.totals.w,unit:g=>(g.unitNames&&g.unitNames.length===1?g.unitNames[0]:"~"),buy:g=>g.totals.buy,sub:g=>g.totals.sub,tax:g=>g.totals.tax,dis:g=>g.totals.dis,total:g=>g.totals.total,paid:g=>g.customerPaid,rem:g=>g.remaining,coll:g=>({collected:2,partial:1,pending:0})[g.collectionStatus],status:g=>g.so?.closed?1:0,stock:g=>({settled:2,partial:1,unsettled:0})[g.stockStatus]??-1};
   const GNUM=new Set(["pol","qty","weight","buy","sub","tax","dis","total","paid","rem","coll","status","stock"]);
   const allocList=[]; (state.treasuryEntries||[]).forEach(e=>{ if(e.direction==="in"&&e.status!=="returned") (e.allocations||[]).forEach(a=>{ if((+a.amount||0)>0) allocList.push(a); }); });
   // حالة التسوية المخزنية: بوليصة مسوّاة = ليها وارد ومنصرف في حركات المخزون. بنحمّل الحركات لو لسه أو لو قديمة (دقيقة).
@@ -19632,9 +19659,14 @@ function renderSupplyGrouped(L){
     // الكمية والوزن بيتجمّعوا بعد التحويل لوحدة مرجعية واحدة (الوحدة المستخدمة في أغلب الأصناف)، لأن أصناف الأمر ممكن تكون وحداتها الافتراضية مختلفة (طن/كجم/قطعة)
     const _bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
     // الوحدة المرجعية = الوحدة المستخدمة في أغلب أصناف الأمر (الأكبر وزنًا، ولو متساوية الأكتر عددًا) مش أول صنف
-    const _refBf=(()=>{ const m=new Map(); g.items.forEach(({it})=>{ const f=_bfOf(it), o=m.get(f)||{w:0,n:0}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0); o.n++; m.set(f,o); });
+    const _refBf=(()=>{ const m=new Map(); g.items.forEach(({it})=>{ const f=_bfOf(it), o=m.get(f)||{w:0,n:0}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*f; o.n++; m.set(f,o); });
       let best=1,bw=-1,bn=-1; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ best=f; bw=o.w; bn=o.n; } }); return best; })();
-    g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);const _k=_bfOf(it)/_refBf;g.totals.sq+=(+it.supplyQty||0)*_k;g.totals.w+=(+it.actualWeight||0)*_k;g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
+    g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);const _k=_bfOf(it)/_refBf;if(!(g.so&&Array.isArray(g.so.items)&&g.so.items.length)){ const _kk=(it.diameter||'')+'|'+(it.type||''), _v=(+it.supplyQty||0)*_k; if(!g._sqMax) g._sqMax={}; if(!(_v<=(g._sqMax[_kk]||0))) g._sqMax[_kk]=_v; }g.totals.w+=(+it.actualWeight||0)*_k;g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
+    // كمية التوريد = كمية أمر البيع نفسه (لأن كل بوليصة بتشيل كمية الأمر الكاملة في supplyQty فجمعها بيكرّرها)؛ ولو مفيش أمر بيع مربوط ناخد أكبر قيمة لكل صنف بدل الجمع
+    if(g.so&&Array.isArray(g.so.items)&&g.so.items.length){ g.totals.sq=g.so.items.reduce((n,x)=>{ const r=parseFloat(String(x.qty??'').replace(',','.')); return n+(Number.isFinite(r)?r*_bfOf(x)/_refBf:0); },0); }
+    else if(g._sqMax){ g.totals.sq=Object.values(g._sqMax).reduce((n,v)=>n+v,0); }
+    g.totals.sq=Math.round(g.totals.sq*1000)/1000; g.totals.w=Math.round(g.totals.w*1000)/1000;
+    { const _un=new Set(); g.items.forEach(({it})=>{ let n=""; try{ n=policyUnitName(it)||it.unitName||iuDefaultUnitName(it.diameter)||""; }catch(_){ n=it.unitName||""; } if(n) _un.add(String(n).trim()); }); g.unitNames=[..._un]; }
     g.orderNo=g.so?.orderNo || g.items[0]?.s.saleOrderNo || "";
     const wid=(g.so&&g.so.warehouseId)||whDefaultId();
     g.warehouse=whList().find(w=>String(w.id)===String(wid))||null;
@@ -19681,7 +19713,7 @@ function renderSupplyGrouped(L){
       :g.stockStatus==="unsettled"?`<span class="sup-stk bad" title="مفيش وارد/منصرف مسجّل للأمر ده — سوّيه من المخزون ← تقارير المخزون">✗ غير مسوّى</span>`
       :`<span class="muted">${g.stockStatus==="loading"?"…":"—"}</span>`;
     const _open=!!(window._supOpenDet&&window._supOpenDet.has(String(g.key)));
-    const _cols=12+(SB?1:0)+(SS?7:0)+2+supPaymentHeaders(maxSchedule).length;
+    const _cols=13+(SB?1:0)+(SS?7:0)+2+supPaymentHeaders(maxSchedule).length;
     return `<tr class="stk-${g.stockStatus}">
       <td class="sup-ord-td" onclick="supToggleDet('${escapeAttr(String(g.key))}')" title="اضغط لعرض بوالص الأمر وحالة تسوية كل واحدة"><span class="sup-det-arr">${_open?"▾":"▸"}</span> ${orderCell}</td>
       <td>${stk}${(g.stockStatus==="partial"||g.stockStatus==="unsettled")&&can("inventory","post")?`<button type="button" class="sup-stk-btn" title="تسوية الأمر مخزنيًا (إضافة الوارد والمنصرف الناقص لكل بوالص الأمر)" onclick="supSettleOrder('${escapeAttr(String(g.key))}')" aria-label="تسوية الأمر">⚖</button>`:""}</td>
@@ -19692,6 +19724,7 @@ function renderSupplyGrouped(L){
       <td>${g.warehouse?escapeHtml(String(g.warehouse.code||""))+" — "+escapeHtml(g.warehouse.name||""):'<span class="muted">غير محدد</span>'}</td>
       <td class="num"><bdi dir="ltr">${escapeHtml(String(g.stockAccountCode||"—"))}</bdi></td>
       <td class="num">${fmt(totals.sq,3)}</td><td class="num"><strong>${fmt(totals.w,3)}</strong></td>
+      <td>${g.unitNames.length===1?escapeHtml(g.unitNames[0]):g.unitNames.length>1?`<span style="color:#dc2626;font-weight:800" title="وحدات مختلفة على البوالص: ${escapeAttr(g.unitNames.join(' / '))}">—</span>`:'<span class="muted">—</span>'}</td>
       ${SB?`<td class="num">${fmt(totals.buy)}</td>`:""}
       ${SS?`<td class="num">${fmt(totals.sub)}</td><td class="num">${fmt(totals.tax)}</td><td class="num">${fmt(totals.dis)}</td><td class="num"><strong style="color:var(--gold-text)">${fmt(totals.total)}</strong></td><td class="num">${fmt(g.customerPaid)}</td><td class="num"><strong style="color:${g.remaining>0.005?'#b91c1c':'#166534'}">${fmt(g.remaining)}</strong></td><td>${g.collectionStatus==="collected"?'<span class="chip" style="background:#dcfce7;color:#166534">محصّل</span>':g.collectionStatus==="partial"?'<span class="chip" style="background:#fef3c7;color:#92400e">جزئي</span>':'<span class="chip" style="background:#fee2e2;color:#991b1b">لم يُحصّل</span>'}</td>`:""}
       <td>${g.so?.closed?'<span class="chip warn">مقفول</span>':'—'}</td>
@@ -19715,10 +19748,10 @@ function renderSupplyGrouped(L){
   groups.forEach(g=>{const t=g.totals;total.sq+=t.sq;total.w+=t.w;total.buy+=t.buy;total.sub+=t.sub;total.tax+=t.tax;total.dis+=t.dis;total.grand+=t.total;total.paid+=g.customerPaid;total.rem+=g.remaining;});
   const termsHidden=localStorage.getItem("ig_supply_terms_hidden")==="1";
   return supStkBarHtml()+`<div class="tbl-wrap sup-grouped-wrap${termsHidden?" is-terms-hidden":""}"><table data-rs-key="supply-grouped"><thead><tr>
-    ${["order|أمر البيع","stock|التسوية المخزنية","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","warehouse|المخزن","stockAccount|حساب المخزون","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
+    ${["order|أمر البيع","stock|التسوية المخزنية","pol|عدد البوالص","date|التاريخ","supplier|المورد","customer|العميل","company|الشركة","site|الموقع","warehouse|المخزن","stockAccount|حساب المخزون","qty|إجمالي كمية التوريد","weight|إجمالي الوزن الفعلي","unit|الوحدة"].map(x=>supTh(x.split("|")[0],x.split("|")[1],"grouped")).join("")}
     ${SB?supTh("buy","إجمالي الشراء","grouped"):""}${SS?supTh("sub","إجمالي البيع قبل الضريبة","grouped")+supTh("tax","ضريبة القيمة المضافة","grouped")+supTh("dis","خصم 1%","grouped")+supTh("total","صافي البيع بعد الضريبة والخصم","grouped")+supTh("paid","المسدد","grouped")+supTh("rem","المتبقي","grouped")+supTh("coll","التحصيل","grouped"):""}${supTh("status","الحالة","grouped")}<th class="sup-act-th">إجراء</th>
     ${supPaymentHeaders(maxSchedule).map((h,i)=>`<th class="pay-terms-col pay-terms-head${i===0?' pay-terms-start':''}${i<=1?' pay-cash':''}">${escapeHtml(h)}</th>`).join("")}
-    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="10">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td><td class="num">${fmt(total.paid)}</td><td class="num"><strong>${fmt(total.rem)}</strong></td><td></td>`:""}<td colspan="2"></td><td class="pay-terms-col pay-cash"></td><td class="pay-terms-col num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="pay-terms-col"></td><td class="pay-terms-col"></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td class="pay-terms-col"></td>`).join("")}</tr></tfoot></table></div>`;
+    </tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="10">الإجمالي العام</td><td class="num">${fmt(total.sq,3)}</td><td class="num">${fmt(total.w,3)}</td><td></td>${SB?`<td class="num">${fmt(total.buy)}</td>`:""}${SS?`<td class="num">${fmt(total.sub)}</td><td class="num">${fmt(total.tax)}</td><td class="num">${fmt(total.dis)}</td><td class="num"><strong>${fmt(total.grand)}</strong></td><td class="num">${fmt(total.paid)}</td><td class="num"><strong>${fmt(total.rem)}</strong></td><td></td>`:""}<td colspan="2"></td><td class="pay-terms-col pay-cash"></td><td class="pay-terms-col num pay-cash">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.cashValue||0),0))}</td><td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.creditValue||0),0))}</td><td class="pay-terms-col"></td><td class="pay-terms-col"></td>${Array.from({length:maxSchedule},(_,i)=>`<td class="pay-terms-col num">${fmt([...groups.values()].reduce((a,g)=>a+(+g.payment.schedule[i]?.amount||0),0))}</td><td class="pay-terms-col"></td>`).join("")}</tr></tfoot></table></div>`;
 }
 
 
