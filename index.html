@@ -20241,21 +20241,27 @@ function supOpenGroupPolicy(key){
   supplyLines().forEach(({s,it})=>{
     const k = s.saleOrderId ? "so:"+s.saleOrderId : (s.saleOrderNo ? "no:"+s.saleOrderNo : "policy:"+s.id);
     if(k!==key) return;
-    if(!pol.has(s.id)) pol.set(s.id,{s,w:0,n:0});
-    const p=pol.get(s.id); p.w+=(+it.actualWeight||0); p.n++;
+    if(!pol.has(s.id)) pol.set(s.id,{s,w:0,n:0,its:[]});
+    const p=pol.get(s.id); p.w+=(+it.actualWeight||0); p.n++; p.its.push(it);
   });
   const list=[...pol.values()].sort((a,b)=>String(a.s.date||"").localeCompare(String(b.s.date||""))||shEntryCmp(a.s,b.s)||String(a.s.policyNo||"").localeCompare(String(b.s.policyNo||""),undefined,{numeric:true}));
   if(!list.length){ toast("لم يتم العثور على بوليصة لهذا الأمر","err"); return; }
   if(list.length===1){ editShipment(list[0].s.id); return; }
-  const rows=list.map(({s,w,n})=>`<tr>
+  // الكمية الفعلية بوحدة كل صنف (بمعامل التحويل المعرّف للصنف)؛ لو البوليصة فيها وحدات مختلفة تتعرض كل وحدة في سطر
+  const unitGroups=its=>{ const m=new Map(); (its||[]).forEach(it=>{ let nm="", q=+it.actualWeight||0;
+    try{ nm=policyUnitName(it)||""; }catch(e){} if(!nm) nm=it.unitName||"طن";
+    try{ const v=parseFloat(String(policyUnitShown(it,"actualWeight")).replace(/,/g,"")); if(Number.isFinite(v)) q=v; }catch(e){}
+    m.set(nm,(m.get(nm)||0)+q); }); return [...m.entries()]; };
+  const rows=list.map(({s,w,n,its})=>{ const ug=unitGroups(its); return `<tr>
     <td><strong>${escapeHtml(String(s.policyNo||"—"))}</strong></td>
     <td>${escapeHtml(s.date||"—")}</td>
     <td class="num">${n}</td>
-    <td class="num">${fmt(w,3)}</td>
+    <td class="num">${ug.length?ug.map(([nm,q])=>fmt(q,3)).join("<br>"):fmt(w,3)}</td>
+    <td>${ug.length?ug.map(([nm])=>escapeHtml(nm)).join("<br>"):"طن"}</td>
     <td><button type="button" class="btn sm" onclick="closeModal();editShipment('${escapeAttr(s.id)}')">فتح / تعديل</button></td>
-  </tr>`).join("");
+  </tr>`; }).join("");
   openModal(`اختر البوليصة (${list.length} بوليصة في هذا الأمر)`,
-    `<div class="tbl-wrap"><table style="white-space:nowrap;width:100%"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>عدد الأصناف</th><th>الوزن الفعلي (طن)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
+    `<div class="tbl-wrap"><table style="white-space:nowrap;width:100%"><thead><tr><th>رقم البوليصة</th><th>التاريخ</th><th>عدد الأصناف</th><th>الكمية الفعلية</th><th>الوحدة</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`);
   document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)")?.remove();   // مفيش حاجة تتحفظ هنا
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إغلاق";
 }
