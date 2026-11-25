@@ -11598,7 +11598,7 @@ function pmInvoices(){
   if(exact.length===1){PM.conflicts.push({shipment:sh.id,policy:sh.policyNo,invoices:exact.map(v=>v.id)});return;}
   const possible=invs.filter(v=>!v.deleted_at&&!['cancelled','void'].includes(v.status)&&pmCompany(v)===pmCompany(sh)&&((v.referenceNo&&String(v.referenceNo)===String(sh.policyNo))||(v.sourceSaleOrderNo&&sh.saleOrderNo&&String(v.sourceSaleOrderNo)===String(sh.saleOrderNo))));
   if(exact.length>1||possible.length){PM.conflicts.push({shipment:sh.id,policy:sh.policyNo,invoices:(exact.length?exact:possible).map(v=>v.id)});return;}
-  const items=(sh.items||[]).map(it=>{const qty=Number(it.actualWeight)||0,gross=qty*(Number(it.buyPrice)||0),rate=shipBuyVatRate(sh),net=Math.round(gross/(1+rate/100)*100)/100;const u=iuDefaultEntry(it.diameter)||{};return {...it,qty,receivedQty:qty,unitNo:u.unitNo||'',unit:iuUnitName(u.unitNo)||'',unitPrice:qty?net/qty:0,discountPct:0,taxPct:rate};});
+  const items=(sh.items||[]).map(it=>{const qty=Number(it.actualWeight)||0,gross=qty*(Number(it.buyPrice)||0),rate=shipBuyVatRate(sh),net=Math.round(gross/(1+rate/100)*100)/100;let u=iuDefaultEntry(it.diameter)||{},fu=1;try{const e=it.diameter?uomResolve(it.diameter,it):null,k=e?Number(uomFactorToDefaultUnit(it.diameter,it)):1;if(e&&k>0){u=e;fu=k;}}catch(_){}const qs=qty/fu;return {...it,qty:qs,receivedQty:qs,unitNo:u.unitNo||'',unit:iuUnitName(u.unitNo)||'',unitPrice:qs?net/qs:0,discountPct:0,taxPct:rate};});
   const receipt=PM.rows.find(m=>m.source_type==='policy'&&m.movement_type==='receipt'&&String(m.source_id)===String(sh.id)&&pmCompany(m)===pmCompany(sh));
   out.push({...sh,warehouseId:receipt&&receipt.warehouse_id||'',id:'pm:'+pmKey(sh),_pm:true,_shipment:sh.id,status:'settled',docNo:sh.policyNo,sourceSaleOrderNo:sh.saleOrderNo||((state.saleOrders||[]).find(o=>String(o.id)===String(sh.saleOrderId))||{}).orderNo||'',referenceNo:sh.policyNo,items});
  });return out;
@@ -17675,11 +17675,11 @@ function refreshTotals(){
   { const ft=document.getElementById("itemsFoot");
     if(ft){
       const cell=(v,cls,cap,tt)=>`<td class="num ${cls||""}"${tt?` title="${tt}"`:""}>${cap?`<small class="ft-cap">${cap}</small>`:""}<strong>${v}</strong></td>`;
-      ft.innerHTML=`<tr class="ig-foot-row"><td colspan="5" class="ft-lbl">الإجماليات</td>`
+      ft.innerHTML=`<tr class="ig-foot-row"><td colspan="${SI_MODE?7:6}" class="ft-lbl">الإجماليات</td>`
         +cell(fmt(t.supplyShown,3),"",t.unitName||null)+cell(fmt(t.weightShown,3),"",t.unitName||null)+cell(fmt(t.weightShown-t.supplyShown,3),"c-calc",t.unitName||null)
         +(SB?cell(fmt(t.buyTotal),"","إجمالي الشراء"):"")
         +(SS?(SB?cell(fmt(t.subtotal-t.buyTotal),"","هامش قبل الضريبة"):`<td></td>`)
-            +cell(fmt(t.subtotal),"c-calc")+cell(fmt(t.tax),"c-calc",null,"قيمة مضافة"+(draft.applyVat!==false?" ("+(draft.vatPct||0)+"%)":" (موقوفة)"))
+            +`<td colspan="2"></td>`+cell(fmt(t.subtotal),"c-calc")+cell(fmt(t.tax),"c-calc",null,"قيمة مضافة"+(draft.applyVat!==false?" ("+(draft.vatPct||0)+"%)":" (موقوفة)"))
             +cell(fmt(t.discount),"c-calc",null,"إجمالي الخصومات: خصم الصنف وخصم الفاتورة وخصم العميل")
             +cell(fmt(t.grandTotal),"c-calc c-total","","إجمالي الأمر ("+cur+")"):"")
         +`<td colspan="2"></td></tr>`;
@@ -17730,8 +17730,9 @@ function toDraft(r){
     items:r.items.map(it=>({...igItemExtras(it),factory:itemFactory(r,it),diameter:it.diameter,type:it.type,agingStatus:it.agingStatus||"",supplyQty:it.supplyQty,actualWeight:it.actualWeight??"",buyPrice:it.buyPrice??0,sellPrice:it.sellPrice??0,discVal:it.discVal??"",discType:it.discType||"pct",notes:it.notes||"",
       // وحدة القياس المختارة للسطر (كانت بتتحفظ ومش بترجع عند فتح البوليصة، فكانت بترجع للوحدة الافتراضية)
       unitNo:it.unitNo||"",unitName:it.unitName||"",unitFactor:(Number(it.unitFactor)>0?Number(it.unitFactor):1),
-      ...((it.supplyUnitQty!==null&&it.supplyUnitQty!==undefined&&it.supplyUnitQty!=="")?{supplyUnitQty:it.supplyUnitQty}:{}),
-      ...((it.actualWeightUnitQty!==null&&it.actualWeightUnitQty!==undefined&&it.actualWeightUnitQty!=="")?{actualWeightUnitQty:it.actualWeightUnitQty}:{})}))};
+      // الكميات المعروضة المحفوظة (…UnitQty) بتتحمّل بس لو الوحدة نفسها محفوظة معاها؛ غير كده بتتحسب من القيمة المخزّنة بالوحدة الحالية (تفادي تضاعف الأرقام في البوالص القديمة)
+      ...((it.unitNo&&it.supplyUnitQty!==null&&it.supplyUnitQty!==undefined&&it.supplyUnitQty!=="")?{supplyUnitQty:it.supplyUnitQty}:{}),
+      ...((it.unitNo&&it.actualWeightUnitQty!==null&&it.actualWeightUnitQty!==undefined&&it.actualWeightUnitQty!=="")?{actualWeightUnitQty:it.actualWeightUnitQty}:{})}))};
 }
 function loadRecord(src,id,editMode){
   const r=(src==="shipments"?state.shipments:state.policies).find(x=>x.id===id); if(!r) return;
@@ -22240,7 +22241,11 @@ function soPickItem(i,v){
 // تغيير الوحدة: نفس الكمية الفعلية بتتحوّل بمعامل التحويل للوحدة الجديدة
 function soSetUnit(i,no){
   const it=soDraft.items[i]; if(!it) return;
+  // السعر لوحدة السطر المختارة: لما الوحدة تتغيّر السعر بيتحوّل بنفس المعامل (كيلو→طن = ×1000) فإجمالي السطر ما يتغيّرش
+  const fOld=uomFactorToDefaultUnit(it.diameter,it);
   uomChangeUnit(it,it.diameter,no);
+  const fNew=uomFactorToDefaultUnit(it.diameter,it), p=parseFloat(String(it.unitPrice==null?"":it.unitPrice).replace(",","."));
+  if(Number.isFinite(p)&&p>0&&fOld>0&&fNew>0) it.unitPrice=String(uomRound(p*fNew/fOld,6));
   soRenderItems(); soRenderPreview();
 }
 // الكمية الداخلية محفوظة بوحدة العرض الافتراضية للصنف؛ العرض يترجمها للوحدة المختارة.
@@ -22365,8 +22370,17 @@ function soApplyTerms(rec){
   audit("order_terms","أمر بيع "+rec.orderNo+": "+(old?old.cashPct+"%/"+old.installments+"/"+old.periodDays+" ← ":"")+nt.cashPct+"%/"+nt.installments+"/"+nt.periodDays);
 }
 function soUpdateTotal(){
-  const totals=new Map();
-  (soDraft.items||[]).forEach(it=>{const unit=uomLineName(it.diameter,it)||"وحدة";const shown=parseFloat(String(uomLineShown(it.diameter,it)||0).replace(',','.'));if(Number.isFinite(shown))totals.set(unit,(totals.get(unit)||0)+shown);});
+  const totals=new Map(), fam=new Map();   // fam: اسم الوحدة الأساسية -> {unit:وحدة العرض (أول سطر), base:إجمالي بالأساسية, f:معامل وحدة العرض للأساسية}
+  (soDraft.items||[]).forEach(it=>{
+    const shown=parseFloat(String(uomLineShown(it.diameter,it)||0).replace(',','.')); if(!Number.isFinite(shown)) return;
+    let done=false;
+    try{
+      const e=it.diameter?uomResolve(it.diameter,it):null, bn=e?iuBaseUnitName(it.diameter):"";
+      if(e&&bn){ const f=Number(iuFactorToBase(it.diameter,e.unitNo)); if(f>0){ let g=fam.get(bn); if(!g){ g={unit:iuUnitName(e.unitNo)||bn,base:0,f}; fam.set(bn,g); } g.base+=shown*f; done=true; } }
+    }catch(_){}
+    if(!done){ const unit=uomLineName(it.diameter,it)||"وحدة"; totals.set(unit,(totals.get(unit)||0)+shown); }
+  });
+  fam.forEach(g=>{ totals.set(g.unit,(totals.get(g.unit)||0)+g.base/g.f); });
   const parts=[...totals.entries()].filter(([,v])=>v>0).map(([u,v])=>`${Math.round(v*1000)/1000} ${u}`);
   const el=document.getElementById("soTotalQty"); if(el) el.textContent=parts.join("، ")||"0";
   const unit=document.getElementById("soTotalUnit"); if(unit) unit.textContent=parts.length>1?"حسب الوحدة":"";
@@ -50499,10 +50513,10 @@ async function igSoConfirmSavedForPrint(){
     var i=0;
     cells.forEach(function(td){
       var cap=td.querySelector(".ft-cap");
-      if(cap){ td.removeAttribute("data-label"); return; }
       var tt=td.getAttribute("title")||"";
       var lbl=null;
       if(i<3 && !tt){ lbl=fixed[i]; }
+      else if(cap){ td.removeAttribute("data-label"); i++; return; }
       else if(tt.indexOf("قيمة مضافة")>=0) lbl="الضريبة";
       else if(tt.indexOf("الخصومات")>=0) lbl="الخصم";
       else if(tt.indexOf("إجمالي الأمر")>=0||tt.indexOf("الإجمالي")>=0) lbl="الإجمالي";
@@ -51288,7 +51302,7 @@ html body aside nav .navsub{overflow:visible!important}
   const company=String(CUR_CO);try{const r=await sb.rpc('ig_purchase_settled_preview_review',{p_source:String(id)});if(r.error)throw r.error;if(String(CUR_CO)!==company)throw new Error('تغيرت الشركة أثناء التحميل، أعد فتح المصدر');window.piEditCtx={id:String(id),company,fingerprint:r.data.fingerprint,lines:r.data.lines,sales:!!r.data.sales_dependent,customer:r.data.customer,order:(state.shipments||[]).find(s=>String(s.id)===String(id))?.saleOrderNo};piEditRender()}catch(e){toast('تعذر فتح التعديل: '+(e.message||e),'err')}
  };
  window.piEditRender=function(){const x=window.piEditCtx;if(!x)return;const f=(label,key,l,i,ro=false)=>`<label class="fld"><span>${label}</span><input class="inp" ${ro?'readonly':''} value="${escapeAttr(l[key]??'')}" oninput="piEditCtx.lines[${i}]['${key}']=this.value"></label>`;
- const body=`<p class="pr-note">نفس البوليصة ونفس أرقام السطور. يتوقف الحفظ إذا كان قيد مشتريات أو مبيعات موجودًا، أو يوجد تاريخ مخزني آخر للصنف. لا تُحذف سطور قائمة. تغيير الوزن يعيد حساب قيم البيع والضريبة والخصومات مع الحفاظ على أسعار وشروط البيع الحالية. الصنف الجديد المرتبط ببيع يحتاج سعر بيع وخصمًا صريحين. لا تُعدّل قيود مبيعات مرحّلة. جدول سداد يدوي يتوقف للمراجعة إذا تغيّر الإجمالي. الأصناف الجديدة يجب ألا يكون لها تاريخ مخزني على نفس المخزن والمواصفة.</p><div style="display:grid;gap:12px">${x.lines.map((l,i)=>`<section class="card"><div class="body"><b>السطر ${l.line_no}</b><div class="igp-fields">${f('الصنف','diameter',l,i,!l._new)}${f('النوع','type',l,i,!l._new)}${f('المصنع','factory',l,i,!l._new)}${f('الوزن الفعلي','actual_weight',l,i)}${f('سعر الشراء شامل الضريبة','buy_price',l,i)}${x.sales?f('سعر البيع شامل الضريبة','sell_price',l,i,!l._new):''}${x.sales&&l._new?`<button class="btn ghost" type="button" onclick="piSettledOrderChoices(${i})">اختيار تفاصيل من سطر أمر البيع</button>`:''}${x.sales&&l._new?f('خصم الصنف: قيمة أو نسبة','disc_value',l,i):''}${x.sales&&l._new?`<label class="fld"><span>نوع الخصم</span><select class="inp" onchange="piEditCtx.lines[${i}].disc_type=this.value"><option value="">اختر صراحةً</option><option value="pct" ${l.disc_type==='pct'?'selected':''}>نسبة %</option><option value="amt" ${l.disc_type==='amt'?'selected':''}>مبلغ</option></select></label>`:''}</div></div></section>`).join('')}</div><button class="btn ghost" type="button" onclick="piSettledAdd()">＋ إضافة صنف</button>`;
+ const body=`<p class="pr-note">نفس البوليصة ونفس أرقام السطور. يتوقف الحفظ إذا كان قيد مشتريات أو مبيعات موجودًا، أو يوجد تاريخ مخزني آخر للصنف. لا تُحذف سطور قائمة. تغيير الوزن يعيد حساب قيم البيع والضريبة والخصومات مع الحفاظ على أسعار وشروط البيع الحالية. الصنف الجديد المرتبط ببيع يحتاج سعر بيع وخصمًا صريحين. لا تُعدّل قيود مبيعات مرحّلة. جدول سداد يدوي يتوقف للمراجعة إذا تغيّر الإجمالي. الأصناف الجديدة يجب ألا يكون لها تاريخ مخزني على نفس المخزن والمواصفة.</p><div style="display:grid;gap:12px">${x.lines.map((l,i)=>`<section class="card"><div class="body"><b>السطر ${l.line_no}</b><div class="igp-fields">${f('الصنف','diameter',l,i,!l._new)}${f('النوع','type',l,i,!l._new)}${f('المصنع','factory',l,i,!l._new)}${f('الوزن الفعلي'+(iuDefaultUnitName(l.diameter)?' ('+iuDefaultUnitName(l.diameter)+')':''),'actual_weight',l,i)}${f('سعر الشراء شامل الضريبة'+(iuDefaultUnitName(l.diameter)?' (لكل '+iuDefaultUnitName(l.diameter)+')':''),'buy_price',l,i)}${x.sales?f('سعر البيع شامل الضريبة','sell_price',l,i,!l._new):''}${x.sales&&l._new?`<button class="btn ghost" type="button" onclick="piSettledOrderChoices(${i})">اختيار تفاصيل من سطر أمر البيع</button>`:''}${x.sales&&l._new?f('خصم الصنف: قيمة أو نسبة','disc_value',l,i):''}${x.sales&&l._new?`<label class="fld"><span>نوع الخصم</span><select class="inp" onchange="piEditCtx.lines[${i}].disc_type=this.value"><option value="">اختر صراحةً</option><option value="pct" ${l.disc_type==='pct'?'selected':''}>نسبة %</option><option value="amt" ${l.disc_type==='amt'?'selected':''}>مبلغ</option></select></label>`:''}</div></div></section>`).join('')}</div><button class="btn ghost" type="button" onclick="piSettledAdd()">＋ إضافة صنف</button>`;
  openModal('تعديل مشتريات البوليصة المسوّاة',body,()=>{piSettledSave();return false});
  };
  window.piSettledAdd=function(){const x=window.piEditCtx;x.lines.push({line_no:Math.max(0,...x.lines.map(l=>+l.line_no))+1,diameter:'',type:'',factory:'',actual_weight:1,buy_price:0,sell_price:'',disc_value:'',disc_type:'',_new:true});piEditRender()};
