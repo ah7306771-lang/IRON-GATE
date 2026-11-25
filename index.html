@@ -51373,26 +51373,32 @@ async function piPolicyStockState(id){
    return {r:rows.some(m=>m.movement_type==='receipt'),i:rows.some(m=>m.movement_type==='issue')};
   }catch(e){return null}
  }
- const partialMsg=x=>toast('البوليصة مسوّاة جزئيًا ('+(x.r?'وارد بدون منصرف':'منصرف بدون وارد')+'). من بيانات التوريد: كمّل التسوية أو اضغط «إلغاء التسوية» وبعدها عدّل.','err');
- // مسار «المسوّاة» محتاج وارد + منصرف مسجّلين للبوليصة. لو البوليصة مش مسوّاة (مفيش حركات مخزن) نستخدم التعديل والحفظ العاديين.
+ const partialMsg=x=>toast('البوليصة فيها منصرف بدون وارد في المخزن. من بيانات التوريد: اضغط «إلغاء التسوية» وبعدها عدّل.','err');
+ // «مسوّاة» = وارد + منصرف مسجّلين (ده بس اللي بيروح للمحرر الآمن). الوارد وحده (ترحيل عادي، لسه ما اتسوّتش) أو مفيش حركات = تعديل وحفظ عاديين.
  const start=window.startEdit;window.startEdit=function(){
   if(editingSrc==='shipments'&&!SI_MODE){
    const id=editingId,self=this,args=arguments;
    return piPolicyStockState(id).then(x=>{
     if(!x||(x.r&&x.i))return piSettledEdit(id);
-    if(!x.r&&!x.i)return start.apply(self,args);
+    if(!x.i)return start.apply(self,args);
     return partialMsg(x);
    });
   }
   return start.apply(this,arguments)
  };
+ const itemsSig=id=>{try{const sh=(state.shipments||[]).find(s=>String(s.id)===String(id));return JSON.stringify((sh&&sh.items||[]).map(it=>[it.diameter,it.type,it.factory,it.actualWeight,it.supplyQty]))}catch(e){return ''}};
  const save=window.saveShipment;window.saveShipment=function(){
   if(editingSrc==='shipments'&&!SI_MODE){
    const id=editingId,self=this,args=arguments;
    if(window._piSaveBusy)return; window._piSaveBusy=true;
    return piPolicyStockState(id).then(x=>{
     if(!x||(x.r&&x.i)){toast('لتعديل مشتريات مصدر مسوّى، استخدم محرر المشتريات الآمن. لا يمكن حفظه بالمسار القديم.','err');return piSettledEdit(id)}
-    if(!x.r&&!x.i)return save.apply(self,args);
+    if(!x.i){
+     const before=itemsSig(id), res=save.apply(self,args);
+     // الوارد المسجّل في المخزن بيفضل بالكميات القديمة لو الأصناف/الأوزان اتغيّرت
+     if(x.r&&itemsSig(id)!==before)setTimeout(()=>toast('الأصناف أو الأوزان اتغيّرت: من بيانات التوريد اضغط «↶ إلغاء التسوية» ثم «⚖ تسوية» عشان المخزن يتحدّث بالكميات الجديدة.','warn'),600);
+     return res;
+    }
     return partialMsg(x);
    }).finally(()=>{window._piSaveBusy=false});
   }
