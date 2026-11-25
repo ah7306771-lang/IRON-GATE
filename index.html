@@ -18439,7 +18439,9 @@ function supGroup(L,key){
     if(s.date&&(!g.d||s.date<g.d)) g.d=s.date;
     g.ids.add(s.id); g.w+=(+it.actualWeight||0); g.sub+=a.subtotal;
     g.tax+=a.tax; g.dis+=a.discount; g.tot+=a.total; g.buy+=a.buyTotal;
+    (g._lines||(g._lines=[])).push({s,it});
   });
+  Object.values(m).forEach(g=>{ try{ const q=supQtyTotals(g._lines||[]); g.w=q.w; g.unit=q.unit; g.mixed=q.mixed; }catch(_){} });   // الوزن بعد توحيد الوحدة
   return m;
 }
 // إجماليات الكمية/الوزن لمجموعة سطور توريد بعد توحيد الوحدة (الوحدة المستخدمة في أغلب الأصناف)،
@@ -18447,8 +18449,9 @@ function supGroup(L,key){
 function supQtyTotals(lines){
   const bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
   const nameOf=it=>{ try{ return String(policyUnitName(it)||it.unitName||iuDefaultUnitName(it.diameter)||"").trim(); }catch(_){ return String(it.unitName||"").trim(); } };
+  const ukOf=it=>{ let pf=1; try{ pf=Number(policyUnitFactor(it))||1; }catch(_){} return Math.round(bfOf(it)*pf*1e9)/1e9; };
   const m=new Map(), names=new Set();
-  lines.forEach(({it})=>{ const f=bfOf(it), o=m.get(f)||{w:0,n:0,name:""}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*f; o.n++; if(!o.name) o.name=nameOf(it); m.set(f,o); const nn=nameOf(it); if(nn) names.add(nn); });
+  lines.forEach(({it})=>{ const f=ukOf(it), o=m.get(f)||{w:0,n:0,name:""}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*bfOf(it); o.n++; if(!o.name) o.name=nameOf(it); m.set(f,o); const nn=nameOf(it); if(nn) names.add(nn); });
   let ref=1,bw=-1,bn=-1,unit=""; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ ref=f; bw=o.w; bn=o.n; unit=o.name; } });
   let w=0; const orders=new Map();
   lines.forEach(({s,it})=>{
@@ -18974,8 +18977,8 @@ function supBuildProTableHtml(C){
       <td>${escapeHtml(itemFactory(s,it)||"—")}</td>
       <td>${escapeHtml(String(it.diameter||""))}</td>
       <td>${escapeHtml(String(it.type||""))}</td>
-      <td class="n">${nm(+it.supplyQty||0,3)}</td>
-      <td class="n">${nm(+it.actualWeight||0,3)}</td>
+      <td class="n">${nm(+policyUnitShown(it,"supplyQty")||0,3)}</td>
+      <td class="n">${nm(+policyUnitShown(it,"actualWeight")||0,3)}</td>
       ${SB?`<td class="n">${nm(+it.buyPrice||0,2)}</td><td class="n c-dr">${nm(a.buyTotal,2)}</td>`:""}
       ${SS?`<td class="n">${nm(+it.sellPrice||0,2)}</td><td class="n">${nm(a.subtotal,2)}</td><td class="n">${nm(a.tax,2)}</td><td class="n">${nm(a.discount,2)}</td><td class="n c-bal">${nm(a.total,2)}</td>`:""}
     </tr>`;
@@ -19110,7 +19113,7 @@ function renderSupplyFlat(L, T){
       <td data-label="التاريخ">${showOrderData?escapeHtml(displayDate):""}</td><td data-label="أمر البيع">${showOrderData?`<span class="sup-ordcell">${escapeHtml(displayOrderNo||"—")}${displayOrderNo?`<button class="sup-inv-btn" type="button" title="طباعة فاتورة المبيعات — أمر ${escapeAttr(displayOrderNo)}" aria-label="طباعة فاتورة المبيعات" onclick="supPrintInvoiceForKey('${escapeAttr(String(s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"no:"+displayOrderNo)))}')">🖨</button>`:""}</span>`:""}</td><td data-label="المورد">${showOrderData?escapeHtml(displaySupplier):""}</td><td data-label="العميل">${showOrderData?escapeHtml(displayCustomer):""}</td><td data-label="الشركة">${showOrderData?escapeHtml(displayCompany):""}</td><td data-label="الموقع">${showOrderData?escapeHtml(displaySite):""}</td>
       <td data-label="المصنع">${escapeHtml(itemFactory(s,it))}</td>
       <td data-label="الصنف">${escapeHtml(it.diameter)}</td><td data-label="النوع">${escapeHtml(it.type)}</td>
-      <td data-label="كمية التوريد" class="num">${fmt(it.supplyQty,3)}</td><td data-label="الوزن الفعلي" class="num"><strong>${fmt(it.actualWeight,3)}</strong></td><td data-label="الوحدة">${(()=>{ let n=""; try{ n=policyUnitName(it)||""; }catch(_){} return n?escapeHtml(n):'<span class="muted">—</span>'; })()}</td>
+      <td data-label="كمية التوريد" class="num">${fmt(policyUnitShown(it,"supplyQty"),3)}</td><td data-label="الوزن الفعلي" class="num"><strong>${fmt(policyUnitShown(it,"actualWeight"),3)}</strong></td><td data-label="الوحدة">${(()=>{ let n=""; try{ n=policyUnitName(it)||""; }catch(_){} return n?escapeHtml(n):'<span class="muted">—</span>'; })()}</td>
       ${SB?`<td class="num">${fmt(it.buyPrice)}</td>`:""}${SS?`<td class="num">${fmt(it.sellPrice)}</td>`:""}
       ${SS?`<td class="num">${fmt(sub)}</td><td class="num">${fmt(amounts.tax)}</td><td class="num">${fmt(amounts.discount)}</td><td class="num"><strong>${fmt(amounts.total)}</strong></td>`:""}
       <td data-label="شروط الدفع">${first?supNoteBtn(supJoinNotes(supOrderPayNote(displayOrderNo,termsData),[s],false)):""}</td><td data-label="التعتيق">${it.agingStatus?`<span class="chip gold">${escapeHtml(it.agingStatus)}</span>`:""}</td>
@@ -19659,7 +19662,8 @@ function renderSupplyGrouped(L){
     // الكمية والوزن بيتجمّعوا بعد التحويل لوحدة مرجعية واحدة (الوحدة المستخدمة في أغلب الأصناف)، لأن أصناف الأمر ممكن تكون وحداتها الافتراضية مختلفة (طن/كجم/قطعة)
     const _bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
     // الوحدة المرجعية = الوحدة المستخدمة في أغلب أصناف الأمر (الأكبر وزنًا، ولو متساوية الأكتر عددًا) مش أول صنف
-    const _refBf=(()=>{ const m=new Map(); g.items.forEach(({it})=>{ const f=_bfOf(it), o=m.get(f)||{w:0,n:0}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*f; o.n++; m.set(f,o); });
+    const _ukOf=it=>{ let pf=1; try{ pf=Number(policyUnitFactor(it))||1; }catch(_){} return Math.round(_bfOf(it)*pf*1e9)/1e9; };
+    const _refBf=(()=>{ const m=new Map(); g.items.forEach(({it})=>{ const f=_ukOf(it), o=m.get(f)||{w:0,n:0}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*_bfOf(it); o.n++; m.set(f,o); });
       let best=1,bw=-1,bn=-1; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ best=f; bw=o.w; bn=o.n; } }); return best; })();
     g.items.forEach(({s,it})=>{const a=supplyAmounts(s,it);const _k=_bfOf(it)/_refBf;if(!(g.so&&Array.isArray(g.so.items)&&g.so.items.length)){ const _kk=(it.diameter||'')+'|'+(it.type||''), _v=(+it.supplyQty||0)*_k; if(!g._sqMax) g._sqMax={}; if(!(_v<=(g._sqMax[_kk]||0))) g._sqMax[_kk]=_v; }g.totals.w+=(+it.actualWeight||0)*_k;g.totals.buy+=a.buyTotal;g.totals.sub+=a.subtotal;g.totals.tax+=a.tax;g.totals.dis+=a.discount;g.totals.total+=a.total;});
     // كمية التوريد = كمية أمر البيع نفسه (لأن كل بوليصة بتشيل كمية الأمر الكاملة في supplyQty فجمعها بيكرّرها)؛ ولو مفيش أمر بيع مربوط ناخد أكبر قيمة لكل صنف بدل الجمع
@@ -20416,10 +20420,11 @@ function supInvoiceDataForKey(key){
   const buckets = new Map();
   g.items.forEach(({s,it})=>{
     const dia=String(it.diameter||"").trim(), typ=String(it.type||"").trim();
-    const bk = dia+"||"+typ;
+    let un=""; try{ un=String(policyUnitName(it)||"").trim(); }catch(_){}
+    const bk = dia+"||"+typ+"||"+un;
     const amt = supplyAmounts(s,it);
-    const w = +it.actualWeight||0;
-    if(!buckets.has(bk)) buckets.set(bk,{diameter:dia,type:typ,weight:0,subtotal:0,tax:0,discount:0,total:0,buyTotal:0});
+    let w = +it.actualWeight||0; try{ const sh=Number(policyUnitShown(it,"actualWeight")); if(Number.isFinite(sh)) w=sh; }catch(_){}
+    if(!buckets.has(bk)) buckets.set(bk,{diameter:dia,type:typ,unitName:un,weight:0,subtotal:0,tax:0,discount:0,total:0,buyTotal:0});
     const b = buckets.get(bk);
     b.weight += w;
     b.subtotal += +amt.subtotal||0;
@@ -20434,11 +20439,12 @@ function supInvoiceDataForKey(key){
   const rows=[...buckets.values()]
     .sort((a,b)=> diaNum(a.diameter)-diaNum(b.diameter) || String(a.type).localeCompare(String(b.type),'ar'))
     .map(b=>({
-      diameter:b.diameter, type:b.type, weight:+b.weight.toFixed(3),
+      diameter:b.diameter, type:b.type, unitName:b.unitName||"", weight:+b.weight.toFixed(3),
       unit: b.weight>0 ? +(b.subtotal/b.weight).toFixed(2) : 0,
       subtotal:+b.subtotal.toFixed(2), tax:+b.tax.toFixed(2), discount:+b.discount.toFixed(2), total:+b.total.toFixed(2)
     }));
   const T = rows.reduce((t,r)=>({w:t.w+r.weight, sub:t.sub+r.subtotal, tax:t.tax+r.tax, dis:t.dis+r.discount, tot:t.tot+r.total}),{w:0,sub:0,tax:0,dis:0,tot:0});
+  { const q=supQtyTotals(g.items); T.w=q.w; T.unit=q.unit||"طن"; T.mixed=q.mixed; }   // إجمالي الكمية بوحدة واحدة
   return { g, orderNo:g.orderNo, customer:g.customer, supplier:g.supplier, date:g.date, rows, totals:T };
 }
 
@@ -20469,6 +20475,7 @@ function supInvoiceHtml(inv){
     +(xRep?`<div class="lbl">المندوب</div><div class="val full">${escapeHtml(xRep)}</div>`:"")
     +(xTerms?`<div class="lbl">شروط السداد</div><div class="val full">${escapeHtml(xTerms)}</div>`:"");
   const schedHtml=xSched?`<table class="inv-tbl" style="margin-top:12px"><thead><tr><th>م</th><th>البيان</th><th>تاريخ الاستحقاق</th><th>المبلغ</th></tr></thead><tbody>${xSched.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(String(x.label||((+x.no||0)===0?"نقدي":"قسط "+x.no)))}</td><td>${escapeHtml(String(x.due||x.date||"-"))}</td><td>${money2(x.amount)}</td></tr>`).join("")}</tbody></table>`:"";
+  const totWTxt = inv.totals.noSum ? "—" : inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3});
   const nowDate = inv.date || new Date().toISOString().slice(0,10);
   const typesInInvoice = [...new Set(inv.rows.map(r=>r.type).filter(Boolean))].join(" / ");
   const bayan = `توريد حديد تسليح ${typesInInvoice}`.trim();
@@ -20489,7 +20496,7 @@ function supInvoiceHtml(inv){
     <td>${i+1}</td>
     <td>${escapeHtml(r.diameter||"-")}</td>
     <td>${escapeHtml(r.type||"-")}</td>
-    <td>${r.weight.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td>
+    <td>${r.weight.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}${inv.totals.mixed&&r.unitName?` <small>${escapeHtml(r.unitName)}</small>`:""}</td>
     <td>${r.unit.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
     <td><strong>${r.subtotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></td>
   </tr>`).join("");
@@ -20506,13 +20513,13 @@ function supInvoiceHtml(inv){
       <div class="lbl">التاريخ</div><div class="val">${escapeHtml(nowDate)}</div>
       <div class="lbl">العميل</div><div class="val full">${escapeHtml(inv.customer||"-")}</div>
       ${extraInfo}
-      <div class="lbl">إجمالي الكمية (طن)</div><div class="val full">${inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</div>
+      <div class="lbl">إجمالي الكمية (${escapeHtml(inv.totals.unit||"طن")})</div><div class="val full">${totWTxt}</div>
       <div class="lbl">البيان</div><div class="val full">${escapeHtml(bayan)}</div>
     </div>
     <table class="inv-tbl">
-      <thead><tr><th>م</th><th>الصنف</th><th>النوع</th><th>الكمية (طن)</th><th>سعر الطن (قبل الضريبة)</th><th>الإجمالي</th></tr></thead>
+      <thead><tr><th>م</th><th>الصنف</th><th>النوع</th><th>الكمية${inv.totals.mixed?"":" ("+escapeHtml(inv.totals.unit||"طن")+")"}</th><th>${inv.totals.mixed?"سعر الوحدة":"سعر "+escapeHtml(inv.totals.unit||"الطن")} (قبل الضريبة)</th><th>الإجمالي</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
-      <tfoot><tr><td colspan="3">إجمالي الكمية</td><td>${inv.totals.w.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}</td><td></td><td></td></tr></tfoot>
+      <tfoot><tr><td colspan="3">إجمالي الكمية</td><td>${totWTxt}</td><td></td><td></td></tr></tfoot>
     </table>
     <div class="inv-totals">
       <div class="row sub"><div class="lbl">الإجمالي قبل الضريبة (الأصناف)</div><div class="pct"></div><div class="amt">${money2(inv.totals.sub)}</div></div>
@@ -51606,7 +51613,7 @@ html body:not(#_):has(.p1-shell) #app main .topbar>.spacer{flex:0 0 0!important}
 (function(){
 const icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v8H6z"/><path d="M18 12h.01"/></svg>';
 const view=igPurchaseView;igPurchaseView=function(){const root=document.createElement('div');root.innerHTML=view.apply(this,arguments);root.querySelectorAll('button[onclick="igPurchasePrint()"]' ).forEach(b=>{b.innerHTML=icon;b.classList.add('p1-print-main');b.title='طباعة فاتورة المشتريات / PDF';b.setAttribute('aria-label',b.title)});return root.innerHTML};
-window.piPrintHtml=function(d){const c=igPcalc(d),E=escapeHtml,sup=(state.suppliers||[]).find(x=>x.name===d.supplier)||{},rows=c.lines.map(x=>({diameter:x.diameter||x.itemCode||x.description,type:x.type||'',weight:Number(x.qty)||0,unit:Number(x.unitPrice)||0,subtotal:Number(x.lineSubtotal??((Number(x.qty)||0)*(Number(x.unitPrice)||0))),tax:Number(x.lineTax)||0,discount:Number(x.lineDiscount)||0,total:Number(x.lineNet)||0})),units=[...new Set(c.lines.map(x=>x.unit||'غير مسجلة'))],unit=units.length===1?units[0]:null,old=window.__igSiPrintNo;let content;try{window.__igSiPrintNo=d.docNo||'مسودة';content=supInvoiceHtml({g:{policies:new Map()},orderNo:'',customer:d.supplier,date:d.date,rows,totals:{w:rows.reduce((a,r)=>a+r.weight,0),sub:c.subtotal,tax:c.tax,dis:c.discount,tot:c.net}})}finally{window.__igSiPrintNo=old}
+window.piPrintHtml=function(d){const c=igPcalc(d),E=escapeHtml,sup=(state.suppliers||[]).find(x=>x.name===d.supplier)||{},rows=c.lines.map(x=>({diameter:x.diameter||x.itemCode||x.description,type:x.type||'',weight:Number(x.qty)||0,unit:Number(x.unitPrice)||0,unitName:String(x.unit||''),subtotal:Number(x.lineSubtotal??((Number(x.qty)||0)*(Number(x.unitPrice)||0))),tax:Number(x.lineTax)||0,discount:Number(x.lineDiscount)||0,total:Number(x.lineNet)||0})),units=[...new Set(c.lines.map(x=>x.unit||'غير مسجلة'))],unit=units.length===1?units[0]:null,old=window.__igSiPrintNo;let content;try{window.__igSiPrintNo=d.docNo||'مسودة';content=supInvoiceHtml({g:{policies:new Map()},orderNo:'',customer:d.supplier,date:d.date,rows,totals:{w:rows.reduce((a,r)=>a+r.weight,0),unit:unit||'',mixed:!unit,noSum:!unit,sub:c.subtotal,tax:c.tax,dis:c.discount,tot:c.net}})}finally{window.__igSiPrintNo=old}
 const root=document.createElement('div');root.innerHTML=content;root.querySelector('.title').innerHTML=root.querySelector('.title').innerHTML.replace('فاتورة مبيعات','فاتورة مشتريات').replace('SALES INVOICE','PURCHASE INVOICE');const labels=[...root.querySelectorAll('.inv-info>.lbl')];labels.find(x=>x.textContent==='العميل').textContent='المورد';const quantity=labels.find(x=>x.textContent.includes('إجمالي الكمية'));quantity.textContent=unit?'إجمالي الكمية ('+unit+')':'الوحدات المسجلة';if(!unit)quantity.nextElementSibling.textContent=units.join(' / ');const bayan=labels.find(x=>x.textContent==='البيان');bayan.nextElementSibling.textContent=(!d._pm&&d.notes)||'مشتريات '+[...new Set(c.lines.map(x=>x.description||[x.diameter,x.type].filter(Boolean).join(' ')))].join(' / ');
 const info=root.querySelector('.inv-info'),add=(label,value)=>{if(!value)return;info.insertAdjacentHTML('beforeend','<div class="lbl">'+E(label)+'</div><div class="val full">'+E(String(value))+'</div>')};add('رقم فاتورة المورد',d.supplierInvoiceNo);add('مرجع البوليصة',d._pm?((state.shipments||[]).find(s=>String(s.id)===String(d._shipment)&&pmCompany(s)===pmCompany(d))?.policyNo||d.referenceNo):d.referenceNo);add('أمر البيع المصدر',d.sourceSaleOrderNo);add('عنوان المورد',sup.address);add('الرقم الضريبي',sup.taxCard);if(!d._pm){add('شروط السداد',d.paymentTerms);add('تاريخ الاستحقاق',d.dueDate)};
 const table=root.querySelector('.inv-tbl'),heads=table.tHead.rows[0];heads.cells[3].textContent=unit?'الكمية ('+unit+')':'الكمية';heads.cells[4].textContent=unit?'سعر '+unit+' (قبل الضريبة)':'سعر الوحدة (قبل الضريبة)';heads.cells[2].insertAdjacentHTML('beforebegin','<th>التصنيف</th>');if(!unit)heads.cells[4].insertAdjacentHTML('beforebegin','<th>الوحدة</th>');[...table.tBodies[0].rows].forEach((tr,i)=>{tr.cells[2].insertAdjacentHTML('beforebegin','<td>'+E(prClsName(c.lines[i].diameter))+'</td>');if(!unit)tr.cells[4].insertAdjacentHTML('beforebegin','<td>'+E(c.lines[i].unit||'غير مسجلة')+'</td>')});table.tFoot.rows[0].cells[0].colSpan=4;if(!unit)table.tFoot.rows[0].innerHTML='<td colspan="'+heads.cells.length+'">لا تجمع كميات بوحدات مختلفة</td>';
