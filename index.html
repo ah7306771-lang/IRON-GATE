@@ -13205,7 +13205,7 @@ async function invRepriceExecute(){
   if(!invRepriceLast||!(invRepriceLast.diffs||[]).length){
     toast("اعمل \"عرض الفروقات\" الأول للتأكد من التعديلات","err"); return;
   }
-  var ok=await askConfirm("هيتم تحديث "+invRepriceLast.changed_movements+" حركة و"+invRepriceLast.entries_affected+" قيد محاسبي تلقائياً. العملية داخل transaction واحد ولو فشل جزء منها بترجع كلها. متأكد؟",{title:"⚠ تأكيد التنفيذ",ok:"نعم، نفّذ",cancel:"إلغاء",danger:true});
+  var ok=await askConfirm("هيتم تحديث "+invRepriceLast.changed_movements+" حركة ("+((invRepriceLast.orders||[]).length)+" أمر بيع متأثر). بعد تحديث الحركات هتتم مقارنة قيود المشتريات والمبيعات لكل أمر بأسعار الشراء الحالية، واللي إجماليه اختلف بس هيتفك ترحيله ويترحّل من جديد. تحديث الحركات وإعادة الترحيل مش في transaction واحد، ولو فشل ترحيل أمر هيظهر لك تقرير بالتفصيل. متأكد؟",{title:"⚠ تأكيد التنفيذ",ok:"نعم، نفّذ",cancel:"إلغاء",danger:true});
   if(!ok) return;
   toast("جارٍ التنفيذ…","ok");
   try{
@@ -13218,8 +13218,12 @@ async function invRepriceExecute(){
     if(r.error) throw r.error;
     invRepriceLast=r.data||null;
     await inventoryLoad();
+    var glRes=null;
+    try{ glRes=await invGlResync_((r.data&&r.data.orders)||[],{}); }
+    catch(e2){ console.error("gl resync",e2); glRes={done:[],fail:[{no:"-",kind:"",msg:String((e2&&e2.message)||e2)}],stale:[],skipped:[]}; }
     invRepriceRender();
-    toast("✓ تم تحديث "+(r.data&&r.data.changed_movements||0)+" حركة و"+(r.data&&r.data.entries_affected||0)+" قيد","ok");
+    toast("✓ تم تحديث تكلفة "+(r.data&&r.data.changed_movements||0)+" حركة","ok");
+    invGlReport_(glRes,false);
   }catch(e){
     var msg=String((e&&e.message)||e||"");
     if(msg.indexOf("FY_CLOSED")>=0){ await askConfirm("الفترة مغلقة. فيه تاريخ في النطاق خارج أي فترة محاسبية مفتوحة، فالتعديل اتوقف.",{title:"🔒 فترة مغلقة",ok:"حسنًا",cancel:"إغلاق"}); }
@@ -18009,11 +18013,18 @@ async function invAutoRepriceOnBuyPriceChange_(rec,oldRec){
     var n=r.data||{};
     try{ await inventoryLoad(); }catch(_){}
     if(Number(n.changed_movements||0)>0){
-      toast("✓ تم إعادة تسعير "+n.changed_movements+" حركة وتحديث "+n.entries_affected+" قيد تلقائياً","ok");
+      toast("✓ تم إعادة تسعير تكلفة "+n.changed_movements+" حركة","ok");
     }else{
       // مفيش فروقات (التكلفة أصلاً مطابقة للمتوسط) — طبيعي لو التغيير بسيط أو مفيش منصرف
-      toast("تم الحفظ — مفيش فروقات محاسبية مطلوبة","ok");
+      toast("تم الحفظ — مفيش فروقات في تكلفة المخزون","ok");
     }
+    // قيود المشتريات والمبيعات للأمر: بتتقارن بأسعار الشراء الحالية وتتعاد لو اختلفت
+    var ordSet=(n.orders||[]).slice();
+    try{ var _ono=invGlOrderNoOfRec_(rec); if(_ono&&ordSet.indexOf(_ono)<0) ordSet.push(_ono); }catch(_){}
+    var glRes=null;
+    try{ glRes=await invGlResync_(ordSet,{}); }
+    catch(e2){ console.error("gl resync",e2); glRes={done:[],fail:[{no:"-",kind:"",msg:String((e2&&e2.message)||e2)}],stale:[],skipped:[]}; }
+    invGlReport_(glRes,true);
   }catch(e){
     var msg=String((e&&e.message)||e||"");
     if(msg.indexOf("FY_CLOSED")>=0){
@@ -52279,3 +52290,97 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  };
 })();
 </script>
+<script id="inv-gl-resync">
+/* مزامنة قيود التوريد (مشتريات/مبيعات) مع أسعار الشراء الحالية بعد إعادة تسعير المخزون.
+   بتقارن إجمالي القيد المرحّل بإجمالي القيد اللي النظام هيبنيه دلوقتي، وبتعيد ترحيل المختلف بس. */
+(function(){
+  "use strict";
+  var TOL=0.5; // جنيه
+  function ordNoOf(s){
+    var so=s&&s.saleOrderId&&(state.saleOrders||[]).find(function(o){return o.id===s.saleOrderId;});
+    return String((so&&so.orderNo)||(s&&s.saleOrderNo)||"");
+  }
+  function keyOf(s){ return s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id); }
+  function findKey(no){
+    var list=state.shipments||[];
+    for(var i=0;i<list.length;i++){ if(ordNoOf(list[i])===String(no)) return keyOf(list[i]); }
+    return null;
+  }
+  function plannedTotal(c,kind){
+    var plan;
+    if(kind==="purchase"){ var sup=findParty(state.suppliers,c.supplier)||{}; plan=supPurchasePlan(c,{inv:1,vat:1,sup:1,pnl:1},sup); }
+    else plan=supSalesPlan(c,{vat:1,cus:1,pnl:1,inv:1});
+    var d=0; plan.lines.forEach(function(x){ d+=(x.dr||0); });
+    return d/100;
+  }
+  async function resync(orderNos,opts){
+    opts=opts||{};
+    var res={checked:0,stale:[],done:[],fail:[],skipped:[]};
+    var nos=Array.from(new Set((orderNos||[]).map(String).filter(Boolean)));
+    if(!nos.length) return res;
+    if(!can("supply","post")){
+      res.fail.push({no:"*",kind:"",msg:"لا تملك صلاحية ترحيل التوريد، فالقيود لم تُراجَع. اطلب من صاحب الصلاحية مراجعتها."});
+      return res;
+    }
+    await supEnsurePostMap(true);
+    var pm=window.supPostMap||{};
+    var amt={};
+    for(var i=0;i<nos.length;i+=80){
+      var q=await sb.from("sale_order_postings").select("order_no,kind,amount").in("order_no",nos.slice(i,i+80));
+      if(q.error) throw q.error;
+      (q.data||[]).forEach(function(x){ amt[x.order_no+"|"+x.kind]=Number(x.amount)||0; });
+    }
+    var sh=null;
+    for(var n=0;n<nos.length;n++){
+      var no=nos[n], key=findKey(no);
+      if(!key){ res.skipped.push({no:no,msg:"الأمر غير موجود في بيانات التوريد المحمّلة"}); continue; }
+      var c=supPostCollect(key);
+      var kinds=["sales","purchase"].filter(function(k){ return pm[no+"|"+k]; });
+      res.checked++;
+      var stale=kinds.filter(function(k){ return Math.abs(plannedTotal(c,k)-(amt[no+"|"+k]||0))>TOL; });
+      if(!stale.length) continue;
+      res.stale.push({no:no,kinds:stale});
+      if(opts.dryRun) continue;
+      if(!sh) sh=await supBulkShared();
+      // فحص مسبق: لو أي حساب/فترة ناقص مش بنفك الترحيل أصلاً
+      var prep={}, bad=false;
+      stale.forEach(function(k){
+        var p=supBulkPrepare(key,k,sh); prep[k]=p;
+        if(p.errs&&p.errs.length){ res.fail.push({no:no,kind:k,msg:"لم يُفك الترحيل — "+p.errs.join("، ")}); bad=true; }
+      });
+      if(bad) continue;
+      for(var j=0;j<stale.length;j++){
+        var kind=stale[j], p2=prep[kind], entryNo=String(pm[no+"|"+kind]||""), u;
+        if(kind==="purchase"&&/^SP-/.test(entryNo)){
+          var ar=await piAtomicPurchase(no,p2.wh&&p2.wh.id,sh.ind&&sh.ind.vat_account,true,true);
+          u={ok:!!(ar&&ar.ok),msg:ar&&ar.error};
+        }else{
+          u=await supBulkUnpostOne(no,kind);
+        }
+        if(!u.ok){ res.fail.push({no:no,kind:kind,msg:"تعذر فك الترحيل: "+(u.msg||"")}); continue; }
+        var r=await supDoPostKind({silent:true,ctx:{c:p2.c,sup:p2.sup,cus:p2.cus,wh:p2.wh,ind:sh.ind,journals:sh.journals,bad:0,postingsOk:true,posted:null,kind:kind}});
+        if(r&&r.ok) res.done.push({no:no,kind:kind,entryNo:r.entryNo||""});
+        else res.fail.push({no:no,kind:kind,msg:"فُكّ الترحيل ولم يُعاد ترحيله. رحّله من بيانات التوريد. السبب: "+((r&&r.error)||"غير معروف")});
+      }
+    }
+    window._supPostMapAt=0;
+    try{ await supEnsurePostMap(true); }catch(_){}
+    return res;
+  }
+  function report(gl,auto){
+    if(!gl) return;
+    var ok=gl.done.length, bad=gl.fail.length;
+    if(ok&&!bad) toast("✓ أُعيد ترحيل "+ok+" قيد لتطابق أسعار الشراء الحالية","ok");
+    else if(!ok&&!bad&&!auto) toast("قيود الدفاتر مطابقة لأسعار الشراء الحالية — لا حاجة لإعادة ترحيل","ok");
+    else if(ok&&bad) toast("أُعيد ترحيل "+ok+" قيد، وفيه "+bad+" يحتاج مراجعة","warn");
+    if(bad){
+      var msg=gl.fail.map(function(f){ return "أمر "+f.no+(f.kind?" ("+(f.kind==="sales"?"مبيعات":"مشتريات")+")":"")+": "+f.msg; }).join("\n");
+      try{ _igDialog({title:"⚠ مزامنة القيود تحتاج مراجعة",msg:msg,ok:"حسنًا",single:true,danger:true}); }catch(e){ toast(msg,"err"); }
+    }
+  }
+  window.invGlResync_=resync;
+  window.invGlReport_=report;
+  window.invGlOrderNoOfRec_=ordNoOf;
+})();
+</script>
+
