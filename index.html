@@ -12534,7 +12534,7 @@ function partyStatementRows(kind,opts){
       return;
     }
     if(!chqStmtCounts(e,customer)) return;
-    const status=({cash:'نقدي',transfer:'تحويل',receivable:'أوراق قبض',collected:'محصل شيك',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
+    const status=({cash:'نقدي',transfer:'تحويل',receivable:'أوراق قبض',collected:'محصل شيك',endorsed:'محوّل لمورد',deposited:'مودع',cash_received:'تم الاستلام',pending:'شيكات تحت التحصيل',guarantee:'شيك ضمان',returned:'مرتد'})[e.status]||e.status||'';
     const desc=(customer?'تحصيل عميل':'دفعة مورد')+(status?' — '+status:'')+(e.notes?' — '+e.notes:'');
     if(q&&!(internalRef+' '+desc+' '+(e.notes||'')).toLowerCase().includes(q)) return;
     const reversed=e.status==='returned';
@@ -12877,7 +12877,7 @@ function treasuryStmtIsRealMovement(e){
   if(!['cash','bank','transfer'].includes(e.method)) return false;
   if(e.method==='transfer_supplier' || e.status==='guarantee') return false;
   // الشيك البنكي لا يؤثر على الرصيد النقدي إلا بعد التحصيل؛ والمرتد يعكس الحركة فقط إذا سبق تحصيله.
-  if(e.method==='bank' && e.status!=='collected' && !(e.status==='returned'&&e.wasCollected)) return false;
+  if(e.method==='bank' && e.status!=='collected' && e.status!=='endorsed' && !(e.status==='returned'&&e.wasCollected)) return false;
   if(e.status==='returned'&&!e.wasCollected) return false;
   return Number(e.amount)>0;
 }
@@ -24061,6 +24061,7 @@ const txStatuses = [
   { v:"pending",       label:"شيكات تحت التحصيل",  color:"warn" },
   { v:"collected",     label:"محصل شيك",           color:"ok" },
   { v:"returned",      label:"مرتد",               color:"danger" },
+  { v:"endorsed",      label:"محوّل لمورد",        color:"info" },
   { v:"guarantee",     label:"شيك ضمان",           color:"warn" }
 ];
 // التسويات: حركة محاسبية غير نقدية — لا تؤثر على الخزنة لكنها تؤثر على رصيد الطرف
@@ -25533,11 +25534,24 @@ function txNew(direction){
 }
 function txEdit(id, direction){
   const entry = state.treasuryEntries.find(e=>e.id===id); if(!entry) return;
+  if(entry.status==="endorsed") return chqDialog("warn","الشيك محوّل لمورد","لا يمكن تعديله. امسح حركة الصرف المرتبطة أولًا ليرجع الشيك لحافظته.");
+  if(entry.chqImpact==="endorseOut") return chqDialog("warn","حركة صرف تظهير شيك","لا يمكن تعديلها — تُحذف فقط (قبل الترحيل) ويرجع الشيك لحافظته.");
   if(txIsPosted(entry)) return chqDialog("warn","الحركة مُرحّلة","لا يمكن تعديلها أو حذفها.");
   openTxForm(direction, entry);
 }
 async function txDel(id, direction){
   const e = state.treasuryEntries.find(x=>x.id===id); if(!e) return;
+  if(e.status==="endorsed") return chqDialog("warn","الشيك محوّل لمورد","امسح حركة الصرف المرتبطة أولًا ليرجع الشيك لحافظته.");
+  if(e.chqImpact==="endorseOut"){
+    const ch=(state.treasuryEntries||[]).find(x=>x.id===e.endorseChequeId);
+    if(txIsPosted(e)) return chqDialog("warn","حركة الصرف مُرحّلة","ألغِ ترحيل قيد التظهير من حركة الشيك أولًا.");
+    if(!await askConfirm(`حذف حركة صرف تظهير الشيك رقم ${ch?ch.no:""}؟\n\nالشيك هيرجع لحافظته ${ch&&ch.treasury?"("+ch.treasury+") ":""}بحالته السابقة، وتتلغى تسكينات فواتير المورد.`)) return;
+    if(ch){ ch.status=ch.statusBeforeEndorse||"receivable"; ["endorsedTo","endorseDate","endorseTxId","statusBeforeEndorse","chqImpactApplied","chqLocked"].forEach(k=>{ delete ch[k]; }); ch.editLog=(ch.editLog||[]).concat([{at:new Date().toISOString(),by:(curU()&&(curU().name||curU().username))||"",changes:[{f:"إلغاء التحويل لمورد",from:"محوّل لمورد",to:ch.status}]}]); }
+    state.treasuryEntries=state.treasuryEntries.filter(x=>x.id!==id);
+    try{ audit("tx_delete",`حذف حركة صرف تظهير شيك رقم ${e.no} — المورد ${e.supplier} — ${fmt(e.amount)} — رجوع الشيك للحافظة`); }catch(_){}
+    saveState(); renderTreasury(direction); toast("✓ تم حذف حركة الصرف ورجع الشيك لحافظته","ok");
+    return;
+  }
   if(txIsPosted(e) || (e.linkedTxId && txIsPosted(state.treasuryEntries.find(x=>x.id===e.linkedTxId)))) return chqDialog("warn","الحركة مُرحّلة","لا يمكن تعديلها أو حذفها.");
   const linked = e.linkedTxId ? state.treasuryEntries.find(x=>x.id===e.linkedTxId) : null;
   // رصد التسكينات
@@ -26093,7 +26107,7 @@ function txInvoiceRowsForCustomer(customer, excludeEntryId){
     orders.set(k,{so,orderNo:p.orderNo});
   });
   const allDocs=[...(state.shipments||[]),...(state.policies||[])];
-  const paidFor=(so,orderNo,inst)=>(state.treasuryEntries||[]).filter(e=>e.id!==excludeEntryId && e.direction==='in'&&String(e.customer||"").trim()===cust&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned")
+  const paidFor=(so,orderNo,inst)=>(state.treasuryEntries||[]).filter(e=>e.id!==excludeEntryId && e.direction==='in'&&String(e.customer||"").trim()===cust&&(e.method!=="bank"||e.status==="collected"||e.status==="endorsed")&&e.status!=="returned")
     .reduce((s,e)=>s+(e.allocations||[]).filter(a=>+a.installment===inst&&txAllocMatches(a,so,orderNo)).reduce((x,a)=>x+(+a.amount||0),0),0);
   const out=[];
   orders.forEach(({so,orderNo},k)=>{
@@ -34921,6 +34935,7 @@ function txPostPlan(e,accs){
   const isLeaf=x=>x&&x.is_active&&!x.is_group&&x.allow_posting&&!(accs||[]).some(ch=>ch.is_active&&ch.parent_id===x.id);
   const accOf=id=>id?(accs||[]).find(x=>String(x.id)===String(id)):null;
   if(txIsPosted(e)) return {reason:"الحركة مُرحّلة بالفعل"};
+  if(e.chqImpact==="endorseOut") return {reason:"حركة تظهير شيك — تُرحَّل من حركة الشيك الأصلية بزر «ترحيل التظهير»"};
   if(e.direction==="out" && e.linkedTxId && e.method==="adjustment" && e.entryKind!=="gl") return {reason:"تسوية مرتبطة بتحويل من عميل — تُرحَّل مع التحصيل المرتبط"};
   if(e.method==="adjustment" && e.entryKind!=="gl") return {reason:"تسوية على حساب العميل/المورد فقط (بدون حسابات مقابلة) — اضغط تعديل ← ⚖ تسويات وأضف الحسابات المقابلة ثم رحّلها"};
   if(e.status==="returned"||e.status==="guarantee") return {reason:"لا يُرحَّل شيك مرتد أو شيك ضمان"};
@@ -34933,16 +34948,7 @@ function txPostPlan(e,accs){
   const stmt=(e.method==="adjustment"?(isIn?"تسوية عميل":"تسوية مورد"):(isIn?"تحصيل":"دفعة"))+" رقم "+(e.no||"")+(who?" — "+who:"")+(e.refNo?" — مرجع "+e.refNo:"");
   const trName=e.method==="cash"?"الخزنة":"البنك";
   const treasuryLine=(dr,cr)=>{ const t=txPostTreasuryAcc(e); const id=chk(trName+": "+treasuryLabel(e.treasury),t&&t.accountId,"اربط "+trName+" بحساب من البيانات الأساسية"); lines.push({k:trName+": "+treasuryLabel(e.treasury),acc:id,dr,cr,desc:stmt}); };
-  if(e.chqImpact==="toSupplier" && e.linkedTxId){
-    /* تحويل شيك لمورد: قيد واحد مشترك بين حركة العميل وحركة المورد — من ح/ المورد (مدين) إلى ح/ العميل (دائن) */
-    const _l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId);
-    const cm=isIn?e:_l, sm=isIn?_l:e;
-    if(!cm||!sm) return {reason:"الحركة المرتبطة بتحويل الشيك غير موجودة"};
-    const sup=findParty(state.suppliers,sm.supplier)||{}, cus=findParty(state.customers,cm.customer)||{};
-    const a=chk("المورد: "+sm.supplier,sup.accountId), b=chk("العميل: "+cm.customer,cus.accountId);
-    const st2="تحويل شيك رقم "+(((cm.sourceCheque||{}).no)||"")+" من العميل "+cm.customer+" للمورد "+sm.supplier+(((cm.sourceCheque||{}).refNo)?" — شيك "+cm.sourceCheque.refNo:"");
-    lines.push({k:"المورد: "+sm.supplier,acc:a,dr:amount,cr:0,desc:st2}); lines.push({k:"العميل: "+cm.customer,acc:b,dr:0,cr:amount,desc:st2});
-  }else if(e.entryKind==="gl"){
+  if(e.entryKind==="gl"){
     if(e.method==="adjustment"){
       const nm=isIn?e.customer:e.supplier, p=findParty(isIn?state.customers:state.suppliers,nm)||{}, id=chk((isIn?"العميل: ":"المورد: ")+nm,p.accountId);
       const pDebit=(e.adjustmentKind||(isIn?"debit":"credit"))==="debit";
@@ -35031,7 +35037,7 @@ async function txPostDo(){
     const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
     const mark=t=>{ t.postedEntryId=entry.id; t.postedEntryNo=entryNo; t.postedAt=now; t.postedBy=by; t.postedJournal=String(j.journal_code); };
     mark(e);
-    if(e.linkedTxId && (e.method==="transfer_supplier"||e.chqImpact==="toSupplier")){ const l=state.treasuryEntries.find(x=>x.id===e.linkedTxId); if(l) mark(l); }
+    if(e.linkedTxId && e.method==="transfer_supplier"){ const l=state.treasuryEntries.find(x=>x.id===e.linkedTxId); if(l) mark(l); }
     try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
     audit("tx_post",`ترحيل ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState(); toast("✓ تم ترحيل "+title+" بقيد رقم "+entryNo,"ok"); closeModal();
@@ -35048,6 +35054,14 @@ async function txPostDo(){
   }
 }
 function txRowActions(e,direction){
+  if(e.chqImpact==="endorseOut"){
+    const ch=(state.treasuryEntries||[]).find(x=>x.id===e.endorseChequeId);
+    if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span>${ch?`<button class="tx-view-entry-btn" onclick="chqViewEntry('${ch.id}','in')">عرض القيد</button>`:""}<span class="chip warn">🔁 تظهير شيك</span></div>`;
+    return `<div class="td-actions"><span class="tx-unposted">غير مُرحّل</span><span class="chip warn">🔁 تظهير شيك</span>${(ch&&can("payments","post"))?`<button class="tx-post-btn" onclick="chqEndorsePostOpen('${ch.id}')">ترحيل التظهير</button>`:""}<button class="del" onclick="txDel('${e.id}','${direction}')">حذف</button></div>`;
+  }
+  if(e.status==="endorsed" && typeof chqCanEndorsePost==="function" && chqCanEndorsePost(e) && can(direction==="in"?"receipts":"payments","post")){
+    return `<div class="td-actions"><span class="tx-posted">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button><span class="chip warn">🔁 محوّل لـ ${escapeHtml(e.endorsedTo||"")}</span><button class="tx-post-btn" onclick="chqEndorsePostOpen('${e.id}')">ترحيل التظهير</button><button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button></div>`;
+  }
   const logBtn=(e.editLog&&e.editLog.length)?`<button onclick="txShowLog('${e.id}')">سجل (${e.editLog.length})</button>`:"";
   const prn=(e.method!=="adjustment")?`<button class="tx-prn-btn" onclick="txPrintVoucher('${e.id}','${direction}')" title="طباعة سند ${direction==="in"?"قبض":"صرف"}">🖨 سند</button>`:"";
   if(txIsPosted(e)) return `<div class="td-actions"><span class="tx-posted" title="لا تعديل ولا حذف بعد الترحيل">✔ مُرحّل ${escapeHtml(String(e.postedEntryNo||""))}</span><button class="tx-view-entry-btn" onclick="chqViewEntry('${e.id}','${direction}')">عرض القيد</button>${(typeof chqCanCollect==="function"&&chqCanCollect(e)&&can(direction==="in"?"receipts":"payments","post"))?`<button class="tx-post-btn" onclick="chqImpactMenu('${e.id}','${direction}')">${direction==="in"?"تأثير الشيك":"تأثير الشيك"}</button>`:""}${(typeof chqCanUnpost==="function"&&chqCanUnpost(e,direction))?`<button class="del" onclick="chqUnpost('${e.id}','${direction}')">إلغاء الترحيل</button>`:(txCanUnpost(e,direction)?`<button class="del" onclick="txUnpost('${e.id}','${direction}')" title="حذف القيد وإرجاع الحركة غير مُرحّلة">↶ إلغاء الترحيل</button>`:"")}${prn}${logBtn}</div>`;
@@ -37436,7 +37450,7 @@ async function txPostCore(e,direction,plan,j,years,periods){
   const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
   const mark=t=>{ t.postedEntryId=entry.id; t.postedEntryNo=entryNo; t.postedAt=now; t.postedBy=by; t.postedJournal=String(j.journal_code); };
   mark(e);
-  if(e.linkedTxId && (e.method==="transfer_supplier"||e.chqImpact==="toSupplier")){ const l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId); if(l) mark(l); }
+  if(e.linkedTxId && e.method==="transfer_supplier"){ const l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId); if(l) mark(l); }
   try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
   try{ audit("tx_post",`ترحيل جماعي ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`); }catch(_){}
   saveState();
@@ -39060,7 +39074,7 @@ function chqStmtCounts(e,customer){
   if(e.method!=="bank") return true;
   const st=e.status, c=chqCfg();
   if(st==="returned") return customer ? !!e.wasCollected : true;
-  if(st==="collected") return true;
+  if(st==="collected"||st==="endorsed") return true;
   if(customer) return (st==="receivable"&&c.stmtNR) || (st==="pending"&&c.stmtUC);
   if(!e.chq2) return true;                         // شيكات الموردين القديمة: كما هي
   return (st==="receivable"||st==="pending") ? c.stmtNP : true;
@@ -39076,7 +39090,7 @@ function chqReasonNotify(reason,e){
 function chqHasKind(e,k){ return !!(e&&e.chequeEntries&&e.chequeEntries.some(r=>r.kind===k)); }
 function chqIsChq(e){ return !!e && e.method==="bank" && e.entryKind!=="gl" && !e.linkedTxId; }
 /* مرحلة 1: ترحيل الاستلام/الإصدار — لشيك لم يُرحَّل منه شيء */
-function chqCanReceipt(e){ return chqIsChq(e) && !txIsPosted(e) && (e.status==="receivable"||e.status==="pending"); }
+function chqCanReceipt(e){ return chqIsChq(e) && !txIsPosted(e) && (e.status==="receivable"||e.status==="pending"||e.status==="endorsed"); }
 /* مرحلة 2: التحصيل/الصرف — لشيك جديد غير مُرحَّل (يعمل القيود كلها) أو شيك رُحِّل استلامه فقط */
 function chqCanCollect(e){
   return chqIsChq(e) && (e.status==="receivable"||e.status==="pending") && chqHasKind(e,"receipt") && !chqHasKind(e,"collect");
@@ -39114,9 +39128,11 @@ function chqPlan(e,accs,ctx){
   chk((isIn?"العميل: ":"المورد: ")+who,party.accountId);
   const ab=(state.banks||[]).find(b=>b.code===(ctx&&ctx.bank));
   const needBank=stage!=="receipt";
-  const actAcc=(needBank&&ab)?chk("البنك الفعلي: "+treasuryLabel(ab.code),ab.accountId,"اربط البنك بحساب من البيانات الأساسية"):null;
-  if(needBank&&!ab) checks.push(["البنك الفعلي","—",false,"اختر البنك الفعلي"]);
-  const T=CHQ_TITLES[isIn?"in":"out"], dTitle=isIn?"تحصيل":"دفعة", ref=dTitle+" "+(e.no||"");
+  const endo=(ctx&&ctx.endorseSupplier)?(findParty(state.suppliers,ctx.endorseSupplier)||{}):null;
+  const actLbl=endo?("المورد: "+ctx.endorseSupplier):("البنك: "+(ab?treasuryLabel(ab.code):""));
+  const actAcc=(needBank&&endo)?chk("المورد: "+ctx.endorseSupplier,endo.accountId,"اربط المورد بحساب من البيانات الأساسية"):((needBank&&ab)?chk("البنك الفعلي: "+treasuryLabel(ab.code),ab.accountId,"اربط البنك بحساب من البيانات الأساسية"):null);
+  if(needBank&&!ab&&!endo) checks.push(["البنك الفعلي","—",false,"اختر البنك الفعلي"]);
+  const T0=CHQ_TITLES[isIn?"in":"out"], T=endo?[T0[0],"تظهير الشيك لمورد — "+ctx.endorseSupplier,T0[2]]:T0, dTitle=isIn?"تحصيل":"دفعة", ref=dTitle+" "+(e.no||"");
   const stmt=(kind)=>`${T[kind]} — ${dTitle} رقم ${e.no||""}${who?" — "+who:""}${e.refNo?" — شيك "+e.refNo:""}`;
   const L=(k,acc,dr,cr,kind)=>({k,acc,dr,cr,desc:stmt(kind)});
   const rd=e.date||glDate(), cd=(ctx&&ctx.date)||"";
@@ -39126,7 +39142,7 @@ function chqPlan(e,accs,ctx){
     const indL=indName;
     if(isIn){
       entries.push({kind:"receipt",title:T[0],date:rd,lines:[L("أوراق القبض — "+sysName,sysAcc,amount,0,0),L(indL,indId,0,amount,0)]});
-      entries.push({kind:"collect",title:T[1],date:cd,lines:[L("البنك: "+(ab?treasuryLabel(ab.code):""),actAcc,amount,0,1),L("العميل: "+who,party.accountId,0,amount,1)]});
+      entries.push({kind:"collect",title:T[1],date:cd,lines:[L(actLbl,actAcc,amount,0,1),L("العميل: "+who,party.accountId,0,amount,1)]});
       entries.push({kind:"reverse",title:T[2],date:cd,lines:[L(indL,indId,amount,0,2),L("أوراق القبض — "+sysName,sysAcc,0,amount,2)]});
     }else{
       entries.push({kind:"receipt",title:T[0],date:rd,lines:[L(indL,indId,amount,0,0),L("أوراق الدفع — "+sysName,sysAcc,0,amount,0)]});
@@ -39136,7 +39152,7 @@ function chqPlan(e,accs,ctx){
   }else{
     if(isIn){
       entries.push({kind:"receipt",title:T[0],date:rd,lines:[L(sysName,sysAcc,amount,0,0),L("العميل: "+who,party.accountId,0,amount,0)]});
-      entries.push({kind:"collect",title:T[1],date:cd,lines:[L("البنك: "+(ab?treasuryLabel(ab.code):""),actAcc,amount,0,1),L(sysName,sysAcc,0,amount,1)]});
+      entries.push({kind:"collect",title:T[1],date:cd,lines:[L(actLbl,actAcc,amount,0,1),L(sysName,sysAcc,0,amount,1)]});
     }else{
       entries.push({kind:"receipt",title:T[0],date:rd,lines:[L("المورد: "+who,party.accountId,amount,0,0),L(sysName,sysAcc,0,amount,0)]});
       entries.push({kind:"collect",title:T[1],date:cd,lines:[L(sysName,sysAcc,amount,0,1),L("البنك: "+(ab?treasuryLabel(ab.code):""),actAcc,0,amount,1)]});
@@ -39471,7 +39487,7 @@ async function chqImpactToSupplier(id, direction){
     </style>
     <div style="display:flex;flex-direction:column;gap:12px">
     <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
-      🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد كتسوية دائنة محوّلة
+      🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد (تظهير الشيك)
       <br>شيك رقم <b>${escapeHtml(String(e.no||""))}</b> — قيمة <b>${fmt(amount)}</b> ${escapeHtml(cur)}
     </div>
     <div class="chqTs-grid">
@@ -39487,8 +39503,8 @@ async function chqImpactToSupplier(id, direction){
         <input class="inp" type="date" id="chqToSupDate" value="${new Date().toISOString().slice(0,10)}">
       </div>
     </div>
-    ${section("c","🧾 فواتير العميل — "+escapeHtml(customer)+" (تسوية دائنة: يقل من مديونيته)","طريقة السداد للعميل",optC,prefill?"invoice_assistance":"invoice_deduction")}
-    ${section("s","🏭 فواتير المورد (تسوية مدينة: يقل من مديونيتنا له)","طريقة السداد للمورد",optS,"invoice_deduction")}
+    ${section("c","🧾 فواتير العميل — "+escapeHtml(customer)+" (الشيك يسدّدها: يقل من مديونيته)","طريقة السداد للعميل",optC,prefill?"invoice_assistance":"invoice_deduction")}
+    ${section("s","🏭 فواتير المورد (حركة الصرف تسدّدها: يقل من مديونيتنا له)","طريقة السداد للمورد",optS,"invoice_deduction")}
     <div class="fld">
       <label>ملاحظات (اختياري)</label>
       <textarea class="inp" id="chqToSupNotes" rows="2" placeholder="مثل: تسليم للمورد كدفعة على فاتورة..."></textarea>
@@ -39496,12 +39512,12 @@ async function chqImpactToSupplier(id, direction){
     <div style="padding:10px;background:#fff9e8;border:1px solid #e9c46a;border-radius:8px;font-size:12px;color:#76540b;line-height:1.7">
       ⚠️ هذا التحويل سينفّذ تلقائيًا:
       <ol style="margin:6px 0;padding-inline-start:20px">
-        <li><b>مرتد للعميل:</b> الشيك يخرج من الحافظة (أوراق القبض) فتقل الحافظة بقيمته، ولو كان مُرحّلًا يُلغى قيده السابق.</li>
-        <li><b>حركة العميل</b> <b>${escapeHtml(customer)}</b>: تسوية دائنة بـ <b>${fmt(amount)}</b> تظهر في نظام العملاء (يقل من مديونيته) ومُسكَّنة على الفواتير المختارة.</li>
-        <li><b>حركة المورد</b> <b id="chqToSupSelLabel">[المورد]</b>: تسوية مدينة بـ <b>${fmt(amount)}</b> تظهر في نظام الموردين (يقل من مديونيتنا له).</li>
-        <li><b>حفظ وترحيل القيد:</b> يحفظ الحركتين ثم يفتح نافذة الترحيل: من ح/ المورد (مدين) إلى ح/ العميل (دائن).</li>
+        <li><b>الشيك لا يُمسح:</b> يفضل في السجل بحالة «محوّل لمورد» ويتقفل، وبيانات المورد والتاريخ بتتسجّل عليه.</li>
+        <li><b>حركة صرف جديدة (المدفوعات / البنوك):</b> خروج الشيك بقيمة <b>${fmt(amount)}</b> من حافظة أوراق القبض${e.treasury?" <b>"+escapeHtml(String(e.treasury))+"</b>":""} إلى المورد <b id="chqToSupSelLabel">[المورد]</b> — فتقل الحافظة، ويقل من مديونيتنا للمورد (مسكّنة على فواتيره).</li>
+        <li><b>العميل <b>${escapeHtml(customer)}</b>:</b> الشيك هو سداده (مسكّن على الفواتير المختارة) — مفيش حركة جديدة عليه.</li>
+        <li><b>حفظ وترحيل القيد:</b> قيد التظهير: من ح/ المورد (مدين) إلى ح/ أوراق القبض (الحافظة) دائن — ولو الشيك استلامه لسه ما اترحّلش، هتتفتح نافذة ترحيل الاستلام الأول.</li>
       </ol>
-      الحركتان مرتبطتان ببعض، ومسح إحداهما يمسح الأخرى. الشيك الأصلي بيتشال ولا يرجع بمسح الحركتين — سجّله من جديد لو لزم.
+      مسح حركة الصرف (قبل ترحيلها) يرجّع الشيك لحافظته بحالته السابقة.
     </div>
   </div>`;
   openModal("🔁 تحويل شيك لمورد — رقم "+(e.no||""), body, ()=>{ chqToSupSubmit(false); return false; });
@@ -39541,8 +39557,8 @@ async function chqToSupSubmit(andPost){
   try{
     const r=await chqImpactToSupplierDo(X.id, supplier, date, notes, opt);
     closeModal();
-    if(andPost && r && r.custId){
-      setTimeout(()=>{ try{ txPostOpen(r.custId,"in"); }catch(pe){ console.warn(pe); } },120);
+    if(andPost && r && r.chequeId){
+      setTimeout(()=>{ try{ chqEndorsePostOpen(r.chequeId); }catch(pe){ console.warn(pe); } },120);
     }
   }catch(err){
     toast("فشل التحويل: "+(err?.message||err),"err");
@@ -39559,78 +39575,63 @@ async function chqImpactToSupplierDo(id, supplier, date, notes, opt){
   const customer = e.customer || "";
   if(!(amount>0)) throw new Error("قيمة الشيك غير صحيحة");
   if(e.status==="collected") throw new Error("الشيك محصّل بالفعل — لا يمكن تحويله لمورد");
-
+  if(e.status==="endorsed") throw new Error("الشيك محوّل لمورد بالفعل");
   if(typeof scopeSaveBlock==="function"){
-    const m1 = scopeSaveBlock({customer:customer,supplier:"",bank:"",safe:""});
-    if(m1) throw new Error(m1);
-    const m2 = scopeSaveBlock({customer:"",supplier:supplier,bank:"",safe:""});
-    if(m2) throw new Error(m2);
+    const m1 = scopeSaveBlock({customer:customer,supplier:"",bank:"",safe:""}); if(m1) throw new Error(m1);
+    const m2 = scopeSaveBlock({customer:"",supplier:supplier,bank:"",safe:""}); if(m2) throw new Error(m2);
   }
-
-  const chequeRef = "شيك رقم "+(e.no||"")+" — "+(e.refNo||"");
-  const parentNo = e.no;
-  const snap = {no:e.no, refNo:e.refNo||"", bankDrawn:e.bankDrawn||"", dueDate:e.dueDate||"", date:e.date||"", amount:amount, customer:customer, portfolio:e.treasury||"", status:e.status||""};
-
-  // 1) مرتد للعميل: خروج الشيك من الحافظة + عكس قيده السابق (إلغاء ترحيل قيود الشيك) — قبل إنشاء أي حاجة
-  if(txIsPosted(e)){
-    if(typeof chqCanUnpost==="function" && !chqCanUnpost(e,"in")) throw new Error("الشيك مُرحّل وتعذر إلغاء ترحيله تلقائيًا (الصلاحية أو حالته) — ألغِ ترحيله يدويًا ثم أعد المحاولة");
-    await chqUnpostRun(id,"in","all");
-    if(txIsPosted(e)) throw new Error("تعذر إلغاء ترحيل الشيك كاملًا — لم يتم إنشاء أي حركة، راجع القيود ثم أعد المحاولة");
-  }
-
-  const uNo = (curU()?String(curU().no):"");
-  const baseNote = `${chequeRef} — مرتد للعميل ومحوّل للمورد`;
-  const custId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
-  const supId = "tx_"+(Date.now()+1)+"_"+Math.random().toString(36).slice(2,6);
   const custAlloc = Array.isArray(opt.custAlloc) ? opt.custAlloc : [];
   const supAlloc = Array.isArray(opt.supAlloc) ? opt.supAlloc : [];
+  const uNo = (curU()?String(curU().no):"");
+  const outId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
+  const portfolio = e.treasury || "";
+  const snap = {no:e.no, refNo:e.refNo||"", bankDrawn:e.bankDrawn||"", dueDate:e.dueDate||"", date:e.date||"", amount:amount, customer:customer, portfolio:portfolio};
 
-  // 2) حركة العميل: تسوية دائنة (يقل من مديونيته) — مُسكَّنة على الفواتير المختارة — تظهر في نظام العملاء
-  const custMove = {
-    id: custId, direction: "in", no: nextTxNo("in"), createdAt: Date.now(), createdBy: uNo,
-    date: date, customer: customer, amount: amount,
-    method: "adjustment", status: "adjustment", treasury: "",
-    refNo: "", dueDate: "", bankDrawn: "",
-    adjustmentKind: "credit",
-    allocations: JSON.parse(JSON.stringify(custAlloc)),
-    allocationType: custAlloc.length ? (opt.custAllocType||"invoice_deduction") : "",
-    targetSupplier: "",
-    notes: `تسوية — ${baseNote}: ${supplier}${notes?" — "+notes:""}`,
-    entryKind: "gl",
-    sourceChequeId: id, sourceCheque: snap,
-    chqImpact: "toSupplier", linkedSupplier: supplier, linkedTxId: supId
-  };
+  // 1) الشيك يفضل موجود — بحالة «محوّل لمورد» ومقفول، وتسكينه على فواتير العميل هو سداد العميل
+  e.statusBeforeEndorse = e.status;
+  e.status = "endorsed";
+  e.chqImpactApplied = "toSupplier";
+  e.chqLocked = true;
+  e.endorsedTo = supplier;
+  e.endorseDate = date;
+  e.endorseTxId = outId;
+  e.allocations = JSON.parse(JSON.stringify(custAlloc));
+  e.allocationType = custAlloc.length ? (opt.custAllocType||"invoice_deduction") : "";
+  e.notes = (e.notes||"") + ` [محوّل للمورد ${supplier} في ${date}${notes?" — "+notes:""}]`;
 
-  // 3) حركة المورد: تسوية مدينة (يقل من مديونيتنا له) — تظهر في نظام الموردين
-  const supMove = {
-    id: supId, direction: "out", no: nextTxNo("out"), createdAt: Date.now()+1, createdBy: uNo,
+  // 2) حركة صرف (مدفوعات / بنوك): خروج الشيك من حافظة أوراق القبض إلى المورد — مسكّنة على فواتيره
+  const outMove = {
+    id: outId, direction: "out", no: nextTxNo("out"), createdAt: Date.now(), createdBy: uNo,
     date: date, supplier: supplier, amount: amount,
-    method: "adjustment", status: "adjustment", treasury: "",
-    refNo: "", dueDate: "", bankDrawn: "",
-    adjustmentKind: "debit",   // مدينة على المورد = نقصان مديونيتنا له
+    method: "transfer", status: "transfer", treasury: portfolio,
+    refNo: e.refNo||"", dueDate: "", bankDrawn: "",
     allocations: JSON.parse(JSON.stringify(supAlloc)),
     allocationType: supAlloc.length ? (opt.supAllocType||"invoice_deduction") : "credit_amount",
     targetSupplier: "",
-    notes: `تسوية — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
-    entryKind: "gl",
-    sourceChequeId: id, sourceCheque: snap,
-    chqImpact: "toSupplier", linkedCustomer: customer, linkedTxId: custId
+    notes: `صرف — تظهير شيك رقم ${e.no}${e.refNo?" ("+e.refNo+")":""} من العميل ${customer} — خروج من حافظة أوراق القبض ${portfolio}${notes?" — "+notes:""}`,
+    entryKind: "party",
+    chqImpact: "endorseOut", endorseChequeId: id, linkedCustomer: customer, sourceCheque: snap
   };
-
-  // الشيك الأصلي يتشال من الحافظة (فتقل بقيمته) والحركتين الجداد بدله — كل واحدة في نظامها
-  state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
-  state.treasuryEntries.push(custMove);
-  state.treasuryEntries.push(supMove);
+  state.treasuryEntries.push(outMove);
+  e.editLog=(e.editLog||[]).concat([{at:new Date().toISOString(),by:(curU()&&(curU().name||curU().username))||"",changes:[{f:"تحويل لمورد",from:e.statusBeforeEndorse,to:"محوّل لمورد "+supplier+" — حركة صرف "+outMove.no}]}]);
   saveState();
-
-  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)} — مرتد للعميل (خروج من الحافظة ${snap.portfolio||""}) + تسوية دائنة للعميل ${custMove.no} + تسوية مدينة للمورد ${supMove.no}`); } catch(_){}
-
-  toast(`✓ تم تحويل الشيك للمورد ${supplier} — خرج من الحافظة + حركة عميل ${custMove.no} / حركة مورد ${supMove.no}`,"ok");
-
-  // تحديث الشاشة
+  try { audit("chq_to_supplier", `تحويل شيك رقم ${e.no} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)} — خروج من الحافظة ${portfolio} بحركة صرف ${outMove.no}`); } catch(_){}
+  toast(`✓ تم تحويل الشيك للمورد ${supplier} — حركة صرف ${outMove.no} (خروج من الحافظة)`,"ok");
   if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(e.direction);
   if(typeof renderChequeRegister==="function" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
-  return {custId, supId, custNo:custMove.no, supNo:supMove.no};
+  return {chequeId:id, outId, outNo:outMove.no};
+}
+
+/* ترحيل قيد التظهير: لو استلام الشيك لسه ما اترحّلش نفتح ترحيل الاستلام الأول */
+function chqCanEndorsePost(e){ return chqIsChq(e) && e.status==="endorsed" && chqHasKind(e,"receipt") && !chqHasKind(e,"collect"); }
+async function chqEndorsePostOpen(id){
+  const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e) return;
+  if(!chqHasKind(e,"receipt")){
+    await chqDialog("warn","رحّل استلام الشيك أولًا","قيد التظهير بيتبني على قيد استلام الشيك (أوراق القبض). هنفتح لك ترحيل الاستلام، وبعده اضغط «ترحيل التظهير».");
+    return chqCollectOpen(id,"in","receipt");
+  }
+  if(!chqCanEndorsePost(e)) return chqDialog("warn","لا يمكن ترحيل التظهير","التظهير مترحّل بالفعل أو حالة الشيك لا تسمح.");
+  return chqCollectOpen(id,"in",undefined,e.endorsedTo);
 }
 
 /* ---------- مرتد للعميل: إلغاء كامل للشيك ---------- */
@@ -39662,12 +39663,12 @@ async function chqImpactReturnedCust(id, direction){
 }
 
 /* ---------- نافذة «تحصيل الشيك / صرف الشيك» ---------- */
-async function chqCollectOpen(id,direction,stageArg){
+async function chqCollectOpen(id,direction,stageArg,endo){
   const scr=direction==="in"?"receipts":"payments";
   if(!can(scr,"post")) return toast("لا تملك صلاحية الترحيل","err");
   const e=(state.treasuryEntries||[]).find(x=>x.id===id); if(!e) return;
   const stage=stageArg==="receipt"?"receipt":(chqHasKind(e,"receipt")?"collect":"all");
-  if(stage==="receipt"?!chqCanReceipt(e):!chqCanCollect(e)) return chqDialog("warn","لا يمكن تنفيذ العملية","هذه الحركة ليست شيكًا قابلًا لهذه العملية في حالته الحالية.");
+  if(stage==="receipt"?!chqCanReceipt(e):!(chqCanCollect(e)||(endo&&chqCanEndorsePost(e)))) return chqDialog("warn","لا يمكن تنفيذ العملية","هذه الحركة ليست شيكًا قابلًا لهذه العملية في حالته الحالية.");
   const mode=e.chqMode||"";
   let accs=[],journals=[],years=[],periods=[];
   try{
@@ -39675,12 +39676,12 @@ async function chqCollectOpen(id,direction,stageArg){
     if(a.error)throw a.error; if(j.error)throw j.error; if(y.error)throw y.error; if(p.error)throw p.error;
     accs=a.data||[]; journals=(j.data||[]).filter(x=>x.is_active); years=y.data||[]; periods=p.data||[];
   }catch(err){ return toast("تعذر قراءة بيانات الحسابات: "+(err.message||err),"err"); }
-  const first=chqPlan(e,accs,{bank:"",date:"",stage,mode}); if(first.err) return chqDialog("err",first.err.title,first.err.msg);
+  const first=chqPlan(e,accs,{bank:"",date:"",stage,mode,endorseSupplier:endo||""}); if(first.err) return chqDialog("err",first.err.title,first.err.msg);
   let saved=""; try{ saved=localStorage.getItem(TX_POST_JOURNAL_KEY)||""; }catch(_){}
   const pref=journals.find(x=>String(x.journal_code)===saved)||journals.find(x=>/خزن|نقد|بنك|cash|bank/i.test(String(x.journal_name||"")))||journals[0];
   const banks=(state.banks||[]).filter(b=>!chqIsSysBank(b)), cur=(state.settings&&state.settings.currency)||"";
   const isIn=direction==="in", who=isIn?e.customer:e.supplier;
-  window._chqCtx={id,direction,accs,journals,years,periods,stage,mode};
+  window._chqCtx={id,direction,accs,journals,years,periods,stage,mode,endorse:endo||""};
   const body=`<div class="chq-box">
     <div class="chq-summary">${isIn?"تحصيل":"دفعة"} رقم ${escapeHtml(String(e.no||""))} — ${escapeHtml(who||"")} — شيك ${escapeHtml(e.refNo||"—")} — ${fmt(e.amount)} ${escapeHtml(cur)}</div>
     <div class="chq-grid">
@@ -39693,13 +39694,18 @@ async function chqCollectOpen(id,direction,stageArg){
   openModal((stage==="receipt"?(isIn?"ترحيل استلام الشيك":"ترحيل إصدار الشيك"):(isIn?"تحصيل الشيك":"صرف الشيك"))+" — رقم "+(e.no||""),body,()=>{ chqCollectDo(); return false; });
   document.querySelector("#modalBackdrop .modal")?.classList.add("chq-modal");
   const cancel=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cancel) cancel.textContent="إلغاء";
+  if(endo && stage!=="receipt"){
+    const _b=document.getElementById("chqBank"), _f=_b&&_b.closest(".fld"); if(_f) _f.innerHTML='<label>المورد المستفيد</label><div class="inp">'+escapeHtml(endo)+'</div>';
+    const _d=document.getElementById("chqDate"); if(_d&&e.endorseDate) _d.value=e.endorseDate;
+    const _h=document.querySelector("#modalBackdrop .mhead h3"); if(_h) _h.textContent="تظهير الشيك لمورد — رقم "+(e.no||"");
+  }
   chqRefresh();
 }
 function chqRefresh(){
   const X=window._chqCtx; if(!X) return;
   const e=state.treasuryEntries.find(x=>x.id===X.id); if(!e) return;
   const bank=document.getElementById("chqBank")?.value||"", date=document.getElementById("chqDate")?.value||"";
-  const plan=chqPlan(e,X.accs,{bank,date,stage:X.stage,mode:X.mode}), okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"), box=document.getElementById("chqPrev");
+  const plan=chqPlan(e,X.accs,{bank,date,stage:X.stage,mode:X.mode,endorseSupplier:X.endorse||""}), okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"), box=document.getElementById("chqPrev");
   if(!box) return;
   if(plan.err){ box.innerHTML=`<p style="color:var(--danger);font-weight:700">${escapeHtml(plan.err.msg)}</p>`; if(okb) okb.disabled=true; return; }
   const checks=plan.checks.slice(); const d=date;
@@ -39712,17 +39718,17 @@ function chqRefresh(){
   box.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>البند</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>${checks.map(r=>`<tr><td style="text-align:right">${escapeHtml(r[0])}</td><td>${escapeHtml(r[1])}</td><td style="color:${r[2]?"var(--ok)":"var(--danger)"}">${r[2]?"✓":"⚠ "+escapeHtml(r[3])}</td></tr>`).join("")}</tbody></table></div>
     ${chqEntriesHtml(plan)}
     <p style="margin-top:10px;font-weight:700;color:${bad?"var(--danger)":"var(--ok)"}">${bad?`في ${bad} بند محتاج تصليح قبل التنفيذ.`:(plan.full?"الدورة كاملة (حسابات وسيطة).":"تأثير مباشر على "+(e.direction==="in"?"العميل":"المورد")+".")+" بعد التنفيذ لا يُسمح بتعديل الحركة أو حذفها."}</p>`;
-  if(okb){ okb.disabled=false; okb.textContent=X.stage==="receipt"?"تأكيد الترحيل":(e.direction==="in"?"تأكيد التحصيل":"تأكيد الصرف"); okb.style.display=bad?"none":""; }
+  if(okb){ okb.disabled=false; okb.textContent=X.stage==="receipt"?"تأكيد الترحيل":(X.endorse?"تأكيد التظهير":(e.direction==="in"?"تأكيد التحصيل":"تأكيد الصرف")); okb.style.display=bad?"none":""; }
   X.plan=plan;
 }
 async function chqCollectDo(){
   const X=window._chqCtx; if(!X) return;
   const {id,direction}=X, scr=direction==="in"?"receipts":"payments";
   if(!can(scr,"post")) return toast("لا تملك صلاحية الترحيل","err");
-  const e=state.treasuryEntries.find(x=>x.id===id); if(!e||txIsPosted(e)) return chqDialog("warn","الحركة مُرحّلة","لا يمكن تعديلها أو حذفها.");
+  const e=state.treasuryEntries.find(x=>x.id===id); if(!e||(txIsPosted(e)&&!(X.stage!=="receipt"&&chqHasKind(e,"receipt")&&!chqHasKind(e,"collect")))) return chqDialog("warn","الحركة مُرحّلة","لا يمكن تعديلها أو حذفها.");
   const stage=X.stage, bank=document.getElementById("chqBank")?.value||"", date=document.getElementById("chqDate")?.value||"";
-  if(stage!=="receipt"&&(!bank||!date)) return chqDialog("warn","أكمل البيانات المطلوبة","البنك الفعلي وتاريخ "+(direction==="in"?"التحصيل":"الصرف")+".");
-  const plan=chqPlan(e,X.accs,{bank,date,stage,mode:X.mode}); if(plan.err) return chqDialog("err",plan.err.title,plan.err.msg);
+  if(stage!=="receipt"&&((!X.endorse&&!bank)||!date)) return chqDialog("warn","أكمل البيانات المطلوبة","البنك الفعلي وتاريخ "+(direction==="in"?"التحصيل":"الصرف")+".");
+  const plan=chqPlan(e,X.accs,{bank,date,stage,mode:X.mode,endorseSupplier:X.endorse||""}); if(plan.err) return chqDialog("err",plan.err.title,plan.err.msg);
   if(plan.entries.some(x=>x.td!==x.tc||!x.td)) return chqDialog("err","تعذّر الترحيل","القيد غير متوازن، ولم يُسجَّل أي شيء.\nراجع المبالغ ثم أعد المحاولة.");
   if(plan.entries.some(x=>x.lines.some(l=>!l.acc))) return chqDialog("err","تعذّر الترحيل","يوجد حساب غير مربوط بأحد بنود القيد.");
   const jc=document.getElementById("chqJournal")?.value, j=X.journals.find(v=>String(v.journal_code)===String(jc)); if(!j) return toast("اختر اليومية","err");
@@ -39762,7 +39768,10 @@ async function chqCollectDo(){
     e.chequeEntries=(e.chequeEntries||[]).concat(done);
     e.postedEntryId=done[done.length-1].id; e.postedEntryNo=e.chequeEntries.map(d=>d.no).join(" · ");
     e.postedAt=now; e.postedBy=by; e.postedJournal=String(j.journal_code); e.chq2=true; e.chqMode=plan.full?"full":"direct";
-    if(stage!=="receipt"){ e.statusBeforeCollect=e.status; e.status="collected"; e.actualBank=bank; e.collectDate=date; e.collectedAt=Date.now(); }
+    if(stage!=="receipt" && X.endorse){
+      const mv=state.treasuryEntries.find(x=>x.id===e.endorseTxId), col=done.find(d=>d.kind==="collect");
+      if(mv&&col){ mv.postedEntryId=col.id; mv.postedEntryNo=col.no; mv.postedAt=now; mv.postedBy=by; mv.postedJournal=String(j.journal_code); }
+    } else if(stage!=="receipt"){ e.statusBeforeCollect=e.status; e.status="collected"; e.actualBank=bank; e.collectDate=date; e.collectedAt=Date.now(); }
     for(const d of done){ try{ await sb.from("gl_posting_sources").insert({entry_id:d.id,source_system:"التحصيلات والمدفوعات",source_ref:plan.ref}); }catch(_){} }
     audit("chq_collect",`${stage==="receipt"?"ترحيل "+(direction==="in"?"استلام":"إصدار"):(direction==="in"?"تحصيل":"صرف")} شيك ${title} رقم ${e.no} بقيود ${e.postedEntryNo} — بنك ${bank} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState();
@@ -39895,12 +39904,13 @@ async function chqUnpostRun(id,direction,scope){
     else ["postedEntryId","postedEntryNo","postedAt","postedBy","postedJournal","chequeEntries","chqMode"].forEach(k=>{ delete e[k]; });
   };
   if(failed){
-    sync(); if(all.some(r=>r.kind==="collect")&&!left.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
+    sync(); if(all.some(r=>r.kind==="collect")&&!left.some(r=>r.kind==="collect")){ e.status=(e.endorsedTo?"endorsed":(e.statusBeforeCollect||"receivable")); ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
     saveState(); if(typeof renderTreasury==="function"&&document.getElementById("txBody")) renderTreasury(direction);
     return chqDialog("err","تعذّر إكمال إلغاء الترحيل","تم حذف "+removed.length+" من "+refs.length+" قيود، ثم حدث خطأ: "+String(failed.message||failed)+"\nالقيود المتبقية ما زالت مُرحّلة. راجع المحاسب أو أعد المحاولة.");
   }
   sync();
-  if(all.some(r=>r.kind==="collect")){ e.status=e.statusBeforeCollect||"receivable"; ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
+  if(e.endorseTxId && !left.some(r=>r.kind==="collect")){ const _mv=(state.treasuryEntries||[]).find(x=>x.id===e.endorseTxId); if(_mv) ["postedEntryId","postedEntryNo","postedAt","postedBy","postedJournal"].forEach(k=>{ delete _mv[k]; }); }
+  if(all.some(r=>r.kind==="collect")){ e.status=(e.endorsedTo?"endorsed":(e.statusBeforeCollect||"receivable")); ["actualBank","collectDate","collectedAt","statusBeforeCollect"].forEach(k=>{ delete e[k]; }); }
   const nos=refs.map(r=>r.no).join("، ");
   e.editLog=(e.editLog||[]).concat([{at:new Date().toISOString(),by,changes:[{f:"إلغاء "+what,from:"قيود "+nos,to:stepBack?"أوراق قبض/دفع":"غير مُرحّل"}]}]);
   audit("chq_unpost",`إلغاء ${what} للشيك رقم ${e.no} — حُذفت القيود ${nos}`);
