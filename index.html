@@ -34933,7 +34933,16 @@ function txPostPlan(e,accs){
   const stmt=(e.method==="adjustment"?(isIn?"تسوية عميل":"تسوية مورد"):(isIn?"تحصيل":"دفعة"))+" رقم "+(e.no||"")+(who?" — "+who:"")+(e.refNo?" — مرجع "+e.refNo:"");
   const trName=e.method==="cash"?"الخزنة":"البنك";
   const treasuryLine=(dr,cr)=>{ const t=txPostTreasuryAcc(e); const id=chk(trName+": "+treasuryLabel(e.treasury),t&&t.accountId,"اربط "+trName+" بحساب من البيانات الأساسية"); lines.push({k:trName+": "+treasuryLabel(e.treasury),acc:id,dr,cr,desc:stmt}); };
-  if(e.entryKind==="gl"){
+  if(e.chqImpact==="toSupplier" && e.linkedTxId){
+    /* تحويل شيك لمورد: قيد واحد مشترك بين حركة العميل وحركة المورد — من ح/ المورد (مدين) إلى ح/ العميل (دائن) */
+    const _l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId);
+    const cm=isIn?e:_l, sm=isIn?_l:e;
+    if(!cm||!sm) return {reason:"الحركة المرتبطة بتحويل الشيك غير موجودة"};
+    const sup=findParty(state.suppliers,sm.supplier)||{}, cus=findParty(state.customers,cm.customer)||{};
+    const a=chk("المورد: "+sm.supplier,sup.accountId), b=chk("العميل: "+cm.customer,cus.accountId);
+    const st2="تحويل شيك رقم "+(((cm.sourceCheque||{}).no)||"")+" من العميل "+cm.customer+" للمورد "+sm.supplier+(((cm.sourceCheque||{}).refNo)?" — شيك "+cm.sourceCheque.refNo:"");
+    lines.push({k:"المورد: "+sm.supplier,acc:a,dr:amount,cr:0,desc:st2}); lines.push({k:"العميل: "+cm.customer,acc:b,dr:0,cr:amount,desc:st2});
+  }else if(e.entryKind==="gl"){
     if(e.method==="adjustment"){
       const nm=isIn?e.customer:e.supplier, p=findParty(isIn?state.customers:state.suppliers,nm)||{}, id=chk((isIn?"العميل: ":"المورد: ")+nm,p.accountId);
       const pDebit=(e.adjustmentKind||(isIn?"debit":"credit"))==="debit";
@@ -35022,7 +35031,7 @@ async function txPostDo(){
     const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
     const mark=t=>{ t.postedEntryId=entry.id; t.postedEntryNo=entryNo; t.postedAt=now; t.postedBy=by; t.postedJournal=String(j.journal_code); };
     mark(e);
-    if(e.linkedTxId && e.method==="transfer_supplier"){ const l=state.treasuryEntries.find(x=>x.id===e.linkedTxId); if(l) mark(l); }
+    if(e.linkedTxId && (e.method==="transfer_supplier"||e.chqImpact==="toSupplier")){ const l=state.treasuryEntries.find(x=>x.id===e.linkedTxId); if(l) mark(l); }
     try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
     audit("tx_post",`ترحيل ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`);
     saveState(); toast("✓ تم ترحيل "+title+" بقيد رقم "+entryNo,"ok"); closeModal();
@@ -37427,7 +37436,7 @@ async function txPostCore(e,direction,plan,j,years,periods){
   const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
   const mark=t=>{ t.postedEntryId=entry.id; t.postedEntryNo=entryNo; t.postedAt=now; t.postedBy=by; t.postedJournal=String(j.journal_code); };
   mark(e);
-  if(e.linkedTxId && e.method==="transfer_supplier"){ const l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId); if(l) mark(l); }
+  if(e.linkedTxId && (e.method==="transfer_supplier"||e.chqImpact==="toSupplier")){ const l=(state.treasuryEntries||[]).find(x=>x.id===e.linkedTxId); if(l) mark(l); }
   try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"التحصيلات والمدفوعات",source_ref:ref}); }catch(_){}
   try{ audit("tx_post",`ترحيل جماعي ${title} رقم ${e.no} بقيد ${entryNo} — يومية ${j.journal_code} — بقيمة ${fmt(e.amount)}`); }catch(_){}
   saveState();
@@ -39322,51 +39331,164 @@ async function chqImpactReturnedBank(id, direction){
   });
 }
 
-/* ---------- محول لمورد: شيك عميل بيتحوّل لمورد كتسوية ---------- */
+/* ---------- محول لمورد: شيك عميل بيتحوّل لمورد = تسوية دائنة على العميل ⟷ تسوية مدينة على المورد ---------- */
+function chqTsAmt(v){ return Math.round((+v||0)*100)/100; }
+function chqTsKey(r){ return String(r.orderId)+"|"+r.installment; }
+function chqTsType(side){ return document.getElementById("chqTs_"+side+"Type")?.value||""; }
+function chqTsRowsFor(side, party, excludeId){
+  if(!party) return [];
+  try{ return (side==="c"?txInvoiceRowsForCustomer(party,excludeId):txInvoiceRowsForSupplier(party,excludeId)).filter(r=>r.remaining>0.004); }catch(_){ return []; }
+}
+function chqTsAuto(side){
+  const X=window.__chqTs; if(!X) return [];
+  let left=X.amount; const out=[];
+  (X.rows[side]||[]).slice().sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).forEach(r=>{
+    if(left<=0.004) return;
+    const take=chqTsAmt(Math.min(left,r.remaining));
+    if(take>0){ out.push({orderId:r.orderId,orderNo:r.orderNo,installment:r.installment,amount:take}); left=chqTsAmt(left-take); }
+  });
+  return out;
+}
+function chqTsCollect(side){
+  const X=window.__chqTs; if(!X) return [];
+  const type=chqTsType(side);
+  if(type==="invoice_deduction") return chqTsAuto(side);
+  if(type!=="invoice_assistance") return [];
+  const out=[];
+  (X.rows[side]||[]).forEach((r,i)=>{
+    const v=chqTsAmt(document.querySelector(`#chqTs_${side}Rows .chqTs-amt[data-index="${i}"]`)?.value);
+    if(v>0.009) out.push({orderId:r.orderId,orderNo:r.orderNo,installment:r.installment,amount:v});
+  });
+  return out;
+}
+function chqTsSummary(side){
+  const X=window.__chqTs, el=document.getElementById("chqTs_"+side+"Sum"); if(!X||!el) return;
+  const used=chqTsAmt(chqTsCollect(side).reduce((t,a)=>t+a.amount,0)), left=chqTsAmt(X.amount-used);
+  el.innerHTML=`القيمة: <b>${fmt(X.amount)}</b> &nbsp;·&nbsp; الموزَّع: <b>${fmt(used)}</b> &nbsp;·&nbsp; غير موزَّع: <b style="color:${left>0.009?"#b45309":"#15803d"}">${fmt(left)}</b>`;
+}
+function chqTsRender(side, reload){
+  const X=window.__chqTs; if(!X) return;
+  const party = side==="c" ? X.customer : (document.getElementById("chqToSupSelect")?.value||"");
+  const body=document.getElementById("chqTs_"+side+"Rows"), tbl=document.getElementById("chqTs_"+side+"Tbl"); if(!body) return;
+  if(reload) X.rows[side]=chqTsRowsFor(side,party,X.id);
+  const type=chqTsType(side), rows=X.rows[side]||[], msg=t=>{ body.innerHTML=`<tr><td colspan="10" class="chqTs-empty">${t}</td></tr>`; };
+  if(tbl) tbl.style.display = type==="credit_amount" ? "none" : "";
+  if(type==="credit_amount"){ body.innerHTML=""; chqTsSummary(side); return; }
+  if(!party){ msg("اختر المورد أولًا لعرض فواتيره."); chqTsSummary(side); return; }
+  if(!type){ msg("اختر طريقة السداد أولًا."); chqTsSummary(side); return; }
+  if(!rows.length){ msg(side==="c"?"لا توجد أقساط مستحقة أو متبقية لهذا العميل.":"لا توجد فواتير مستحقة أو متبقية لهذا المورد."); chqTsSummary(side); return; }
+  const auto = type==="invoice_deduction", autoMap=new Map();
+  if(auto) chqTsAuto(side).forEach(a=>autoMap.set(a.orderId+"|"+a.installment,a.amount));
+  const pre = (side==="c" && X.prefill) ? X.prefill : null;
+  body.innerHTML = rows.map((r,i)=>{
+    const k=chqTsKey(r), pv=pre&&pre[k]?chqTsAmt(pre[k]):0;
+    const last = auto ? `<span class="num" style="font-weight:700">${autoMap.has(k)?fmt(autoMap.get(k)):"—"}</span>`
+      : `<input class="inp num chqTs-amt" data-side="${side}" data-index="${i}" type="number" min="0" step="0.01" value="${pv>0?pv.toFixed(2):"0"}" oninput="chqTsManual('${side}',${i})" onfocus="this.select()" style="width:130px;min-width:110px">`;
+    const first = auto ? `<span title="تخصيص تلقائي من الأقدم">تلقائي</span>` : `<input type="checkbox" class="chqTs-chk" data-side="${side}" data-index="${i}" ${pv>0?"checked":""} onchange="chqTsTick('${side}',${i},this)">`;
+    return `<tr><td>${first}</td><td>${escapeHtml(String(r.orderNo))}</td><td>${escapeHtml(String(r.label||""))}</td><td>${escapeHtml(r.date||"")}</td><td class="num">${fmt(r.total)}</td><td>${escapeHtml(r.due||"")}</td><td class="num">${fmt(r.amount)}</td><td class="num">${fmt(r.paid)}</td><td class="num"><b>${fmt(r.remaining)}</b></td><td>${last}</td></tr>`;
+  }).join("");
+  if(pre && !auto) X.prefill=null;   // التعبئة المسبقة من تسكين الشيك الأصلي بتتطبق مرة واحدة
+  chqTsSummary(side);
+}
+function chqTsTick(side,i,chk){
+  const X=window.__chqTs; if(!X) return;
+  const inp=document.querySelector(`#chqTs_${side}Rows .chqTs-amt[data-index="${i}"]`), r=(X.rows[side]||[])[i]; if(!inp||!r) return;
+  if(!chk.checked){ inp.value="0"; }
+  else{
+    let used=0; document.querySelectorAll(`#chqTs_${side}Rows .chqTs-amt`).forEach(x=>{ if(x!==inp) used+=(+x.value||0); });
+    inp.value=chqTsAmt(Math.max(0,Math.min(r.remaining,X.amount-used))).toFixed(2);
+  }
+  chqTsSummary(side);
+}
+function chqTsManual(side,i){
+  const inp=document.querySelector(`#chqTs_${side}Rows .chqTs-amt[data-index="${i}"]`), chk=document.querySelector(`#chqTs_${side}Rows .chqTs-chk[data-index="${i}"]`);
+  if(chk&&inp) chk.checked=(+inp.value||0)>0;
+  chqTsSummary(side);
+}
+function chqTsValidate(side){
+  const X=window.__chqTs, type=chqTsType(side), rows=X.rows[side]||[], who=side==="c"?"العميل":"المورد";
+  if(!type) return "اختر طريقة السداد لـ"+who;
+  if(type==="credit_amount") return "";
+  const allocs=chqTsCollect(side), used=chqTsAmt(allocs.reduce((t,a)=>t+a.amount,0));
+  if(type==="invoice_assistance"){
+    for(let i=0;i<rows.length;i++){
+      const s=chqTsAmt(Array.from(document.querySelectorAll(`#chqTs_${side}Rows .chqTs-amt[data-index="${i}"]`)).reduce((t,x)=>t+(+x.value||0),0));
+      if(s>rows[i].remaining+0.01) return `المبلغ على «${rows[i].orderNo}» أكبر من المتبقي (${fmt(rows[i].remaining)})`;
+    }
+  }
+  if(used>X.amount+0.01) return `إجمالي التوزيع على فواتير ${who} (${fmt(used)}) أكبر من قيمة الشيك (${fmt(X.amount)})`;
+  if(side==="c"){
+    const need=chqTsAmt(Math.min(X.amount, rows.reduce((t,r)=>t+r.remaining,0)));
+    if(Math.abs(used-need)>0.01) return `تسكين فواتير العميل إجباري — وزّع (${fmt(need)}) على الفواتير قبل الحفظ`;
+  }
+  return "";
+}
+
 async function chqImpactToSupplier(id, direction){
   const e = state.treasuryEntries.find(x=>x.id===id);
   if(!e) return;
   if(direction!=="in") return toast("شيك المورد لا يُحوّل لمورد","err");
   const customer = e.customer || "";
-  const amount = +e.amount || 0;
+  const amount = chqTsAmt(e.amount);
   const cur = state.settings?.currency || "ج.م";
 
-  // قائمة الموردين
   const suppliers = partyNames(state.suppliers||[]);
   if(!suppliers.length) return toast("لا يوجد موردين — أضف مورد في البيانات الأساسية","err");
 
-  // أنواع السداد المتاحة للطرفين (الشيك نفسه هو وسيلة السداد الأصلية فمش متاح هنا كنوع تاني)
-  const mOpts = [["adjustment","⚖ تسوية (غير نقدية)"],["cash","💵 نقدي"],["transfer","🔁 تحويل بنكي"]];
-  const safes = (state.safes||[]).filter(x=>typeof safeOk!=="function"||safeOk(x.code));
-  const banks = (state.banks||[]).filter(b=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(b))&&(typeof bankOk!=="function"||bankOk(b.code)));
-  const mSel = (idm)=>`<select class="inp" id="${idm}">${mOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select>`;
+  // فواتير/أقساط العميل (بدون الشيك نفسه) + تعبئة مسبقة من تسكين الشيك الأصلي لو موجود ومطابق للقيمة
+  const custRows = chqTsRowsFor("c", customer, id);
+  let prefill = null;
+  if(Array.isArray(e.allocations) && e.allocations.length){
+    const pre={}; let tot=0;
+    custRows.forEach(r=>{
+      const s=e.allocations.filter(a=>+a.installment===+r.installment && txAllocMatches(a,{id:r.orderId},r.orderNo)).reduce((t,a)=>t+(+a.amount||0),0);
+      if(s>0.009){ pre[chqTsKey(r)]=Math.min(s,r.remaining); tot+=pre[chqTsKey(r)]; }
+    });
+    if(Math.abs(tot-amount)<=0.01) prefill=pre;
+  }
+  window.__chqTs = {id, amount, customer, rows:{c:custRows, s:[]}, prefill, busy:false};
 
-  const body = `<div style="display:flex;flex-direction:column;gap:12px">
+  const thead = `<thead><tr><th>اختيار</th><th>أمر البيع / الفاتورة</th><th>النوع</th><th>تاريخ الفاتورة</th><th>الإجمالي</th><th>الاستحقاق</th><th>قيمة القسط / الفاتورة</th><th>المسدد</th><th>المتبقي</th><th>مبلغ السداد</th></tr></thead>`;
+  const section = (side,title,typeLabel,opts,def)=>`<div class="chqTs-sec">
+      <div class="chqTs-sec-h">${title}</div>
+      <div class="fld"><label>${typeLabel} *</label>
+        <select class="inp" id="chqTs_${side}Type" onchange="chqTsRender('${side}')">${opts.map(o=>`<option value="${o[0]}" ${o[0]===def?"selected":""}>${o[1]}</option>`).join("")}</select>
+      </div>
+      <div class="chqTs-sum" id="chqTs_${side}Sum"></div>
+      <div class="tbl-wrap" id="chqTs_${side}Tbl"><table class="chqTs-tbl">${thead}<tbody id="chqTs_${side}Rows"></tbody></table></div>
+    </div>`;
+  const optC = [["invoice_deduction","تنازلي فاتورة (تلقائي من الأقدم)"],["invoice_assistance","مساعدة فاتورة (يدوي)"]];
+  const optS = [["invoice_deduction","تنازلي فاتورة (تلقائي من الأقدم)"],["invoice_assistance","مساعدة فاتورة (يدوي)"],["credit_amount","دفعة مقدمة للمورد (بدون توزيع الآن)"]];
+
+  const body = `<style>
+      .chqTs-sec{border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--bg-2)}
+      .chqTs-sec-h{font-weight:800;color:var(--gold-text,#7a5c0b);margin-bottom:8px;font-size:14px}
+      .chqTs-sum{margin:6px 0 8px;font-size:13px}
+      .chqTs-tbl{white-space:nowrap;min-width:100%}
+      .chqTs-empty{text-align:center;color:var(--text-dim);padding:14px}
+      .chqTs-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      @media(max-width:700px){.chqTs-grid{grid-template-columns:1fr}}
+    </style>
+    <div style="display:flex;flex-direction:column;gap:12px">
     <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
-      🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد كتسوية
+      🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد كتسوية دائنة محوّلة
       <br>شيك رقم <b>${escapeHtml(String(e.no||""))}</b> — قيمة <b>${fmt(amount)}</b> ${escapeHtml(cur)}
     </div>
-    <div class="fld">
-      <label>المورد المستفيد *</label>
-      <select class="inp" id="chqToSupSelect">
-        <option value="">— اختر المورد —</option>
-        ${suppliers.map(s=>`<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("")}
-      </select>
+    <div class="chqTs-grid">
+      <div class="fld">
+        <label>المورد المستفيد *</label>
+        <select class="inp" id="chqToSupSelect">
+          <option value="">— اختر المورد —</option>
+          ${suppliers.map(s=>`<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="fld">
+        <label>تاريخ التحويل *</label>
+        <input class="inp" type="date" id="chqToSupDate" value="${new Date().toISOString().slice(0,10)}">
+      </div>
     </div>
-    <div class="fld">
-      <label>نوع السداد للعميل *</label>
-      ${mSel("chqToSupCM")}
-      <select class="inp" id="chqToSupCT" style="display:none;margin-top:6px"></select>
-    </div>
-    <div class="fld">
-      <label>نوع السداد للمورد *</label>
-      ${mSel("chqToSupSM")}
-      <select class="inp" id="chqToSupST" style="display:none;margin-top:6px"></select>
-    </div>
-    <div class="fld">
-      <label>تاريخ التحويل *</label>
-      <input class="inp" type="date" id="chqToSupDate" value="${new Date().toISOString().slice(0,10)}">
-    </div>
+    ${section("c","🧾 فواتير العميل — "+escapeHtml(customer)+" (تسوية دائنة: يقل من مديونيته)","طريقة السداد للعميل",optC,prefill?"invoice_assistance":"invoice_deduction")}
+    ${section("s","🏭 فواتير المورد (تسوية مدينة: يقل من مديونيتنا له)","طريقة السداد للمورد",optS,"invoice_deduction")}
     <div class="fld">
       <label>ملاحظات (اختياري)</label>
       <textarea class="inp" id="chqToSupNotes" rows="2" placeholder="مثل: تسليم للمورد كدفعة على فاتورة..."></textarea>
@@ -39374,52 +39496,59 @@ async function chqImpactToSupplier(id, direction){
     <div style="padding:10px;background:#fff9e8;border:1px solid #e9c46a;border-radius:8px;font-size:12px;color:#76540b;line-height:1.7">
       ⚠️ هذا التحويل سينفّذ تلقائيًا:
       <ol style="margin:6px 0;padding-inline-start:20px">
-        <li><b>مرتد للعميل:</b> الشيك يخرج من الحافظة (أوراق القبض) ويُلغى قيده المُرحّل، وتتعكس الحافظة السابقة.</li>
-        <li><b>سداد العميل</b> <b>${escapeHtml(customer)}</b> بـ <b>${fmt(amount)}</b> بنوع السداد المختار (يقل من مديونيته).</li>
-        <li><b>سداد المورد</b> <b id="chqToSupSelLabel">[المورد]</b> بـ <b>${fmt(amount)}</b> بنوع السداد المختار (يقل من مديونيتنا له).</li>
+        <li><b>مرتد للعميل:</b> الشيك يخرج من الحافظة (أوراق القبض) فتقل الحافظة بقيمته، ولو كان مُرحّلًا يُلغى قيده السابق.</li>
+        <li><b>حركة العميل</b> <b>${escapeHtml(customer)}</b>: تسوية دائنة بـ <b>${fmt(amount)}</b> تظهر في نظام العملاء (يقل من مديونيته) ومُسكَّنة على الفواتير المختارة.</li>
+        <li><b>حركة المورد</b> <b id="chqToSupSelLabel">[المورد]</b>: تسوية مدينة بـ <b>${fmt(amount)}</b> تظهر في نظام الموردين (يقل من مديونيتنا له).</li>
+        <li><b>حفظ وترحيل القيد:</b> يحفظ الحركتين ثم يفتح نافذة الترحيل: من ح/ المورد (مدين) إلى ح/ العميل (دائن).</li>
       </ol>
       الحركتان مرتبطتان ببعض، ومسح إحداهما يمسح الأخرى. الشيك الأصلي بيتشال ولا يرجع بمسح الحركتين — سجّله من جديد لو لزم.
     </div>
   </div>`;
-  openModal("🔁 تحويل شيك لمورد — رقم "+(e.no||""), body, async ()=>{
-    const supplier = (document.getElementById("chqToSupSelect")?.value||"").trim();
-    const date = document.getElementById("chqToSupDate")?.value || "";
-    const notes = (document.getElementById("chqToSupNotes")?.value||"").trim();
-    const opt = {
-      custMethod: document.getElementById("chqToSupCM")?.value||"adjustment",
-      custTreasury: document.getElementById("chqToSupCT")?.value||"",
-      supMethod: document.getElementById("chqToSupSM")?.value||"adjustment",
-      supTreasury: document.getElementById("chqToSupST")?.value||""
-    };
-    if(!supplier) { toast("اختر المورد","err"); return false; }
-    if(!date) { toast("اختر تاريخ التحويل","err"); return false; }
-    if(opt.custMethod!=="adjustment" && !opt.custTreasury){ toast(opt.custMethod==="cash"?"اختر خزينة سداد العميل":"اختر بنك سداد العميل","err"); return false; }
-    if(opt.supMethod!=="adjustment" && !opt.supTreasury){ toast(opt.supMethod==="cash"?"اختر خزينة سداد المورد":"اختر بنك سداد المورد","err"); return false; }
-    try {
-      await chqImpactToSupplierDo(id, supplier, date, notes, opt);
-      return true;
-    } catch(err) {
-      toast("فشل التحويل: "+(err?.message||err),"err");
-      return false;
+  openModal("🔁 تحويل شيك لمورد — رقم "+(e.no||""), body, ()=>{ chqToSupSubmit(false); return false; });
+  // شاشة أكبر + زرار «حفظ وترحيل القيد»
+  const mdl=document.querySelector("#modalBackdrop .modal");
+  if(mdl){ mdl.classList.add("tx-wide"); mdl.style.setProperty("width","min(1180px,96vw)","important"); mdl.style.setProperty("max-width","96vw","important"); }
+  const canPost = (typeof txCanPost==="function") && txCanPost(null,"in");
+  const mf=document.querySelector("#modalBackdrop .mfoot");
+  if(mf && canPost){
+    const pb=document.createElement("button");
+    pb.type="button"; pb.className="btn"; pb.id="chqToSupSavePostBtn"; pb.textContent="حفظ وترحيل القيد";
+    pb.title="يحفظ التحويل ثم يفتح نافذة الترحيل مباشرة";
+    pb.style.cssText="background:#0f2a52;border-color:#0f2a52;color:#fff";
+    pb.onclick=()=>chqToSupSubmit(true);
+    mf.insertBefore(pb, mf.children[1]||null);
+  }
+  const sel=document.getElementById("chqToSupSelect"), lbl=document.getElementById("chqToSupSelLabel");
+  if(sel){
+    sel.addEventListener("change", ()=>{ if(lbl) lbl.textContent = sel.value || "[المورد]"; chqTsRender("s",true); });
+    try{ igSearchableSelect(sel); }catch(_){}
+  }
+  chqTsRender("c"); chqTsRender("s",true);
+}
+
+async function chqToSupSubmit(andPost){
+  const X=window.__chqTs; if(!X||X.busy) return;
+  const supplier=(document.getElementById("chqToSupSelect")?.value||"").trim();
+  const date=document.getElementById("chqToSupDate")?.value||"";
+  const notes=(document.getElementById("chqToSupNotes")?.value||"").trim();
+  if(!supplier) return toast("اختر المورد","err");
+  if(!date) return toast("اختر تاريخ التحويل","err");
+  const ec=chqTsValidate("c"); if(ec) return toast(ec,"err");
+  const es=chqTsValidate("s"); if(es) return toast(es,"err");
+  const opt={ custAllocType:chqTsType("c"), custAlloc:chqTsCollect("c"), supAllocType:chqTsType("s"), supAlloc:chqTsCollect("s") };
+  const btns=Array.from(document.querySelectorAll("#modalBackdrop .mfoot .btn"));
+  X.busy=true; btns.forEach(b=>b.disabled=true);
+  try{
+    const r=await chqImpactToSupplierDo(X.id, supplier, date, notes, opt);
+    closeModal();
+    if(andPost && r && r.custId){
+      setTimeout(()=>{ try{ txPostOpen(r.custId,"in"); }catch(pe){ console.warn(pe); } },120);
     }
-  });
-  // تحديث اسم المورد في التحذير + قوائم الخزائن/البنوك حسب نوع السداد
-  setTimeout(()=>{
-    const sel = document.getElementById("chqToSupSelect");
-    const lbl = document.getElementById("chqToSupSelLabel");
-    if(sel && lbl) sel.addEventListener("change", ()=>{ lbl.textContent = sel.value || "[المورد]"; });
-    const wire = (mid,tid)=>{
-      const m=document.getElementById(mid), t=document.getElementById(tid); if(!m||!t) return;
-      const paint=()=>{
-        if(m.value==="adjustment"){ t.style.display="none"; t.innerHTML=""; return; }
-        const list = m.value==="cash" ? safes : banks;
-        t.innerHTML = `<option value="">${m.value==="cash"?"— اختر الخزينة —":"— اختر البنك —"}</option>` + list.map(x=>`<option value="${escapeAttr(x.code)}">${escapeHtml(x.code)} — ${escapeHtml(x.name||"")}</option>`).join("");
-        t.style.display="";
-      };
-      m.addEventListener("change", paint); paint();
-    };
-    wire("chqToSupCM","chqToSupCT"); wire("chqToSupSM","chqToSupST");
-  }, 100);
+  }catch(err){
+    toast("فشل التحويل: "+(err?.message||err),"err");
+  }finally{
+    X.busy=false; btns.forEach(b=>{ try{ b.disabled=false; }catch(_){} });
+  }
 }
 
 async function chqImpactToSupplierDo(id, supplier, date, notes, opt){
@@ -39431,22 +39560,18 @@ async function chqImpactToSupplierDo(id, supplier, date, notes, opt){
   if(!(amount>0)) throw new Error("قيمة الشيك غير صحيحة");
   if(e.status==="collected") throw new Error("الشيك محصّل بالفعل — لا يمكن تحويله لمورد");
 
-  const cm = opt.custMethod || "adjustment", sm = opt.supMethod || "adjustment";
-  const ct = opt.custTreasury || "", st = opt.supTreasury || "";
-  if(cm!=="adjustment" && !ct) throw new Error(cm==="cash"?"اختر خزينة سداد العميل":"اختر بنك سداد العميل");
-  if(sm!=="adjustment" && !st) throw new Error(sm==="cash"?"اختر خزينة سداد المورد":"اختر بنك سداد المورد");
   if(typeof scopeSaveBlock==="function"){
-    const m1 = scopeSaveBlock({customer:customer,supplier:"",bank:(cm==="transfer"?ct:""),safe:(cm==="cash"?ct:"")});
+    const m1 = scopeSaveBlock({customer:customer,supplier:"",bank:"",safe:""});
     if(m1) throw new Error(m1);
-    const m2 = scopeSaveBlock({customer:"",supplier:supplier,bank:(sm==="transfer"?st:""),safe:(sm==="cash"?st:"")});
+    const m2 = scopeSaveBlock({customer:"",supplier:supplier,bank:"",safe:""});
     if(m2) throw new Error(m2);
   }
 
   const chequeRef = "شيك رقم "+(e.no||"")+" — "+(e.refNo||"");
   const parentNo = e.no;
-  const snap = {no:e.no, refNo:e.refNo||"", bankDrawn:e.bankDrawn||"", dueDate:e.dueDate||"", date:e.date||"", amount:amount, customer:customer};
+  const snap = {no:e.no, refNo:e.refNo||"", bankDrawn:e.bankDrawn||"", dueDate:e.dueDate||"", date:e.date||"", amount:amount, customer:customer, portfolio:e.treasury||"", status:e.status||""};
 
-  // 1) مرتد للعميل: عكس الحافظة السابقة والقيد (إلغاء ترحيل قيود الشيك) — قبل إنشاء أي حاجة
+  // 1) مرتد للعميل: خروج الشيك من الحافظة + عكس قيده السابق (إلغاء ترحيل قيود الشيك) — قبل إنشاء أي حاجة
   if(txIsPosted(e)){
     if(typeof chqCanUnpost==="function" && !chqCanUnpost(e,"in")) throw new Error("الشيك مُرحّل وتعذر إلغاء ترحيله تلقائيًا (الصلاحية أو حالته) — ألغِ ترحيله يدويًا ثم أعد المحاولة");
     await chqUnpostRun(id,"in","all");
@@ -39457,50 +39582,55 @@ async function chqImpactToSupplierDo(id, supplier, date, notes, opt){
   const baseNote = `${chequeRef} — مرتد للعميل ومحوّل للمورد`;
   const custId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
   const supId = "tx_"+(Date.now()+1)+"_"+Math.random().toString(36).slice(2,6);
+  const custAlloc = Array.isArray(opt.custAlloc) ? opt.custAlloc : [];
+  const supAlloc = Array.isArray(opt.supAlloc) ? opt.supAlloc : [];
 
-  // 2) سداد العميل (يقل من مديونيته) — بنفس تسكينات الشيك الأصلي على الفواتير/الأقساط
+  // 2) حركة العميل: تسوية دائنة (يقل من مديونيته) — مُسكَّنة على الفواتير المختارة — تظهر في نظام العملاء
   const custMove = {
     id: custId, direction: "in", no: nextTxNo("in"), createdAt: Date.now(), createdBy: uNo,
     date: date, customer: customer, amount: amount,
-    method: cm, status: cm, treasury: cm==="adjustment" ? "" : ct,
+    method: "adjustment", status: "adjustment", treasury: "",
     refNo: "", dueDate: "", bankDrawn: "",
-    adjustmentKind: cm==="adjustment" ? "credit" : "",
-    allocations: JSON.parse(JSON.stringify(e.allocations||[])),
-    allocationType: e.allocationType || (cm==="adjustment" ? "" : "invoice_deduction"),
+    adjustmentKind: "credit",
+    allocations: JSON.parse(JSON.stringify(custAlloc)),
+    allocationType: custAlloc.length ? (opt.custAllocType||"invoice_deduction") : "",
     targetSupplier: "",
-    notes: `${cm==="adjustment"?"تسوية":"سداد"} — ${baseNote}: ${supplier}${notes?" — "+notes:""}`,
+    notes: `تسوية — ${baseNote}: ${supplier}${notes?" — "+notes:""}`,
+    entryKind: "gl",
     sourceChequeId: id, sourceCheque: snap,
     chqImpact: "toSupplier", linkedSupplier: supplier, linkedTxId: supId
   };
-  if(cm==="adjustment") custMove.entryKind = "gl";
 
-  // 3) سداد المورد (يقل من مديونيتنا له)
+  // 3) حركة المورد: تسوية مدينة (يقل من مديونيتنا له) — تظهر في نظام الموردين
   const supMove = {
     id: supId, direction: "out", no: nextTxNo("out"), createdAt: Date.now()+1, createdBy: uNo,
     date: date, supplier: supplier, amount: amount,
-    method: sm, status: sm, treasury: sm==="adjustment" ? "" : st,
+    method: "adjustment", status: "adjustment", treasury: "",
     refNo: "", dueDate: "", bankDrawn: "",
-    adjustmentKind: sm==="adjustment" ? "debit" : "",   // مدينة على المورد = نقصان مديونيتنا له
-    allocations: [], allocationType: "invoice_deduction", targetSupplier: "",
-    notes: `${sm==="adjustment"?"تسوية":"سداد"} — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
+    adjustmentKind: "debit",   // مدينة على المورد = نقصان مديونيتنا له
+    allocations: JSON.parse(JSON.stringify(supAlloc)),
+    allocationType: supAlloc.length ? (opt.supAllocType||"invoice_deduction") : "credit_amount",
+    targetSupplier: "",
+    notes: `تسوية — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
+    entryKind: "gl",
     sourceChequeId: id, sourceCheque: snap,
     chqImpact: "toSupplier", linkedCustomer: customer, linkedTxId: custId
   };
-  if(sm==="adjustment") supMove.entryKind = "gl";
 
-  // الشيك الأصلي يتشال من الحافظة (مرتد للعميل) والحركتين الجداد بدله
+  // الشيك الأصلي يتشال من الحافظة (فتقل بقيمته) والحركتين الجداد بدله — كل واحدة في نظامها
   state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
   state.treasuryEntries.push(custMove);
   state.treasuryEntries.push(supMove);
   saveState();
 
-  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)} — مرتد للعميل + سداد العميل (${cm}) ${custMove.no} + سداد المورد (${sm}) ${supMove.no}`); } catch(_){}
+  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)} — مرتد للعميل (خروج من الحافظة ${snap.portfolio||""}) + تسوية دائنة للعميل ${custMove.no} + تسوية مدينة للمورد ${supMove.no}`); } catch(_){}
 
-  toast(`✓ تم تحويل الشيك للمورد ${supplier} — مرتد للعميل + حركتان (${custMove.no} / ${supMove.no})`,"ok");
+  toast(`✓ تم تحويل الشيك للمورد ${supplier} — خرج من الحافظة + حركة عميل ${custMove.no} / حركة مورد ${supMove.no}`,"ok");
 
   // تحديث الشاشة
   if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(e.direction);
   if(typeof renderChequeRegister==="function" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
+  return {custId, supId, custNo:custMove.no, supNo:supMove.no};
 }
 
 /* ---------- مرتد للعميل: إلغاء كامل للشيك ---------- */
