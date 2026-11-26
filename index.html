@@ -35815,6 +35815,11 @@ async function trfCustMark(t,entry,entryNo){
 "use strict";
 const E=v=>custodyEsc(v);
 const money=n=>(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+/* تحويل بين عهدتين: طرفين (منصرف + وارد) بنفس «رقم التحويل» في أول البيان — والقيد واحد للطرفين */
+const xferNo=r=>{ const m=/^تحويل عهدة رقم (\d+) /.exec(String((r&&r.description)||"")); return m?m[1]:null; };
+const xferPair=r=>{ const n=xferNo(r); if(!n) return null; return custodyCache.entries.find(x=>x!==r&&!x._ob&&xferNo(x)===n&&x.entry_type!==r.entry_type)||null; };
+const xferIds=r=>{ const q=xferPair(r); return q?[r.id,q.id]:[r.id]; };
+const xferLockMsg=r=>{ const q=xferPair(r); if(!q) return ""; const pa=custodyAccount(q.account_id); return (pa&&pa.lock_date&&d10(q.entry_date)<=d10(pa.lock_date))?"الطرف الآخر من التحويل (عهدة "+pa.code+") داخل فترة مقفولة":""; };
 const C100=v=>Math.round((+v||0)*100);
 const d10=d=>String(d==null?"":d).slice(0,10);
 const norm=s=>String(s==null?"":s).replace(/\s+/g," ").trim().toLowerCase();
@@ -36010,6 +36015,7 @@ async function postDo(){
     const y=X.years.find(v=>v.start_date<=date&&v.end_date>=date); if(!y) throw new Error("لا توجد سنة مالية مفتوحة تغطي "+date);
     const per=X.periods.find(v=>v.fiscal_year_id===y.id&&v.start_date<=date&&v.end_date>=date); if(!per) throw new Error("لا توجد فترة مفتوحة تغطي "+date);
     if(P.td!==P.tc||!P.td) throw new Error("القيد غير متوازن");
+    { const _lm=xferLockMsg(r); if(_lm) throw new Error(_lm); }
     const ref="عهدة "+a.code;
     const description="قيد "+(r.entry_type==="in"?"وارد":"منصرف")+" عهدة "+a.code+" — "+a.owner_name+" — "+(r.description||"")+" — [مستند: "+ref+"]";
     let entryNo=await nextEntryNo(date);
@@ -36021,7 +36027,7 @@ async function postDo(){
     if(lr.error) throw lr.error;
     const pr=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id}); if(pr.error) throw pr.error;
     const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
-    const up=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}).eq("id",r.id);
+    const up=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}).in("id",xferIds(r));
     let _upErr=up.error, _linked=false;
     if(_upErr){
       /* v15: لو رد الربط ضاع والسيرفر نفّذه، متفكش القيد */
@@ -36032,6 +36038,7 @@ async function postDo(){
       entry=null; throw up.error;
     }
     Object.assign(r,{gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by});
+    { const _px=xferPair(r); if(_px) Object.assign(_px,{gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}); }
     try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"نظام العهد",source_ref:ref}); }catch(_){}
     try{ audit("ترحيل حركة عهدة","عهدة "+a.code+" — "+(r.entry_type==="in"?"وارد":"منصرف")+" "+money(r.amount)+" بقيد "+entryNo+" — يومية "+j.journal_code); }catch(_){}
     toast("✓ تم ترحيل الحركة بقيد رقم "+entryNo,"ok"); closeModal(); changed();
@@ -36042,8 +36049,8 @@ async function postDo(){
       try{ const _c=await sb.from("gl_entries").select("status").eq("id",entry.id).maybeSingle(); if(_c.error) throw _c.error; _st=_c.data?_c.data.status:null; }catch(_re){ _unsure=true; }
       if(!_unsure&&_st==="posted"){
         let _ok=false;
-        try{ const _u=(typeof curU==="function"&&curU())||{}; const _q=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entry.entry_no,posted_at:new Date().toISOString(),posted_by:_u.name||_u.username||""}).eq("id",r.id); _ok=!_q.error; }catch(_le){}
-        if(_ok){ try{ Object.assign(r,{gl_entry_id:String(entry.id),gl_entry_no:entry.entry_no}); }catch(_){} toast("✓ القيد اترحّل على السيرفر وتم ربطه بالحركة (رقم "+(entry.entry_no||"")+") بعد انقطاع الاتصال","ok"); closeModal(); changed(); return; }
+        try{ const _u=(typeof curU==="function"&&curU())||{}; const _q=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entry.entry_no,posted_at:new Date().toISOString(),posted_by:_u.name||_u.username||""}).in("id",xferIds(r)); _ok=!_q.error; }catch(_le){}
+        if(_ok){ try{ Object.assign(r,{gl_entry_id:String(entry.id),gl_entry_no:entry.entry_no}); const _px=xferPair(r); if(_px) Object.assign(_px,{gl_entry_id:String(entry.id),gl_entry_no:entry.entry_no}); }catch(_){} toast("✓ القيد اترحّل على السيرفر وتم ربطه بالحركة (رقم "+(entry.entry_no||"")+") بعد انقطاع الاتصال","ok"); closeModal(); changed(); return; }
         _unsure=true;
       }
       if(!_unsure){ try{ await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){} }
@@ -36076,6 +36083,7 @@ async function postBulk(ids){
   const ready=[], bad=[];
   rows.forEach(r=>{
     const a=custodyAccount(r.account_id), d=d10(r.entry_date), why=[];
+    { const _lm=xferLockMsg(r); if(_lm) why.push(_lm); }
     let P={reason:"—"};
     if(!a) why.push("العهدة غير موجودة");
     else{
@@ -36122,12 +36130,13 @@ async function postBulk(ids){
           if(lr.error) throw lr.error;
           const pr=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id}); if(pr.error) throw pr.error;
           const u=(typeof curU==="function"&&curU())||{}, now=new Date().toISOString(), by=u.name||u.username||"";
-          const up=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}).eq("id",r.id);
+          const up=await sb.from("custody_entries").update({gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}).in("id",xferIds(r));
           if(up.error){
             try{ await sb.rpc("gl_unpost_entry_authorized",{p_entry_id:entry.id}); await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id).eq("status","draft"); }catch(_){}
             entry=null; throw up.error;
           }
           Object.assign(r,{gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by});
+          { const _px=xferPair(r); if(_px) Object.assign(_px,{gl_entry_id:String(entry.id),gl_entry_no:entryNo,posted_at:now,posted_by:by}); }
           try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"نظام العهد",source_ref:ref}); }catch(_){}
           try{ audit("ترحيل حركة عهدة","عهدة "+a.code+" — "+(r.entry_type==="in"?"وارد":"منصرف")+" "+money(r.amount)+" بقيد "+entryNo+" — يومية "+j.journal_code); }catch(_){}
           ok++;
@@ -36151,6 +36160,7 @@ async function unpost(id){
   const r=findRow(id); if(!r||!r.gl_entry_id) return; const a=custodyAccount(r.account_id); if(!a) return;
   if(!canPost()) return toast("لا تملك صلاحية إلغاء الترحيل","err");
   if(a.lock_date&&d10(r.entry_date)<=d10(a.lock_date)) return toast("الحركة داخل فترة مقفولة","err");
+  { const _lm=xferLockMsg(r); if(_lm) return toast(_lm,"err"); }
   if(!await askConfirm("سيتم إلغاء ترحيل القيد رقم "+r.gl_entry_no+" وحذفه من اليومية العامة، وترجع الحركة «غير مُرحّلة» وتقدر تعدّلها أو تحذفها. تكمل؟",{title:"إلغاء ترحيل حركة عهدة",ok:"إلغاء الترحيل",cancel:"تراجع",danger:true})) return;
   const eid=r.gl_entry_id, no=r.gl_entry_no; let warn="";
   if(_igUnpBusy.has(id)) return; _igUnpBusy.add(id);
@@ -36170,8 +36180,9 @@ async function unpost(id){
       }catch(e){ warn=" — القيد رجع مسودة في اليومية العامة وتعذر حذفه تلقائيًا، احذفه من هناك قبل إعادة الترحيل"; }
     }
     try{ await sb.from("gl_posting_sources").delete().eq("entry_id",eid); }catch(_){}
-    const q=await sb.from("custody_entries").update({gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null}).eq("id",r.id);
+    const q=await sb.from("custody_entries").update({gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null}).in("id",xferIds(r));
     if(q.error) throw q.error;
+    { const _px=xferPair(r); if(_px) Object.assign(_px,{gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null}); }
     Object.assign(r,{gl_entry_id:null,gl_entry_no:null,posted_at:null,posted_by:null});
     try{ audit("إلغاء ترحيل حركة عهدة","عهدة "+a.code+" — قيد "+no); }catch(_){}
     toast("تم إلغاء ترحيل القيد "+no+warn,warn?"err":"ok"); changed();
@@ -36350,7 +36361,7 @@ async function page(name,c){
 window.CGL={
   K,E,money,loadAccounts,loadItems,ensureDatalist,parseAcc,accOf,accLabel,rowAccLabel,item,activeItems,isLeaf,
   v2:()=>K.v2!==false, v2known:()=>K.v2!==null,
-  plan,viewEntry,postOpen,postBulk,unpost,canPost,page,
+  plan,viewEntry,postOpen,postBulk,unpost,canPost,page,xferNo,xferPair,
   setRefresh:f=>{ K.refresh=f; }
 };
 })();
@@ -36365,7 +36376,7 @@ window.CGL={
 .cgx .cgx-draft input,.cgx .cgx-draft select{width:100%;min-height:42px;padding:8px 12px;font:inherit;font-size:14px;color:var(--text);background:#fff;border:1px solid #eadfcb;border-radius:10px;box-sizing:border-box}
 .cgx .cgx-draft input::placeholder{color:#9aa3b0}
 .cgx .cgx-draft input:focus,.cgx .cgx-draft select:focus{outline:2px solid #1a1a1a;outline-offset:0;border-color:transparent}
-.cgx .cgx-draft .d-bayan,.cgx .cgx-draft .d-proj-new,.cgx .cgx-draft .d-acc,.cgx .cgx-draft .d-itemrow{grid-column:1/-1}
+.cgx .cgx-draft .d-bayan,.cgx .cgx-draft .d-proj-new,.cgx .cgx-draft .d-acc,.cgx .cgx-draft .d-toacc,.cgx .cgx-draft .d-itemrow{grid-column:1/-1}
 .cgx .cgx-draft .d-itemrow{display:grid;grid-template-columns:1.5fr .8fr 1.4fr;gap:10px}
 .cgx .cgx-draft .d-itemrow.in{grid-template-columns:1fr 1.4fr}
 .cgx .cgx-draft .d-acct{text-align:right}
@@ -36658,11 +36669,11 @@ function draftHtml(type,r){
   const attr=ed?'data-cgx-editing="'+E(r.id)+'"':'data-cgx-new="'+type+'"';
   let h='<div class="cgx-draft '+type+'" '+attr+'><div class="dh">'+(ed?"✎ تعديل حركة ":"＋ ")+(inn?"وارد":"منصرف")+'</div><div class="d-cust">'+custBanner(ed?custodyAccount(r.account_id):current())+'</div>';
   if(!ed&&scopeAccounts().length!==1) h+='<select class="d-acc full" aria-label="الموظف / العهدة"><option value="">— اختر الموظف / العهدة * —</option>'+mine.map(x=>'<option value="'+E(x.id)+'">'+E(ownerLabel(x,mine))+'</option>').join("")+'</select>';
-  h+='<input class="d-bayan" maxlength="250" placeholder="البيان" aria-label="البيان" value="'+E(ed?r.description:"")+'">'+
+  h+='<input class="d-bayan" maxlength="250" placeholder="البيان" aria-label="البيان" value="'+E(ed?xferTxt(r):"")+'">'+
     '<input class="d-amt" type="number" inputmode="decimal" min="0" step="0.01" placeholder="القيمة" aria-label="القيمة" value="'+(ed?(+r.amount):"")+'">'+
     '<select class="d-proj" aria-label="المشروع">'+projOptions(ed?(r.project||""):"")+'</select>'+
     '<input class="d-proj-new" hidden maxlength="120" placeholder="اسم المشروع الجديد" aria-label="اسم المشروع الجديد">';
-  if(v2){
+  if(v2&&!(ed&&CGL.xferNo(r))){
     let accNo="", accNm="", sel="";
     if(ed){ const x=CGL.accOf(r.gl_account_id,r.gl_account_code); accNo=x?x.account_code:(r.gl_account_code||""); accNm=x?x.account_name:(r.gl_account_name||""); sel=r.expense_item_id?String(r.expense_item_id):""; }
     h+='<div class="d-itemrow">';
@@ -36673,6 +36684,10 @@ function draftHtml(type,r){
     h+='<input class="d-acct" list="cglAccList" autocomplete="off" dir="ltr" placeholder="'+(inn?"رقم الحساب المقابل (خزنة / بنك)":"رقم الحساب")+'" aria-label="رقم الحساب"'+(sel?" disabled":"")+' value="'+E(accNo)+'">'+
       '<input class="d-acctname" readonly tabindex="-1" placeholder="اسم الحساب" aria-label="اسم الحساب" value="'+E(accNm)+'">';
     h+='</div>';
+  }
+  if(!ed&&!inn){
+    const _cur=current(), tg=custodyCache.accounts.filter(x=>x.is_active!==false&&(!_cur||String(x.id)!==String(_cur.id)));
+    h+='<select class="d-toacc" aria-label="تحويل إلى عهدة أخرى"><option value="">↔ تحويل إلى عهدة أخرى (اختياري — بيتسجل وارد هناك تلقائي بقيد واحد)</option>'+tg.map(x=>'<option value="'+E(x.id)+'">'+E(x.code+' — '+x.owner_name)+'</option>').join("")+'</select>';
   }
   h+='<input class="d-date" type="date" aria-label="التاريخ" value="'+E(ed?d10(r.entry_date):todayStr())+'">';
   const _canPost = (typeof CGL!=="undefined" && CGL.canPost) ? CGL.canPost() : false;
@@ -36712,6 +36727,38 @@ async function readAcct(d,type){
   }
   return {fields:{expense_item_id:it?String(it.id):null,expense_item_no:it?it.item_no:null,expense_item_name:it?it.item_name:null,gl_account_id:String(acc.id),gl_account_code:acc.account_code,gl_account_name:acc.account_name}};
 }
+const xferTxt=r=>{ const m=/^تحويل عهدة رقم (\d+) (?:إلى|من) [\s\S]*?: ([\s\S]*)$/.exec(String((r&&r.description)||"")); return m?m[2]:(r?(r.description||""):""); };
+const xferPre=r=>{ const d=String((r&&r.description)||""); return d.slice(0,d.length-xferTxt(r).length); };
+const xferDesc=(n,dir,acc,txt)=>"تحويل عهدة رقم "+n+" "+(dir==="out"?"إلى ":"من ")+acc.code+" — "+acc.owner_name+": "+txt;
+const xferNext=()=>{ let m=0; custodyCache.entries.forEach(x=>{ const n=CGL.xferNo(x); if(n&&+n>m) m=+n; }); return m+1; };
+async function saveXfer(a,tid,desc,amt,proj,date,post,ok,okp){
+  const fail=m=>{ setStatus(m,true); ok.disabled=false; if(okp) okp.disabled=false; };
+  const b=custodyAccount(tid);
+  if(!b) return fail("العهدة المحوَّل إليها غير موجودة");
+  if(String(b.id)===String(a.id)) return fail("لا يمكن التحويل لنفس العهدة");
+  let ga=null, gb=null;
+  if(CGL.v2()){
+    try{ await CGL.loadAccounts(); }catch(e){ return fail("تعذر تحميل شجرة الحسابات: "+((e&&e.message)||e)); }
+    ga=CGL.accOf(a.gl_account_id,a.gl_account_code); gb=CGL.accOf(b.gl_account_id,b.gl_account_code);
+    if(!ga) return fail("العهدة المحوَّل منها غير مربوطة بحساب — اربطها من «تكويد العهد» أولاً");
+    if(!gb) return fail("العهدة المحوَّل إليها غير مربوطة بحساب — اربطها من «تكويد العهد» أولاً");
+  }
+  await freshLock(a); await freshLock(b);
+  if(isLocked(a,date)) return fail(lockText(a));
+  if(isLocked(b,date)) return fail("العهدة المحوَّل إليها: "+lockText(b));
+  const n=xferNext(), by=custodyUserName();
+  const gf=g=>g?{gl_account_id:String(g.id),gl_account_code:g.account_code,gl_account_name:g.account_name}:{};
+  const base={entry_date:date,amount:amt,project:proj,created_by:by};
+  const q=await sb.from(CUSTODY_TABLES.entries).insert([
+    {...base,account_id:a.id,entry_type:"out",description:xferDesc(n,"out",b,desc),...gf(gb)},
+    {...base,account_id:b.id,entry_type:"in",description:xferDesc(n,"in",a,desc),...gf(ga)}
+  ]).select();
+  if(q.error) throw q.error;
+  (q.data||[]).forEach(x=>custodyCache.entries.push(x));
+  try{ audit("تحويل بين عهدتين",a.code+" ← "+b.code+" / "+amt+" / رقم "+n); }catch(e){}
+  toast(post?"تم تسجيل التحويل ✓ — جاري فتح الترحيل":"تم تسجيل التحويل (منصرف من "+a.code+" ووارد في "+b.code+") ✓ — اضغط «ترحيل الحركة» لعمل قيد واحد للطرفين","ok"); rerender();
+  if(post){ const o=(q.data||[]).find(x=>x.entry_type==="out"); try{ if(o&&CGL.postOpen) await CGL.postOpen(o.id); }catch(e){ console.warn(e); } }
+}
 async function saveNew(type,d,post){
   let a=current();
   const ds=d.querySelector(".d-acc"); if(ds){ a=custodyAccount(ds.value); if(!a){ setStatus("اختر الموظف / العهدة",true); return; } }
@@ -36721,6 +36768,7 @@ async function saveNew(type,d,post){
   if(CGL.v2()&&!(a.gl_account_id||a.gl_account_code)){ setStatus("العهدة غير مربوطة بحساب من شجرة الحسابات — اربطها من «تكويد العهد» أولاً",true); return; }
   const ok=d.querySelector(".d-ok"), okp=d.querySelector(".d-okpost"); ok.disabled=true; if(okp) okp.disabled=true;
   try{
+    { const _ts=d.querySelector(".d-toacc"), _tid=(type==="out"&&_ts)?_ts.value:""; if(_tid){ await saveXfer(a,_tid,desc,amt,proj,date,post,ok,okp); return; } }
     const g=await readAcct(d,type); if(g.err){ setStatus(g.err,true); ok.disabled=false; if(okp) okp.disabled=false; return; }
     await freshLock(a);
     if(isLocked(a,date)){ setStatus(lockText(a),true); ok.disabled=false; if(okp) okp.disabled=false; return; }
@@ -36739,13 +36787,22 @@ async function saveEdit(d){
   if(!desc||!(amt>0)){ setStatus("اكتب البيان وقيمة أكبر من صفر",true); return; }
   const ok=d.querySelector(".d-ok"); ok.disabled=true;
   try{
-    const g=await readAcct(d,r.entry_type);
+    const _px=CGL.xferNo(r)?CGL.xferPair(r):null, _isX=!!CGL.xferNo(r);
+    const g=_isX?{fields:{}}:await readAcct(d,r.entry_type);
     if(g.err){ setStatus(g.err,true); ok.disabled=false; return; }
     await freshLock(a);
     if(isLocked(a,r.entry_date)||isLocked(a,date)){ setStatus(lockText(a),true); S.editing=null; rerender(); setStatus(lockText(a),true); return; }
-    const upd={description:desc,amount:amt,entry_date:date,project:proj,updated_by:custodyUserName(),updated_at:new Date().toISOString(),...g.fields};
+    let _pa=null; if(_px){ _pa=custodyAccount(_px.account_id); if(_pa){ await freshLock(_pa); if(isLocked(_pa,_px.entry_date)||isLocked(_pa,date)){ setStatus("الطرف الآخر من التحويل (عهدة "+_pa.code+") داخل فترة مقفولة",true); ok.disabled=false; return; } } }
+    const _old={description:r.description,amount:r.amount,entry_date:r.entry_date,project:r.project};
+    const upd={description:(_isX?xferPre(r):"")+desc,amount:amt,entry_date:date,project:proj,updated_by:custodyUserName(),updated_at:new Date().toISOString(),...g.fields};
     const q=await sb.from(CUSTODY_TABLES.entries).update(upd).eq("id",r.id);
     if(q.error) throw q.error;
+    if(_px){
+      const upd2={description:xferPre(_px)+desc,amount:amt,entry_date:date,project:proj,updated_by:custodyUserName(),updated_at:upd.updated_at};
+      const q2=await sb.from(CUSTODY_TABLES.entries).update(upd2).eq("id",_px.id);
+      if(q2.error){ try{ await sb.from(CUSTODY_TABLES.entries).update(_old).eq("id",r.id); }catch(_){} throw q2.error; }
+      Object.assign(_px,upd2);
+    }
     Object.assign(r,upd); try{ audit("تعديل حركة عهدة",a.code+" / "+desc); }catch(e){}
     S.editing=null; toast("تم تعديل الحركة ✓","ok"); rerender();
   }catch(e){ ok.disabled=false; const m=(e&&e.message)||String(e); setStatus("تعذّر تعديل الحركة: "+m+(/column|schema cache/i.test(m)?" — "+NOTE_SQL:""),true); }
@@ -36756,10 +36813,13 @@ async function delRow(id){
   if(r.gl_entry_id){ setStatus("الحركة مُرحّلة — ألغِ الترحيل الأول عشان تحذفها",true); return; }
   await freshLock(a);
   if(isLocked(a,r.entry_date)){ setStatus(lockText(a),true); rerender(); setStatus(lockText(a),true); return; }
-  if(!await askConfirm("حذف الحركة دي؟")) return;
-  const q=await sb.from(CUSTODY_TABLES.entries).update({deleted_at:new Date().toISOString(),updated_by:custodyUserName(),updated_at:new Date().toISOString()}).eq("id",r.id);
+  const _px=CGL.xferNo(r)?CGL.xferPair(r):null;
+  if(_px){ const _pa=custodyAccount(_px.account_id); if(_pa){ await freshLock(_pa); if(isLocked(_pa,_px.entry_date)){ setStatus("الطرف الآخر من التحويل (عهدة "+_pa.code+") داخل فترة مقفولة",true); return; } } if(_px.gl_entry_id){ setStatus("الطرف الآخر من التحويل مُرحّل — ألغِ الترحيل الأول",true); return; } }
+  if(!await askConfirm(_px?"ده تحويل بين عهدتين — الحذف هيمسح الطرفين (المنصرف والوارد). تكمل؟":"حذف الحركة دي؟")) return;
+  const _ids=_px?[r.id,_px.id]:[r.id];
+  const q=await sb.from(CUSTODY_TABLES.entries).update({deleted_at:new Date().toISOString(),updated_by:custodyUserName(),updated_at:new Date().toISOString()}).in("id",_ids);
   if(q.error){ setStatus("تعذّر الحذف: "+q.error.message,true); return; }
-  custodyCache.entries=custodyCache.entries.filter(x=>x.id!==r.id); try{ audit("حذف حركة عهدة",a.code+" / "+r.description); }catch(e){}
+  custodyCache.entries=custodyCache.entries.filter(x=>_ids.indexOf(x.id)<0); try{ audit("حذف حركة عهدة",a.code+" / "+r.description); }catch(e){}
   toast("تم الحذف","ok"); rerender();
 }
 function bindLedger(){
@@ -36804,6 +36864,7 @@ function bindLedger(){
     const box=t.closest(".cgx-draft"); if(!box) return;
     if(t.classList.contains("d-acc")){ const c=box.querySelector(".d-cust"); if(c) c.innerHTML=custBanner(custodyAccount(t.value)); return; }
     if(t.classList.contains("d-proj")){ const n=box.querySelector(".d-proj-new"); if(n){ n.hidden=t.value!=="__new__"; if(!n.hidden) n.focus(); } return; }
+    if(t.classList.contains("d-toacc")){ const it=box.querySelector(".d-item"), ac=box.querySelector(".d-acct"), nm=box.querySelector(".d-acctname"), on=!!t.value; if(it){ it.disabled=on; if(on) it.value=""; } if(ac){ ac.disabled=on||!!(it&&it.value); if(on) ac.value=""; } if(nm&&on) nm.value=""; return; }
     if(!t.classList.contains("d-item")) return;
     const inp=box.querySelector(".d-acct"), nm=box.querySelector(".d-acctname"); if(!inp) return;
     if(t.value){
@@ -39073,6 +39134,12 @@ async function chqImpactToSupplier(id, direction){
   const suppliers = partyNames(state.suppliers||[]);
   if(!suppliers.length) return toast("لا يوجد موردين — أضف مورد في البيانات الأساسية","err");
 
+  // أنواع السداد المتاحة للطرفين (الشيك نفسه هو وسيلة السداد الأصلية فمش متاح هنا كنوع تاني)
+  const mOpts = [["adjustment","⚖ تسوية (غير نقدية)"],["cash","💵 نقدي"],["transfer","🔁 تحويل بنكي"]];
+  const safes = (state.safes||[]).filter(x=>typeof safeOk!=="function"||safeOk(x.code));
+  const banks = (state.banks||[]).filter(b=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(b))&&(typeof bankOk!=="function"||bankOk(b.code)));
+  const mSel = (idm)=>`<select class="inp" id="${idm}">${mOpts.map(o=>`<option value="${o[0]}">${o[1]}</option>`).join("")}</select>`;
+
   const body = `<div style="display:flex;flex-direction:column;gap:12px">
     <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
       🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد كتسوية
@@ -39086,6 +39153,16 @@ async function chqImpactToSupplier(id, direction){
       </select>
     </div>
     <div class="fld">
+      <label>نوع السداد للعميل *</label>
+      ${mSel("chqToSupCM")}
+      <select class="inp" id="chqToSupCT" style="display:none;margin-top:6px"></select>
+    </div>
+    <div class="fld">
+      <label>نوع السداد للمورد *</label>
+      ${mSel("chqToSupSM")}
+      <select class="inp" id="chqToSupST" style="display:none;margin-top:6px"></select>
+    </div>
+    <div class="fld">
       <label>تاريخ التحويل *</label>
       <input class="inp" type="date" id="chqToSupDate" value="${new Date().toISOString().slice(0,10)}">
     </div>
@@ -39093,105 +39170,132 @@ async function chqImpactToSupplier(id, direction){
       <label>ملاحظات (اختياري)</label>
       <textarea class="inp" id="chqToSupNotes" rows="2" placeholder="مثل: تسليم للمورد كدفعة على فاتورة..."></textarea>
     </div>
-    <div style="padding:10px;background:#fff9e8;border:1px solid #e9c46a;border-radius:8px;font-size:12px;color:#76540b;line-height:1.6">
-      ⚠️ هذا التحويل سيُنشئ تسويتين:
+    <div style="padding:10px;background:#fff9e8;border:1px solid #e9c46a;border-radius:8px;font-size:12px;color:#76540b;line-height:1.7">
+      ⚠️ هذا التحويل سينفّذ تلقائيًا:
       <ol style="margin:6px 0;padding-inline-start:20px">
-        <li>تسوية دائنة على العميل <b>${escapeHtml(customer)}</b> بـ <b>${fmt(amount)}</b> (يقل من مديونيته)</li>
-        <li>تسوية مدينة على المورد <b id="chqToSupSelLabel">[المورد]</b> بـ <b>${fmt(amount)}</b> (يقل من مديونيتنا له)</li>
+        <li><b>مرتد للعميل:</b> الشيك يخرج من الحافظة (أوراق القبض) ويُلغى قيده المُرحّل، وتتعكس الحافظة السابقة.</li>
+        <li><b>سداد العميل</b> <b>${escapeHtml(customer)}</b> بـ <b>${fmt(amount)}</b> بنوع السداد المختار (يقل من مديونيته).</li>
+        <li><b>سداد المورد</b> <b id="chqToSupSelLabel">[المورد]</b> بـ <b>${fmt(amount)}</b> بنوع السداد المختار (يقل من مديونيتنا له).</li>
       </ol>
-      وسيتم قفل الشيك الأصلي ولن يمكن تغيير تأثيره مرة ثانية إلا بمسح التسويتين.
+      الحركتان مرتبطتان ببعض، ومسح إحداهما يمسح الأخرى. الشيك الأصلي بيتشال ولا يرجع بمسح الحركتين — سجّله من جديد لو لزم.
     </div>
   </div>`;
   openModal("🔁 تحويل شيك لمورد — رقم "+(e.no||""), body, async ()=>{
     const supplier = (document.getElementById("chqToSupSelect")?.value||"").trim();
     const date = document.getElementById("chqToSupDate")?.value || "";
     const notes = (document.getElementById("chqToSupNotes")?.value||"").trim();
+    const opt = {
+      custMethod: document.getElementById("chqToSupCM")?.value||"adjustment",
+      custTreasury: document.getElementById("chqToSupCT")?.value||"",
+      supMethod: document.getElementById("chqToSupSM")?.value||"adjustment",
+      supTreasury: document.getElementById("chqToSupST")?.value||""
+    };
     if(!supplier) { toast("اختر المورد","err"); return false; }
     if(!date) { toast("اختر تاريخ التحويل","err"); return false; }
+    if(opt.custMethod!=="adjustment" && !opt.custTreasury){ toast(opt.custMethod==="cash"?"اختر خزينة سداد العميل":"اختر بنك سداد العميل","err"); return false; }
+    if(opt.supMethod!=="adjustment" && !opt.supTreasury){ toast(opt.supMethod==="cash"?"اختر خزينة سداد المورد":"اختر بنك سداد المورد","err"); return false; }
     try {
-      await chqImpactToSupplierDo(id, supplier, date, notes);
+      await chqImpactToSupplierDo(id, supplier, date, notes, opt);
       return true;
     } catch(err) {
       toast("فشل التحويل: "+(err?.message||err),"err");
       return false;
     }
   });
-  // تحديث اسم المورد في التحذير مع التغيير
+  // تحديث اسم المورد في التحذير + قوائم الخزائن/البنوك حسب نوع السداد
   setTimeout(()=>{
     const sel = document.getElementById("chqToSupSelect");
     const lbl = document.getElementById("chqToSupSelLabel");
     if(sel && lbl) sel.addEventListener("change", ()=>{ lbl.textContent = sel.value || "[المورد]"; });
+    const wire = (mid,tid)=>{
+      const m=document.getElementById(mid), t=document.getElementById(tid); if(!m||!t) return;
+      const paint=()=>{
+        if(m.value==="adjustment"){ t.style.display="none"; t.innerHTML=""; return; }
+        const list = m.value==="cash" ? safes : banks;
+        t.innerHTML = `<option value="">${m.value==="cash"?"— اختر الخزينة —":"— اختر البنك —"}</option>` + list.map(x=>`<option value="${escapeAttr(x.code)}">${escapeHtml(x.code)} — ${escapeHtml(x.name||"")}</option>`).join("");
+        t.style.display="";
+      };
+      m.addEventListener("change", paint); paint();
+    };
+    wire("chqToSupCM","chqToSupCT"); wire("chqToSupSM","chqToSupST");
   }, 100);
 }
 
-async function chqImpactToSupplierDo(id, supplier, date, notes){
+async function chqImpactToSupplierDo(id, supplier, date, notes, opt){
+  opt = opt || {};
   const e = state.treasuryEntries.find(x=>x.id===id);
   if(!e) throw new Error("الشيك غير موجود");
   const amount = +e.amount || 0;
   const customer = e.customer || "";
   if(!(amount>0)) throw new Error("قيمة الشيك غير صحيحة");
+  if(e.status==="collected") throw new Error("الشيك محصّل بالفعل — لا يمكن تحويله لمورد");
+
+  const cm = opt.custMethod || "adjustment", sm = opt.supMethod || "adjustment";
+  const ct = opt.custTreasury || "", st = opt.supTreasury || "";
+  if(cm!=="adjustment" && !ct) throw new Error(cm==="cash"?"اختر خزينة سداد العميل":"اختر بنك سداد العميل");
+  if(sm!=="adjustment" && !st) throw new Error(sm==="cash"?"اختر خزينة سداد المورد":"اختر بنك سداد المورد");
+  if(typeof scopeSaveBlock==="function"){
+    const m1 = scopeSaveBlock({customer:customer,supplier:"",bank:(cm==="transfer"?ct:""),safe:(cm==="cash"?ct:"")});
+    if(m1) throw new Error(m1);
+    const m2 = scopeSaveBlock({customer:"",supplier:supplier,bank:(sm==="transfer"?st:""),safe:(sm==="cash"?st:"")});
+    if(m2) throw new Error(m2);
+  }
 
   const chequeRef = "شيك رقم "+(e.no||"")+" — "+(e.refNo||"");
   const parentNo = e.no;
+  const snap = {no:e.no, refNo:e.refNo||"", bankDrawn:e.bankDrawn||"", dueDate:e.dueDate||"", date:e.date||"", amount:amount, customer:customer};
 
-  // 1) تسوية دائنة على العميل (يقل من مديونيته)
-  const custAdjId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
-  const custAdj = {
-    id: custAdjId,
-    direction: "in",
-    no: nextTxNo("in"),
-    createdAt: Date.now(),
-    createdBy: (curU()?String(curU().no):""),
-    date: date,
-    customer: customer,
-    amount: amount,
-    method: "adjustment",
-    adjustmentKind: "credit",
-    entryKind: "gl",
-    notes: `تسوية — ${chequeRef} محوّل للمورد: ${supplier}${notes?" — "+notes:""}`,
-    sourceChequeId: id,
-    chqImpact: "toSupplier",
-    linkedSupplier: supplier
+  // 1) مرتد للعميل: عكس الحافظة السابقة والقيد (إلغاء ترحيل قيود الشيك) — قبل إنشاء أي حاجة
+  if(txIsPosted(e)){
+    if(typeof chqCanUnpost==="function" && !chqCanUnpost(e,"in")) throw new Error("الشيك مُرحّل وتعذر إلغاء ترحيله تلقائيًا (الصلاحية أو حالته) — ألغِ ترحيله يدويًا ثم أعد المحاولة");
+    await chqUnpostRun(id,"in","all");
+    if(txIsPosted(e)) throw new Error("تعذر إلغاء ترحيل الشيك كاملًا — لم يتم إنشاء أي حركة، راجع القيود ثم أعد المحاولة");
+  }
+
+  const uNo = (curU()?String(curU().no):"");
+  const baseNote = `${chequeRef} — مرتد للعميل ومحوّل للمورد`;
+  const custId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
+  const supId = "tx_"+(Date.now()+1)+"_"+Math.random().toString(36).slice(2,6);
+
+  // 2) سداد العميل (يقل من مديونيته) — بنفس تسكينات الشيك الأصلي على الفواتير/الأقساط
+  const custMove = {
+    id: custId, direction: "in", no: nextTxNo("in"), createdAt: Date.now(), createdBy: uNo,
+    date: date, customer: customer, amount: amount,
+    method: cm, status: cm, treasury: cm==="adjustment" ? "" : ct,
+    refNo: "", dueDate: "", bankDrawn: "",
+    adjustmentKind: cm==="adjustment" ? "credit" : "",
+    allocations: JSON.parse(JSON.stringify(e.allocations||[])),
+    allocationType: e.allocationType || (cm==="adjustment" ? "" : "invoice_deduction"),
+    targetSupplier: "",
+    notes: `${cm==="adjustment"?"تسوية":"سداد"} — ${baseNote}: ${supplier}${notes?" — "+notes:""}`,
+    sourceChequeId: id, sourceCheque: snap,
+    chqImpact: "toSupplier", linkedSupplier: supplier, linkedTxId: supId
   };
+  if(cm==="adjustment") custMove.entryKind = "gl";
 
-  // 2) تسوية مدينة على المورد (يقل من مديونيتنا له) — نسجلها كـdirection=out أي دفعة للمورد
-  const supAdjId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
-  const supAdj = {
-    id: supAdjId,
-    direction: "out",
-    no: nextTxNo("out"),
-    createdAt: Date.now(),
-    createdBy: (curU()?String(curU().no):""),
-    date: date,
-    supplier: supplier,
-    amount: amount,
-    method: "adjustment",
-    adjustmentKind: "credit",   // تسوية دائنة على المورد = نقصان الدين
-    entryKind: "gl",
-    notes: `تسوية — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
-    sourceChequeId: id,
-    chqImpact: "toSupplier",
-    linkedCustomer: customer
+  // 3) سداد المورد (يقل من مديونيتنا له)
+  const supMove = {
+    id: supId, direction: "out", no: nextTxNo("out"), createdAt: Date.now()+1, createdBy: uNo,
+    date: date, supplier: supplier, amount: amount,
+    method: sm, status: sm, treasury: sm==="adjustment" ? "" : st,
+    refNo: "", dueDate: "", bankDrawn: "",
+    adjustmentKind: sm==="adjustment" ? "debit" : "",   // مدينة على المورد = نقصان مديونيتنا له
+    allocations: [], allocationType: "invoice_deduction", targetSupplier: "",
+    notes: `${sm==="adjustment"?"تسوية":"سداد"} — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
+    sourceChequeId: id, sourceCheque: snap,
+    chqImpact: "toSupplier", linkedCustomer: customer, linkedTxId: custId
   };
+  if(sm==="adjustment") supMove.entryKind = "gl";
 
-  // ربط الحركتين ببعض
-  custAdj.linkedTxId = supAdjId;
-  supAdj.linkedTxId = custAdjId;
-
-  // قفل الشيك الأصلي
-  e.chqLocked = true;
-  e.chqImpactApplied = "toSupplier";
-  e.chqImpactChildren = [custAdjId, supAdjId];
-  e.chqImpactDate = date;
-  e.chqImpactSupplier = supplier;
-
-  state.treasuryEntries.push(custAdj);
-  state.treasuryEntries.push(supAdj);
+  // الشيك الأصلي يتشال من الحافظة (مرتد للعميل) والحركتين الجداد بدله
+  state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
+  state.treasuryEntries.push(custMove);
+  state.treasuryEntries.push(supMove);
   saveState();
 
-  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)}`); } catch(_){}
+  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)} — مرتد للعميل + سداد العميل (${cm}) ${custMove.no} + سداد المورد (${sm}) ${supMove.no}`); } catch(_){}
 
-  toast(`✓ تم تحويل الشيك للمورد ${supplier} — تسويتان مُنشأتان (${custAdj.no} / ${supAdj.no})`,"ok");
+  toast(`✓ تم تحويل الشيك للمورد ${supplier} — مرتد للعميل + حركتان (${custMove.no} / ${supMove.no})`,"ok");
 
   // تحديث الشاشة
   if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(e.direction);
