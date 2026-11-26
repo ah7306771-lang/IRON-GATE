@@ -3645,6 +3645,7 @@ const defaults = {
   itemGroups: [],        // المجموعات الرئيسية للأصناف (حديد / اسمنت ...) ولكل مجموعة حسابين
   customerClasses: [],   // تصنيفات العملاء (رقم + اسم) — جدول customer_classes
   supplierClasses: [],   // تصنيفات الموردين (رقم + اسم) — جدول supplier_classes
+  chqImpactLevels: [],   // مستويات تأثير الشيكات — جدول chq_impact_levels
   services: [],          // خدمات المبيعات (كود + اسم + حساب مرتبط للترحيل) — جدول sales_services
   salesDepts: [],        // أقسام المبيعات (رقم + اسم) — جدول sales_departments
   salesReps: [],         // أكواد المناديب (رقم + اسم + القسم) — جدول sales_reps
@@ -3744,6 +3745,7 @@ const PARTY_COLS = { address:"address", phone:"phone", taxCard:"tax_card", comme
 const MASTER_TABLES = {
   suppliers:   { t:"suppliers",       k:"name", f:"name", cols:Object.assign({}, PARTY_COLS, { classCode:"class_code", code:"code" }) },
   supplierClasses: { t:"supplier_classes", k:"code", f:"code", cols:{ name:"name" } },
+  chqImpactLevels: { t:"chq_impact_levels", k:"key", f:"key", cols:{ serial:"serial", no:"no", name:"name", active:"active" } },
   customers:   { t:"customers",       k:"name", f:"name", cols:Object.assign({}, PARTY_COLS, { applyDiscount1Pct:"apply_discount_1pct", creditLimit:"credit_limit", creditIncludeNotes:"credit_include_notes", classCode:"class_code", code:"code" }) },
   customerClasses: { t:"customer_classes", k:"code", f:"code", cols:{ name:"name" } },
   salesDepts:  { t:"sales_departments", k:"code", f:"code", cols:{ name:"name" } },
@@ -3930,6 +3932,7 @@ function toRow(cfg, it, i){
   if(!cfg.cols){ const r0={ [cfg.k]:String(it), sort:i }; if(cfg.gm) r0.group_id=(state[cfg.gm]||{})[it]||null; return r0; }
   const row = { [cfg.k]:String(it[cfg.f]), sort:i };
   for(const [js,col] of Object.entries(cfg.cols)){
+    if(cfg.t==="chq_impact_levels"){ row[col] = js==="active" ? it[js]!==false : (js==="serial"||js==="no") ? (+it[js]||0) : String(it[js]==null?"":it[js]); continue; }
     if(js==="applyDiscount1Pct"||js==="creditIncludeNotes"){ row[col] = !!it[js]; continue; } // عمود منطقي (true/false) مش نص
     if(js==="creditLimit"){ const n=+it[js]; row[col] = n>0 ? n : null; continue; } // حد الائتمان: رقم أو null
     if(/^(account|acc[12])_id$|^class_code$/.test(col)){ row[col] = (it[js]===undefined||it[js]===null||it[js]==="") ? null : String(it[js]); continue; } // معرّف الحساب: null بدل نص فاضي (يمنع خطأ uuid)
@@ -3940,7 +3943,7 @@ function toRow(cfg, it, i){
 function fromRow(cfg, r){
   if(!cfg.cols) return r[cfg.k];
   const o = { [cfg.f]:r[cfg.k] };
-  for(const [js,col] of Object.entries(cfg.cols)) o[js] = (js==="applyDiscount1Pct"||js==="creditIncludeNotes") ? !!r[col] : (js==="creditLimit") ? (r[col]==null||r[col]===""?"":+r[col]) : r[col];
+  for(const [js,col] of Object.entries(cfg.cols)) o[js] = (cfg.t==="chq_impact_levels") ? (js==="active" ? r[col]!==false : (js==="serial"||js==="no") ? (+r[col]||0) : r[col]) : (js==="applyDiscount1Pct"||js==="creditIncludeNotes") ? !!r[col] : (js==="creditLimit") ? (r[col]==null||r[col]===""?"":+r[col]) : r[col];
   return o;
 }
 
@@ -3968,14 +3971,15 @@ async function loadMaster(admin){
     const k=kinds[i];
     if(r.error){
       // جدول المخازن لسه متعملش على Supabase: نكمل تحميل التطبيق ونوقف رفعه لحد ما يتشغّل ملف SQL
-      if((k==="warehouses"||k==="itemGroups"||k==="customerClasses"||k==="supplierClasses"||k==="salesDepts"||k==="salesReps"||k==="services") && /relation|does not exist|schema cache|42P01|PGRST205|permission denied|42501/i.test(String(r.error.message||"")+String(r.error.code||""))){
+      if((k==="warehouses"||k==="itemGroups"||k==="customerClasses"||k==="supplierClasses"||k==="chqImpactLevels"||k==="salesDepts"||k==="salesReps"||k==="services") && /relation|does not exist|schema cache|42P01|PGRST205|permission denied|42501/i.test(String(r.error.message||"")+String(r.error.code||""))){
         skipSyncKinds.add(k); console.warn("جدول "+MASTER_TABLES[k].t+" غير موجود:",r.error);
-        toast(k==="services"?"جدول الخدمات غير موجود أو بدون صلاحيات على Supabase — شغّل ملف irongate_sales_services.sql":(k==="salesDepts"||k==="salesReps")?"جدول أقسام المبيعات/المناديب غير موجود على Supabase — شغّل ملف irongate_sales_reps.sql":k==="customerClasses"?"جدول تصنيف العملاء غير موجود على Supabase — شغّل ملف irongate_customer_classes.sql":k==="supplierClasses"?"جدول تصنيف الموردين غير موجود على Supabase — شغّل ملف irongate_supplier_classes_and_party_codes.sql":k==="itemGroups"?"جدول مجموعات الأصناف غير موجود على Supabase — شغّل ملف irongate_item_groups.sql":"جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
+        toast(k==="chqImpactLevels"?"جدول مستوى التأثير غير موجود على Supabase — شغّل ملف irongate_chq_impact_levels.sql":k==="services"?"جدول الخدمات غير موجود أو بدون صلاحيات على Supabase — شغّل ملف irongate_sales_services.sql":(k==="salesDepts"||k==="salesReps")?"جدول أقسام المبيعات/المناديب غير موجود على Supabase — شغّل ملف irongate_sales_reps.sql":k==="customerClasses"?"جدول تصنيف العملاء غير موجود على Supabase — شغّل ملف irongate_customer_classes.sql":k==="supplierClasses"?"جدول تصنيف الموردين غير موجود على Supabase — شغّل ملف irongate_supplier_classes_and_party_codes.sql":k==="itemGroups"?"جدول مجموعات الأصناف غير موجود على Supabase — شغّل ملف irongate_item_groups.sql":"جدول المخازن غير موجود على Supabase — شغّل ملف irongate_master_data_fix.sql","err");
         if(k==="warehouses"&&(!Array.isArray(state.warehouses)||!state.warehouses.length)) state.warehouses=(state.settings&&state.settings.warehouses||[]).slice();
         if(k==="itemGroups"&&!Array.isArray(state.itemGroups)) state.itemGroups=[];
         if(k==="customerClasses"&&!Array.isArray(state.customerClasses)) state.customerClasses=[];
         if((k==="salesDepts"||k==="salesReps"||k==="services")&&!Array.isArray(state[k])) state[k]=[];
         if(k==="supplierClasses"&&!Array.isArray(state.supplierClasses)) state.supplierClasses=[];
+        if(k==="chqImpactLevels"&&!Array.isArray(state.chqImpactLevels)) state.chqImpactLevels=[];
         return;
       }
       throw r.error;
@@ -4001,6 +4005,14 @@ async function loadMaster(admin){
   await Promise.all([ _ldTrack("المستخدمين",adminP), _ldTrack("البوالص وأوامر البيع",loadDocs()), _ldTrack("المشتريات",igPurchaseFetchAll()), _ldTrack("خطط السداد",supLoadPaymentPlansFromSupabase()), _ldTrack("الخزينة",txLoadTreasuryFromDb()), _ldTrack("عروض الأسعار",loadQuotesFromSupabase()), _ldTrack("الأرصدة الافتتاحية",loadOpeningFromSupabase()), _ldTrack("أرصدة أول المدة (خزن/بنوك/عهد)",(window.OB?window.OB.load():Promise.resolve())), _ldTrack("شروط السداد",loadOrderTermsFromSupabase()) ]);
   securityMigrate(state);
   MASTER_KINDS.concat(["settings"]).forEach(k=>{ lastSnaps[k] = snapOf(k); });
+  try{   // مستوى التأثير: لو الجدول فاضي نرفع المستويات القديمة (من الإعدادات) أو الافتراضية أول مرة
+    if(!Array.isArray(state.chqImpactLevels)) state.chqImpactLevels=[];
+    if(!state.chqImpactLevels.length && !skipSyncKinds.has("chqImpactLevels")){
+      const legacy=(state.settings&&Array.isArray(state.settings.chqImpactLevels)&&state.settings.chqImpactLevels.length)?state.settings.chqImpactLevels:((typeof CHQ_IMPACT_DEFAULT!=="undefined")?CHQ_IMPACT_DEFAULT:[]);
+      state.chqImpactLevels=JSON.parse(JSON.stringify(legacy));
+      lastSnaps.chqImpactLevels="__migrate__";
+    }
+  }catch(_){}
   if(whMigrate){ state.settings.warehouses=[]; lastSnaps.warehouses="__migrate__"; lastSnaps.settings="__migrate__"; }   // يرفع المخازن القديمة للجدول الجديد أول مرة ويفضّي النسخة القديمة من الإعدادات
   try{ chqEnsureSysBanks(state); }catch(_){}
   masterLoaded = true;
@@ -6051,6 +6063,7 @@ function viewApps(){
 function apWm(){ try{ const w=document.querySelector(".ap-wrap"),l=document.getElementById("hmLoginLogo")||document.getElementById("igSidebarLogo"); if(w&&l) w.style.setProperty("--wm","url("+l.src+")"); }catch(e){} }
 let _apBarItems=[];
 function apCat(it,secT){
+  if(it.id==="custodyDashboard") return "الملفات الرئيسية";
   if(it.tab==="sysInd"||it.id==="treasuryBulkPost"||it.id==="bankBulkPost"||it.id==="obSafe"||it.id==="obBank"||it.id==="obCustody"||it.id==="obWarehouse") return "مؤشرات النظام";
   if(it.id==="gl"&&it.tab==="indicators") return "مؤشرات النظام";
   if(it.id==="gl"&&(it.tab==="dashboard"||it.tab==="import_entries"||it.tab==="bulk_post")) return "الملفات الرئيسية";
@@ -6165,7 +6178,7 @@ function adBuild(gid){
     const by={}; let i=0,o=0; custodyCache.entries.forEach(r=>{ const v=Number(r.amount)||0, sg=r.entry_type==="in"?1:-1; (sg>0?i+=v:o+=v); by[r.account_id]=(by[r.account_id]||0)+sg*v; });
     const nm=id=>{ const a=custodyCache.accounts.find(x=>String(x.id)===String(id)); return a?(a.name||a.code):"—"; };
     return {k:adK("💼","حسابات العهد",custodyCache.accounts.length,"حساب","b","go('custodyLedger')")+adK("↓","إجمالي الوارد",val(i),"","g")+adK("↑","إجمالي المنصرف",val(o),"","r")+adK("⚖","صافي الرصيد",val(i-o),"","n","go('custodyReport')"),
-      t:adTable("أرصدة العهد",["الحساب","الرصيد"],Object.entries(by).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10).map(([id,v])=>[nm(id),adN(v)]),"go('custodyReport')")};
+      t:adTable("أرصدة العهد",["الحساب","الرصيد"],Object.entries(by).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).slice(0,10).map(([id,v])=>[nm(id),adN(v)]),"go('custodyReport')"),ksCls:"ad-ks-cust"};
   }
   if(gid==="fixedAssets"){
     const A=(faData&&faData.assets)||[], EV=(faData&&faData.events)||[], RUNS=(faData&&faData.runs)||[], E_=v=>faEsc(v);
@@ -6311,10 +6324,10 @@ function adItemSalesDash(mk){
 function viewModuleDash(gid){
   if(!igDataReady()){ igWaitRerender(); return `<div class="ig-skel" role="status" aria-label="جاري تحميل البيانات"><div class="ad-ks">${'<div class="b k"></div>'.repeat(4)}</div><div class="ad-g2"><div class="b r"></div><div class="b r"></div></div></div>`; }
   let d; try{ d=adBuild(gid); }catch(e){ console.warn(e); d={k:adK("!","تعذر تحميل اللوحة","—","","n")}; }
-  const g=visibleNavGroups().find(x=>x.id===gid), q=g?g.items.filter(it=>!it.sep&&apCat(it,"")==="الملفات الرئيسية").slice(0,8):[];
+  const g=visibleNavGroups().find(x=>x.id===gid), q=g?g.items.filter(it=>!it.sep&&apCat(it,"")==="الملفات الرئيسية"&&it.id!=="custodyDashboard").slice(0,8):[];
   _apItems=q;
   let tx="",txTop=""; if(gid==="treasury"||gid==="banking"){ try{ const _p=adTrPanel(gid); txTop=_p.top; tx=_p.rest; setTimeout(()=>adTrLoad(false),0); }catch(e){ console.warn(e); } }
-  return `<div class="ad">${txTop}<div class="ad-ks">${d.k||""}${d.kExtra||""}</div><div class="ad-g2">${d.c||""}${d.t||""}</div>${tx}`+(q.length?`<div class="ad-card"><h3>وصول سريع</h3><div class="ad-q">${q.map((it,i)=>`<button onclick="navItemGo(_apItems[${i}])"><span>${igIco(it.icon||"▦")}</span>${it.label}</button>`).join("")}</div></div>`:"")+
+  return `<div class="ad">${txTop}<div class="ad-ks${d.ksCls?" "+d.ksCls:""}">${d.k||""}${d.kExtra||""}</div><div class="ad-g2">${d.c||""}${d.t||""}</div>${tx}`+(q.length?`<div class="ad-card"><h3>وصول سريع</h3><div class="ad-q">${q.map((it,i)=>`<button onclick="navItemGo(_apItems[${i}])"><span>${igIco(it.icon||"▦")}</span>${it.label}</button>`).join("")}</div></div>`:"")+
     (gid==="custody"&&typeof custodyCache!=="undefined"&&custodyCache.loaded&&window.cgDashPanel?(setTimeout(()=>{ try{ window.cgDashBind&&window.cgDashBind(); }catch(e){} },0),`<div class="ad-card ad-cgx" style="margin-top:14px">${window.cgDashPanel()}</div>`):"")+`</div>`;
 }
 
@@ -24423,6 +24436,7 @@ function viewTreasury(direction){
   </div>
   <div class="tx-bar">
     <button type="button" class="btn ghost sm" id="txFiltersBtn" onclick="txToggleFilters('${direction}')">${txFiltersOpen()?'▲':'▼'} الفلاتر</button>
+    ${txIsBank()?`<label class="tx-grpflag" title="على مستوى البنك: كل بنك كعنوان رئيسي وحركاته تحته"><input type="checkbox" id="txGrpFlag" ${txGrpOn()?"checked":""} onchange="txGrpSet(this.checked)"> على مستوى البنك</label>`:""}
     <span class="tx-fsum" id="txFiltersSum" style="display:${txFiltersOpen()?'none':''}">${escapeHtml(txFilterSummary(direction))}</span>
     <div class="tx-filters" id="txFilters" style="display:${txFiltersOpen()?'flex':'none'}">
     <input class="inp tx-f-q" placeholder="بحث: رقم / ${partyLabel} / بنك / ملاحظات" value="${escapeAttr(txFilter.q)}" oninput="txFilter.q=this.value;renderTreasury('${direction}')">
@@ -24436,6 +24450,7 @@ function viewTreasury(direction){
     <button type="button" class="btn ghost" onclick="${isB?'txClearBoth()':`fpClear('${isIn?'receipts':'payments'}')`}" title="مسح كل الفلاتر المحفوظة">مسح الكل</button>
   </div>
     <div class="tx-actions">
+      ${txIsBank()?`<button type="button" class="btn tx-selbtn tx-selpost" id="txSelPost" onclick="txSelPostRun()" title="ترحيل المحدد، ولو مفيش تحديد يرحّل كل الحركات الجاهزة المعروضة">📥 ترحيل الكل</button><button type="button" class="btn ghost tx-selbtn tx-selunpost" id="txSelUnpost" onclick="txSelUnpostRun()" title="إلغاء ترحيل المحدد، ولو مفيش تحديد يلغي ترحيل كل المُرحّل المعروض">↶ إلغاء الكل</button>`:""}
       <span class="chip gold tx-count" id="txCount">${(direction==="both" ? trfVirtualRows("in").concat(trfVirtualRows("out"),list) : trfVirtualRows(direction).concat(list)).filter(txScopeOK).length} سجل</span>
       <button type="button" class="btn ghost tx-ic" title="طباعة حسب الفلتر" aria-label="طباعة حسب الفلتر" onclick="txExport('${direction}','pdf')">🖨<span class="tx-lbl"> طباعة حسب الفلتر</span></button>
       <button type="button" class="btn ghost tx-xl" title="تصدير Excel" onclick="txExport('${direction}','excel')">⬇ Excel</button>
@@ -24447,6 +24462,7 @@ function viewTreasury(direction){
   <div class="tbl-swipe-hint" aria-hidden="true">↔ ↕ اسحب الجدول يمين وشمال وفوق وتحت لعرض كل الأعمدة والصفوف</div>
   <div class="tbl-wrap"><table data-rs-key="treasury-${direction}" data-scope="${txScope}">
     <thead><tr>
+      ${txIsBank()?`<th class="tx-selth" title="تحديد الكل"><input type="checkbox" id="txSelAll" onchange="txSelAll(this.checked)"></th>`:""}
       <th class="sortable" data-sk="no" onclick="txSortBy('no','${direction}')">م</th>
       <th class="sortable" data-sk="date" onclick="txSortBy('date','${direction}')">التاريخ</th>
       <th class="sortable" data-sk="party" onclick="txSortBy('party','${direction}')"><span class="th-wrap">${partyLabel}<button type="button" class="th-fbtn" data-fk="party" title="فلتر" onclick="txColFilterOpen('party','${direction}',event)">▾</button></span></th>
@@ -24454,7 +24470,7 @@ function viewTreasury(direction){
       <th class="sortable" data-sk="ref" onclick="txSortBy('ref','${direction}')">رقم المرجع</th>
       ${isB?`<th class="sortable" data-sk="inamt" onclick="txSortBy('inamt','${direction}')">وارد</th><th class="sortable" data-sk="outamt" onclick="txSortBy('outamt','${direction}')">صادر</th>`:`<th class="sortable" data-sk="amount" onclick="txSortBy('amount','${direction}')">القيمة</th>`}
       <th class="sortable" data-sk="due" onclick="txSortBy('due','${direction}')">تاريخ الاستحقاق</th>
-      <th class="sortable" data-sk="treasury" onclick="txSortBy('treasury','${direction}')"><span class="th-wrap">الخزنة / البنك<button type="button" class="th-fbtn" data-fk="treasury" title="فلتر" onclick="txColFilterOpen('treasury','${direction}',event)">▾</button></span></th>
+      <th class="sortable tx-col-bank" data-sk="treasury" onclick="txSortBy('treasury','${direction}')"><span class="th-wrap">الخزنة / البنك<button type="button" class="th-fbtn" data-fk="treasury" title="فلتر" onclick="txColFilterOpen('treasury','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="bank" onclick="txSortBy('bank','${direction}')">البنك المسحوب عليه</th>
       <th class="sortable" data-sk="status" onclick="txSortBy('status','${direction}')"><span class="th-wrap">الحالة<button type="button" class="th-fbtn" data-fk="status" title="فلتر" onclick="txColFilterOpen('status','${direction}',event)">▾</button></span></th>
       <th class="sortable" data-sk="alert" onclick="txSortBy('alert','${direction}')">تنبيه</th>
@@ -24465,6 +24481,7 @@ function viewTreasury(direction){
     <tbody id="txBody"></tbody>
     <tfoot id="txFoot"></tfoot>
   </table></div>
+  ${txIsBank()?`<div id="txRecon" class="tx-recon"></div>`:""}
   ${(isIn&&txScope!=="cash")?`<div id="txCheckSummary" style="margin-top:18px"></div>`:""}
   </div>
   `;
@@ -24669,8 +24686,9 @@ function renderTreasury(direction){
   { const sm=document.getElementById("txFiltersSum"); if(sm) sm.textContent=txFilterSummary(direction); }
   const partyField = direction==="in" ? "customer" : "supplier";
   const filtered = txFilteredSorted(direction);
+  let tot0=0;
   { const c=document.getElementById("txCount"), tot=(direction==="both" ? trfVirtualRows("in").concat(trfVirtualRows("out"),treasuryList("both")) : trfVirtualRows(direction).concat(treasuryList(direction))).filter(txScopeOK).length;
-    if(c) c.textContent = filtered.length===tot ? tot+" سجل" : filtered.length+" من "+tot+" سجل"; }
+    tot0=tot; if(c) c.textContent = filtered.length===tot ? tot+" سجل" : filtered.length+" من "+tot+" سجل"; }
   txMarkSort();
   // أعد حساب الـKPIs حسب الفلتر الحالي
   try{
@@ -24681,13 +24699,22 @@ function renderTreasury(direction){
     }
   }catch(_){}
   let totalFiltered = 0, tIn=0, tOut=0, eIn=0, eOut=0;
-  const body = filtered.map(e=>{
+  const _SEL = txIsBank(); window.__txDirCur = direction;
+  if(_SEL){ window.txSel=window.txSel||{}; const ok={}; filtered.forEach(e=>{ if(e.entryKind!=="transfer_view") ok[txSelKey(e)]=1; }); Object.keys(window.txSel).forEach(k=>{ if(!ok[k]) delete window.txSel[k]; }); }
+  const _GRP = _SEL && txGrpOn();
+  const rowsView = _GRP ? txGrpOrder(filtered) : filtered;
+  try{ const _t=document.getElementById("txBody").closest("table"); if(_t) _t.classList.toggle("tx-grp-on",!!_GRP); }catch(_){}
+  const _grpInfo = _GRP ? txGrpInfo(rowsView, direction) : null; let _lastGrp = null;
+  const body = rowsView.map(e=>{
+    let _gh="";
+    if(_GRP){ const gk=String(e.treasury||""); if(gk!==_lastGrp){ _lastGrp=gk; _gh=txGrpHeaderHtml(gk,_grpInfo[gk],direction); } }
     if(!(e.entryKind==="transfer_view"&&txScope==="all")) totalFiltered += +e.amount||0;
     if(direction==="both" && e.method!=="adjustment"){ const _v=+e.amount||0; if(e.direction==="in"){ tIn+=_v; if(txIsEffective(e)) eIn+=_v; } else { tOut+=_v; if(txIsEffective(e)) eOut+=_v; } }
     const _virt=e.entryKind==="transfer_view";
     const _al = _virt?null:txAlertInfo(e);
     const alert = _al ? `<span class="cr-due ${_al.cls}">${escapeHtml(_al.text)}</span>` : "";
-    return `<tr>
+    return _gh+`<tr${_SEL&&!_virt&&window.txSel&&window.txSel[txSelKey(e)]?' class="tx-selrow"':''}>
+      ${_SEL?`<td class="tx-seltd">${_virt?"":`<input type="checkbox" class="tx-selcb" data-k="${escapeAttr(txSelKey(e))}" ${window.txSel&&window.txSel[txSelKey(e)]?"checked":""} onchange="txSelToggle(this.dataset.k,this.checked)">`}</td>`:""}
       <td style="color:var(--text-dim)">${e.no||""}</td>
       <td>${e.date||""}</td>
       <td class="tx-party"><strong>${escapeHtml(e.entryKind==="transfer_view" ? e._label : e.entryKind==="gl" ? txGlLabel(e) : (partyWithCode(txPF(e,direction)==="customer"?"customers":"suppliers",e[txPF(e,direction)])||"—"))}</strong></td>
@@ -24695,7 +24722,7 @@ function renderTreasury(direction){
       <td style="direction:ltr;text-align:right">${escapeHtml(e.refNo||"—")}</td>
       ${direction==="both" ? `<td class="num" style="color:var(--ok);font-weight:800">${e.direction==="in"?fmt(e.amount):"—"}</td><td class="num" style="color:var(--danger);font-weight:800">${e.direction==="out"?fmt(e.amount):"—"}</td>` : `<td class="num" style="color:var(--gold-text);font-weight:800">${fmt(e.amount)}</td>`}
       <td>${e.dueDate||"—"}</td>
-      <td>${escapeHtml(treasuryLabel(e.treasury))}</td>
+      <td class="tx-col-bank">${escapeHtml(treasuryLabel(e.treasury))}</td>
       <td>${escapeHtml(e.bankDrawn?treasuryLabel(e.bankDrawn):"—")}</td>
       <td>${txStatusChip(e.status)}</td>
       <td>${alert}</td>
@@ -24704,11 +24731,11 @@ function renderTreasury(direction){
       <td>${_virt?trfVirtActions(e):txRowActions(e,direction==="both"?e.direction:direction)}</td>
     </tr>`;
   }).join("");
-  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="15"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
+  document.getElementById("txBody").innerHTML = body || `<tr><td colspan="${_SEL?16:15}"><div class="empty" style="padding:30px"><p>لا توجد سجلات.</p></div></td></tr>`;
   try{ const _w=document.getElementById("txBody").closest(".tbl-wrap"); if(_w){ _w.scrollLeft=0; requestAnimationFrame(()=>{ if(_w.scrollLeft<0) _w.scrollLeft=0; }); } }catch(e){}
   document.getElementById("txFoot").innerHTML = !filtered.length ? "" : direction==="both"
-    ? `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي (كل الحركات)</td><td class="num" style="color:var(--ok)">${fmt(tIn)}</td><td class="num" style="color:var(--danger)">${fmt(tOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي: <b style="direction:ltr;display:inline-block">${fmt(tIn-tOut)}</b></td></tr><tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الفعلي (تحويل / شيك محصَّل)</td><td class="num" style="color:var(--ok)">${fmt(eIn)}</td><td class="num" style="color:var(--danger)">${fmt(eOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي الفعلي: <b style="direction:ltr;display:inline-block">${fmt(eIn-eOut)}</b></td></tr>`
-    : `<tr><td colspan="5" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="8"></td></tr>`;
+    ? `<tr><td colspan="${_SEL?6:5}" style="text-align:left;color:var(--gold-text)">الإجمالي (كل الحركات)</td><td class="num" style="color:var(--ok)">${fmt(tIn)}</td><td class="num" style="color:var(--danger)">${fmt(tOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي: <b style="direction:ltr;display:inline-block">${fmt(tIn-tOut)}</b></td></tr><tr><td colspan="${_SEL?6:5}" style="text-align:left;color:var(--gold-text)">الفعلي (تحويل / شيك محصَّل)</td><td class="num" style="color:var(--ok)">${fmt(eIn)}</td><td class="num" style="color:var(--danger)">${fmt(eOut)}</td><td colspan="8" style="text-align:right;color:var(--text-dim)">الصافي الفعلي: <b style="direction:ltr;display:inline-block">${fmt(eIn-eOut)}</b></td></tr>`
+    : `<tr><td colspan="${_SEL?6:5}" style="text-align:left;color:var(--gold-text)">الإجمالي</td><td class="num" style="color:var(--gold-text)">${fmt(totalFiltered)}</td><td colspan="8"></td></tr>`;
   { const ch=document.getElementById("txDashChip");
     if(ch){
       if(txFilter.dashCollected){
@@ -24717,6 +24744,179 @@ function renderTreasury(direction){
       } else { ch.style.display="none"; ch.innerHTML=""; }
     } }
   if(direction==="in") renderIncomingCheckSummary();
+  if(_SEL){ txSelRefresh(filtered); txReconReset(filtered,tot0); }
+}
+
+/* ===== تحديد حركات البنوك + ترحيل الكل / إلغاء الكل من سطر الأدوات ===== */
+window.txSel = window.txSel || {};
+function txSelKey(e){ return e.direction+":"+e.id; }
+function txSelRows(filtered){ return (filtered||txFilteredSorted(window.__txDirCur||"both")).filter(e=>e.entryKind!=="transfer_view"); }
+function txSelReady(e){
+  if(txIsPosted(e)||e.entryKind==="transfer_view") return false;
+  try{ return bkBulkState({t:e.direction,e}).k==="ready"; }catch(_){ return false; }
+}
+function txSelUnpostable(e){
+  if(!txIsPosted(e)||e.entryKind==="transfer_view") return null;
+  try{
+    if(typeof chqCanUnpost==="function"&&chqCanUnpost(e,e.direction)) return "chq";
+    if(typeof txCanUnpost==="function"&&txCanUnpost(e,e.direction)) return "tx";
+  }catch(_){}
+  return null;
+}
+function txSelToggle(k,on){ window.txSel=window.txSel||{}; if(on) window.txSel[k]=1; else delete window.txSel[k]; txSelRefresh(); const tr=document.querySelector('.tx-selcb[data-k="'+k.replace(/"/g,'\\"')+'"]'); if(tr&&tr.closest("tr")) tr.closest("tr").classList.toggle("tx-selrow",!!on); }
+function txSelAll(on){
+  window.txSel={}; const rows=txSelRows();
+  if(on) rows.forEach(e=>{ if(txSelReady(e)||txSelUnpostable(e)) window.txSel[txSelKey(e)]=1; });
+  document.querySelectorAll(".tx-selcb").forEach(c=>{ const v=!!window.txSel[c.dataset.k]; c.checked=v; const tr=c.closest("tr"); if(tr) tr.classList.toggle("tx-selrow",v); });
+  txSelRefresh();
+}
+function txSelRefresh(filtered){
+  const pb=document.getElementById("txSelPost"), ub=document.getElementById("txSelUnpost"); if(!pb&&!ub) return;
+  const rows=txSelRows(filtered), sel=window.txSel||{}, nSel=Object.keys(sel).length, busy=!!window.__txSelBusy;
+  const pick=rows.filter(e=>!nSel||sel[txSelKey(e)]);
+  const nR=pick.filter(txSelReady).length, nU=pick.filter(e=>txSelUnpostable(e)).length;
+  if(pb){ pb.disabled=busy||!nR; pb.textContent=busy?"جارٍ…":(nSel?"📥 ترحيل المحدد ("+nR+")":"📥 ترحيل الكل ("+nR+")"); }
+  if(ub){ ub.disabled=busy||!nU; ub.textContent=busy?"جارٍ…":(nSel?"↶ إلغاء المحدد ("+nU+")":"↶ إلغاء الكل ("+nU+")"); }
+  const all=document.getElementById("txSelAll");
+  if(all){ const sel2=rows.filter(e=>txSelReady(e)||txSelUnpostable(e)); all.checked=!!sel2.length&&sel2.every(e=>sel[txSelKey(e)]); all.indeterminate=!all.checked&&nSel>0; }
+}
+async function txSelPostRun(){
+  if(window.__txSelBusy) return;
+  const sel=window.txSel||{}, nSel=Object.keys(sel).length;
+  const todo=txSelRows().filter(e=>(!nSel||sel[txSelKey(e)])&&txSelReady(e)).map(e=>({t:e.direction,e}))
+    .sort((a,b)=>String(a.e.date||"").localeCompare(String(b.e.date||""))||((+a.e.no||0)-(+b.e.no||0)));
+  if(!todo.length) return toast("لا توجد حركات جاهزة للترحيل","err");
+  const st=state.settings||{}, jc={in:st.txJournalBankIn||st.txJournalIn||"",out:st.txJournalBankOut||st.txJournalOut||""};
+  const need=["in","out"].filter(k=>todo.some(it=>it.t===k)&&!jc[k]);
+  if(need.length) return toast("حدّد "+need.map(k=>k==="in"?"يومية التحصيلات":"يومية المدفوعات").join(" و ")+" من مؤشرات النظام أولًا","err");
+  const nIn=todo.filter(it=>it.t==="in").length, nOut=todo.length-nIn;
+  const okc=await askConfirm("ترحيل "+todo.length+" حركة"+(nSel?" محددة":" معروضة")+" (تحصيلات "+nIn+" / مدفوعات "+nOut+")؟\n\nقيد مستقل لكل حركة بالترتيب (التاريخ ثم رقم الحركة). بعد الترحيل لا يُسمح بتعديل الحركة أو حذفها إلا بإلغاء الترحيل.",{title:"ترحيل الكل",ok:"نعم، رحّل",cancel:"رجوع"});
+  if(!okc) return;
+  window.__txSelBusy=true; txSelRefresh();
+  const res={ok:0,err:0,skip:0,errors:[]};
+  try{
+    const {accs,journals,years,periods}=await bkBulkLoadGL();
+    const jr={in:journals.find(x=>String(x.journal_code)===String(jc.in)),out:journals.find(x=>String(x.journal_code)===String(jc.out))};
+    let n=0;
+    for(const it of todo){
+      n++; const pb=document.getElementById("txSelPost"); if(pb) pb.textContent="⏳ "+n+" / "+todo.length;
+      const e=(state.treasuryEntries||[]).find(x=>x.id===it.e.id), ref=txBulkRef(it.e), jn=jr[it.t];
+      if(!e||txIsPosted(e)){ res.skip++; continue; }
+      if(!jn){ res.err++; res.errors.push(ref+": يومية "+jc[it.t]+" غير موجودة أو غير نشطة"); continue; }
+      try{
+        if(bkBulkState(it).stage==="receipt"){
+          const cp=chqPlan(e,accs,{bank:"",date:"",stage:"receipt"});
+          if(cp.err){ res.err++; res.errors.push(ref+": "+cp.err.title+" — "+String(cp.err.msg).replace(/\n/g," ")); continue; }
+          const cbad=cp.checks.filter(r=>!r[2]);
+          if(cbad.length||cp.entries.some(x=>!x.td||x.td!==x.tc||x.lines.some(l=>!l.acc))){ res.err++; res.errors.push(ref+": "+(cbad.length?cbad.map(r=>r[0]+": "+r[3]).join(" | "):"القيد غير متوازن أو حساب غير مربوط")); continue; }
+          await bkChqReceiptCore(e,it.t,cp,jn,years,periods); res.ok++; continue;
+        }
+        const plan=txPostPlan(e,accs); if(plan.reason){ res.skip++; continue; }
+        const bad=plan.checks.filter(r=>!r[2]);
+        if(bad.length||plan.lines.some(l=>!l.acc)){ res.err++; res.errors.push(ref+": "+(bad.length?bad.map(r=>r[0]+": "+r[3]).join(" | "):"يوجد حساب غير مربوط بأحد بنود القيد")); continue; }
+        await txPostCore(e,it.t,plan,jn,years,periods); res.ok++;
+      }catch(err){ res.err++; res.errors.push(ref+": "+((err&&err.message)||err)); }
+    }
+  }catch(err){ toast("تعذر الترحيل: "+((err&&err.message)||err),"err"); }
+  window.__txSelBusy=false; window.txSel={};
+  try{ saveState(); }catch(_){}
+  renderTreasury(window.__txDirCur||"both");
+  toast("انتهى الترحيل — تم "+res.ok+" / أخطاء "+res.err+(res.skip?" / اتخطّت "+res.skip:""),res.err?"err":"ok");
+  if(res.err&&typeof chqDialog==="function") chqDialog("warn","أخطاء في الترحيل","تم ترحيل "+res.ok+" وفشل "+res.err+"\n\n"+res.errors.slice(0,10).join("\n")+(res.errors.length>10?"\n…و "+(res.errors.length-10)+" خطأ آخر":""));
+}
+async function txSelUnpostRun(){
+  if(window.__txSelBusy) return;
+  const sel=window.txSel||{}, nSel=Object.keys(sel).length;
+  const items=txSelRows().filter(e=>(!nSel||sel[txSelKey(e)])).map(e=>({e,kind:txSelUnpostable(e)})).filter(x=>x.kind);
+  if(!items.length) return toast("لا توجد حركات مُرحّلة قابلة لإلغاء الترحيل","err");
+  const okc=await askConfirm("سيتم إلغاء ترحيل "+items.length+" حركة"+(nSel?" (المحددة)":" (كل المُرحّل المعروض)")+".\n\n- كل قيد هيتحذف نهائياً من القيود اليومية (بدون قيد عكسي)\n- الحركات هترجع غير مُرحّلة وتقدر تعدلها/تحذفها/ترحّلها من جديد\n\nهل تريد المتابعة؟",{title:"إلغاء الترحيل",ok:"نعم، ألغِ الترحيل",danger:true,cancel:"رجوع"});
+  if(!okc) return;
+  window.__txSelBusy=true; txSelRefresh();
+  let okN=0, errN=0; const errors=[];
+  for(let i=0;i<items.length;i++){
+    const {e,kind}=items[i], ref=txBulkRef(e);
+    const ub=document.getElementById("txSelUnpost"); if(ub) ub.textContent="⏳ "+(i+1)+" / "+items.length;
+    try{
+      if(kind==="chq") await chqUnpostRun(e.id,e.direction); else await txUnpostRun(e.id,e.direction);
+      if(txIsPosted(e)){ errN++; errors.push(ref+": لم يُلغَ"); } else okN++;
+    }catch(err){ errN++; errors.push(ref+": "+((err&&err.message)||err)); }
+  }
+  window.__txSelBusy=false; window.txSel={};
+  try{ saveState(); }catch(_){}
+  renderTreasury(window.__txDirCur||"both");
+  toast("انتهى إلغاء الترحيل — تم "+okN+" / فشل "+errN,errN?"err":"ok");
+  if(errN&&typeof chqDialog==="function") chqDialog("warn","أخطاء في إلغاء الترحيل","تم إلغاء "+okN+" وفشل "+errN+"\n\n"+errors.slice(0,10).join("\n")+(errors.length>10?"\n…و "+(errors.length-10)+" خطأ آخر":""));
+}
+
+/* ===== مطابقة الحركة البنكية مع كشف حساب البنك ===== */
+function txReconReset(filtered,tot){
+  const box=document.getElementById("txRecon"); if(!box) return;
+  const hidden=Math.max(0,(tot||0)-(filtered||[]).length);
+  box.innerHTML=`<div class="tx-recon-bar"><button type="button" class="btn ghost sm" onclick="txReconRun()">🔍 مطابقة مع كشف حساب البنك</button>${hidden?`<span class="tx-recon-warn">⚠ فيه ${hidden} سجل مخفي بسبب الفلاتر — الإجماليات فوق للمعروض فقط. <a href="#" onclick="event.preventDefault();txClearBoth()">عرض كل الحركات</a></span>`:`<span class="muted" style="font-size:12px">بيقارن الصافي الفعلي بالرصيد الختامي في كشف حساب البنك لنفس الفترة والبنوك المختارة.</span>`}</div>`;
+}
+async function txReconRun(){
+  const box=document.getElementById("txRecon"); if(!box) return;
+  const M=v=>fmt(Math.round((+v||0)*100)/100), col=d=>Math.abs(d)<0.01?"var(--ok)":"var(--danger)";
+  box.innerHTML='<div class="tx-recon-card"><div class="muted">⏳ جاري قراءة كشف حساب البنك والأستاذ العام…</div></div>';
+  try{
+    const sel=txNormFilterArr(txFilter.treasury).map(String);
+    let items=treasuryStmtList("bank").filter(b=>!(typeof chqIsSysBank==="function"&&chqIsSysBank(b)));
+    if(sel.length) items=items.filter(b=>sel.includes(String(b.code)));
+    if(!items.length){ box.innerHTML='<div class="tx-recon-card"><div class="muted">لا توجد بنوك للمطابقة.</div></div>'; return; }
+    const f={from:txFilter.from||"",to:txFilter.to||"",q:"",direction:"all"}, res=[];
+    for(const it of items){ res.push(await treasuryStmtBuild("bank",it,f)); }
+    const T=res.reduce((t,r)=>({open:t.open+r.open,inc:t.inc+r.incoming,out:t.out+r.outgoing,cl:t.cl+r.closing}),{open:0,inc:0,out:0,cl:0});
+    const dirCur=window.__txDirCur||"both";
+    const inRange=e=>!(txFilter.from&&String(e.date||"")<txFilter.from)&&!(txFilter.to&&String(e.date||"")>txFilter.to);
+    const base=(dirCur==="both"?trfVirtualRows("in").concat(trfVirtualRows("out"),treasuryList("both")):trfVirtualRows(dirCur).concat(treasuryList(dirCur)))
+      .filter(txScopeOK).filter(inRange).filter(e=>txMatchMulti(txFilter.treasury,e.treasury));
+    const net=a=>a.reduce((t,e)=>{ if(e.method==="adjustment"||!txIsEffective(e)||e.status==="returned") return t; const v=+e.amount||0; return t+(e.direction==="in"?v:-v); },0);
+    const netAll=net(base), netShown=net(txFilteredSorted(dirCur));
+    const stMove=T.inc-T.out, dFilter=netAll-netShown, dOther=stMove-netAll;
+    const row=(l,v,c,sub)=>`<tr><td>${l}${sub?`<div class="tx-recon-sub">${sub}</div>`:""}</td><td class="num" style="direction:ltr;text-align:left;font-weight:800;color:${c||"inherit"}">${M(v)}</td></tr>`;
+    const banksTbl=`<table class="tx-recon-tbl"><thead><tr><th>البنك</th><th>أول المدة</th><th>وارد</th><th>منصرف</th><th>الرصيد الختامي</th></tr></thead><tbody>${res.map(r=>`<tr><td style="text-align:right">${escapeHtml(r.item.code+" — "+r.item.name)}</td><td class="num">${M(r.open)}</td><td class="num" style="color:var(--ok)">${M(r.incoming)}</td><td class="num" style="color:var(--danger)">${M(r.outgoing)}</td><td class="num" style="font-weight:800">${M(r.closing)}</td></tr>`).join("")}</tbody><tfoot><tr><td style="text-align:right">الإجمالي (${res.length} بنك)</td><td class="num">${M(T.open)}</td><td class="num" style="color:var(--ok)">${M(T.inc)}</td><td class="num" style="color:var(--danger)">${M(T.out)}</td><td class="num">${M(T.cl)}</td></tr></tfoot></table>`;
+    const okAll=Math.abs(dFilter)<0.01&&Math.abs(dOther)<0.01;
+    box.innerHTML=`<div class="tx-recon-card"><div class="tx-recon-h">🔍 مطابقة الحركة البنكية مع كشف حساب البنك <span class="chip ${okAll?"ok":"warn"}">${okAll?"✓ مطابق":"فيه فرق"}</span><small>الفترة: ${escapeHtml(f.from||"البداية")} → ${escapeHtml(f.to||"النهاية")}</small></div>
+      <div class="tbl-wrap">${banksTbl}</div>
+      <table class="tx-recon-tbl tx-recon-sum"><tbody>
+        ${row("صافي الحركة الفعلي — المعروض في الشاشة (بعد الفلاتر)",netShown)}
+        ${row("+ حركات مخفية بسبب الفلاتر",dFilter,col(dFilter),"لو مش صفر: امسح الفلاتر (النوع / الحالة / الترحيل / الطرف / البحث)")}
+        ${row("= صافي الحركة الفعلي — كل الحركات بدون فلاتر",netAll)}
+        ${row("+ فرق آخر (قيود أستاذ يدوية، بنك/تاريخ التحصيل الفعلي للشيك، ارتداد)",dOther,col(dOther),"الشاشة بتعتمد تاريخ وبنك الشيك الأصلي، وكشف الحساب بيعتمد تاريخ وبنك التحصيل الفعلي + قيود GL اليدوية")}
+        ${row("= صافي حركة كشف حساب البنك (وارد − منصرف)",stMove)}
+        ${row("+ رصيد أول المدة (أستاذ عام + غير مرحّل)",T.open)}
+        ${row("= الرصيد الختامي حسب كشف حساب البنك",T.cl,"var(--gold-text)")}
+      </tbody></table></div>`;
+  }catch(err){ box.innerHTML='<div class="tx-recon-card"><div style="color:var(--danger)">تعذرت المطابقة: '+escapeHtml(String((err&&err.message)||err))+'</div></div>'; }
+}
+
+/* ===== تفصيل بالبنك: كل بنك كعنوان (ماستر) وحركاته تحته — الفلاج بيرجّع العرض العادي لما يتشال ===== */
+function txGrpOn(){ try{ return localStorage.getItem("ig_tx_grp_bank")==="1"; }catch(_){ return false; } }
+function txGrpSet(on){ try{ localStorage.setItem("ig_tx_grp_bank",on?"1":"0"); }catch(_){} renderTreasury(window.__txDirCur||"both"); }
+function txGrpOrder(list){
+  const idx=new Map(); list.forEach((e,i)=>idx.set(e,i));
+  return list.slice().sort((a,b)=>{
+    const x=String(a.treasury||""), y=String(b.treasury||"");
+    if(x!==y){ if(!x) return 1; if(!y) return -1; return x.localeCompare(y,"ar",{numeric:true}); }
+    return idx.get(a)-idx.get(b);
+  });
+}
+function txGrpInfo(list,direction){
+  const g={};
+  list.forEach(e=>{
+    const k=String(e.treasury||""), o=g[k]||(g[k]={n:0,inn:0,out:0,eIn:0,eOut:0}), v=+e.amount||0, isIn=e.direction==="in";
+    o.n++; if(isIn) o.inn+=v; else o.out+=v;
+    if(e.method!=="adjustment"&&e.status!=="returned"&&txIsEffective(e)){ if(isIn) o.eIn+=v; else o.eOut+=v; }
+  });
+  return g;
+}
+function txGrpHeaderHtml(k,o,direction){
+  o=o||{n:0,inn:0,out:0,eIn:0,eOut:0};
+  const nm=k?treasuryLabel(k):"بدون بنك", M=v=>fmt(Math.round((+v||0)*100)/100);
+  const chips=direction==="both"
+    ? `<span>وارد <b style="color:var(--ok)">${M(o.inn)}</b></span><span>صادر <b style="color:var(--danger)">${M(o.out)}</b></span><span>الصافي الفعلي <b style="direction:ltr;display:inline-block">${M(o.eIn-o.eOut)}</b></span>`
+    : `<span>الإجمالي <b>${M(o.inn+o.out)}</b></span>`;
+  return `<tr class="tx-grp"><td colspan="16"><div class="tx-grp-in"><b>🏦 ${escapeHtml(nm)}</b><span class="chip gold">${o.n} حركة</span>${chips}</div></td></tr>`;
 }
 function txClearDash(direction){ txFilter.dashCollected=false; try{ txViewSave(direction); }catch(_){} renderTreasury(direction); }
 
@@ -38589,11 +38789,12 @@ const CHQ_IMPACT_DEFAULT = [
   {serial:5, no:5, name:"محول لمورد",          key:"toSupplier",    active:true}
 ];
 function chqImpactLevels(){
-  const s = state.settings = state.settings||{};
-  if(!Array.isArray(s.chqImpactLevels) || !s.chqImpactLevels.length){
-    s.chqImpactLevels = JSON.parse(JSON.stringify(CHQ_IMPACT_DEFAULT));
+  if(!Array.isArray(state.chqImpactLevels)) state.chqImpactLevels = [];
+  if(!state.chqImpactLevels.length){
+    const old = state.settings && state.settings.chqImpactLevels;
+    state.chqImpactLevels = JSON.parse(JSON.stringify(Array.isArray(old)&&old.length ? old : CHQ_IMPACT_DEFAULT));
   }
-  return s.chqImpactLevels;
+  return state.chqImpactLevels;
 }
 function chqImpactLevelsSorted(){
   return chqImpactLevels().slice().sort((a,b)=>(+a.serial||0)-(+b.serial||0) || (+a.no||0)-(+b.no||0));
@@ -38738,7 +38939,7 @@ function chqImpactLevelMove(i,dir){
 async function chqImpactLevelsReset(){
   if(!can("master","edit")) return toast("لا تملك صلاحية","err");
   if(!await askConfirm("استعادة الـ5 مستويات الافتراضية؟ (سيتم حذف أي تعديلات)")) return;
-  state.settings.chqImpactLevels = JSON.parse(JSON.stringify(CHQ_IMPACT_DEFAULT));
+  state.chqImpactLevels = JSON.parse(JSON.stringify(CHQ_IMPACT_DEFAULT));
   chqImpactLevelsSave();
   toast("✓ تم الاستعادة","ok");
   go("master");
@@ -42995,6 +43196,16 @@ html body:not(#_) .topbar .ap-menus .ap-dd button{min-height:40px;padding:5px 9p
 html body:not(#_) .topbar .ap-menus .ap-dd button>span:first-child{width:28px;height:28px;font-size:14px;border-radius:8px}
 /* كروت الأرصدة فوق لوحة الخزينة/البنوك */
 .ad-ks-bal .ad-k{min-height:100px}
+/* كروت لوحة العهد: مصغّرة وأنيقة (أيقونة جنب النص، رقم واضح، من غير مساحات فاضية) */
+.ad-ks.ad-ks-cust{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:8px!important;margin-bottom:10px}
+.ad-ks-cust .ad-k{grid-template-columns:auto 1fr!important;grid-template-areas:"i l" "i v"!important;gap:0 10px!important;padding:8px 12px!important;min-height:0!important;border-radius:10px!important;border-inline-start-width:3px!important;box-shadow:0 1px 4px rgba(15,42,82,.06)!important}
+.ad-ks-cust .ad-ki{width:30px!important;height:30px!important;border-radius:8px!important;font-size:15px!important;grid-row:1/3}
+.ad-ks-cust .ad-kl{font-size:11.5px!important;font-weight:700;line-height:1.3}
+.ad-ks-cust .ad-k strong{font-size:18px!important;line-height:1.25;font-weight:800}
+.ad-ks-cust .ad-k strong em{font-size:10.5px!important}
+.ad-ks-cust .ad-k small{display:none!important}
+.ad-ks-cust .ad-g strong{color:#15803d}.ad-ks-cust .ad-r strong{color:#b91c1c}.ad-ks-cust .ad-b strong{color:#1d4ed8}
+@media(max-width:700px){.ad-ks.ad-ks-cust{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 </style>
 <script>
 // ===== فترات سريعة لفلاتر التاريخ: اليوم | أمس | الأسبوع ده | الشهر ده | السنة — تظهر تلقائيًا تحت أي زوج (من / إلى) =====
@@ -53549,3 +53760,42 @@ igPurchaseExport=function(){
 }
 
 </style>
+
+<style id="tx-sel-bar-style">
+.tx-actions{flex-wrap:nowrap!important;white-space:nowrap}
+.tx-actions .tx-selbtn{padding:6px 10px!important;font-size:12px!important;font-weight:800;flex:0 0 auto}
+.tx-actions .tx-selpost{background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border:0}
+.tx-actions .tx-selunpost{border-color:#dc2626!important;color:#b91c1c!important}
+.tx-actions .tx-selbtn:disabled{opacity:.45;cursor:not-allowed}
+th.tx-selth,td.tx-seltd{width:34px;min-width:34px;text-align:center;padding-left:4px!important;padding-right:4px!important}
+.tx-seltd input,.tx-selth input{width:16px;height:16px;cursor:pointer;accent-color:#D4A017}
+tr.tx-selrow>td{background:#fff7de!important}
+</style>
+
+<style id="tx-recon-style">
+.tx-recon{margin-top:12px}
+.tx-recon-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.tx-recon-warn{font-size:12.5px;font-weight:700;color:#b45309}
+.tx-recon-warn a{color:#1f4e8c;text-decoration:underline}
+.tx-recon-card{border:1px solid #e8d7ad;border-right:5px solid #D4A017;border-radius:12px;background:#fffdf6;padding:12px 14px}
+.tx-recon-h{font-weight:900;color:#0f2a52;margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tx-recon-h small{font-weight:600;color:var(--text-dim)}
+.tx-recon-tbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+.tx-recon-tbl th,.tx-recon-tbl td{border-bottom:1px solid var(--line);padding:6px 9px}
+.tx-recon-tbl thead th{background:var(--bg-3);font-weight:800;text-align:center}
+.tx-recon-tbl td.num{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}
+.tx-recon-tbl tfoot td{background:var(--bg-3);font-weight:900}
+.tx-recon-sum td:first-child{font-weight:700}
+.tx-recon-sub{font-size:11px;font-weight:500;color:var(--text-dim)}
+</style>
+
+<style id="tx-grp-style">
+.tx-grpflag{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:800;color:#0f2a52;background:#fff8e1;border:1px solid #D4A017;border-radius:8px;padding:4px 9px;cursor:pointer;white-space:nowrap;flex:0 0 auto}
+.tx-grpflag input{width:14px;height:14px;accent-color:#D4A017;cursor:pointer}
+tr.tx-grp>td{background:linear-gradient(90deg,#0f2a52,#1f4e8c)!important;color:#fff!important;padding:7px 12px!important;border-top:3px solid #D4A017}
+.tx-grp-in{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:13px}
+.tx-grp-in b{color:#F4C542}
+.tx-grp-in span b{color:#fff}
+.tx-grp-in .chip{background:#F4C542;color:#0a1a35;font-weight:800}
+</style>
+<style id="tx-grp-hide-bank">table.tx-grp-on .tx-col-bank{display:none!important}</style>
