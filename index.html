@@ -4619,7 +4619,8 @@ const SCREENS = [
     {id:"details",label:"تفاصيل السداد (التخصيص على فواتير المورد)"}
   ]},
   { id:"treasuryTransfer", label:"التحويل بين الخزن والبنوك", icon:"🔁", acts:["add","edit","delete","post","print"] },
-  { id:"custodyLedger", label:"العهد", icon:"💼", acts:["add","edit","delete","post","close","print"] },
+  { id:"custodyLedger", label:"العهد والخزن", icon:"💼", acts:["add","edit","delete","post","close","print"] },
+  { id:"custodyTotal", label:"إجمالي العهد", icon:"📋", acts:["print"] },
   { id:"custodyCodes", label:"تكويد العهد", icon:"🔖", acts:["add","edit","delete"] },
   { id:"expenseItems", label:"بند المصروف", icon:"🏷", acts:["add","edit","delete"] },
   { id:"custodyReport", label:"تقرير العهد", icon:"🧾", acts:["print"] },
@@ -4891,6 +4892,7 @@ function canView(page){
   if(page==="purchaseCompare") page="purchaseReport";   // نفس صلاحية تقرير المشتريات بالظبط، بدون صلاحية جديدة
   if(page==="salesCompare") page="salesReport";         // نفس صلاحية تقرير المبيعات بالظبط
   if(page==="apps") return true;
+  if(page==="custodyDashboard") return can("custodyLedger","view");
   if(page==="saleOrderList") return can("saleOrder","view");
   if(page==="inventory") return can("inventory","view");
   if(page==="supplyBulkPost") return can("supply","post");
@@ -5661,7 +5663,9 @@ const navGroups = [
     { id:"obSupplier", icon:"🧮", label:"الأرصدة الافتتاحية للموردين" }
   ]},
   { id:"custody", icon:"💼", label:"نظام العهد", items:[
-    { id:"custodyLedger", icon:"💼", label:"العهد" },
+    { id:"custodyDashboard", icon:"📊", label:"لوحة العهد" },
+    { id:"custodyLedger", icon:"🔐", label:"العهد والخزن" },
+    { id:"custodyTotal", icon:"📋", label:"إجمالي العهد" },
     { id:"custodyReport", icon:"🧾", label:"تقرير العهد" },
     { sep:"البيانات الأساسية للعهد" },
     { id:"custodyCodes", icon:"🔖", label:"تكويد العهد" },
@@ -6935,6 +6939,17 @@ function go(page){
   else if(page==="gl"){ c.innerHTML=viewGL(); glLoad(); }
   else if(page==="botCaller"){ c.innerHTML=viewBotCaller(); bindBotCaller(); }
   else if(page==="custodyCodes"||page==="expenseItems"){ window.CGL.page(page,c); }
+  else if(page==="custodyDashboard"){
+    const paintDash=()=>{ c.innerHTML='<style>.cgdash-wrap .ad-ks{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))!important;gap:8px!important}.cgdash-wrap .ad-k{padding:10px!important}.cgdash-wrap .ad-k .lbl{font-size:11px!important}.cgdash-wrap .ad-k .val{font-size:17px!important}.cgdash-wrap .ad-k .sub{font-size:10px!important}.cgdash-wrap .ad-g2{gap:10px!important}.cgdash-wrap .ad-card{padding:10px 12px!important}.cgdash-wrap .ad-card h3{font-size:13px!important;margin-bottom:6px!important}.cgdash-wrap .ad-q{gap:6px!important}.cgdash-wrap .ad-q button{padding:7px 10px!important;font-size:12px!important}.cgdash-wrap table{font-size:12px!important}.cgdash-wrap table th,.cgdash-wrap table td{padding:5px 8px!important}</style><div class="cgdash-wrap">'+viewModuleDash("custody")+'</div>'; };
+    if(custodyCache.loaded){ paintDash(); }
+    else {
+      c.innerHTML='<div class="empty"><div class="ic">💼</div><h3>جاري تحميل لوحة العهد…</h3></div>';
+      custodyLoad().then(()=>{ if(currentPage==="custodyDashboard") paintDash(); }).catch(e=>{
+        if(currentPage==="custodyDashboard") c.innerHTML='<div class="empty"><div class="ic">⚠️</div><h3>تعذر التحميل</h3><p>'+escapeHtml(e.message||e)+'</p></div>';
+      });
+    }
+    return;
+  }
   else if(page==="custodyLedger"||page==="custodyTotal"||page==="custodyReport"){
     const _cgPaint=()=>{ window.cgPaintPage(page,c); };
     if(custodyCache.loaded){
@@ -36588,14 +36603,13 @@ function mobileView(){
   h+='<datalist id="cgxProjs">'+projectNames(null).map(p=>'<option value="'+E(p)+'">').join("")+'</datalist>';
   return h+'</div>';
 }
-// شاشة العهد الموحدة — نفس شكل «إجمالي العهد» كشاشة أساسية واحدة
-function ledgerView(mode){ return totalView(); }
+function ledgerView(mode){ return mode==="total"?totalView():mobileView(); }
 
 /* ---------- إجمالي العهد (الفلاتر + كل الحركات) ---------- */
 
 function totalView(dash){
   const admin=adm(), mine=myAccounts(), v=empValue(), F=S.f;
-  let h='<div class="cgx cgx-wide'+(dash?' cgx-dash':'')+'"'+(dash?' id="cgxDashPanel"':'')+'><h2 class="cgx-title">'+(dash?'حركات العهد':'💼 العهد')+'</h2>';
+  let h='<div class="cgx cgx-wide'+(dash?' cgx-dash':'')+'"'+(dash?' id="cgxDashPanel"':'')+'><h2 class="cgx-title">'+(dash?'حركات العهد':'إجمالي العهد')+'</h2>';
   if(!mine.length){
     return h+'<div class="empty"><div class="ic">💼</div><h3>'+(admin?"لا توجد عهد مسجلة بعد":"مفيش خزنة عهدة مسجلة باسمك")+'</h3><p>'+(admin?"كوّد عهدة جديدة من شاشة «تكويد العهد».":"اطلب من الأدمن يكوّد لك عهدة بنفس اسمك.")+'</p></div>'+
       (admin&&canView("custodyCodes")?'<div style="text-align:center;margin-top:8px"><button type="button" class="cgx-rep" data-cgx-go="custodyCodes">🔖 تكويد العهد</button></div>':"")+'</div>';
@@ -38910,10 +38924,305 @@ function chqImpactMenu(id, direction){
   if(ok) ok.style.display = "none";
 }
 
-/* ---------- تنفيذ التأثير المختار (step 2 — placeholder) ---------- */
+/* ---------- تنفيذ التأثير المختار ---------- */
 function chqImpactApply(id, direction, action){
-  toast("اختيار: "+action+" — سنربطه بالقيود المحاسبية في الخطوة التالية","info");
   closeModal();
+  const e = (state.treasuryEntries||[]).find(x=>x.id===id);
+  if(!e) return toast("الشيك غير موجود","err");
+  // قفل الشيك لو عليه تأثير سابق لم يمسح
+  if(e.chqLocked){
+    return chqDialog("warn","الشيك مقفول","الشيك ده عليه تأثير سابق. امسح الحركة الجديدة الأول عشان تغيّر تأثيره.");
+  }
+  switch(action){
+    case "toSupplier":    return chqImpactToSupplier(id, direction);
+    case "returnedCust":  return chqImpactReturnedCust(id, direction);
+    case "pending":       return chqImpactPending(id, direction);
+    case "collected":     return chqImpactCollected(id, direction);
+    case "returnedBank":  return chqImpactReturnedBank(id, direction);
+    default:              return toast("تأثير غير معروف: "+action,"err");
+  }
+}
+
+/* helper: البنوك المتاحة كحافظات (غير النظامية) */
+function chqPortfolioBanks(){
+  return (state.banks||[]).filter(b => !(typeof chqIsSysBank==="function" && chqIsSysBank(b)));
+}
+
+/* ---------- شيكات تحت التحصيل: نقل الشيك لحافظة التحصيل ---------- */
+async function chqImpactPending(id, direction){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) return;
+  const cur = state.settings?.currency || "ج.م";
+  const banks = chqPortfolioBanks();
+  if(!banks.length) return toast("لا توجد بنوك مُسجَّلة — أضف بنك في البيانات الأساسية","err");
+  const body = `<div style="display:flex;flex-direction:column;gap:12px">
+    <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
+      📨 نقل شيك <b>${escapeHtml(e.customer||"")}</b> لحافظة شيكات تحت التحصيل
+      <br>شيك رقم <b>${escapeHtml(String(e.no||""))}</b> — قيمة <b>${fmt(e.amount)}</b> ${escapeHtml(cur)}
+    </div>
+    <div class="fld"><label>حافظة التحصيل *</label>
+      <select class="inp" id="chqPendBank"><option value="">— اختر الحافظة —</option>
+        ${banks.map(b=>`<option value="${escapeAttr(b.code)}">${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="fld"><label>تاريخ النقل *</label>
+      <input class="inp" type="date" id="chqPendDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div style="padding:10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;font-size:12px;color:#1e40af;line-height:1.6">
+      ℹ️ الشيك هينتقل لحافظة التحصيل. العميل مش هيتأثر لسه (هيتأثر لما يتحصل بالبنك).
+    </div>
+  </div>`;
+  openModal("📨 نقل لشيكات تحت التحصيل — رقم "+(e.no||""), body, async()=>{
+    const bankCode = document.getElementById("chqPendBank")?.value;
+    const date = document.getElementById("chqPendDate")?.value;
+    if(!bankCode){ toast("اختر الحافظة","err"); return false; }
+    if(!date){ toast("اختر التاريخ","err"); return false; }
+    try{
+      e.status = "pending";
+      e.treasury = bankCode;
+      e.chqImpactApplied = "pending";
+      e.chqImpactDate = date;
+      e.chqLocked = true;
+      e.notes = (e.notes||"") + ` [نُقل لحافظة ${bankCode} في ${date}]`;
+      saveState();
+      try{ audit("chq_pending", `نقل شيك رقم ${e.no} لحافظة التحصيل ${bankCode} — قيمة ${fmt(e.amount)}`); }catch(_){}
+      toast(`✓ تم نقل الشيك لحافظة التحصيل ${bankCode}`,"ok");
+      if(typeof renderChequeRegister==="function") renderChequeRegister();
+      if(typeof renderTreasury==="function"&&document.getElementById("txBody")) renderTreasury(e.direction);
+      return true;
+    }catch(err){ toast("فشل: "+(err?.message||err),"err"); return false; }
+  });
+}
+
+/* ---------- تحصيل من البنك: فتح شاشة التحصيل العادية ---------- */
+async function chqImpactCollected(id, direction){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) return;
+  if(typeof chqCollectOpen === "function"){
+    try{
+      await chqCollectOpen(id, direction);
+      e.chqImpactApplied = "collected";
+      return;
+    }catch(err){ toast("فشل فتح شاشة التحصيل: "+(err?.message||err),"err"); return; }
+  }
+  toast("شاشة التحصيل غير متاحة في هذه النسخة","err");
+}
+
+/* ---------- ارتداد من البنك: البنك رفض الشيك قبل التحصيل ---------- */
+async function chqImpactReturnedBank(id, direction){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) return;
+  const cur = state.settings?.currency || "ج.م";
+  const banks = chqPortfolioBanks();
+  if(!banks.length) return toast("لا توجد حافظات متاحة — أضف بنك في البيانات الأساسية","err");
+  const body = `<div style="display:flex;flex-direction:column;gap:12px">
+    <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
+      ⚠️ ارتداد شيك <b>${escapeHtml(e.customer||"")}</b> من البنك
+      <br>شيك رقم <b>${escapeHtml(String(e.no||""))}</b> — قيمة <b>${fmt(e.amount)}</b> ${escapeHtml(cur)}
+    </div>
+    <div class="fld"><label>حافظة الارتداد *</label>
+      <select class="inp" id="chqRetBank"><option value="">— اختر حافظة الارتداد —</option>
+        ${banks.map(b=>`<option value="${escapeAttr(b.code)}">${escapeHtml(b.code)} — ${escapeHtml(b.name)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="fld"><label>تاريخ الارتداد *</label>
+      <input class="inp" type="date" id="chqRetDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="fld"><label>سبب الارتداد (اختياري)</label>
+      <input class="inp" id="chqRetReason" placeholder="مثل: رصيد غير كافٍ، توقيع غير مطابق...">
+    </div>
+    <div style="padding:10px;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;font-size:12px;color:#991b1b;line-height:1.6">
+      ⚠️ البنك رفض الشيك قبل التحصيل. الشيك هينتقل لحافظة الارتداد. العميل مش هيتأثر.
+    </div>
+  </div>`;
+  openModal("⚠️ ارتداد من البنك — شيك رقم "+(e.no||""), body, async()=>{
+    const bankCode = document.getElementById("chqRetBank")?.value;
+    const date = document.getElementById("chqRetDate")?.value;
+    const reason = document.getElementById("chqRetReason")?.value || "";
+    if(!bankCode){ toast("اختر حافظة الارتداد","err"); return false; }
+    if(!date){ toast("اختر تاريخ الارتداد","err"); return false; }
+    try{
+      e.status = "returned";
+      e.treasury = bankCode;
+      e.chqImpactApplied = "returnedBank";
+      e.chqImpactDate = date;
+      e.chqReturnReason = reason;
+      e.chqLocked = true;
+      e.notes = (e.notes||"") + ` [مرتد من البنك إلى ${bankCode} في ${date}${reason?" — "+reason:""}]`;
+      saveState();
+      try{ audit("chq_returned_bank", `ارتداد شيك رقم ${e.no} إلى حافظة ${bankCode} — قيمة ${fmt(e.amount)}${reason?" — سبب: "+reason:""}`); }catch(_){}
+      toast(`✓ تم ارتداد الشيك إلى حافظة ${bankCode}`,"ok");
+      if(typeof renderChequeRegister==="function") renderChequeRegister();
+      if(typeof renderTreasury==="function"&&document.getElementById("txBody")) renderTreasury(e.direction);
+      return true;
+    }catch(err){ toast("فشل: "+(err?.message||err),"err"); return false; }
+  });
+}
+
+/* ---------- محول لمورد: شيك عميل بيتحوّل لمورد كتسوية ---------- */
+async function chqImpactToSupplier(id, direction){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) return;
+  if(direction!=="in") return toast("شيك المورد لا يُحوّل لمورد","err");
+  const customer = e.customer || "";
+  const amount = +e.amount || 0;
+  const cur = state.settings?.currency || "ج.م";
+
+  // قائمة الموردين
+  const suppliers = partyNames(state.suppliers||[]);
+  if(!suppliers.length) return toast("لا يوجد موردين — أضف مورد في البيانات الأساسية","err");
+
+  const body = `<div style="display:flex;flex-direction:column;gap:12px">
+    <div style="padding:10px;background:var(--bg-2);border-radius:8px;border:1px solid var(--line);font-size:13px">
+      🔁 تحويل شيك العميل <b>${escapeHtml(customer)}</b> لمورد كتسوية
+      <br>شيك رقم <b>${escapeHtml(String(e.no||""))}</b> — قيمة <b>${fmt(amount)}</b> ${escapeHtml(cur)}
+    </div>
+    <div class="fld">
+      <label>المورد المستفيد *</label>
+      <select class="inp" id="chqToSupSelect">
+        <option value="">— اختر المورد —</option>
+        ${suppliers.map(s=>`<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join("")}
+      </select>
+    </div>
+    <div class="fld">
+      <label>تاريخ التحويل *</label>
+      <input class="inp" type="date" id="chqToSupDate" value="${new Date().toISOString().slice(0,10)}">
+    </div>
+    <div class="fld">
+      <label>ملاحظات (اختياري)</label>
+      <textarea class="inp" id="chqToSupNotes" rows="2" placeholder="مثل: تسليم للمورد كدفعة على فاتورة..."></textarea>
+    </div>
+    <div style="padding:10px;background:#fff9e8;border:1px solid #e9c46a;border-radius:8px;font-size:12px;color:#76540b;line-height:1.6">
+      ⚠️ هذا التحويل سيُنشئ تسويتين:
+      <ol style="margin:6px 0;padding-inline-start:20px">
+        <li>تسوية دائنة على العميل <b>${escapeHtml(customer)}</b> بـ <b>${fmt(amount)}</b> (يقل من مديونيته)</li>
+        <li>تسوية مدينة على المورد <b id="chqToSupSelLabel">[المورد]</b> بـ <b>${fmt(amount)}</b> (يقل من مديونيتنا له)</li>
+      </ol>
+      وسيتم قفل الشيك الأصلي ولن يمكن تغيير تأثيره مرة ثانية إلا بمسح التسويتين.
+    </div>
+  </div>`;
+  openModal("🔁 تحويل شيك لمورد — رقم "+(e.no||""), body, async ()=>{
+    const supplier = (document.getElementById("chqToSupSelect")?.value||"").trim();
+    const date = document.getElementById("chqToSupDate")?.value || "";
+    const notes = (document.getElementById("chqToSupNotes")?.value||"").trim();
+    if(!supplier) { toast("اختر المورد","err"); return false; }
+    if(!date) { toast("اختر تاريخ التحويل","err"); return false; }
+    try {
+      await chqImpactToSupplierDo(id, supplier, date, notes);
+      return true;
+    } catch(err) {
+      toast("فشل التحويل: "+(err?.message||err),"err");
+      return false;
+    }
+  });
+  // تحديث اسم المورد في التحذير مع التغيير
+  setTimeout(()=>{
+    const sel = document.getElementById("chqToSupSelect");
+    const lbl = document.getElementById("chqToSupSelLabel");
+    if(sel && lbl) sel.addEventListener("change", ()=>{ lbl.textContent = sel.value || "[المورد]"; });
+  }, 100);
+}
+
+async function chqImpactToSupplierDo(id, supplier, date, notes){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) throw new Error("الشيك غير موجود");
+  const amount = +e.amount || 0;
+  const customer = e.customer || "";
+  if(!(amount>0)) throw new Error("قيمة الشيك غير صحيحة");
+
+  const chequeRef = "شيك رقم "+(e.no||"")+" — "+(e.refNo||"");
+  const parentNo = e.no;
+
+  // 1) تسوية دائنة على العميل (يقل من مديونيته)
+  const custAdjId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
+  const custAdj = {
+    id: custAdjId,
+    direction: "in",
+    no: nextTxNo("in"),
+    createdAt: Date.now(),
+    createdBy: (curU()?String(curU().no):""),
+    date: date,
+    customer: customer,
+    amount: amount,
+    method: "adjustment",
+    adjustmentKind: "credit",
+    entryKind: "gl",
+    notes: `تسوية — ${chequeRef} محوّل للمورد: ${supplier}${notes?" — "+notes:""}`,
+    sourceChequeId: id,
+    chqImpact: "toSupplier",
+    linkedSupplier: supplier
+  };
+
+  // 2) تسوية مدينة على المورد (يقل من مديونيتنا له) — نسجلها كـdirection=out أي دفعة للمورد
+  const supAdjId = "tx_"+Date.now()+"_"+Math.random().toString(36).slice(2,6);
+  const supAdj = {
+    id: supAdjId,
+    direction: "out",
+    no: nextTxNo("out"),
+    createdAt: Date.now(),
+    createdBy: (curU()?String(curU().no):""),
+    date: date,
+    supplier: supplier,
+    amount: amount,
+    method: "adjustment",
+    adjustmentKind: "credit",   // تسوية دائنة على المورد = نقصان الدين
+    entryKind: "gl",
+    notes: `تسوية — ${chequeRef} محوّل من العميل: ${customer}${notes?" — "+notes:""}`,
+    sourceChequeId: id,
+    chqImpact: "toSupplier",
+    linkedCustomer: customer
+  };
+
+  // ربط الحركتين ببعض
+  custAdj.linkedTxId = supAdjId;
+  supAdj.linkedTxId = custAdjId;
+
+  // قفل الشيك الأصلي
+  e.chqLocked = true;
+  e.chqImpactApplied = "toSupplier";
+  e.chqImpactChildren = [custAdjId, supAdjId];
+  e.chqImpactDate = date;
+  e.chqImpactSupplier = supplier;
+
+  state.treasuryEntries.push(custAdj);
+  state.treasuryEntries.push(supAdj);
+  saveState();
+
+  try { audit("chq_to_supplier", `تحويل شيك رقم ${parentNo} من العميل ${customer} للمورد ${supplier} بقيمة ${fmt(amount)}`); } catch(_){}
+
+  toast(`✓ تم تحويل الشيك للمورد ${supplier} — تسويتان مُنشأتان (${custAdj.no} / ${supAdj.no})`,"ok");
+
+  // تحديث الشاشة
+  if(typeof renderTreasury==="function" && document.getElementById("txBody")) renderTreasury(e.direction);
+  if(typeof renderChequeRegister==="function" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
+}
+
+/* ---------- مرتد للعميل: إلغاء كامل للشيك ---------- */
+async function chqImpactReturnedCust(id, direction){
+  const e = state.treasuryEntries.find(x=>x.id===id);
+  if(!e) return;
+  const customer = (direction==="in"?e.customer:e.supplier) || "";
+  const amount = +e.amount || 0;
+  if(!await askConfirm(`إلغاء الشيك رقم ${e.no} (${fmt(amount)} ${state.settings?.currency||""}) ومسح كل حركاته؟\n\nالشيك هيُرجع للعميل «${customer}» وكل التأثيرات المحاسبية هتتعكس (كأن الشيك ما كانش موجود).`)) return;
+
+  try {
+    // لو الشيك متأثر (محصل، تحت تحصيل، إلخ) — نلغي القيد المحاسبي
+    if(txIsPosted(e) && typeof chqUnpost==="function") {
+      await chqUnpost(id, direction);
+    }
+    // ثم نحذف الحركة نفسها
+    if(typeof txDel==="function") {
+      await txDel(id, direction);
+    } else {
+      state.treasuryEntries = state.treasuryEntries.filter(x=>x.id!==id);
+      saveState();
+    }
+    try { audit("chq_returned_customer", `إلغاء شيك رقم ${e.no} ومرتد للعميل ${customer} — قيمة ${fmt(amount)}`); } catch(_){}
+    toast("✓ تم مرتد الشيك للعميل — تم مسح كل الحركات","ok");
+    if(typeof renderChequeRegister==="function" && document.getElementById("chequeRegisterTable")) renderChequeRegister();
+  } catch(err) {
+    toast("فشل المرتد: "+(err?.message||err),"err");
+  }
 }
 
 /* ---------- نافذة «تحصيل الشيك / صرف الشيك» ---------- */
