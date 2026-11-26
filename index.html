@@ -7126,7 +7126,26 @@ async function igPurchasePost(){if(igPurchaseDraft&&igPurchaseDraft._pm)return t
   await igPurchaseFetchAll();const fresh=igPurchaseDocs.invoices.find(x=>String(x.id)===String(d.id));if(fresh)igPurchaseDraft=JSON.parse(JSON.stringify(fresh));
   document.getElementById("content").innerHTML=igPurchaseView();
   toast("تم ترحيل الفاتورة والقيد وإثبات وارد المخزون بنجاح — "+(r.data?.entry_no||""),"ok");
- }catch(e){toast("تعذر ترحيل فاتورة المشتريات: "+(e.message||e),"err");}
+ }catch(e){
+   const msg = String(e.message||e||"");
+   // لو الخطأ "not completely settled" نجيب تفاصيل السبب الحقيقي
+   if(/not completely settled|غير مسوّى|receipt and issue/i.test(msg)){
+     const m = msg.match(/sh_[0-9a-zA-Z_-]+/);
+     if(m){
+       try{
+         const det = await supShipmentImbalanceDetail(m[0], d.company_id||null);
+         if(det && !det.ok){
+           const title = "لا يمكن ترحيل فاتورة المشتريات — الشحنة غير مسوّاة";
+           const body = "البوليصة "+m[0]+"\n\n"+det.reason;
+           if(typeof _igDialog==="function") _igDialog({title, msg:body, ok:"حسنًا", single:true, danger:true});
+           else toast(body,"err");
+           return;
+         }
+       }catch(_){}
+     }
+   }
+   toast("تعذر ترحيل فاتورة المشتريات: "+msg,"err");
+ }
 }
 async function igPurchaseUnpost(){if(igPurchaseDraft&&igPurchaseDraft._pm)return toast("مرآة قراءة فقط","err");
  const d=igPurchaseDraft;if(!d||!d.id||d.status!=="posted")return;
@@ -11192,7 +11211,7 @@ function renderManagementReports(){
   if(v){let x=suppliers.get(v)||{purchase:0};x.purchase+=+a.buyTotal||0;suppliers.set(v,x)}
   let z=orders.get(o)||{sale:0,cost:0,customer:c,weight:0};z.sale+=+a.total||0;z.cost+=+a.buyTotal||0;z.weight+=+it.actualWeight||0;orders.set(o,z);
  }));
- const collected=new Map(),paid=new Map(); entries.forEach(e=>{if(e.status==='guarantee'||e.status==='returned')return;const amt=+e.amount||0;if(e.direction==='in'&&(!(e.method==='bank')||e.status==='collected'))collected.set(String(e.customer||''),(collected.get(String(e.customer||''))||0)+amt);if(e.direction==='out'&&(!(e.method==='bank')||e.status==='collected'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+amt)});
+ const collected=new Map(),paid=new Map(); entries.forEach(e=>{if(e.status==='guarantee'||e.status==='returned')return;const amt=+e.amount||0;if(e.direction==='in'&&(!(e.method==='bank')||e.status==='collected'||e.status==='endorsed'))collected.set(String(e.customer||''),(collected.get(String(e.customer||''))||0)+amt);if(e.direction==='out'&&(!(e.method==='bank')||e.status==='collected'||e.status==='endorsed_out'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+amt)});
  const inst=(()=>{try{return salesInstallmentBaseRows()}catch(e){return []}})(), lateBy=new Map(); inst.filter(x=>x.status==='متأخر'&&x.remaining>0).forEach(x=>lateBy.set(x.customer,(lateBy.get(x.customer)||0)+x.remaining));
  const rows=(map,fn)=>[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0],'ar')).map(([n,x])=>fn(n,x));
  const table=(heads,body)=>`<div class="tbl-wrap" style="margin:8px 0 20px"><table class="trade-report-table" style="min-width:760px;width:100%"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody></table></div>`;
@@ -13431,6 +13450,56 @@ function invBackfillPendingHtml(){
   return `<div class="inv-pend-bar"><b>حركات غير مسوّاة: ${list.length}</b><span style="flex:1"></span><label class="inv-auto-lbl" title="يسوّي أي بوالص ناقصة تلقائيًا بمجرد فتح الشاشة، بدون سؤال"><input type="checkbox" ${invAutoOn()?"checked":""} onchange="invAutoSet(this.checked)"> تسوية تلقائية</label><button class="btn" id="invPendBtn" onclick="inventorySettleSmart()">${window.invPendSel.size?`تسوية المحدد (<span id="invPendCnt">${window.invPendSel.size}</span>)`:`تسوية الكل (<span id="invPendCnt">${list.length}</span>)`}</button></div>
   <div class="tbl-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th style="width:36px"><input type="checkbox" id="invPendAllCb" ${list.length&&window.invPendSel.size===list.length?"checked":""} onchange="invPendSelectAll(this.checked)" title="تحديد الكل" style="width:18px;height:18px"></th><th>البوليصة</th><th>التاريخ</th><th>أمر البيع</th><th>العميل</th><th>المورد</th><th>الكمية / الوحدة</th><th>الحالة</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
+// يرجّع تفاصيل عدم تطابق الوارد والمنصرف لبوليصة — رسالة مفهومة بدل "line 1 is not completely settled"
+async function supShipmentImbalanceDetail(shipmentId, companyId){
+  const sid = String(shipmentId);
+  try{
+    let rq = sb.from("inventory_movements").select("*").eq("source_id",sid).eq("movement_type","receipt");
+    let iq = sb.from("inventory_movements").select("*").eq("source_id",sid).eq("movement_type","issue");
+    if(companyId){ rq = rq.eq("company_id",String(companyId)); iq = iq.eq("company_id",String(companyId)); }
+    const [rr, ir] = await Promise.all([rq, iq]);
+    if(rr.error) return {ok:false, reason:"تعذّر قراءة حركات الوارد: "+String(rr.error.message||rr.error)};
+    if(ir.error) return {ok:false, reason:"تعذّر قراءة حركات المنصرف: "+String(ir.error.message||ir.error)};
+    const receipts = rr.data||[], issues = ir.data||[];
+    if(!receipts.length) return {ok:false, reason:"لم يُسجَّل أي وارد للبوليصة في المخزن. راجع تسوية المخزن أو تسجيل الاستلام."};
+    // توقيع يطابق منطق invIssueFallback
+    const sig = m => [m.line_no??"", m.warehouse_id??"", m.factory??"", m.diameter??"", m.item_type??"", m.unit??"", Number(m.qty)||0, Number(m.unit_cost)||0, Number(m.total_cost)||0].join("¦");
+    const describe = m => `${m.diameter||"؟"} / ${m.item_type||"؟"} — كمية ${Number(m.qty)||0} ${m.unit||""} — مخزن ${m.warehouse_name||m.warehouse_code||m.warehouse_id||"؟"}`;
+    const issCount = new Map();
+    issues.forEach(m => { const k = sig(m); issCount.set(k, (issCount.get(k)||0)+1); });
+    const recUnmatched = [];
+    for(const r of receipts){
+      const k = sig(r), n = issCount.get(k)||0;
+      if(n>0) issCount.set(k, n-1);
+      else recUnmatched.push(r);
+    }
+    const issUnmatched = [];
+    const recCount2 = new Map();
+    receipts.forEach(m => { const k = sig(m); recCount2.set(k, (recCount2.get(k)||0)+1); });
+    for(const i of issues){
+      const k = sig(i), n = recCount2.get(k)||0;
+      if(n>0) recCount2.set(k, n-1);
+      else issUnmatched.push(i);
+    }
+    if(!recUnmatched.length && !issUnmatched.length) return {ok:true};
+    const msgs = [];
+    if(recUnmatched.length){
+      msgs.push("🔴 وارد بدون منصرف مطابق ("+recUnmatched.length+" سطر):");
+      recUnmatched.slice(0,10).forEach(m=>msgs.push(" • "+describe(m)));
+      if(recUnmatched.length>10) msgs.push(" • ... و"+(recUnmatched.length-10)+" سطر إضافي");
+    }
+    if(issUnmatched.length){
+      msgs.push("🟠 منصرف بدون وارد مطابق ("+issUnmatched.length+" سطر):");
+      issUnmatched.slice(0,10).forEach(m=>msgs.push(" • "+describe(m)));
+      if(issUnmatched.length>10) msgs.push(" • ... و"+(issUnmatched.length-10)+" سطر إضافي");
+    }
+    msgs.push("\n💡 الحل: افتح شاشة المخزن وشغّل «تسوية الكل» أو «تسوية المحدد»، ثم أعد الترحيل.");
+    return {ok:false, reason: msgs.join("\n"), receipts: recUnmatched, issues: issUnmatched};
+  }catch(e){
+    return {ok:false, reason:"خطأ في الفحص: "+String(e.message||e)};
+  }
+}
+
 // يكمّل المنصرف الناقص لبوليصة: ينسخ حركات الوارد كمنصرف (نفس الكمية/التكلفة/المخزن). مفيش تكرار.
 async function invIssueFallback(sh){
   const sid=String(sh.id), companyId=sh.company_id||sh.companyId||null;
@@ -20181,7 +20250,22 @@ async function supBulkRun(){
         if(p.errs.length){bad=true;p.errs.forEach(m=>res.errors.push({orderNo:o.orderNo,msg:lbl+": "+m}));continue;}
         const r=await supDoPostKind({silent:true,ctx:{c:p.c,sup:p.sup,cus:p.cus,wh:p.wh,ind:sh.ind,journals:sh.journals,bad:0,postingsOk:true,posted:null,kind}});
         if(r&&r.ok){ if(kind==="purchase")res.pur++; else res.sal++; }
-        else{bad=true;res.errors.push({orderNo:o.orderNo,msg:lbl+": "+((r&&r.error)||"فشل الترحيل")});}
+        else{
+          bad=true;
+          let errMsg = (r&&r.error)||"فشل الترحيل";
+          // لو الخطأ عن حركة مخزن غير مسوّاة، نجيب التفاصيل
+          const errStr = String(errMsg);
+          if(/not completely settled|غير مسوّى|receipt and issue/i.test(errStr)){
+            const shm = errStr.match(/sh_[0-9a-zA-Z_-]+/);
+            if(shm){
+              try{
+                const det = await supShipmentImbalanceDetail(shm[0], o.company_id||null);
+                if(det && !det.ok) errMsg = "بوليصة "+shm[0]+" غير مسوّاة:\n"+det.reason;
+              }catch(_){}
+            }
+          }
+          res.errors.push({orderNo:o.orderNo,msg:lbl+": "+errMsg});
+        }
       }
       if(bad) res.err++;
     }
@@ -26266,7 +26350,7 @@ function txAllDueRows(){
       }
     });
     total=Math.round(total*100)/100;
-    const paidFor=inst=>(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&String(e.customer||"").trim()===g.customer&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned")
+    const paidFor=inst=>(state.treasuryEntries||[]).filter(e=>e.direction==="in"&&String(e.customer||"").trim()===g.customer&&(e.method!=="bank"||e.status==="collected"||e.status==="endorsed")&&e.status!=="returned")
       .reduce((sum,e)=>sum+(e.allocations||[]).filter(a=>+a.installment===inst&&txAllocMatches(a,g.so,g.orderNo)).reduce((x,a)=>x+(+a.amount||0),0),0);
     const merged=new Map();
     parts.forEach(pt=>{
@@ -26305,7 +26389,7 @@ function settlementIgAllocated(e){ if(!Array.isArray(window.igSalesAllocations))
 function settlementCustomerCredit(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   return (state.treasuryEntries||[])
-    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
+    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected"||e.status==="endorsed") && e.status!=="returned")
     .reduce((sum,e)=>{
       const amt=+e.amount||0;
       const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0)+settlementIgAllocated(e);
@@ -26326,7 +26410,7 @@ function settlementCustomerInvoiceTotal(customer){
 function settlementCustomerPaid(customer){
   const cust = String(customer||"").trim(); if(!cust) return 0;
   return (state.treasuryEntries||[])
-    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
+    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected"||e.status==="endorsed") && e.status!=="returned")
     .reduce((sum,e)=>sum + (e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0) + settlementIgAllocated(e), 0);
 }
 // صفوف شاشة التسوية — سطر لكل عميل
@@ -26457,7 +26541,7 @@ function settlementAutoAllocateForCustomer(customer){
   if(!rows.length) return {applied:0, installments:0};
   // التحصيلات التي بها رصيد غير مخصص (مرتبة بالتاريخ)
   const openReceipts = (state.treasuryEntries||[])
-    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
+    .filter(e=>e.direction==="in" && String(e.customer||"").trim()===cust && (e.method!=="bank"||e.status==="collected"||e.status==="endorsed") && e.status!=="returned")
     .filter(e=>{ const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0)+settlementIgAllocated(e); return (+e.amount||0) - used > 0.009; })
     .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
   if(!openReceipts.length) return {applied:0, installments:0};
@@ -26569,7 +26653,7 @@ function settlementOpenAssistanceModal(customerList, idx){
     }
     // نفذ التوزيع: كل مبلغ يُسجَّل كتسكين مستقل ليظهر منفصلًا في الأقساط
     const openReceipts = (state.treasuryEntries||[])
-      .filter(e=>e.direction==="in" && String(e.customer||"").trim()===String(customer).trim() && (e.method!=="bank"||e.status==="collected") && e.status!=="returned")
+      .filter(e=>e.direction==="in" && String(e.customer||"").trim()===String(customer).trim() && (e.method!=="bank"||e.status==="collected"||e.status==="endorsed") && e.status!=="returned")
       .filter(e=>{ const used=(e.allocations||[]).reduce((s,a)=>s+(+a.amount||0),0); return (+e.amount||0) - used > 0.009; })
       .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
     let totalApplied=0;
@@ -26901,7 +26985,7 @@ function salesInstallmentBaseRows(){
       }catch(e){}
     }
     const paysFor=inst=>(state.treasuryEntries||[])
-      .filter(e=>e.direction==="in"&&String(e.customer||"").trim()===g.customer&&(e.method!=="bank"||e.status==="collected")&&e.status!=="returned")
+      .filter(e=>e.direction==="in"&&String(e.customer||"").trim()===g.customer&&(e.method!=="bank"||e.status==="collected"||e.status==="endorsed")&&e.status!=="returned")
       .slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")))
       .flatMap(e=>(e.allocations||[]).filter(a=>+a.installment===inst&&txAllocMatches(a,g.so,g.orderNo)).map(a=>+a.amount||0)).filter(v=>v>0);
     parts.forEach(pt=>{
@@ -33300,8 +33384,8 @@ function renderManagementReports(){
  if(c){let x=clients.get(c)||{sale:0,qty:0,cost:0,margin:0};x.sale+=sale;x.qty+=qty;x.cost+=cost;x.margin+=(+a.subtotal||0)-costNet;clients.set(c,x)}if(v){let x=vendors.get(v)||{buy:0,qty:0,items:0};x.buy+=cost;x.qty+=qty;x.items++;vendors.set(v,x)}
  const order=String(sh.saleOrderNo||arr('saleOrders').find(x=>String(x.id)===String(sh.saleOrderId))?.orderNo||'—');let o=orders.get(order)||{sale:0,cost:0,qty:0,customer:c};o.sale+=sale;o.cost+=cost;o.qty+=qty;orders.set(order,o);
  }));
- const coll=new Map();entries.forEach(e=>{if(e.direction==='in'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'))coll.set(String(e.customer||''),(coll.get(String(e.customer||''))||0)+(+e.amount||0))});
- const paid=new Map();entries.forEach(e=>{if(e.direction==='out'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+(+e.amount||0))});
+ const coll=new Map();entries.forEach(e=>{if(e.direction==='in'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'||e.status==='endorsed'))coll.set(String(e.customer||''),(coll.get(String(e.customer||''))||0)+(+e.amount||0))});
+ const paid=new Map();entries.forEach(e=>{if(e.direction==='out'&&!['guarantee','returned'].includes(e.status)&&(!(e.method==='bank')||e.status==='collected'||e.status==='endorsed_out'))paid.set(String(e.supplier||''),(paid.get(String(e.supplier||''))||0)+(+e.amount||0))});
  const inst=(()=>{try{return salesInstallmentBaseRows()}catch(e){return []}})().filter(x=>igMgmtInRange(x.due));
  const table=(id,heads,rows,foot='')=>`<div class="tbl-wrap"><table id="${id}" class="trade-report-table" style="width:100%;min-width:720px"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="${heads.length}" class="empty">لا توجد بيانات مطابقة</td></tr>`}</tbody>${foot?`<tfoot>${foot}</tfoot>`:''}</table></div>`;
  const tools=id=>`<div class="ig-mgmt-tools"><button class="btn sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','print')">🖨 طباعة / PDF</button><button class="btn ghost sm" onclick="igMgmtExport(document.getElementById('${id}').closest('section').querySelector('h3').innerText,'${id}','excel')">📊 Excel</button></div>`;
