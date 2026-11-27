@@ -4659,7 +4659,7 @@ const SCREENS = [
   { id:"hrErrands", label:"الإذونات والمأموريات", icon:"📋", acts:["add","edit","delete"] },
   { id:"hrApprovals", label:"اعتمادات شؤون الموظفين", icon:"✅", acts:["post"] },
   { id:"hrSalaryItems", label:"بنود الراتب", icon:"🧾", acts:["add","edit","delete"] },
-  { id:"hrPayroll", label:"تشغيل الرواتب", icon:"🧮", acts:["add","print"] },
+  { id:"hrPayroll", label:"تشغيل الرواتب", icon:"🧮", acts:["add","delete","post","manage","print"] },
   { id:"hrAdvances", label:"سلف الموظفين", icon:"💸", acts:["add","edit","delete","post","print"] },
   { id:"hrJobs", label:"الوظائف", icon:"🧑‍💼", acts:["add","edit","delete"] },
   { id:"hrQuals", label:"أرقام المؤهلات", icon:"🎓", acts:["add","edit","delete"] },
@@ -5394,7 +5394,16 @@ function doLogout(reason){
   setTimeout(()=>document.getElementById("loginPass")?.focus(),50);
   setTimeout(()=>{ try{ window._maybeAutoOpenBioSheet&&window._maybeAutoOpenBioSheet(); }catch(e){} }, 400);
 }
-async function logout(){ if(!await askConfirm("تسجيل الخروج؟")) return; doLogout(); }
+async function logout(){
+  let n=0; try{ n=hrPendCount(""); }catch(_){ }
+  if(n){
+    try{ toast("جاري رفع السجلات المعلّقة قبل الخروج…"); n=await Promise.race([hrPendFlush(),new Promise(r=>setTimeout(()=>r(hrPendCount("")),8000))]); }catch(_){ try{ n=hrPendCount(""); }catch(__){} }
+  }
+  let msg="تسجيل الخروج؟";
+  if(n) msg+=" — تنبيه: فيه "+n+" سجل (موارد بشرية/مقاولات) لسه ما اترفعش للسيرفر. هيفضل محفوظ على هذا الجهاز عشان ما يضيعش، وفيه بيانات حساسة (رواتب/رقم قومي). لو الجهاز مشترك، ارفعه الأول أو امسحه من شاشة الموظفين.";
+  if(!await askConfirm(msg,{ok:"خروج",danger:false})) return;
+  doLogout();
+}
 
 // خروج تلقائي بعد 15 دقيقة بدون نشاط (تحذير قبلها بدقيقة)
 const IDLE_MS = 15*60*1000;
@@ -15759,6 +15768,7 @@ async function resetAll(){
   if(!await askConfirm("سيتم مسح جميع البيانات نهائيًا. متأكد؟")) return;
   if(!await askConfirm("هل أنت متأكد تمامًا؟ لا يمكن التراجع.")) return;
   state = JSON.parse(JSON.stringify(defaults));
+  try{ if(typeof hrAfterStateReplace==="function") hrAfterStateReplace(); }catch(_){ }
   saveState(); go("dashboard"); toast("تم إعادة التعيين","ok");
 }
 
@@ -16361,6 +16371,7 @@ async function importData(e){
       const d = JSON.parse(ev.target.result);
       if(!await askConfirm("سيتم استبدال البيانات الحالية بالنسخة المستوردة. متأكد؟")) return;
       state = Object.assign(JSON.parse(JSON.stringify(defaults)), d);
+      try{ if(typeof hrAfterStateReplace==="function") hrAfterStateReplace(); }catch(_){ }
       saveState(); go("dashboard"); toast("تم استيراد البيانات","ok");
     }catch(err){ toast("ملف غير صالح: "+err.message,"err"); }
   };
@@ -18613,23 +18624,26 @@ function supGroup(L,key){
 // وكمية التوريد بتتاخد من أمر البيع نفسه (لأن كل بوليصة بتشيل كمية الأمر الكاملة في supplyQty فجمعها بيكرّرها)
 function supQtyTotals(lines){
   const bfOf=it=>{ try{ const f=Number(iuBasePerDefaultUnit(it.diameter)); return Number.isFinite(f)&&f>0?f:1; }catch(_){ return 1; } };
-  const nameOf=it=>{ try{ return String(policyUnitName(it)||it.unitName||iuDefaultUnitName(it.diameter)||"").trim(); }catch(_){ return String(it.unitName||"").trim(); } };
-  const ukOf=it=>{ let pf=1; try{ pf=Number(policyUnitFactor(it))||1; }catch(_){} return Math.round(bfOf(it)*pf*1e9)/1e9; };
+  // الكمية المخزّنة دايمًا بالوحدة الافتراضية للصنف، فالمفتاح هو اسم الوحدة الافتراضية:
+  // أصناف وحدتها الافتراضية «طن» بتتجمع زي ما هي حتى لو وحدتها الأساسية مختلفة (كجم / كيس)، والتحويل بالمعامل بس لو اسم الوحدة اختلف
+  const nameOf=it=>{ try{ return String(iuDefaultUnitName(it.diameter)||policyUnitName(it)||it.unitName||"").trim(); }catch(_){ return String(it.unitName||"").trim(); } };
+  const keyOf=it=>nameOf(it)||("#"+bfOf(it));
   const m=new Map(), names=new Set();
-  lines.forEach(({it})=>{ const f=ukOf(it), o=m.get(f)||{w:0,n:0,name:""}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*bfOf(it); o.n++; if(!o.name) o.name=nameOf(it); m.set(f,o); const nn=nameOf(it); if(nn) names.add(nn); });
-  let ref=1,bw=-1,bn=-1,unit=""; m.forEach((o,f)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ ref=f; bw=o.w; bn=o.n; unit=o.name; } });
+  lines.forEach(({it})=>{ const k=keyOf(it), o=m.get(k)||{w:0,n:0,name:"",f:bfOf(it)}; o.w+=Math.abs(+it.actualWeight||+it.supplyQty||0)*bfOf(it); o.n++; if(!o.name) o.name=nameOf(it); m.set(k,o); const nn=nameOf(it); if(nn) names.add(nn); });
+  let ref=1,refKey="",bw=-1,bn=-1,unit=""; m.forEach((o,k)=>{ if(o.w>bw||(o.w===bw&&o.n>bn)){ ref=o.f; refKey=k; bw=o.w; bn=o.n; unit=o.name; } });
+  const scOf=it=>keyOf(it)===refKey?1:bfOf(it)/ref;
   let w=0; const orders=new Map();
   lines.forEach(({s,it})=>{
-    w+=(+it.actualWeight||0)*bfOf(it)/ref;
+    w+=(+it.actualWeight||0)*scOf(it);
     const k=s.saleOrderId?"so:"+s.saleOrderId:(s.saleOrderNo?"no:"+s.saleOrderNo:"policy:"+s.id);
     const o=orders.get(k)||{s,keys:new Set(),max:{}}; const kk=(it.diameter||"")+"|"+(it.type||"");
-    o.keys.add(kk); const v=(+it.supplyQty||0)*bfOf(it)/ref; if(!(v<=(o.max[kk]||0))) o.max[kk]=v; orders.set(k,o);
+    o.keys.add(kk); const v=(+it.supplyQty||0)*scOf(it); if(!(v<=(o.max[kk]||0))) o.max[kk]=v; orders.set(k,o);
   });
   let sq=0;
   orders.forEach(o=>{
     const so=(state.saleOrders||[]).find(x=>(o.s.saleOrderId&&String(x.id)===String(o.s.saleOrderId))||(!o.s.saleOrderId&&o.s.saleOrderNo&&String(x.orderNo)===String(o.s.saleOrderNo)));
     if(so&&Array.isArray(so.items)&&so.items.length){
-      so.items.forEach(x=>{ if(!o.keys.has((x.diameter||"")+"|"+(x.type||""))) return; const r=parseFloat(String(x.qty??"").replace(",",".")); if(Number.isFinite(r)) sq+=r*bfOf(x)/ref; });
+      so.items.forEach(x=>{ if(!o.keys.has((x.diameter||"")+"|"+(x.type||""))) return; const r=parseFloat(String(x.qty??"").replace(",",".")); if(Number.isFinite(r)) sq+=r*scOf(x); });
     } else sq+=Object.values(o.max).reduce((n,v)=>n+v,0);
   });
   return {sq:Math.round(sq*1000)/1000,w:Math.round(w*1000)/1000,unit,mixed:names.size>1,names:[...names]};
@@ -19120,12 +19134,35 @@ function _supFmtKpi(x){
   return n.toLocaleString("en-US",{minimumFractionDigits:x.d==null?2:x.d,maximumFractionDigits:x.d==null?2:x.d});
 }
 // بناء جدول/جداول التوريد كـ HTML بتنسيق الـ pro template
+/* التابة الحالية في بيانات التوريد: flat | customer | supplier | grouped */
+function supCurView(){ return supBreak||(supFilter.grouped?"grouped":"flat"); }
+function supCurViewLabel(){ return ({flat:"العرض العادي",customer:"مبالغ العملاء",supplier:"مبالغ الموردين",grouped:"تجميع حسب أمر البيع"})[supCurView()]||""; }
+/* جدول «تجميع حسب أمر البيع» للتصدير: نسخة نظيفة من الجدول المعروض (من غير عمود الإجراء وصفوف التفاصيل والأعمدة المخفية) */
+function supGroupedExportHtml(){
+  const t=document.querySelector('.sup-grouped-wrap table[data-rs-key="supply-grouped"]');
+  if(!t) return "";
+  const c=t.cloneNode(true);
+  c.querySelectorAll("tr.sup-det-row").forEach(r=>r.remove());
+  const hr=c.querySelector("thead tr"); if(!hr) return "";
+  const termsHidden=!!(t.closest(".sup-grouped-wrap")&&t.closest(".sup-grouped-wrap").classList.contains("is-terms-hidden"));
+  const drop=[];
+  [...hr.children].forEach((th,i)=>{ if(th.classList.contains("sup-act-th")||(termsHidden&&th.classList.contains("pay-terms-col"))) drop.push(i); });
+  drop.reverse();
+  c.querySelectorAll("tr").forEach(tr=>{ drop.forEach(i=>{ if(tr.children[i]) tr.children[i].remove(); }); });
+  c.querySelectorAll("button,.th-fbtn,script").forEach(e=>e.remove());
+  if(!c.querySelectorAll("tbody tr").length) return "";
+  return `<h3 class="sup-sec-h">▧ تجميع حسب أمر البيع</h3><table class="rprt-tbl">${c.innerHTML}</table>`;
+}
 function supBuildProTableHtml(C){
   const {SB,SS,L}=C, nm=(v,d)=> Number(v||0).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
   let h = "";
-  // تفصيل حسب العميل والمورد
-  if(SS){ const tb=supBreakTable("customer",C); h+=`<h3 class="sup-sec-h">🧑‍💼 ${escapeHtml(tb.title)}</h3><table class="rprt-tbl">${supProBreakTable(tb)}</table>`; }
-  if(SB){ const tb=supBreakTable("supplier",C); h+=`<h3 class="sup-sec-h">🏭 ${escapeHtml(tb.title)}</h3><table class="rprt-tbl">${supProBreakTable(tb)}</table>`; }
+  // التصدير على قد التابة اللي المستخدم واقف عليها
+  const _v=supCurView();
+  if(_v==="customer"||_v==="supplier"){
+    const tb=supBreakTable(_v,C);
+    return `<h3 class="sup-sec-h">${_v==="customer"?"🧑‍💼":"🏭"} ${escapeHtml(tb.title)}</h3><table class="rprt-tbl">${supProBreakTable(tb)}</table>`;
+  }
+  if(_v==="grouped"){ const gh=supGroupedExportHtml(); if(gh) return gh; }
   // تفصيل البوالص
   const head=["#","تاريخ","أمر البيع","المورد","العميل","المصنع","الصنف","النوع","كمية","وزن"]
     .concat(SB?["سعر الشراء","إجمالي شراء"]:[]).concat(SS?["سعر البيع","قبل الضريبة","ضريبة","خصم","الإجمالي"]:[]);
@@ -19192,7 +19229,7 @@ function supBuildProReportHtml(){
   const tableHtml = `<style>.sup-sec-h{margin:18px 0 8px;font-size:14px;color:#92400e;background:#fef3c7;padding:7px 14px;border-radius:4px;border-right:4px solid #d4a017;font-weight:800}</style>` + supBuildProTableHtml(C);
   return igProReportHtml({
     emoji:"📦",
-    title:"تقرير بيانات التوريد",
+    title:"تقرير بيانات التوريد — "+supCurViewLabel(),
     titleEn:"SUPPLY DATA REPORT",
     sub:`${new Set(C.L.map(x=>x.s.id)).size} بوليصة · ${C.L.length} صنف`,
     filters:filters,
@@ -19204,14 +19241,14 @@ function supExportExcel(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للتصدير","err"); return; }
   const html = supBuildProReportHtml();
-  igSaveXlsx(html,igSafeFileName("بيانات_التوريد_"+new Date().toISOString().slice(0,10)));
+  igSaveXlsx(html,igSafeFileName("بيانات_التوريد_"+supCurViewLabel().replace(/\s+/g,"_")+"_"+new Date().toISOString().slice(0,10)));
   toast("✓ تم تصدير ملف Excel احترافي","ok");
 }
 function supExportPdf(){
   const C=supCompute();
   if(!C.L.length){ toast("مفيش بيانات للطباعة","err"); return; }
   const html = supBuildProReportHtml();
-  openReportPreview(html,'تقرير بيانات التوريد');
+  openReportPreview(html,'تقرير بيانات التوريد — '+supCurViewLabel());
 }
 
 // ========== عرض عادي (كل البوالص بصفوف) ==========
@@ -44718,7 +44755,7 @@ function decorate(){
   var tf=tb.querySelector("tfoot tr");
   if(tf){
     var tfChildren=[].slice.call(tf.children);
-    var anchorIdx = hasBuy ? 4 : 3;
+    var anchorIdx = idxInsert;   /* نفس مكان إدراج أعمدة سداد المورد في الهيدر والصفوف */
     var anchor = tfChildren[anchorIdx] || tfChildren[tfChildren.length-1];
     if(anchor){
       tf.insertBefore(mk("td",fmt(T.paid),"num"),anchor);
@@ -46134,22 +46171,127 @@ const IG_SYNC_TABLES={hrEmployees:"hr_employees",hrMoves:"hr_moves",hrAdvances:"
 let hrSyncErr="",conSyncErr="",hrSynced=false,conSynced=false,hrLoading=false,conLoading=false;
 function igSyncMiss(m){ return /relation|does not exist|schema cache|42P01|PGRST205|permission denied|42501/i.test(String(m||"")); }
 function igSyncKindOf(key){ return key.slice(0,2)==="hr"?"hr":"con"; }
+/* ===== مخزن محلي للسجلات غير المرفوعة (HR + المقاولات) =====
+   saveState() ما بيكتبش مفاتيح الموارد البشرية والمقاولات في localStorage، فأي سجل فشل رفعه للسيرفر كان بيضيع عند Refresh/إغلاق التبويب.
+   هنا كل سجل بيتحط في مخزن مستقل (مفتاح لكل شركة) قبل محاولة الرفع، وبيتشال بس بعد ما السيرفر يؤكد الحفظ.
+   المخزن بيتعامل بالـid صراحةً (مش بيتحسب من state) عشان resetAll/importData اللي بيستبدلوا state ما يمسحوش سجلات لسه مترفعتش. */
+const HR_PENDING_KEY=STORAGE_KEY+"_hr_pending";
+function hrPendRead(){ try{ const o=JSON.parse(localStorage.getItem(HR_PENDING_KEY)||"{}"); return (o&&typeof o==="object")?o:{}; }catch(e){ return {}; } }
+function hrPendWrite(o){
+  try{ let n=0; Object.keys(o).forEach(k=>{ n+=Object.keys(o[k]||{}).length; });
+    if(n) localStorage.setItem(HR_PENDING_KEY,JSON.stringify(o)); else localStorage.removeItem(HR_PENDING_KEY);
+    return true;
+  }catch(e){
+    if(!window.__hrPendWarned){ window.__hrPendWarned=1; toast("تعذّر حفظ نسخة محلية احتياطية للسجل غير المرفوع (مساحة المتصفح ممتلئة؟) — لا تغلق الصفحة قبل نجاح المزامنة",true); }
+    return false; }
+}
+function hrPendUid(){ try{ return currentUser&&currentUser.no!=null?String(currentUser.no):""; }catch(e){ return ""; } }
+function hrPendPut(key,rec){ if(!rec||!rec.id) return; const o=hrPendRead(); (o[key]=o[key]||{})[rec.id]=Object.assign({},rec,{_dirty:true,_pendBy:hrPendUid()}); hrPendWrite(o); }
+function hrPendDrop(key,id){ if(id==null) return; const o=hrPendRead(); if(o[key]&&o[key][id]){ delete o[key][id]; if(!Object.keys(o[key]).length) delete o[key]; hrPendWrite(o); } }
+/* محاولة أخيرة لرفع السجلات المعلّقة بتاعة المستخدم الحالي (قبل الخروج) — بترجّع عدد اللي لسه معلّق */
+async function hrPendFlush(){
+  const o=hrPendRead(), me=hrPendUid();
+  for(const key of Object.keys(o)){
+    for(const id of Object.keys(o[key]||{})){
+      const rec=o[key][id]; if(!rec||(rec._pendBy&&me&&rec._pendBy!==me)) continue;
+      const live=(state[key]||[]).find(x=>x&&x.id===id)||rec;
+      try{ if(IG_SYNC_TABLES[key]) await igSyncPush(key,live); else if(typeof hrCatDef==="function"&&hrCatDef(key)) await hrCatPush(key,live); }catch(e){ /* يفضل معلّق */ }
+    }
+  }
+  return hrPendCount("");
+}
+async function hrPendWipe(){
+  const n=hrPendCount("hr"); if(!n) return;
+  if(!await askConfirm("مسح "+n+" سجل غير مرفوع من هذا الجهاز نهائيًا؟ لن يمكن استرجاعها ولن تصل للسيرفر أبدًا.",{danger:true,ok:"مسح نهائي"})) return;
+  const o=hrPendRead();
+  Object.keys(o).forEach(k=>{ if(k.slice(0,2)==="hr"){ delete o[k]; state[k]=(state[k]||[]).filter(x=>x&&x.serverId); state[k].forEach(x=>{ delete x._dirty; }); } });
+  hrPendWrite(o); saveState(); hrSynced=false; hrSyncErr="";
+  toast("تم مسح السجلات غير المرفوعة من الجهاز");
+  try{ igSyncEnsure("hr"); }catch(_){ } try{ go(currentPage); }catch(_){ }
+}
+function hrPendCount(prefix){ const o=hrPendRead(); let n=0; Object.keys(o).forEach(k=>{ if(!prefix||k.slice(0,prefix.length)===prefix) n+=Object.keys(o[k]||{}).length; }); return n; }
+/* دمج السجلات المعلّقة في state (عند التحميل وقبل كل مزامنة): النسخة المعلّقة أحدث من أي نسخة جاية من السيرفر، لكن نسخة الذاكرة غير المرفوعة هي الأحدث فنسيبها */
+function hrPendMerge(){
+  try{
+    const o=hrPendRead(); const okKeys=new Set(Object.keys(IG_SYNC_TABLES).concat(typeof HR_CATALOGS!=="undefined"?HR_CATALOGS.map(d=>d.key):[]));
+    Object.keys(o).forEach(k=>{ if(!okKeys.has(k)) return;
+      const a=state[k]=state[k]||[];
+      Object.keys(o[k]||{}).forEach(id=>{ const rec=o[k][id]; if(!rec||!rec.id) return;
+        /* سجل معلّق لمستخدم تاني على نفس الجهاز: ما يتدمجش ولا يترفع باسم المستخدم الحالي (بيانات حساسة) — بيفضل محفوظ لحد ما صاحبه يدخل أو يتمسح */
+        { const me=hrPendUid(); if(rec._pendBy&&me&&rec._pendBy!==me) return; }
+        const i=a.findIndex(x=>x&&x.id===rec.id);
+        if(i<0) a.push(rec);
+        else if(!(a[i]._dirty||!a[i].serverId)) a[i]=rec; });
+    });
+  }catch(e){ console.warn("hr pending merge failed",e); }
+}
+/* ===== حماية من الكتابة فوق تعديل مستخدم آخر (optimistic concurrency) =====
+   كل سجل بيتحمّل ومعاه _srvUpdatedAt (آخر updated_at شافه من السيرفر). التعديل بيتنفّذ بشرط إن السيرفر لسه على نفس النسخة؛
+   لو اتغيّر بين كده بنرفض بدل ما نكتب فوقه، ونحمّل نسخة السيرفر ونبلّغ المستخدم. */
+function igConflictErr(row){ const e=new Error("IG_CONFLICT"); e.igConflict=true; e.srvRow=row; return e; }
+async function igGuardedUpdate(t,key,rec,body){
+  let q=sb.from(t).update(body).eq("id",rec.serverId);
+  if(rec._srvUpdatedAt) q=q.eq("updated_at",rec._srvUpdatedAt);
+  const u=await q.select();
+  if(u.error) throw igSrvErr(u.error);
+  if((u.data||[]).length){ delete rec._dirty; if(u.data[0].updated_at) rec._srvUpdatedAt=u.data[0].updated_at; hrPendDrop(key,rec.id); return true; }
+  if(!rec._srvUpdatedAt) return false;      /* مفيش نسخة أساس (سجل قديم): السلوك القديم */
+  const cur=await sb.from(t).select("*").eq("id",rec.serverId).limit(1);
+  if(cur.error) throw new Error(cur.error.message);
+  const row=(cur.data||[])[0];
+  if(!row) return false;                    /* اتحذف من السيرفر: نكمل بإعادة الإنشاء زي زمان */
+  if(String(row.updated_at)!==String(rec._srvUpdatedAt)) throw igConflictErr(row);
+  throw new Error("السيرفر رفض التعديل (غالبًا سياسة الأمان RLS تمنع التعديل)");
+}
+function igApplyConflict(key,rec,row){
+  const id=rec.id; Object.keys(rec).forEach(k=>{ delete rec[k]; });
+  Object.assign(rec,row.data||{},{serverId:row.id,_srvUpdatedAt:row.updated_at}); hrPendDrop(key,id);
+}
+const IG_CONFLICT_MSG="السجل اتعدّل من مستخدم آخر قبل حفظك — اتحمّلت نسخة السيرفر وتعديلك ما اتحفظش. راجع البيانات وأعد التعديل";
+/* ===== عدّاد كود الموظف من السيرفر (ذرّي — مفيش اتنين ياخدوا نفس الرقم) =====
+   RPC: hr_next_emp_code (ملف ERP-HR-PHASE1-0088.sql). لو مش مثبّت أو مفيش نت: بنكمّل بالاقتراح المحلي hrNextEmpCode، والفهرس الفريد على السيرفر هو خط الدفاع الأخير */
+async function hrSrvNextCode(){
+  try{ if(!CUR_CO||CUR_CO==="*") return null; const r=await sb.rpc("hr_next_emp_code",{p_company:CUR_CO}); if(r.error||r.data==null||r.data==="") return null; return String(r.data); }catch(e){ return null; }
+}
+async function hrEmpCodeFromServer(initial){
+  const c=await hrSrvNextCode(); if(!c) return;
+  const el=document.querySelector("#heCode"); if(el&&el.value===initial&&!el.dataset.touched){ el.value=c; el.dataset.srv="1"; }
+}
+/* رسالة مفهومة لخطأ الفهرس الفريد (تكرار على السيرفر) */
+function igSrvErr(err){
+  const raw=String((err&&err.message)||""), code=String((err&&err.code)||"");
+  const e=new Error(raw);
+  if(code==="23505"||/duplicate key|unique constraint/i.test(raw)){
+    if(/hr_employees_code_uq/.test(raw)){ e.igDup="code"; e.message="رقم الموظف مستخدم لموظف آخر على السيرفر"; }
+    else if(/hr_employees_natid_uq/.test(raw)){ e.igDup="natid"; e.message="الرقم القومي مسجّل لموظف آخر على السيرفر"; }
+    else if(/hr_employees_insno_uq/.test(raw)){ e.igDup="insno"; e.message="رقم التأمين الاجتماعي مسجّل لموظف آخر على السيرفر"; }
+  }
+  return e;
+}
 async function igSyncPush(key,rec){
   const t=IG_SYNC_TABLES[key]; if(!t||!rec) return null;
   const body={data:Object.assign({},rec),updated_at:new Date().toISOString()};
   delete body.data.serverId;
   Object.keys(body.data).forEach(k=>{ if(k.charAt(0)==="_") delete body.data[k]; });   /* حقول مؤقتة للعميل (_opKey/_dirty/...) ما تروحش للسيرفر */
   if(rec.serverId){
-    /* سجل متزامن قبل كده: UPDATE مباشر (سياسة التعديل بس). الـ upsert كان بيعدّي على سياسة الإضافة كمان فكان بيرفض المعتمِد/المُقفِل اللي معاه صلاحية تعديل بدون إضافة */
-    const u=await sb.from(t).update(body).eq("id",rec.serverId).select();
-    if(u.error) throw new Error(u.error.message);
-    if((u.data||[]).length){ delete rec._dirty; return rec.serverId; }
+    /* سجل متزامن قبل كده: UPDATE مباشر (سياسة التعديل بس) بشرط ما حدش عدّله قبلنا. الـ upsert كان بيعدّي على سياسة الإضافة كمان فكان بيرفض المعتمِد/المُقفِل اللي معاه صلاحية تعديل بدون إضافة */
+    if(await igGuardedUpdate(t,key,rec,body)) return rec.serverId;
     body.id=rec.serverId;
   }
-  const r=await sb.from(t).upsert(body).select();
-  if(r.error) throw new Error(r.error.message);
-  const row=(r.data||[])[0]; if(row&&row.id) rec.serverId=row.id;
-  delete rec._dirty;
+  let r=await sb.from(t).upsert(body).select();
+  if(r.error){
+    const ge=igSrvErr(r.error);
+    /* موظف جديد اتحجز كوده من مستخدم تاني في نفس اللحظة: ناخد رقم جديد من العدّاد ونعيد المحاولة مرة واحدة */
+    if(key==="hrEmployees"&&ge.igDup==="code"&&!rec.serverId){
+      const nc=await hrSrvNextCode();
+      if(nc){ const old=rec.code; rec.code=nc; body.data.code=nc; r=await sb.from(t).upsert(body).select();
+        if(!r.error){ try{ toast("رقم الموظف "+old+" كان اتحجز من مستخدم آخر — اتغيّر تلقائيًا إلى "+nc); }catch(_){ } }
+        else throw igSrvErr(r.error); }
+      else throw ge;
+    } else throw ge;
+  }
+  const row=(r.data||[])[0]; if(row&&row.id){ rec.serverId=row.id; if(row.updated_at) rec._srvUpdatedAt=row.updated_at; }
+  delete rec._dirty; hrPendDrop(key,rec.id);
   return rec.serverId||null;
 }
 /* إعادة قراءة سجل من السيرفر ودمجه محليًا (من غير ما نكتب فوقه) — للسجلات اللي السيرفر بيعدّل فيها بنفسه (الصرف/الترحيل) */
@@ -46162,26 +46304,37 @@ async function igSyncRefresh(key,rec){
 }
 function igSyncPushBg(key,rec){
   if(!rec) return;
+  rec._dirty=true; hrPendPut(key,rec);   /* نسخة محلية دايمة قبل ما نحاول الرفع */
   igSyncPush(key,rec).then(()=>saveState()).catch(e=>{
-    rec._dirty=true; saveState();
+    if(e&&e.igConflict){ igApplyConflict(key,rec,e.srvRow); saveState(); toast(IG_CONFLICT_MSG,true); try{ go(currentPage); }catch(_){ } return; }
+    rec._dirty=true; hrPendPut(key,rec); saveState();
     if(igSyncKindOf(key)==="hr") hrSyncErr=hrSyncErr||IG_SYNC_TABLES[key]; else conSyncErr=conSyncErr||IG_SYNC_TABLES[key];
-    toast("تعذّر حفظ السجل على السيرفر — محفوظ محليًا وسيُرفع عند فتح الشاشة بعد تثبيت ملف SQL: "+((e&&e.message)||e),true);
+    toast("تعذّر رفع السجل للسيرفر — محفوظ مؤقتًا على هذا الجهاز وسيُعاد رفعه تلقائيًا عند فتح الشاشة. لا تمسح بيانات المتصفح قبل نجاح المزامنة: "+((e&&e.message)||e),true);
   });
 }
 async function igSyncLoad(kind){
+  hrPendMerge();   /* السجلات المعلّقة من جلسة سابقة (أو اللي ضاعت من state بعد استيراد/إعادة تعيين) ترجع قبل المزامنة */
   const keys=Object.keys(IG_SYNC_TABLES).filter(k=>igSyncKindOf(k)===kind);
+  let nConf=0;
   const setErr=t=>{ if(kind==="hr") hrSyncErr=t; else conSyncErr=t; };
   try{
     for(const key of keys){
       const r=await sb.from(IG_SYNC_TABLES[key]).select("*");
       if(r.error){ if(igSyncMiss((r.error.message||"")+(r.error.code||""))){ setErr(IG_SYNC_TABLES[key]); return false; } throw new Error(r.error.message); }
       const dirtyBy={}; (state[key]||[]).forEach(x=>{ if(x&&x.serverId&&x._dirty) dirtyBy[x.serverId]=x; });
-      const mapped=(r.data||[]).map(x=>dirtyBy[x.id]||Object.assign({},(x.data||{}),{serverId:x.id}));
-      const local=(state[key]||[]).filter(x=>x&&!x.serverId);
-      state[key]=mapped;
-      for(const rec of mapped){ if(rec._dirty){ try{ await igSyncPush(key,rec); }catch(e){ console.warn("dirty push failed",key,e); } } }
-      for(const rec of local){ state[key].push(rec); await igSyncPush(key,rec); }
+      const srvIds=new Set((r.data||[]).map(x=>x.id));
+      const mapped=(r.data||[]).map(x=>dirtyBy[x.id]||Object.assign({},(x.data||{}),{serverId:x.id,_srvUpdatedAt:x.updated_at}));
+      /* سجلات محلية لسه مترفعتش: من غير serverId، أو معدّلة (_dirty) وملهاش صف على السيرفر */
+      const local=(state[key]||[]).filter(x=>x&&(!x.serverId||(x._dirty&&!srvIds.has(x.serverId))));
+      state[key]=mapped; local.forEach(rec=>state[key].push(rec));
+      /* كل سجل معلّق بيتحاول لوحده؛ فشل واحد ما يضيّعش الباقي من الذاكرة — وبعدها نبلّغ بالفشل بدل ما نعلّم «تمت المزامنة» */
+      let pushErr=null;
+      for(const rec of state[key]){ if(rec._dirty||!rec.serverId){ try{ await igSyncPush(key,rec); }catch(e){
+        if(e&&e.igConflict){ igApplyConflict(key,rec,e.srvRow); nConf++; }
+        else{ rec._dirty=true; hrPendPut(key,rec); pushErr=pushErr||e; console.warn("push failed",key,e); } } } }
+      if(pushErr) throw pushErr;
     }
+    if(nConf) toast(nConf+" سجل اتعدّل من مستخدم آخر أثناء غيابك — اتحمّلت نسخة السيرفر وتعديلاتك المحلية عليها ما اتحفظتش. راجعها وأعد التعديل",true);
     if(kind==="hr"){ const okC=await hrCatLoadAll(); if(!okC) return false; }
     setErr(""); if(kind==="hr") hrSynced=true; else conSynced=true;
     saveState(); return true;
@@ -46225,7 +46378,8 @@ const HR_CATALOGS=[
   {key:"hrLeaveTypes",kind:"leavetypes",page:"hrLeaveTypes",label:"أرقام أنواع الإجازات",codeLabel:"رقم النوع",nameLabel:"اسم النوع"},
   {key:"hrPenRewTypes",kind:"penrewtypes",page:"hrPenRewTypes",label:"أرقام أنواع الجزاءات / المكافآت",codeLabel:"رقم النوع",nameLabel:"اسم النوع"},
   {key:"hrEmpStatus",kind:"empstatus",page:"hrEmpStatus",label:"أرقام حالات الموظف",codeLabel:"رقم الحالة",nameLabel:"اسم الحالة"},
-  {key:"hrTermStatus",kind:"termstatus",page:"hrTermStatus",label:"أرقام حالات إنهاء الخدمة",codeLabel:"رقم الحالة",nameLabel:"اسم الحالة"}
+  {key:"hrTermStatus",kind:"termstatus",page:"hrTermStatus",label:"أرقام حالات إنهاء الخدمة",codeLabel:"رقم الحالة",nameLabel:"اسم الحالة"},
+  {key:"hrPayCfg",kind:"paycfg",page:"hrPayCfg",label:"إعدادات احتساب الرواتب",codeLabel:"",nameLabel:"",hidden:true}
 ];
 HR_CATALOGS.forEach(d=>{ if(!state[d.key]) state[d.key]=[]; });
 function hrCatDef(x){ return HR_CATALOGS.find(d=>d.key===x)||HR_CATALOGS.find(d=>d.page===x); }
@@ -46235,30 +46389,37 @@ async function hrCatPush(key,rec){
   delete body.data.serverId;
   Object.keys(body.data).forEach(k=>{ if(k.charAt(0)==="_") delete body.data[k]; });
   if(rec.serverId){
-    const u=await sb.from("hr_catalogs").update(body).eq("id",rec.serverId).select();
-    if(u.error) throw new Error(u.error.message);
-    if((u.data||[]).length) return rec.serverId;
+    if(await igGuardedUpdate("hr_catalogs",key,rec,body)) return rec.serverId;
     body.id=rec.serverId;
   }
   const r=await sb.from("hr_catalogs").upsert(body).select();
   if(r.error) throw new Error(r.error.message);
-  const row=(r.data||[])[0]; if(row&&row.id) rec.serverId=row.id;
+  const row=(r.data||[])[0]; if(row&&row.id){ rec.serverId=row.id; if(row.updated_at) rec._srvUpdatedAt=row.updated_at; }
+  delete rec._dirty; hrPendDrop(key,rec.id);
   return rec.serverId||null;
 }
 function hrCatPushBg(key,rec){
   if(!rec) return;
-  hrCatPush(key,rec).then(()=>saveState()).catch(e=>{ hrSyncErr=hrSyncErr||"hr_catalogs"; toast("تعذّر حفظ السجل على السيرفر — محفوظ محليًا وسيُرفع عند فتح الشاشة بعد تثبيت ملف SQL: "+((e&&e.message)||e),true); });
+  rec._dirty=true; hrPendPut(key,rec);
+  hrCatPush(key,rec).then(()=>saveState()).catch(e=>{ if(e&&e.igConflict){ igApplyConflict(key,rec,e.srvRow); saveState(); toast(IG_CONFLICT_MSG,true); try{ go(currentPage); }catch(_){ } return; } rec._dirty=true; hrPendPut(key,rec); hrSyncErr=hrSyncErr||"hr_catalogs"; toast("تعذّر رفع السجل للسيرفر — محفوظ مؤقتًا على هذا الجهاز وسيُعاد رفعه تلقائيًا عند فتح الشاشة. لا تمسح بيانات المتصفح قبل نجاح المزامنة: "+((e&&e.message)||e),true); });
 }
 async function hrCatLoadAll(){
   try{
     const r=await sb.from("hr_catalogs").select("*");
     if(r.error){ if(igSyncMiss((r.error.message||"")+(r.error.code||""))){ hrSyncErr=hrSyncErr||"hr_catalogs"; return false; } throw new Error(r.error.message); }
-    const byKind={}; (r.data||[]).forEach(x=>{ (byKind[x.kind]=byKind[x.kind]||[]).push(Object.assign({},(x.data||{}),{serverId:x.id})); });
+    const byKind={}; (r.data||[]).forEach(x=>{ (byKind[x.kind]=byKind[x.kind]||[]).push(Object.assign({},(x.data||{}),{serverId:x.id,_srvUpdatedAt:x.updated_at})); });
+    let pushErr=null,nConf=0;
     for(const d of HR_CATALOGS){
-      const local=(state[d.key]||[]).filter(x=>x&&!x.serverId);
-      state[d.key]=byKind[d.kind]||[];
-      for(const rec of local){ state[d.key].push(rec); await hrCatPush(d.key,rec); }
+      const dirtyBy={}; (state[d.key]||[]).forEach(x=>{ if(x&&x.serverId&&x._dirty) dirtyBy[x.serverId]=x; });
+      const srvIds=new Set((byKind[d.kind]||[]).map(x=>x.serverId));
+      const local=(state[d.key]||[]).filter(x=>x&&(!x.serverId||(x._dirty&&!srvIds.has(x.serverId))));
+      state[d.key]=(byKind[d.kind]||[]).map(x=>dirtyBy[x.serverId]||x); local.forEach(rec=>state[d.key].push(rec));
+      for(const rec of state[d.key]){ if(rec._dirty||!rec.serverId){ try{ await hrCatPush(d.key,rec); }catch(e){
+        if(e&&e.igConflict){ igApplyConflict(d.key,rec,e.srvRow); nConf++; }
+        else{ rec._dirty=true; hrPendPut(d.key,rec); pushErr=pushErr||e; console.warn("catalog push failed",d.key,e); } } } }
     }
+    if(pushErr) throw pushErr;
+    if(nConf) toast(nConf+" سجل من الأدلة اتعدّل من مستخدم آخر — اتحمّلت نسخة السيرفر وتعديلاتك المحلية عليها ما اتحفظتش",true);
     return true;
   }catch(e){ console.warn("hr catalogs sync failed",e); hrSyncErr=hrSyncErr||"hr_catalogs"; return false; }
 }
@@ -46314,14 +46475,60 @@ async function hrCatDel(page,id){
   const used=hrCatUsed(page,id);
   if(used){ toast("لا يمكن الحذف — مستخدم في "+used,true); return; }
   if(!confirm("حذف «"+(r.name||r.no)+"»؟")) return;
-  state[d.key]=rows.filter(x=>x.id!==id); saveState();
-  if(r.serverId){ try{ await sb.from("hr_catalogs").delete().eq("id",r.serverId); }catch(e){ hrSyncErr=hrSyncErr||"hr_catalogs"; toast("تعذّر حذف السجل من السيرفر — سيظهر مجددًا عند المزامنة: "+((e&&e.message)||e),true); } }
-  toast("تم الحذف"); go(d.page);
+  if(window.__hrCatDelBusy){ toast("جاري تنفيذ حذف آخر — انتظر لحظة",true); return; }
+  window.__hrCatDelBusy=true;
+  try{
+    /* السيرفر الأول: مكتبة supabase-js بترجّع {error} ومش بترمي استثناء، فالـ try/catch وحده كان بيعدّي الفشل ويقول «تم الحذف».
+       ما بنمسحش من الجهاز غير بعد تأكيد السيرفر. */
+    if(r.serverId){
+      try{
+        const dr=await sb.from("hr_catalogs").delete().eq("id",r.serverId).select();
+        if(dr.error) throw new Error(dr.error.message);
+        if(!(dr.data||[]).length){
+          /* ما رجعش صفوف: يا إما اتحذف قبل كده يا إما RLS منعت من غير error — نتأكد بقراءة الصف */
+          const chk=await sb.from("hr_catalogs").select("id").eq("id",r.serverId).limit(1);
+          if(chk.error) throw new Error(chk.error.message);
+          if((chk.data||[]).length) throw new Error("السيرفر رفض الحذف (غالبًا سياسة الأمان RLS تمنع الحذف)");
+        }
+      }catch(e){ toast("لم يتم الحذف — تعذّر الحذف من السيرفر: "+((e&&e.message)||e),true); return; }
+    }
+    state[d.key]=(state[d.key]||[]).filter(x=>x.id!==id); hrPendDrop(d.key,id); saveState();
+    toast("تم الحذف"); go(d.page);
+  }finally{ window.__hrCatDelBusy=false; }
 }
 function hrEmp(id){ return (state.hrEmployees||[]).find(e=>e.id===id); }
+/* كود الموظف التالي: بنكمّل على نمط الأكواد الموجودة (البادئة الأكثر استخدامًا + أكبر رقم + 1، بنفس عدد الخانات)، وبنتخطى أي كود مستخدم.
+   القديم كان «EMP-» + (عدد الموظفين + 1) فكان بيتكرر بعد أي حذف أو لو موظفين اتضافوا بالتوازي. */
+function hrNextEmpCode(){
+  const list=(state.hrEmployees||[]), taken=new Set(list.map(e=>String(e.code||"").trim().toUpperCase())), groups={};
+  list.forEach(e=>{ const m=/^(.*?)(\d+)$/.exec(String(e.code||"").trim()); if(!m) return; const g=groups[m[1]]=groups[m[1]]||{n:0,max:0,len:0}; g.n++; if(+m[2]>=g.max){ g.max=+m[2]; g.len=m[2].length; } });
+  let pre="EMP-", best=null; Object.keys(groups).forEach(k=>{ if(!best||groups[k].n>best.n){ best=groups[k]; pre=k; } });
+  let n=(best?best.max:0)+1; const len=best?best.len:0, mk=x=>pre+String(x).padStart(len,"0");
+  while(taken.has(mk(n).toUpperCase())) n++;
+  return mk(n);
+}
+/* فحص الرقم القومي المصري: 14 رقم، قرن (2/3)، تاريخ ميلاد صحيح مش في المستقبل، كود محافظة صحيح. بيرجّع تاريخ الميلاد والنوع المستخرجين */
+const HR_GOV_CODES=new Set(["01","02","03","04","11","12","13","14","15","16","17","18","19","21","22","23","24","25","26","27","28","29","31","32","33","34","35","88"]);
+function hrDigits(v){ return String(v==null?"":v).trim().replace(/[٠-٩]/g,d=>"٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/[۰-۹]/g,d=>"۰۱۲۳۴۵۶۷۸۹".indexOf(d)); }
+function hrNatIdCheck(v){
+  const s=hrDigits(v);
+  if(!/^\d{14}$/.test(s)) return {ok:false,msg:"الرقم القومي لازم يكون 14 رقمًا (أرقام فقط)"};
+  if(s[0]!=="2"&&s[0]!=="3") return {ok:false,msg:"الرقم القومي غير صحيح — أول رقم لازم يكون 2 أو 3"};
+  const y=(s[0]==="2"?1900:2000)+(+s.slice(1,3)), m=+s.slice(3,5), d=+s.slice(5,7), dt=new Date(Date.UTC(y,m-1,d));
+  if(dt.getUTCFullYear()!==y||dt.getUTCMonth()!==m-1||dt.getUTCDate()!==d) return {ok:false,msg:"تاريخ الميلاد المضمّن في الرقم القومي غير صحيح"};
+  if(dt.getTime()>Date.now()) return {ok:false,msg:"تاريخ الميلاد المضمّن في الرقم القومي في المستقبل"};
+  if(!HR_GOV_CODES.has(s.slice(7,9))) return {ok:false,msg:"كود المحافظة المضمّن في الرقم القومي غير صحيح"};
+  const p2=x=>String(x).padStart(2,"0");
+  return {ok:true,digits:s,birth:y+"-"+p2(m)+"-"+p2(d),male:(+s[12])%2===1};
+}
 function hrEmpName(id){ const e=hrEmp(id); return e?e.name:"—"; }
 const HR_LOCAL_NOTE=`<div class="chip warn" style="display:block;margin-bottom:8px">⚠ بيانات محلية على هذا الجهاز — غير متزامنة مع السيرفر حتى تشغيل ملف SQL المرحلي المحتجز في Supabase</div>`;
-function hrLocalNote(){ return (hrSynced&&!hrSyncErr)?"":HR_LOCAL_NOTE; }
+function hrLocalNote(){
+  const n=hrPendCount("hr");
+  const _wipe=n?` <button type="button" class="btn ghost sm" onclick="hrPendWipe()">مسح المعلّق من هذا الجهاز</button>`:"";
+  if(hrSynced&&!hrSyncErr) return n?`<div class="chip warn" style="display:block;margin-bottom:8px">⚠ ${n} سجل غير مرفوع محفوظ على هذا الجهاز (من جلسة أو مستخدم آخر) وفيه بيانات حساسة${_wipe}</div>`:"";
+  return `<div class="chip warn" style="display:block;margin-bottom:8px">⚠ غير متزامن مع السيرفر${n?" — "+n+" سجل محفوظ مؤقتًا على هذا الجهاز وسيُرفع تلقائيًا عند نجاح الاتصال":" — ما فيش سجلات معلّقة على هذا الجهاز"}. لا تمسح بيانات المتصفح قبل المزامنة، وراجع تثبيت ملف SQL وصلاحيات الجداول في Supabase${_wipe}</div>`;
+}
 function conLocalNote(){ return (conSynced&&!conSyncErr)?"":`<div class="chip warn" style="display:block;margin-bottom:8px">⚠ بيانات محلية على هذا الجهاز — غير متزامنة مع السيرفر ولا تظهر للمستخدمين الآخرين حتى تشغيل ملف SQL المرحلي المحتجز في Supabase</div>`; }
 function viewHrEmployees(){
   return `<h2>بيانات الموظفين</h2>${hrLocalNote()}
@@ -46356,7 +46563,7 @@ function hrEmpPhoto(inp){
 function hrEmpPhotoClear(){ const h=document.getElementById("hePhoto"); if(h) h.value=""; const box=document.getElementById("hePhotoBox"); if(box) box.innerHTML='<span style="font-size:11px;color:var(--text-dim);padding:6px;text-align:center">اضغط لإضافة صورة</span>'; }
 function hrEmpCatCode(selId,codeId,key){ const el=document.querySelector(selId); const c=(state[key]||[]).find(x=>x.id===(el?el.value:"")); const t=document.querySelector(codeId); if(t) t.value=c?(c.no||""):""; }
 function hrEmpForm(id){
-  const e=id?hrEmp(id):{id:"emp"+Date.now(),code:"EMP-"+((state.hrEmployees||[]).length+1),hireDate:today()};
+  const e=id?hrEmp(id):{id:"emp"+Date.now(),code:hrNextEmpCode(),hireDate:today()};
   window._hrEmpDocs=((e.docs)||[]).map(d=>Object.assign({docId:"",docNo:"",docName:"",num:"",issuePlace:"",issueDateG:"",issueDateH:"",expiryDateG:"",expiryDateH:""},d));
   const _empOpts=cur=>`<option value="">— اختر —</option>`+(state.hrEmployees||[]).filter(x=>x.id!==id).map(x=>`<option value="${escapeAttr(x.id)}" ${x.id===cur?"selected":""}>${escapeHtml(x.name||"")}</option>`).join("");
   let _coCode=""; try{ _coCode=String(CUR_CO||""); }catch(_){ }
@@ -46376,7 +46583,7 @@ function hrEmpForm(id){
   <div class="heHead">
     <div class="heHeadFields">
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
-        <label class="fld"><span>رقم الموظف</span><input class="inp" id="heCode" value="${escapeHtml(e.code||"")}"></label>
+        <label class="fld"><span>رقم الموظف</span><input class="inp" id="heCode" value="${escapeHtml(e.code||"")}" oninput="this.dataset.touched=1"></label>
         <label class="fld" style="display:flex;align-items:center;gap:6px;flex-direction:row"><input type="checkbox" id="heStopOt" ${e.stopOvertime?"checked":""}><span>إيقاف احتساب الوقت الإضافي</span></label>
       </div>
       <div class="heRowLbl">الاسم تفصيلي عربي</div>
@@ -46423,6 +46630,7 @@ function hrEmpForm(id){
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px">
     <label class="fld"><span>تاريخ التعيين</span><input class="inp" id="heHire" type="date" value="${e.hireDate||today()}"></label>
+    <label class="fld"><span>تاريخ ترك الخدمة (إن وُجد)</span><input class="inp" id="heTerm" type="date" value="${e.termDate||""}"></label>
     <label class="fld"><span>الرقم القومي</span><input class="inp" id="heNat" value="${escapeHtml(e.nationalId||"")}"></label>
     <label class="fld"><span>فترة العمل</span><select class="inp" id="heWorkPeriod"><option value="">— اختر —</option>${(state.hrPayPeriods||[]).map(p=>`<option value="${escapeAttr(p.id)}" ${e.workPeriodId===p.id?"selected":""}>${escapeHtml(String(p.no||"")+" / "+String(p.year||"")+(p.status==="closed"?" (مقفولة)":""))}</option>`).join("")}</select></label>
   </div></div>
@@ -46473,6 +46681,7 @@ function hrEmpForm(id){
   </div></div>
   <div id="heTabRel" style="display:none"><div class="card" style="padding:16px;color:var(--text-dim)">محتوى تابة «المرافقين» غير ظاهر في الصور المرسلة — سيُضاف بعد تأكيد المستخدم للحقول المطلوبة فيه.</div></div>
   <div id="heTabContract" style="display:none"><div class="card" style="padding:16px;color:var(--text-dim)">محتوى تابة «بيانات العقد» غير ظاهر في الصور المرسلة — سيُضاف بعد تأكيد المستخدم للحقول المطلوبة فيه.</div></div>`,()=>{ return hrSaveEmp(e.id)?undefined:false; });
+  if(!id){ const _c0=e.code; setTimeout(()=>{ try{ hrEmpCodeFromServer(_c0); }catch(_){ } },0); }
   const _m=document.querySelector("#modalBackdrop .modal"); if(_m){ _m.style.maxWidth="min(1050px,96vw)"; _m.style.width="96vw"; }
   hrEmpTab("base"); hrEmpDocsRender();
 }
@@ -46515,7 +46724,7 @@ function hrSaveEmp(id){
     company:v("#heCompany"),
     nationalId:v("#heNat"),insNo:v("#heInsNo"),
     insSalary:+v("#heInsSal")||0,phone:v("#hePhone"),mobile:v("#heMobile"),
-    hireDate:v("#heHire"),
+    hireDate:v("#heHire"),termDate:v("#heTerm"),
     qualPlace:v("#heQualPlace"),gradYear:v("#heGradYear"),gender:v("#heGender"),empAccNo:v("#heEmpAcc"),
     birthDate:v("#heBirthDate"),birthDateH:v("#heBirthDateH"),birthYear:v("#heBirthYear"),birthPlace:v("#heBirthPlace"),maritalStatus:v("#heMarital"),
     children:v("#heChildren"),presence:v("#hePresence"),workSite:v("#heWorkSite"),idType:v("#heIdType"),disabled:v("#heDisabled"),advPct:v("#heAdvPct"),
@@ -46540,7 +46749,29 @@ function hrSaveEmp(id){
   d.docs=docs.map(x=>({docId:x.docId,docNo:x.docNo||"",docName:x.docName||"",num:x.num||"",issuePlace:x.issuePlace||"",issueDateG:x.issueDateG||"",issueDateH:x.issueDateH||"",expiryDateG:x.expiryDateG||"",expiryDateH:x.expiryDateH||""}));
   if(!d.name){ toast("اسم الموظف مطلوب",true); return false; }
   if(!d.code){ toast("رقم الموظف مطلوب",true); return false; }
+  /* تكرار الكود / الرقم القومي / رقم التأمينات: بنفحص بس لو الحقل جديد أو اتغيّر، عشان بيانات قديمة فيها تكرار ما تمنعش تعديل باقي بيانات الموظف */
+  { const _prev=(state.hrEmployees||[]).find(x=>x.id===id)||null;
+    const _chg=f=>!_prev||String(_prev[f]||"").trim()!==String(d[f]||"").trim();
+    const _u=x=>String(x||"").trim().toUpperCase();
+    const _others=(state.hrEmployees||[]).filter(x=>x.id!==id);
+    if(_chg("code")&&_others.some(x=>_u(x.code)===_u(d.code))){ toast("رقم الموظف «"+d.code+"» مستخدم لموظف آخر — الرقم التالي المتاح: "+hrNextEmpCode(),true); return false; }
+    if(d.nationalId){
+      const _natTxt=d.natName||(_prev&&(_prev.natName||_prev.nationality))||"";
+      const _egy=!_natTxt||/مصر/.test(_natTxt);
+      const _touch=_chg("nationalId")||_chg("birthDate")||_chg("gender");
+      if(_egy&&_touch){
+        const c=hrNatIdCheck(d.nationalId);
+        if(!c.ok){ toast(c.msg+(_natTxt?"":" (لو الموظف غير مصري اختر جنسيته أولًا)"),true); return false; }
+        d.nationalId=c.digits;
+        if(d.birthDate&&d.birthDate!==c.birth){ toast("تاريخ الميلاد ("+d.birthDate+") لا يطابق الرقم القومي ("+c.birth+")",true); return false; }
+        if(d.gender&&((d.gender==="ذكر")!==c.male)){ toast("النوع لا يطابق الرقم القومي (الرقم الثالث عشر ده "+(c.male?"ذكر":"أنثى")+")",true); return false; }
+      }
+      if(_chg("nationalId")&&_others.some(x=>hrDigits(x.nationalId)&&hrDigits(x.nationalId)===hrDigits(d.nationalId))){ toast("الرقم القومي ده مسجّل لموظف آخر",true); return false; }
+    }
+    if(d.insNo&&_chg("insNo")&&_others.some(x=>_u(x.insNo)&&_u(x.insNo)===_u(d.insNo))){ toast("رقم التأمين الاجتماعي ده مسجّل لموظف آخر",true); return false; }
+  }
   if(!d.hireDate||isNaN(new Date(d.hireDate).getTime())){ toast("تاريخ التعيين غير صحيح",true); return false; }
+  if(d.termDate&&(isNaN(new Date(d.termDate).getTime())||d.termDate<d.hireDate)){ toast("تاريخ ترك الخدمة غير صحيح أو قبل تاريخ التعيين",true); return false; }
   if(!(d.insSalary>=0)){ toast("أجر التأمينات لا يكون سالبًا",true); return false; }
   const i=(state.hrEmployees||[]).findIndex(x=>x.id===id);
   let rec;
@@ -46627,9 +46858,9 @@ function viewHrAdvances(){
   return `<h2>سلف الموظفين</h2>${hrLocalNote()}
   <div class="toolbar no-print"><button class="btn primary" onclick="hrAdvRequestForm()" ${state.hrEmployees.length?"":"disabled"}>+ طلب سلفة</button> <button class="btn ghost" onclick="hrAdvForm()" ${state.hrEmployees.length?"":"disabled"} title="تسجيل سلفة مباشرة بالطريقة القديمة (بدون دورة طلب واعتماد)">+ سلفة مباشرة (قديم)</button></div>
   <div class="card"><table><thead><tr><th>الموظف</th><th>التاريخ</th><th>المبلغ</th><th>المصدر</th><th>رقم السلفة</th><th>حساب السلفة</th><th>البيان</th><th>القيد</th><th></th></tr></thead><tbody>
-  ${(state.hrAdvances||[]).map(a=>`<tr><td>${escapeHtml(hrEmpName(a.empId))}</td><td>${a.date}</td><td>${fmt(a.amount)}</td><td>${a.source==="bank"?"بنك":a.source==="custody"?"عهدة":"خزينة"}: ${escapeHtml(a.sourceName||"")}</td><td>${escapeHtml(a.advTypeNo?(a.advTypeNo+" — "+(a.advTypeName||"")):"—")}</td><td>${escapeHtml(a.accountName||"")}</td><td>${escapeHtml(a.note||"")}</td>
+  ${(state.hrAdvances||[]).map(a=>`<tr><td>${escapeHtml(hrEmpName(a.empId))}</td><td>${a.date}</td><td>${fmt(a.amount)}</td><td>${a.source==="bank"?"بنك":a.source==="custody"?"عهدة":"خزينة"}: ${escapeHtml(a.sourceName||"")}</td><td>${escapeHtml(a.advTypeNo?(a.advTypeNo+" — "+(a.advTypeName||"")):"—")}</td><td>${escapeHtml(a.accountName||"")}</td><td>${escapeHtml(a.note||"")}${hrAdvSchedInfo(a)}</td>
   <td>${a.status==="requested"?'<span class="chip warn">طلب بانتظار الاعتماد</span>':a.status==="approved"?'<span class="chip ok">معتمدة، بانتظار الصرف</span>':a.status==="rejected"?'<span class="chip" style="background:#fde8e6;color:#c4382b">مرفوضة</span>':a.status==="disbursed"?`<span class="chip ok">مصروفة — قيد ${escapeHtml(String(a.postedEntryNo||""))}</span>`:a.postedEntryNo?`<span class="chip ok">قيد ${escapeHtml(String(a.postedEntryNo))}</span>`:'<span class="chip warn">غير مُرحّل</span>'}</td>
-  <td class="no-print">${a.status==="requested"?`<button class="btn sm primary" onclick="hrAdvDecide('${a.id}','approved')">اعتماد</button> <button class="btn ghost sm" onclick="hrAdvDecide('${a.id}','rejected')">رفض</button>`:a.status?"":a.postedEntryNo?"":`<button class="btn sm primary" onclick="hrAdvPostOpen('${a.id}')">ترحيل القيد</button>`}</td></tr>`).join("")||'<tr><td colspan="9">لا توجد سلف بعد</td></tr>'}
+  <td class="no-print">${a.status==="requested"?`<button class="btn sm primary" onclick="hrAdvDecide('${a.id}','approved')">اعتماد</button> <button class="btn ghost sm" onclick="hrAdvDecide('${a.id}','rejected')">رفض</button>`:a.status?"":a.postedEntryNo?"":`<button class="btn sm primary" onclick="hrAdvPostOpen('${a.id}')">ترحيل القيد</button>`}${hrAdvSchedBtn(a)}</td></tr>`).join("")||'<tr><td colspan="9">لا توجد سلف بعد</td></tr>'}
   </tbody></table></div>`;
 }
 /* دورة السلفة: طلب سلفة ← اعتماد الطلب. مفيش قيد ولا صرف تلقائي؛ الصرف الفعلي من الخزنة/العهدة وربطه بشاشة الصرف النقدي مؤجَّل بقرار المستخدم.
@@ -46863,6 +47094,12 @@ async function hrAdvPostDo(){
 /* ---- تشغيل الرواتب الشهرية (احتساب مبدئي من بنود الراتب الثابتة + المكافآت/الجزاءات المعتمدة) ---- */
 if(!state.hrPayrollRuns) state.hrPayrollRuns=[];
 if(!state.hrPayPeriods) state.hrPayPeriods=[];
+hrPendMerge();   /* استرجاع السجلات المعلّقة من الجلسة السابقة (لو فيه) */
+/* بعد resetAll/importData (اللي بيستبدلوا state كله): نرجّع مصفوفات HR الفاضية (عشان state.hrEmployees.length وغيرها ما تكسرش)، ونفرض مزامنة جديدة من السيرفر بدل ما الشاشة تعرض فاضي وتعتبره «متزامن» */
+function hrAfterStateReplace(){
+  Object.keys(IG_SYNC_TABLES).concat(HR_CATALOGS.map(d=>d.key)).forEach(k=>{ if(!Array.isArray(state[k])) state[k]=[]; });
+  hrSynced=false; conSynced=false; hrSyncErr=""; conSyncErr=""; hrPendMerge();
+}
 let hrPayMonth=today().slice(0,7);
 let hrPayPeriodSel="";
 function hrPaySelPeriod(){ return (state.hrPayPeriods||[]).find(p=>p.id===hrPayPeriodSel)||null; }
@@ -46872,7 +47109,7 @@ function viewHrPayPeriods(){
   <div class="toolbar no-print"><button class="btn primary" onclick="hrPayPeriodForm()">+ فترة جديدة</button></div>
   <div class="card" style="overflow:auto"><table><thead><tr><th>رقم الفترة</th><th>السنة</th><th>من تاريخ</th><th>إلى تاريخ</th><th>الحالة</th><th></th></tr></thead><tbody>
   ${list.map(p=>`<tr><td>${escapeHtml(String(p.no||""))}</td><td>${escapeHtml(String(p.year||""))}</td><td>${escapeHtml(p.startDate||"")}</td><td>${escapeHtml(p.endDate||"")}</td><td>${p.status==="closed"?'<span class="chip bad">مقفولة</span>':'<span class="chip ok">مفتوحة</span>'}</td>
-  <td class="no-print" style="white-space:nowrap"><button class="btn ghost sm" onclick="hrPayPeriodToggle('${escapeAttr(p.id)}')">${p.status==="closed"?"فتح":"إقفال"}</button> <button class="btn ghost sm" onclick="hrPayPeriodForm('${escapeAttr(p.id)}')">نسخ لسنة جديدة</button></td></tr>`).join("")||'<tr><td colspan="6">لا توجد فترات — اضغط «فترة جديدة»</td></tr>'}
+  <td class="no-print" style="white-space:nowrap"><button class="btn ghost sm" onclick="hrPayPeriodToggle('${escapeAttr(p.id)}')">${p.status==="closed"?"فتح":"إقفال"}</button> <button class="btn ghost sm" onclick="hrPayPeriodAudit('${escapeAttr(p.id)}')">السجل</button> <button class="btn ghost sm" onclick="hrPayPeriodForm('${escapeAttr(p.id)}')">نسخ لسنة جديدة</button></td></tr>`).join("")||'<tr><td colspan="6">لا توجد فترات — اضغط «فترة جديدة»</td></tr>'}
   </tbody></table></div>`;
 }
 function hrPayPeriodForm(srcId){
@@ -46900,74 +47137,522 @@ function hrPayPeriodForm(srcId){
     state.hrPayPeriods.push(rec); saveState(); igSyncPushBg("hrPayPeriods",rec); toast("تم حفظ الفترة"); go("hrPayPeriods"); return true;
   });
 }
-function hrPayPeriodToggle(id){
-  if(!can("hrPayPeriods","close")){ toast("لا تملك صلاحية الإقفال/الفتح",true); return; }
-  const p=(state.hrPayPeriods||[]).find(x=>x.id===id); if(!p) return;
-  p.status=p.status==="closed"?"open":"closed"; saveState(); igSyncPushBg("hrPayPeriods",p);
-  toast(p.status==="closed"?"تم إقفال الفترة":"تم فتح الفترة"); go("hrPayPeriods");
+/* ============ محرّك الرواتب v2 ============
+   الاحتساب: استحقاقات ثابتة (بتناسب أيام الخدمة) + بنود متغيّرة شهريًا (مدخلات) + إضافي + مكافآت
+             − تأمينات (حصة الموظف) − ضريبة كسب العمل (شرائح سنوية مُجزَّأة) − أقساط سلف − غياب − جزاءات − استقطاعات.
+   كل مبلغ بيتقرّب لقرشين (0.01) قبل ما يتجمّع، فالمجاميع والقيد المحاسبي بيطلعوا متطابقين بالقرش.
+   دورة التشغيل: مسودة ← معتمد (متجمّد) ← مرحّل بقيد. أي فتح/إلغاء اعتماد بيحتاج سبب وبيتسجّل في سجل المراجعة (وعلى السيرفر بترجر). */
+const HR_PAYCFG_DEF={
+  daysBasis:30, hoursPerDay:8, prorate:true,
+  otBasisName:"أساسي", otDay:1.25, otNight:1.5, otRest:2, absMult:1,
+  insOn:true, insEmpPct:11, insCoPct:18.75, insMin:2700, insMax:16700,
+  taxOn:true, taxExempt:20000,
+  taxBr:[[40000,0],[55000,10],[70000,15],[200000,20],[400000,22.5],[1200000,25],[0,27.5]],
+  acc:{expense:"",insExpense:"",insPayable:"",taxPayable:"",netPayable:"",otherDed:"",advance:""}
+};
+function hrPayCfgRec(){ return (state.hrPayCfg||[]).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]||null; }
+function hrPayCfg(){
+  const r=hrPayCfgRec(), c=Object.assign({},HR_PAYCFG_DEF,(r&&r.cfg)||{});
+  c.acc=Object.assign({},HR_PAYCFG_DEF.acc,(r&&r.cfg&&r.cfg.acc)||{});
+  if(!Array.isArray(c.taxBr)||!c.taxBr.length) c.taxBr=HR_PAYCFG_DEF.taxBr;
+  return c;
 }
+function hrR2(x){ return Math.round(((+x||0)+Number.EPSILON)*100)/100; }
+function hrDayN(s){ const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||"")); return m?Date.UTC(+m[1],+m[2]-1,+m[3])/864e5:NaN; }
+function hrDaysBetween(a,b){ const x=hrDayN(a), y=hrDayN(b); return (isNaN(x)||isNaN(y)||y<x)?0:(y-x+1); }
+function hrPayRange(month,period){
+  if(period&&period.startDate&&period.endDate) return {start:period.startDate,end:period.endDate};
+  const m=/^(\d{4})-(\d{2})$/.exec(month||""); if(!m) return {start:"",end:""};
+  const last=new Date(+m[1],+m[2],0).getDate();
+  return {start:month+"-01",end:month+"-"+String(last).padStart(2,"0")};
+}
+function hrAnnualTax(t,br){
+  let tax=0, prev=0;
+  for(const b of br){ const cap=b[0]>0?b[0]:Infinity; if(t>prev) tax+=(Math.min(t,cap)-prev)*b[1]/100; prev=cap; if(t<=cap) break; }
+  return tax;
+}
+/* مدخلات الشهر (بنود متغيّرة / إضافي / غياب): سجلات في hr_moves بـ page="hrPayInput" */
+function hrPayInputsFor(empId,range){
+  return (state.hrMoves||[]).filter(m=>m&&m.page==="hrPayInput"&&m.empId===empId&&m.status==="approved"&&String(m.date||"")>=range.start&&String(m.date||"")<=range.end);
+}
+/* السلف: بتتخصم بس لو اتصرفت فعلًا (مش بمجرد الاعتماد) */
+function hrAdvBase(a){ if(+a.disbursedTotal>0) return +a.disbursedTotal; if(a.status==="disbursed"||a.postedEntryNo) return +a.amount||0; return 0; }
 function hrPayCompute(month,period){
-  return (state.hrEmployees||[]).filter(e=>!period||e.workPeriodId===period.id).map(e=>{
-    const items=e.salaryItems||[];
-    const fixEarn=items.filter(i=>i.kind!=="ded"&&i.fixed).reduce((t,i)=>t+(+i.value||0),0);
-    const fixDed=items.filter(i=>i.kind==="ded"&&i.fixed).reduce((t,i)=>t+(+i.value||0),0);
-    const moves=(state.hrMoves||[]).filter(m=>{ if(m.empId!==e.id||m.status!=="approved") return false;
-      const d=String(m.date||"");
-      if(period) return (!period.startDate||d>=period.startDate)&&(!period.endDate||d<=period.endDate);
-      return d.slice(0,7)===month; });
-    const rewards=moves.filter(m=>m.page==="hrRewards").reduce((t,m)=>t+(+m.amount||0),0);
-    const pens=moves.filter(m=>m.page==="hrPenalties").reduce((t,m)=>t+(+m.amount||0),0);
-    const gross=fixEarn+rewards, ded=fixDed+pens;
-    return {empId:e.id,name:e.name,fixEarn,rewards,gross,fixDed,pens,ded,net:gross-ded};
+  const cfg=hrPayCfg(), range=hrPayRange(month,period), pDays=hrDaysBetween(range.start,range.end)||cfg.daysBasis;
+  const out=[]; out.excluded=[];
+  (state.hrEmployees||[]).filter(e=>!period||e.workPeriodId===period.id).forEach(e=>{
+    const warns=[], items=e.salaryItems||[];
+    const hs=(e.hireDate&&e.hireDate>range.start)?e.hireDate:range.start;
+    const he=(e.termDate&&e.termDate<range.end)?e.termDate:range.end;
+    const worked=hrDaysBetween(hs,he);
+    if(worked<=0){ out.excluded.push(e.name||""); return; }
+    const factor=cfg.prorate?Math.min(1,worked/pDays):1;
+    if(factor<1) warns.push("شهر جزئي: "+worked+" من "+pDays+" يوم");
+    const earnFull=items.filter(i=>i.kind!=="ded"&&i.fixed).reduce((t,i)=>t+(+i.value||0),0);
+    const fixEarn=hrR2(earnFull*factor);
+    const fixDed=hrR2(items.filter(i=>i.kind==="ded"&&i.fixed).reduce((t,i)=>t+(+i.value||0),0));
+    const inp=hrPayInputsFor(e.id,range);
+    let varEarn=0, varDed=0;
+    items.filter(i=>!i.fixed).forEach(it=>{
+      const hit=inp.filter(m=>m.kind==="var"&&m.itemName===it.name);
+      if(!hit.length){ warns.push("بند متغيّر «"+(it.name||"")+"» لم تُدخل له قيمة"); return; }
+      const v=hit.reduce((t,m)=>t+(+m.amount||0),0);
+      if(it.kind==="ded") varDed+=v; else varEarn+=v;
+    });
+    varEarn=hrR2(varEarn); varDed=hrR2(varDed);
+    let ot=0; const otIn=inp.filter(m=>m.kind==="ot");
+    if(otIn.length){
+      if(e.stopOvertime) warns.push("الوقت الإضافي موقوف للموظف — اتجاهلت مدخلات الإضافي");
+      else{
+        const bi=items.filter(i=>i.kind!=="ded"&&i.fixed&&i.name===cfg.otBasisName).reduce((t,i)=>t+(+i.value||0),0);
+        const basis=bi>0?bi:earnFull; if(!(bi>0)) warns.push("لا يوجد بند «"+cfg.otBasisName+"» — الإضافي اتحسب على إجمالي الاستحقاقات الثابتة");
+        const hr=basis/(cfg.daysBasis*cfg.hoursPerDay);
+        otIn.forEach(m=>{ const mu=m.otType==="night"?cfg.otNight:(m.otType==="rest"?cfg.otRest:cfg.otDay); ot+=(+m.qty||0)*hr*mu; });
+      }
+    }
+    ot=hrR2(ot);
+    const absDays=inp.filter(m=>m.kind==="abs").reduce((t,m)=>t+(+m.qty||0),0);
+    if(absDays>worked) warns.push("أيام الغياب ("+absDays+") أكبر من أيام الخدمة ("+worked+")");
+    const absDed=hrR2(absDays*(earnFull/cfg.daysBasis)*cfg.absMult);
+    const mv=(state.hrMoves||[]).filter(m=>m&&m.empId===e.id&&m.status==="approved"&&String(m.date||"")>=range.start&&String(m.date||"")<=range.end);
+    const rewards=hrR2(mv.filter(m=>m.page==="hrRewards").reduce((t,m)=>t+(+m.amount||0),0));
+    const pens=hrR2(mv.filter(m=>m.page==="hrPenalties").reduce((t,m)=>t+(+m.amount||0),0));
+    const gross=hrR2(fixEarn+varEarn+ot+rewards);
+    let insEmp=0, insCo=0;
+    if(cfg.insOn&&(+e.insSalary>0)){
+      let b=+e.insSalary;
+      if(cfg.insMin>0&&b<cfg.insMin){ warns.push("أجر التأمينات أقل من الحد الأدنى — احتُسب على "+cfg.insMin); b=cfg.insMin; }
+      if(cfg.insMax>0&&b>cfg.insMax) b=cfg.insMax;
+      insEmp=hrR2(b*cfg.insEmpPct/100); insCo=hrR2(b*cfg.insCoPct/100);
+    }else if(cfg.insOn&&e.insNo) warns.push("له رقم تأمينات لكن أجر التأمينات صفر — ما اتحسبتش تأمينات");
+    if(insEmp>0&&items.some(i=>i.kind==="ded"&&/تأمين/.test(i.name||""))) warns.push("عنده بند استقطاع يدوي باسم تأمينات — قد يتكرر مع حساب التأمينات التلقائي");
+    let tax=0;
+    if(cfg.taxOn){
+      const base=Math.max(0,gross-absDed-insEmp), eq=factor>0?base/factor:0, annual=Math.max(0,eq*12-cfg.taxExempt);
+      if(annual>600000) warns.push("الدخل السنوي الخاضع فوق 600 ألف — إلغاء الشرائح الأدنى غير مُطبَّق، راجع المحاسب");
+      tax=hrR2(hrAnnualTax(annual,cfg.taxBr)/12*factor);
+    }
+    let adv=0; const insts=[];
+    (state.hrAdvances||[]).filter(a=>a&&a.empId===e.id&&Array.isArray(a.installments)&&a.installments.length).forEach(a=>{
+      const base=hrAdvBase(a); if(!(base>0)) return;
+      let room=hrR2(base-a.installments.filter(i=>i.deductedRun).reduce((t,i)=>t+(+i.amount||0),0));
+      a.installments.filter(i=>!i.deductedRun&&String(i.month)<=month).sort((x,y)=>String(x.month).localeCompare(String(y.month))||(x.no-y.no)).forEach(i=>{
+        const amt=hrR2(i.amount);
+        if(amt>room){ warns.push("قسط سلفة "+i.month+" ("+fmt(amt)+") أكبر من المتبقي المصروف — اتأجّل"); return; }
+        room=hrR2(room-amt); adv=hrR2(adv+amt); insts.push({advId:a.id,no:i.no,month:i.month,amount:amt});
+        if(String(i.month)<month) warns.push("قسط سلفة متأخر من "+i.month);
+      });
+    });
+    const ded=hrR2(insEmp+tax+adv+absDed+pens+fixDed+varDed), net=hrR2(gross-ded);
+    if(net<0) warns.push("صافي سالب — لازم تعالجه قبل الاعتماد");
+    out.push({empId:e.id,name:e.name,days:worked,pdays:pDays,fixEarn,varEarn,ot,rewards,gross,insEmp,insCo,tax,adv,absDays,absDed,pens,fixDed,varDed,ded,net,insts,warns});
   });
+  return out;
 }
+function hrPayTotals(rows){
+  const t={gross:0,ded:0,net:0,fixEarn:0,varEarn:0,ot:0,rewards:0,insEmp:0,insCo:0,tax:0,adv:0,absDed:0,pens:0,fixDed:0,varDed:0};
+  (rows||[]).forEach(r=>{ Object.keys(t).forEach(k=>{ t[k]=hrR2(t[k]+(+r[k]||0)); }); });
+  return t;
+}
+function hrPayHash(rows){
+  const s=JSON.stringify((rows||[]).map(r=>[r.empId,r.days,r.gross,r.ded,r.net,r.insEmp,r.tax,r.adv,r.absDed,(r.insts||[]).map(i=>i.advId+":"+i.no+":"+i.amount)]));
+  let h=5381; for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0;
+  return String(h>>>0)+"-"+(rows||[]).length;
+}
+function hrPayRunFor(per,month){
+  const r=per?(state.hrPayrollRuns||[]).find(x=>x.periodId===per.id):(state.hrPayrollRuns||[]).find(x=>x.month===month&&!x.periodId);
+  /* مسودات النسخة القديمة (من غير status): لو فترتها مقفولة فهي الكشف الرسمي القديم فنعرضها متجمّدة، غير كده تعتبر مسودة وتحتاج إعادة حفظ */
+  if(r&&!r.status) r.status=(per&&per.status==="closed")?"legacy":"draft";
+  return r;
+}
+function hrHist(rec,action,extra){
+  const u=(typeof curU==="function"&&curU())||{};
+  rec.history=(rec.history||[]).concat([Object.assign({at:new Date().toISOString(),by:u.no!=null?u.no:null,byName:u.name||"",action},extra||{})]).slice(-60);
+}
+const HR_PAY_STATUS={draft:"مسودة",approved:"معتمد",posted:"مرحّل بقيد",legacy:"قديم (قبل نظام الاعتماد)"};
+let hrPayBusy=false;
 function viewHrPayroll(){
-  const per=hrPaySelPeriod();
-  const closed=per&&per.status==="closed";
-  const run=per?(state.hrPayrollRuns||[]).find(r=>r.periodId===per.id):(state.hrPayrollRuns||[]).find(r=>r.month===hrPayMonth&&!r.periodId);
-  const rows=closed?(run?run.rows:[]):hrPayCompute(hrPayMonth,per);
-  const tot=rows.reduce((t,r)=>({gross:t.gross+r.gross,ded:t.ded+r.ded,net:t.net+r.net}),{gross:0,ded:0,net:0});
-  const emptyMsg=closed?'لا توجد مسودة محفوظة لهذه الفترة المقفولة':(per?'لا يوجد موظفون معيّنون لهذه الفترة — عيّنهم من ملف الموظف (فترة العمل)':'لا يوجد موظفون — أضفهم من شؤون الموظفين أولًا');
+  const per=hrPaySelPeriod(), closed=per&&per.status==="closed", cfg=hrPayCfg();
+  const run=hrPayRunFor(per,hrPayMonth), frozen=run&&(run.status==="approved"||run.status==="posted"||run.status==="legacy");
+  const live=hrPayCompute(hrPayMonth,per);
+  const rows=frozen?run.rows:live, tot=hrPayTotals(rows);
+  const stale=run&&run.status==="draft"&&run.hash!==hrPayHash(live);
+  const nWarn=rows.reduce((t,r)=>t+((r.warns||[]).length?1:0),0), nNeg=rows.filter(r=>(+r.net||0)<0).length;
+  const emptyMsg=per?'لا يوجد موظفون معيّنون لهذه الفترة — عيّنهم من ملف الموظف (فترة العمل)':'لا يوجد موظفون — أضفهم من شؤون الموظفين أولًا';
+  const stChip=run?(run.status==="legacy"?'<span class="chip warn">كشف قديم محفوظ قبل نظام الاعتماد (للعرض والطباعة فقط)</span>':run.status==="posted"?`<span class="chip ok">مرحّل — قيد ${escapeHtml(String(run.entryNo||""))}</span>`:run.status==="approved"?`<span class="chip ok">معتمد ومتجمّد — صافي ${fmt(run.totals.net)}</span>`:(stale?'<span class="chip bad">مسودة قديمة — تغيّرت المدخلات، أعد الحفظ</span>':`<span class="chip warn">مسودة محفوظة — صافي ${fmt(run.totals.net)}</span>`)):'<span class="chip warn">لم يُحفظ بعد (معاينة حيّة)</span>';
+  const c=(k,r)=>fmt(+r[k]||0);
   return `<h2>تشغيل الرواتب الشهرية</h2>${hrLocalNote()}
-  <div class="toolbar no-print">
+  <div class="toolbar no-print" style="flex-wrap:wrap">
     <label class="fld" style="min-width:170px"><span>الشهر</span><input class="inp" type="month" value="${hrPayMonth}" onchange="hrPayMonth=this.value;hrPayPeriodSel='';document.getElementById('content').innerHTML=viewHrPayroll()"></label>
     <label class="fld" style="min-width:170px"><span>فترة الرواتب</span><select class="inp" onchange="hrPayPeriodSel=this.value;if(this.value){const p=hrPaySelPeriod();if(p)hrPayMonth=String(p.startDate||'').slice(0,7);}document.getElementById('content').innerHTML=viewHrPayroll()"><option value="">— بدون فترة (كل الموظفين) —</option>${(state.hrPayPeriods||[]).map(p=>`<option value="${escapeAttr(p.id)}" ${per&&per.id===p.id?"selected":""}>${escapeHtml(String(p.no||"")+" / "+String(p.year||"")+(p.status==="closed"?" (مقفولة)":""))}</option>`).join("")}</select></label>
-    <button class="btn primary" onclick="hrPaySave()" ${rows.length&&!closed?"":"disabled"}>حفظ مسودة التشغيل</button>
-    <button class="btn ghost" onclick="hrPayPrint()" ${rows.length?"":"disabled"}>🖨 طباعة كشف</button>
-    ${closed?'<span class="chip bad">الفترة مقفولة — عرض المسودة المحفوظة فقط</span>':(run?`<span class="chip ok">محفوظ — صافي ${fmt(run.totals.net)}</span>`:'<span class="chip warn">لم يُحفظ بعد</span>')}
-    ${per&&!closed?`<span class="chip">موظفو الفترة: ${rows.length}</span>`:""}
+    <button class="btn ghost" onclick="hrPayInputsOpen()">📝 مدخلات الشهر</button>
+    <button class="btn primary" onclick="hrPaySave()" ${(!frozen&&!closed&&live.length)?"":"disabled"}>حفظ مسودة التشغيل</button>
+    <button class="btn primary" onclick="hrPayApprove()" ${(run&&run.status==="draft"&&!stale&&!nNeg)?"":"disabled"}>✔ اعتماد</button>
+    <button class="btn ghost" onclick="hrPayRevoke()" ${(run&&run.status==="approved")?"":"disabled"}>↩ إلغاء الاعتماد</button>
+    <button class="btn primary" onclick="hrPayPostOpen()" ${(run&&run.status==="approved")?"":"disabled"}>📒 ترحيل قيد</button>
+    <button class="btn ghost" onclick="hrPayPrint()" ${run?"":"disabled"} title="الطباعة من النسخة المحفوظة فقط">🖨 طباعة كشف</button>
+    <button class="btn ghost" onclick="hrPayAuditOpen()">🕘 سجل المراجعة</button>
+    <button class="btn ghost" onclick="hrPayCfgOpen()">⚙ إعدادات الاحتساب</button>
+    ${stChip}
+    ${per?`<span class="chip">موظفو الفترة: ${rows.length}</span>`:""}
+    ${nWarn?`<span class="chip warn">⚠ ${nWarn} موظف عليهم تنبيهات</span>`:""}
+    ${(live.excluded||[]).length&&!frozen?`<span class="chip" title="${escapeAttr(live.excluded.join("، "))}">خارج مدة الخدمة: ${live.excluded.length}</span>`:""}
   </div>
-  <div class="card"><table><thead><tr><th>الموظف</th><th>استحقاقات ثابتة</th><th>مكافآت معتمدة</th><th>إجمالي الاستحقاق</th><th>استقطاعات ثابتة</th><th>جزاءات معتمدة</th><th>إجمالي الاستقطاع</th><th>صافي المستحق</th></tr></thead><tbody>
-  ${rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${fmt(r.fixEarn)}</td><td>${fmt(r.rewards)}</td><td>${fmt(r.gross)}</td><td>${fmt(r.fixDed)}</td><td>${fmt(r.pens)}</td><td>${fmt(r.ded)}</td><td><strong>${fmt(r.net)}</strong></td></tr>`).join("")||`<tr><td colspan="8">${emptyMsg}</td></tr>`}
-  </tbody>${rows.length?`<tfoot><tr><td><strong>الإجمالي</strong></td><td></td><td></td><td><strong>${fmt(tot.gross)}</strong></td><td></td><td></td><td><strong>${fmt(tot.ded)}</strong></td><td><strong>${fmt(tot.net)}</strong></td></tr></tfoot>`:""}</table></div>
-  <div style="font-size:12px;color:var(--muted);margin-top:6px">الاحتساب مبدئي: البنود الثابتة شهريًا + المكافآت والجزاءات المعتمدة داخل الشهر. اختيار فترة يقيّد الكشف بالموظفين المعيّنين لها، وتُحتسب المكافآت والجزاءات بتاريخها داخل مدى الفترة فقط، ويمنع الحفظ بعد إقفالها. الترحيل المحاسبي للرواتب يُستكمل بعد تحديد حسابات الربط (قرار محاسبي للمستخدم).</div>`;
+  <div class="card" style="overflow:auto"><table><thead><tr><th>الموظف</th><th>أيام</th><th>استحقاق ثابت</th><th>متغيّر</th><th>إضافي</th><th>مكافآت</th><th>إجمالي</th><th>تأمينات</th><th>ضريبة</th><th>أقساط سلف</th><th>غياب</th><th>جزاءات</th><th>استقطاعات أخرى</th><th>إجمالي الاستقطاع</th><th>الصافي</th><th>تنبيهات</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr${(+r.net||0)<0?' style="background:#fde8e6"':""}><td>${escapeHtml(r.name)}</td><td>${r.days!=null?r.days+"/"+r.pdays:"—"}</td><td>${c("fixEarn",r)}</td><td>${c("varEarn",r)}</td><td>${c("ot",r)}</td><td>${c("rewards",r)}</td><td>${c("gross",r)}</td><td>${c("insEmp",r)}</td><td>${c("tax",r)}</td><td>${c("adv",r)}</td><td>${c("absDed",r)}</td><td>${c("pens",r)}</td><td>${fmt(hrR2((+r.fixDed||0)+(+r.varDed||0)))}</td><td>${c("ded",r)}</td><td><strong>${c("net",r)}</strong></td><td style="font-size:11px;min-width:160px">${(r.warns||[]).map(w=>"⚠ "+escapeHtml(w)).join("<br>")}</td></tr>`).join("")||`<tr><td colspan="16">${emptyMsg}</td></tr>`}
+  </tbody>${rows.length?`<tfoot><tr><td><strong>الإجمالي</strong></td><td></td><td>${fmt(tot.fixEarn)}</td><td>${fmt(tot.varEarn)}</td><td>${fmt(tot.ot)}</td><td>${fmt(tot.rewards)}</td><td><strong>${fmt(tot.gross)}</strong></td><td>${fmt(tot.insEmp)}</td><td>${fmt(tot.tax)}</td><td>${fmt(tot.adv)}</td><td>${fmt(tot.absDed)}</td><td>${fmt(tot.pens)}</td><td>${fmt(hrR2(tot.fixDed+tot.varDed))}</td><td><strong>${fmt(tot.ded)}</strong></td><td><strong>${fmt(tot.net)}</strong></td><td>حصة الشركة تأمينات: ${fmt(tot.insCo)}</td></tr></tfoot>`:""}</table></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">الاحتساب: استحقاقات ثابتة (بتناسب أيام الخدمة في شهر التعيين/ترك الخدمة) + مدخلات الشهر + مكافآت − تأمينات (${cfg.insEmpPct}% من أجر التأمينات بين ${cfg.insMin} و${cfg.insMax}) − ضريبة كسب العمل (شرائح سنوية، إعفاء شخصي ${fmt(cfg.taxExempt)}) − أقساط السلف المصروفة − غياب − جزاءات. كل المبالغ مقرّبة لقرشين. الكشف المعتمد متجمّد ولا يتغيّر بتغيّر البيانات بعده، والطباعة من النسخة المحفوظة فقط.</div>`;
+}
+function hrPayLockedByDate(date){
+  return (state.hrPayrollRuns||[]).some(r=>r&&(r.status==="approved"||r.status==="posted")&&r.rangeStart&&String(date)>=r.rangeStart&&String(date)<=r.rangeEnd);
 }
 function hrPaySave(){
   if(!can("hrPayroll","add")){ toast("لا تملك صلاحية حفظ التشغيل",true); return; }
   const per=hrPaySelPeriod();
   if(per&&per.status==="closed"){ toast("الفترة مقفولة — لا يمكن الحفظ أو التعديل",true); return; }
+  const old=hrPayRunFor(per,hrPayMonth);
+  if(old&&old.status!=="draft"){ toast("التشغيل "+HR_PAY_STATUS[old.status]+" ومتجمّد — ألغِ الاعتماد بسبب موثّق لو محتاج تعدّل",true); return; }
   const rows=hrPayCompute(hrPayMonth,per);
   if(!rows.length){ toast(per?"لا يوجد موظفون معيّنون لهذه الفترة":"لا يوجد موظفون",true); return; }
-  const totals=rows.reduce((t,r)=>({gross:t.gross+r.gross,ded:t.ded+r.ded,net:t.net+r.net}),{gross:0,ded:0,net:0});
-  const i=per?(state.hrPayrollRuns||[]).findIndex(r=>r.periodId===per.id):(state.hrPayrollRuns||[]).findIndex(r=>r.month===hrPayMonth&&!r.periodId);
-  const rec={id:i>=0?state.hrPayrollRuns[i].id:"run"+Date.now(),month:hrPayMonth,periodId:per?per.id:"",periodName:per?(String(per.no)+" / "+String(per.year)):"",rows,totals,savedAt:new Date().toISOString()};
-  if(i>=0){ rec.serverId=state.hrPayrollRuns[i].serverId; state.hrPayrollRuns[i]=rec; } else state.hrPayrollRuns.push(rec);
-  saveState(); igSyncPushBg("hrPayrollRuns",rec); toast("تم حفظ مسودة تشغيل "+hrPayMonth); go("hrPayroll");
+  const range=hrPayRange(hrPayMonth,per), totals=hrPayTotals(rows), u=(typeof curU==="function"&&curU())||{};
+  const rec=old?old:{id:"run"+Date.now()};
+  Object.assign(rec,{month:hrPayMonth,periodId:per?per.id:"",periodName:per?(String(per.no)+" / "+String(per.year)):"",rows,totals,status:"draft",hash:hrPayHash(rows),rangeStart:range.start,rangeEnd:range.end,cfgSnap:hrPayCfg(),excluded:rows.excluded||[],savedAt:new Date().toISOString(),savedBy:u.no!=null?u.no:null});
+  hrHist(rec,"save",{net:totals.net,gross:totals.gross,count:rows.length});
+  if(!old) state.hrPayrollRuns.push(rec);
+  saveState(); igSyncPushBg("hrPayrollRuns",rec);
+  try{ audit("hr_payroll_save","حفظ مسودة رواتب "+hrPayMonth+" — صافي "+fmt(totals.net)); }catch(_){ }
+  toast("تم حفظ مسودة تشغيل "+hrPayMonth); go("hrPayroll");
+}
+async function hrPayApprove(){
+  if(!can("hrPayroll","post")){ toast("لا تملك صلاحية الاعتماد",true); return; }
+  if(hrPayBusy) return;
+  const per=hrPaySelPeriod(), run=hrPayRunFor(per,hrPayMonth);
+  if(!run||run.status!=="draft"){ toast("احفظ مسودة التشغيل أولًا",true); return; }
+  const live=hrPayCompute(hrPayMonth,per);
+  if(hrPayHash(live)!==run.hash){ toast("المسودة المحفوظة قديمة — تغيّرت البيانات بعد الحفظ. أعد الحفظ وراجع الأرقام ثم اعتمد",true); return; }
+  if(run.rows.some(r=>(+r.net||0)<0)){ toast("فيه موظفين صافيهم سالب — عالجهم قبل الاعتماد",true); return; }
+  const me=(typeof curU==="function"&&curU())||{};
+  if(run.savedBy!=null&&String(run.savedBy)===String(me.no)&&!isAdmin()){ toast("من أعدّ التشغيل لا يعتمده بنفسه",true); return; }
+  if(!await askConfirm("اعتماد رواتب "+(run.periodName||run.month)+" — "+run.rows.length+" موظف، صافي "+fmt(run.totals.net)+". بعد الاعتماد الكشف بيتجمّد وأقساط السلف بتتعلّم «مخصومة».",{ok:"اعتماد",danger:false})) return;
+  hrPayBusy=true;
+  try{
+    const touched=new Set();
+    run.rows.forEach(r=>(r.insts||[]).forEach(x=>{ const a=(state.hrAdvances||[]).find(y=>y.id===x.advId); const i=a&&(a.installments||[]).find(z=>z.no===x.no); if(i&&!i.deductedRun){ i.deductedRun=run.id; i.deductedAt=new Date().toISOString(); touched.add(a); } }));
+    run.status="approved"; run.approvedBy=me.no!=null?me.no:null; run.approvedAt=new Date().toISOString();
+    hrHist(run,"approve",{net:run.totals.net,gross:run.totals.gross,count:run.rows.length,hash:run.hash});
+    saveState(); igSyncPushBg("hrPayrollRuns",run); touched.forEach(a=>igSyncPushBg("hrAdvances",a));
+    try{ audit("hr_payroll_approve","اعتماد رواتب "+(run.periodName||run.month)+" — صافي "+fmt(run.totals.net)); }catch(_){ }
+    toast("تم اعتماد التشغيل"); go("hrPayroll");
+  }finally{ hrPayBusy=false; }
+}
+/* إلغاء الاعتماد (بسبب موثّق): بيرجّع المسودة ويفك علامة الأقساط. ممنوع بعد الترحيل بقيد */
+function hrPayRevokeRun(run,reason){
+  (state.hrAdvances||[]).forEach(a=>{ let ch=false; (a.installments||[]).forEach(i=>{ if(i.deductedRun===run.id){ delete i.deductedRun; delete i.deductedAt; ch=true; } }); if(ch) igSyncPushBg("hrAdvances",a); });
+  run.status="draft"; delete run.approvedBy; delete run.approvedAt;
+  hrHist(run,"revoke",{reason});
+  saveState(); igSyncPushBg("hrPayrollRuns",run);
+  try{ audit("hr_payroll_revoke","إلغاء اعتماد رواتب "+(run.periodName||run.month)+" — السبب: "+reason); }catch(_){ }
+}
+async function hrPayRevoke(){
+  if(!can("hrPayroll","post")){ toast("لا تملك صلاحية إلغاء الاعتماد",true); return; }
+  const per=hrPaySelPeriod(), run=hrPayRunFor(per,hrPayMonth);
+  if(!run||run.status!=="approved"){ toast("لا يوجد تشغيل معتمد قابل للإلغاء (المرحّل بقيد لا يُلغى من هنا)",true); return; }
+  if(per&&per.status==="closed"){ toast("الفترة مقفولة — افتحها أولًا بسبب موثّق من شاشة الفترات",true); return; }
+  const reason=await askPrompt("سبب إلغاء الاعتماد (مطلوب ويُسجَّل في سجل المراجعة)","");
+  if(!reason||!String(reason).trim()){ toast("السبب مطلوب",true); return; }
+  hrPayRevokeRun(run,String(reason).trim()); toast("تم إلغاء الاعتماد — رجع مسودة"); go("hrPayroll");
 }
 function hrPayPrint(){
   if(!can("hrPayroll","print")){ toast("لا تملك صلاحية الطباعة",true); return; }
-  const per=hrPaySelPeriod();
-  const closed=per&&per.status==="closed";
-  const run=per?(state.hrPayrollRuns||[]).find(r=>r.periodId===per.id):(state.hrPayrollRuns||[]).find(r=>r.month===hrPayMonth&&!r.periodId);
-  const rows=closed?(run?run.rows:[]):hrPayCompute(hrPayMonth,per); if(!rows.length) return;
-  const tot=rows.reduce((t,r)=>({gross:t.gross+r.gross,ded:t.ded+r.ded,net:t.net+r.net}),{gross:0,ded:0,net:0});
-  igVectorPdfDeliver(`<div>
-    <div class="reportHeader"><div class="docTitle">كشف رواتب شهر ${hrPayMonth}</div></div>
-    <table data-ruled="1" style="font-size:11px"><thead><tr><th>الموظف</th><th>استحقاقات ثابتة</th><th>مكافآت</th><th>إجمالي الاستحقاق</th><th>استقطاعات ثابتة</th><th>جزاءات</th><th>إجمالي الاستقطاع</th><th>صافي المستحق</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${fmt(r.fixEarn)}</td><td>${fmt(r.rewards)}</td><td>${fmt(r.gross)}</td><td>${fmt(r.fixDed)}</td><td>${fmt(r.pens)}</td><td>${fmt(r.ded)}</td><td>${fmt(r.net)}</td></tr>`).join("")}
-    <tr><td><strong>الإجمالي</strong></td><td></td><td></td><td><strong>${fmt(tot.gross)}</strong></td><td></td><td></td><td><strong>${fmt(tot.ded)}</strong></td><td><strong>${fmt(tot.net)}</strong></td></tr></tbody></table>
-  </div>`,{filename:"رواتب-"+hrPayMonth+".pdf",info:"كشف رواتب "+hrPayMonth});
+  const per=hrPaySelPeriod(), run=hrPayRunFor(per,hrPayMonth);
+  if(!run){ toast("احفظ مسودة التشغيل أولًا — الطباعة من النسخة المحفوظة فقط عشان المطبوع يطابق المحفوظ",true); return; }
+  const go2=()=>{
+    const rows=run.rows, tot=hrPayTotals(rows), st=run.status==="draft"?"مسودة غير معتمدة":(run.status==="approved"?"معتمد":(run.status==="posted"?"مرحّل بقيد "+(run.entryNo||""):"كشف قديم"));
+    const f=k=>r=>fmt(+r[k]||0);
+    igVectorPdfDeliver(`<div>
+    <div class="reportHeader"><div class="docTitle">كشف رواتب ${escapeHtml(run.periodName||run.month)} — ${escapeHtml(st)}</div></div>
+    <table data-ruled="1" style="font-size:9px"><thead><tr><th>الموظف</th><th>أيام</th><th>استحقاق ثابت</th><th>متغيّر</th><th>إضافي</th><th>مكافآت</th><th>إجمالي</th><th>تأمينات</th><th>ضريبة</th><th>أقساط سلف</th><th>غياب</th><th>جزاءات</th><th>استقطاعات أخرى</th><th>إجمالي الاستقطاع</th><th>الصافي</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr><td>${escapeHtml(r.name)}</td><td>${r.days!=null?r.days+"/"+r.pdays:""}</td><td>${f("fixEarn")(r)}</td><td>${f("varEarn")(r)}</td><td>${f("ot")(r)}</td><td>${f("rewards")(r)}</td><td>${f("gross")(r)}</td><td>${f("insEmp")(r)}</td><td>${f("tax")(r)}</td><td>${f("adv")(r)}</td><td>${f("absDed")(r)}</td><td>${f("pens")(r)}</td><td>${fmt(hrR2((+r.fixDed||0)+(+r.varDed||0)))}</td><td>${f("ded")(r)}</td><td>${f("net")(r)}</td></tr>`).join("")}
+    <tr><td><strong>الإجمالي</strong></td><td></td><td>${fmt(tot.fixEarn)}</td><td>${fmt(tot.varEarn)}</td><td>${fmt(tot.ot)}</td><td>${fmt(tot.rewards)}</td><td><strong>${fmt(tot.gross)}</strong></td><td>${fmt(tot.insEmp)}</td><td>${fmt(tot.tax)}</td><td>${fmt(tot.adv)}</td><td>${fmt(tot.absDed)}</td><td>${fmt(tot.pens)}</td><td>${fmt(hrR2(tot.fixDed+tot.varDed))}</td><td><strong>${fmt(tot.ded)}</strong></td><td><strong>${fmt(tot.net)}</strong></td></tr></tbody></table>
+    <div style="font-size:9px;margin-top:6px">رقم التحقق: ${escapeHtml(run.hash||"")} — حُفظ ${escapeHtml(String(run.savedAt||"").slice(0,16).replace("T"," "))}${run.approvedAt?" — اعتُمد "+escapeHtml(String(run.approvedAt).slice(0,16).replace("T"," ")):""}</div>
+  </div>`,{filename:"رواتب-"+(run.periodName||run.month).replace(/[\s\/]+/g,"-")+".pdf",info:"كشف رواتب "+(run.periodName||run.month)+" — "+st});
+  };
+  if(run.status==="draft"&&run.hash!==hrPayHash(hrPayCompute(hrPayMonth,per))){
+    askConfirm("المسودة المحفوظة تختلف عن الحساب الحالي (تغيّرت بيانات بعد الحفظ). هتتطبع المسودة المحفوظة وعليها «غير معتمدة». تكمّل؟",{ok:"اطبع المحفوظة",danger:false}).then(ok=>{ if(ok) go2(); });
+  }else go2();
 }
+/* ---- مدخلات الشهر: بنود متغيّرة / وقت إضافي / غياب ---- */
+function hrPayInputsOpen(){
+  const per=hrPaySelPeriod(), range=hrPayRange(hrPayMonth,per);
+  const list=(state.hrMoves||[]).filter(m=>m&&m.page==="hrPayInput"&&String(m.date||"")>=range.start&&String(m.date||"")<=range.end).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const locked=hrPayLockedByDate(range.end);
+  const kl={var:"بند متغيّر",ot:"وقت إضافي",abs:"غياب"}, ol={day:"نهاري",night:"ليلي",rest:"راحة/عطلة"};
+  openModal("مدخلات الشهر — "+(per?(per.no+" / "+per.year):hrPayMonth),`
+  <div class="toolbar no-print"><button type="button" class="btn primary" onclick="hrPayInputForm()" ${locked?"disabled":""}>+ مدخل جديد</button> ${locked?'<span class="chip bad">التشغيل معتمد — المدخلات مقفولة</span>':""}</div>
+  <div class="card" style="overflow:auto"><table><thead><tr><th>التاريخ</th><th>الموظف</th><th>النوع</th><th>التفاصيل</th><th>القيمة</th><th>ملاحظة</th><th></th></tr></thead><tbody>
+  ${list.map(m=>`<tr><td>${escapeHtml(m.date||"")}</td><td>${escapeHtml(hrEmpName(m.empId))}</td><td>${kl[m.kind]||m.kind}</td><td>${m.kind==="var"?escapeHtml(m.itemName||""):m.kind==="ot"?(ol[m.otType]||"")+" — "+fmt(m.qty)+" ساعة":fmt(m.qty)+" يوم"}</td><td>${m.kind==="var"?fmt(m.amount):"—"}</td><td>${escapeHtml(m.note||"")}</td><td>${locked?"":`<button type="button" class="btn ghost sm" onclick="hrPayInputDel('${escapeAttr(m.id)}')">حذف</button>`}</td></tr>`).join("")||'<tr><td colspan="7">لا توجد مدخلات لهذه الفترة</td></tr>'}
+  </tbody></table></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">بند «ثابت شهريًا = لا» لازم له قيمة هنا كل فترة، وإلا بيظهر تنبيه ويتحسب صفر. الإضافي بيتحسب على بند «${escapeHtml(hrPayCfg().otBasisName)}»، والغياب بيتخصم بقيمة اليومية.</div>`,()=>{ return true; });
+  const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(okb) okb.style.display="none";
+  const cb=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cb) cb.textContent="إغلاق";
+}
+function hrPayInputForm(){
+  if(!can("hrPayroll","add")){ toast("لا تملك صلاحية الإضافة",true); return; }
+  const per=hrPaySelPeriod(), range=hrPayRange(hrPayMonth,per);
+  const emps=(state.hrEmployees||[]).filter(e=>!per||e.workPeriodId===per.id);
+  if(!emps.length){ toast("لا يوجد موظفون في هذه الفترة",true); return; }
+  try{ closeModal(); }catch(_){ }
+  window._hrPiSwap=()=>{
+    const e=hrEmp(document.querySelector("#hpEmp").value), k=document.querySelector("#hpKind").value;
+    const its=((e&&e.salaryItems)||[]).filter(i=>!i.fixed);
+    document.querySelector("#hpItem").innerHTML=its.map(i=>`<option value="${escapeAttr(i.name)}">${escapeHtml(i.name+" ("+(i.kind==="ded"?"استقطاع":"استحقاق")+")")}</option>`).join("")||'<option value="">— لا توجد بنود متغيّرة لهذا الموظف —</option>';
+    document.querySelector("#hpVarBox").style.display=k==="var"?"":"none";
+    document.querySelector("#hpVarAmtBox").style.display=k==="var"?"":"none";
+    document.querySelector("#hpOtBox").style.display=k==="ot"?"":"none";
+    document.querySelector("#hpQtyBox").style.display=(k==="ot"||k==="abs")?"":"none";
+    document.querySelector("#hpQtyLbl").textContent=k==="ot"?"عدد الساعات":"عدد الأيام";
+  };
+  const dflt=(today()>=range.start&&today()<=range.end)?today():range.end;
+  openModal("مدخل رواتب جديد",`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px">
+    <label class="fld"><span>الموظف</span><select class="inp" id="hpEmp" onchange="_hrPiSwap()">${emps.map(e=>`<option value="${escapeAttr(e.id)}">${escapeHtml(e.name||"")}</option>`).join("")}</select></label>
+    <label class="fld"><span>النوع</span><select class="inp" id="hpKind" onchange="_hrPiSwap()"><option value="var">قيمة بند متغيّر</option><option value="ot">وقت إضافي</option><option value="abs">غياب (أيام)</option></select></label>
+    <label class="fld"><span>التاريخ</span><input class="inp" id="hpDate" type="date" value="${dflt}" min="${range.start}" max="${range.end}"></label>
+    <label class="fld" id="hpVarBox"><span>البند</span><select class="inp" id="hpItem"></select></label>
+    <label class="fld" id="hpVarAmtBox"><span>القيمة</span><input class="inp" id="hpAmt" type="number" step="0.01" min="0" value=""></label>
+    <label class="fld" id="hpOtBox" style="display:none"><span>نوع الإضافي</span><select class="inp" id="hpOt"><option value="day">نهاري</option><option value="night">ليلي</option><option value="rest">راحة أسبوعية / عطلة</option></select></label>
+    <label class="fld" id="hpQtyBox" style="display:none"><span id="hpQtyLbl">عدد</span><input class="inp" id="hpQty" type="number" step="0.25" min="0" value=""></label>
+    <label class="fld" style="grid-column:1/-1"><span>ملاحظة</span><input class="inp" id="hpNote"></label>
+  </div>`,()=>{
+    if(!can("hrPayroll","add")){ toast("لا تملك صلاحية الإضافة",true); return false; }
+    const k=document.querySelector("#hpKind").value, empId=document.querySelector("#hpEmp").value, date=document.querySelector("#hpDate").value;
+    if(!date||date<range.start||date>range.end){ toast("التاريخ لازم يكون داخل الفترة ("+range.start+" → "+range.end+")",true); return false; }
+    if(hrPayLockedByDate(date)){ toast("التشغيل لهذه الفترة معتمد — المدخلات مقفولة",true); return false; }
+    const rec={id:"hpi"+Date.now(),page:"hrPayInput",kind:k,empId,date,status:"approved",note:document.querySelector("#hpNote").value.trim(),createdAt:new Date().toISOString(),createdBy:((typeof curU==="function"&&curU())||{}).no||null};
+    if(k==="var"){
+      const it=document.querySelector("#hpItem").value, amt=hrR2(document.querySelector("#hpAmt").value);
+      if(!it){ toast("اختر البند",true); return false; } if(!(amt>=0)||document.querySelector("#hpAmt").value===""){ toast("القيمة مطلوبة",true); return false; }
+      if((state.hrMoves||[]).some(m=>m&&m.page==="hrPayInput"&&m.kind==="var"&&m.empId===empId&&m.itemName===it&&String(m.date)>=range.start&&String(m.date)<=range.end)){ toast("البند ده له قيمة مدخلة بالفعل لهذا الموظف في الفترة — احذفها أولًا لو عايز تغيّرها",true); return false; }
+      rec.itemName=it; rec.amount=amt;
+    }else{
+      const q=+document.querySelector("#hpQty").value; if(!(q>0)){ toast("الكمية لازم تكون أكبر من صفر",true); return false; }
+      if(k==="ot"){ const e=hrEmp(empId); if(e&&e.stopOvertime){ toast("الوقت الإضافي موقوف لهذا الموظف",true); return false; } rec.otType=document.querySelector("#hpOt").value; }
+      rec.qty=q;
+    }
+    state.hrMoves.push(rec); saveState(); igSyncPushBg("hrMoves",rec); toast("تم حفظ المدخل"); go("hrPayroll"); setTimeout(hrPayInputsOpen,40); return true;
+  });
+  window._hrPiSwap();
+}
+async function hrPayInputDel(id){
+  if(!can("hrPayroll","delete")){ toast("لا تملك صلاحية الحذف",true); return; }
+  const m=(state.hrMoves||[]).find(x=>x.id===id); if(!m) return;
+  if(hrPayLockedByDate(m.date)){ toast("التشغيل معتمد — المدخلات مقفولة",true); return; }
+  if(!await askConfirm("حذف المدخل؟",{ok:"حذف"})) return;
+  try{
+    if(m.serverId){
+      const dr=await sb.from("hr_moves").delete().eq("id",m.serverId).select(); if(dr.error) throw new Error(dr.error.message);
+      if(!(dr.data||[]).length){ const chk=await sb.from("hr_moves").select("id").eq("id",m.serverId).limit(1); if(chk.error) throw new Error(chk.error.message); if((chk.data||[]).length) throw new Error("السيرفر رفض الحذف (RLS)"); }
+    }
+  }catch(e){ toast("لم يتم الحذف — "+((e&&e.message)||e),true); return; }
+  state.hrMoves=(state.hrMoves||[]).filter(x=>x.id!==id); hrPendDrop("hrMoves",id); saveState(); toast("تم الحذف");
+  try{ closeModal(); }catch(_){ } go("hrPayroll"); setTimeout(hrPayInputsOpen,30);
+}
+/* ---- إعدادات الاحتساب + حسابات القيد ---- */
+async function hrPayCfgOpen(){
+  if(!(isAdmin()||can("hrPayroll","manage"))){ toast("لا تملك صلاحية إعدادات الرواتب",true); return; }
+  if(typeof mdAccEnsure==="function"){ try{ await mdAccEnsure(); }catch(_){ } }
+  const c=hrPayCfg(), accs=(typeof glState!=="undefined"?(glState.accounts||[]):[]).filter(a=>a&&(a.account_code||a.code)&&a.is_group!==true&&a.allow_posting!==false&&a.is_active!==false);
+  const accSel=(id,cur)=>`<select class="inp" id="${id}"><option value="">— اختر —</option>${accs.map(a=>`<option value="${escapeAttr(String(a.id||""))}" ${String(a.id||"")===String(cur||"")?"selected":""}>${escapeHtml((a.account_code||a.code)+" — "+(a.account_name||a.name||""))}</option>`).join("")}</select>`;
+  const n=(id,lbl,v,step)=>`<label class="fld"><span>${lbl}</span><input class="inp" id="${id}" type="number" step="${step||"any"}" value="${v}"></label>`;
+  openModal("إعدادات احتساب الرواتب",`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px">
+    ${n("pcDays","أيام الشهر للأجر اليومي",c.daysBasis)}${n("pcHours","ساعات اليوم",c.hoursPerDay)}
+    <label class="fld"><span>تناسب شهر التعيين/ترك الخدمة</span><select class="inp" id="pcProrate"><option value="1" ${c.prorate?"selected":""}>نعم</option><option value="0" ${c.prorate?"":"selected"}>لا (شهر كامل)</option></select></label>
+    <label class="fld"><span>اسم بند أساس الإضافي</span><input class="inp" id="pcOtName" value="${escapeAttr(c.otBasisName)}"></label>
+    ${n("pcOtDay","معامل الإضافي النهاري",c.otDay)}${n("pcOtNight","معامل الإضافي الليلي",c.otNight)}${n("pcOtRest","معامل الراحة/العطلة",c.otRest)}${n("pcAbs","معامل خصم الغياب",c.absMult)}
+    <label class="fld"><span>احتساب التأمينات</span><select class="inp" id="pcInsOn"><option value="1" ${c.insOn?"selected":""}>نعم</option><option value="0" ${c.insOn?"":"selected"}>لا</option></select></label>
+    ${n("pcInsEmp","حصة الموظف %",c.insEmpPct)}${n("pcInsCo","حصة الشركة %",c.insCoPct)}${n("pcInsMin","الحد الأدنى لأجر الاشتراك",c.insMin)}${n("pcInsMax","الحد الأقصى لأجر الاشتراك",c.insMax)}
+    <label class="fld"><span>احتساب ضريبة كسب العمل</span><select class="inp" id="pcTaxOn"><option value="1" ${c.taxOn?"selected":""}>نعم</option><option value="0" ${c.taxOn?"":"selected"}>لا</option></select></label>
+    ${n("pcTaxEx","الإعفاء الشخصي السنوي",c.taxExempt)}
+    <label class="fld" style="grid-column:1/-1"><span>شرائح الضريبة السنوية — سطر لكل شريحة «حتى مبلغ : نسبة %» (آخر سطر بدون حد: 0 : النسبة)</span><textarea class="inp" id="pcBr" rows="7" dir="ltr">${escapeHtml(c.taxBr.map(b=>b[0]+" : "+b[1]).join("\n"))}</textarea></label>
+  </div>
+  <div class="chip warn" style="display:block;margin:10px 0">الأرقام الافتراضية (تأمينات 2026: 2,700–16,700 / حصة الموظف 11% / الإعفاء الشخصي 20,000 / الشرائح) مأخوذة من مصادر منشورة — راجعها مع المحاسب القانوني قبل أول تشغيل فعلي، وعدّلها هنا عند أي تغيير تشريعي.</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">
+    <label class="fld"><span>مدين: مصروف الرواتب</span>${accSel("pcAccExp",c.acc.expense)}</label>
+    <label class="fld"><span>مدين: مصروف تأمينات (حصة الشركة)</span>${accSel("pcAccInsExp",c.acc.insExpense)}</label>
+    <label class="fld"><span>دائن: التأمينات المستحقة</span>${accSel("pcAccInsPay",c.acc.insPayable)}</label>
+    <label class="fld"><span>دائن: ضريبة كسب العمل المستحقة</span>${accSel("pcAccTax",c.acc.taxPayable)}</label>
+    <label class="fld"><span>دائن: الرواتب المستحقة (الصافي)</span>${accSel("pcAccNet",c.acc.netPayable)}</label>
+    <label class="fld"><span>دائن: جزاءات واستقطاعات أخرى</span>${accSel("pcAccOth",c.acc.otherDed)}</label>
+    <label class="fld"><span>دائن: حساب السلف الافتراضي</span>${accSel("pcAccAdv",c.acc.advance)}</label>
+  </div>`,()=>{
+    const g=id=>document.querySelector("#"+id).value, f=id=>+g(id);
+    const br=[]; const lines=g("pcBr").split(/\n/).map(s=>s.trim()).filter(Boolean);
+    for(const ln of lines){ const m=/^(\d+(?:\.\d+)?)\s*[:：]\s*(\d+(?:\.\d+)?)$/.exec(ln); if(!m){ toast("شريحة غير صحيحة: "+ln,true); return false; } br.push([+m[1],+m[2]]); }
+    if(!br.length||br[br.length-1][0]!==0){ toast("آخر شريحة لازم تكون بدون حد (0 : النسبة)",true); return false; }
+    for(let i=1;i<br.length-1;i++) if(!(br[i][0]>br[i-1][0])){ toast("حدود الشرائح لازم تكون تصاعدية",true); return false; }
+    if(br.length>1&&!(br[br.length-2][0]>0)){ toast("حدود الشرائح غير صحيحة",true); return false; }
+    const num=["pcDays","pcHours","pcOtDay","pcOtNight","pcOtRest","pcAbs","pcInsEmp","pcInsCo","pcInsMin","pcInsMax","pcTaxEx"];
+    if(num.some(id=>!(f(id)>=0))){ toast("القيم لازم تكون أرقامًا غير سالبة",true); return false; }
+    if(!(f("pcDays")>0)||!(f("pcHours")>0)){ toast("أيام الشهر وساعات اليوم لازم تكون أكبر من صفر",true); return false; }
+    if(f("pcInsMax")>0&&f("pcInsMax")<f("pcInsMin")){ toast("الحد الأقصى أقل من الأدنى",true); return false; }
+    const cfg={daysBasis:f("pcDays"),hoursPerDay:f("pcHours"),prorate:g("pcProrate")==="1",otBasisName:g("pcOtName").trim()||"أساسي",otDay:f("pcOtDay"),otNight:f("pcOtNight"),otRest:f("pcOtRest"),absMult:f("pcAbs"),
+      insOn:g("pcInsOn")==="1",insEmpPct:f("pcInsEmp"),insCoPct:f("pcInsCo"),insMin:f("pcInsMin"),insMax:f("pcInsMax"),taxOn:g("pcTaxOn")==="1",taxExempt:f("pcTaxEx"),taxBr:br,
+      acc:{expense:g("pcAccExp"),insExpense:g("pcAccInsExp"),insPayable:g("pcAccInsPay"),taxPayable:g("pcAccTax"),netPayable:g("pcAccNet"),otherDed:g("pcAccOth"),advance:g("pcAccAdv")}};
+    let rec=hrPayCfgRec(); if(!rec){ rec={id:"paycfg1",no:"",name:"إعدادات الرواتب"}; state.hrPayCfg.push(rec); }
+    rec.cfg=cfg; hrHist(rec,"cfg");
+    saveState(); hrCatPushBg("hrPayCfg",rec);
+    try{ audit("hr_payroll_cfg","تعديل إعدادات احتساب الرواتب"); }catch(_){ }
+    toast("تم حفظ الإعدادات — أي مسودة قديمة محتاجة إعادة حفظ"); go("hrPayroll"); return true;
+  });
+}
+/* ---- ترحيل القيد المحاسبي ---- */
+function hrPayEntryPlan(run){
+  const cfg=hrPayCfg(), a=cfg.acc, T=run.totals, c=x=>Math.round((+x||0)*100), lines=[], miss=[];
+  const add=(acc,dr,cr,desc,label)=>{ if(!dr&&!cr) return; if(!acc) miss.push(label); lines.push({acc,dr,cr,desc}); };
+  const D=" — رواتب "+(run.periodName||run.month);
+  add(a.expense,c(hrR2(T.gross-T.absDed)),0,"مصروف الرواتب"+D,"حساب مصروف الرواتب");
+  add(a.insExpense,c(T.insCo),0,"حصة الشركة في التأمينات"+D,"حساب مصروف تأمينات الشركة");
+  add(a.insPayable,0,c(hrR2(T.insEmp+T.insCo)),"التأمينات المستحقة"+D,"حساب التأمينات المستحقة");
+  add(a.taxPayable,0,c(T.tax),"ضريبة كسب العمل"+D,"حساب ضريبة كسب العمل");
+  const byAcc={};
+  run.rows.forEach(r=>(r.insts||[]).forEach(x=>{ const ad=(state.hrAdvances||[]).find(y=>y.id===x.advId); const t=ad&&ad.advTypeId?(state.hrAdvTypes||[]).find(z=>z.id===ad.advTypeId):null; const acc=(t&&t.accountId)||(ad&&ad.accountId)||a.advance||""; byAcc[acc]=(byAcc[acc]||0)+c(x.amount); }));
+  Object.keys(byAcc).forEach(acc=>add(acc,0,byAcc[acc],"أقساط سلف الموظفين"+D,"حساب السلف"));
+  add(a.otherDed,0,c(hrR2(T.pens+T.fixDed+T.varDed)),"جزاءات واستقطاعات أخرى"+D,"حساب الجزاءات والاستقطاعات الأخرى");
+  add(a.netPayable,0,c(T.net),"صافي الرواتب المستحقة"+D,"حساب الرواتب المستحقة");
+  const td=lines.reduce((t,l)=>t+l.dr,0), tc=lines.reduce((t,l)=>t+l.cr,0);
+  return {lines,td,tc,miss:Array.from(new Set(miss))};
+}
+async function hrPayPostOpen(){
+  if(!can("hrPayroll","post")){ toast("لا تملك صلاحية الترحيل",true); return; }
+  const per=hrPaySelPeriod(), run=hrPayRunFor(per,hrPayMonth);
+  if(!run||run.status!=="approved"){ toast("لازم التشغيل يكون معتمد قبل الترحيل",true); return; }
+  if(typeof mdAccEnsure==="function"){ try{ await mdAccEnsure(); }catch(_){ } }
+  const plan=hrPayEntryPlan(run);
+  if(plan.miss.length){ toast("اربط الحسابات الناقصة من «إعدادات الاحتساب»: "+plan.miss.join("، "),true); return; }
+  if(plan.td!==plan.tc||!plan.td){ toast("القيد غير متوازن ("+plan.td/100+" / "+plan.tc/100+") — راجع الكشف",true); return; }
+  let years=[],periods=[],journals=[];
+  try{ const [yr,pr,jr]=await Promise.all([sb.from("gl_fiscal_years").select("*"),sb.from("gl_periods").select("*"),sb.from("gl_journals").select("*")]); years=yr.data||[]; periods=pr.data||[]; journals=(jr.data||[]).filter(j=>j.is_active!==false); }
+  catch(e){ toast("تعذر تحميل بيانات الترحيل",true); return; }
+  const date=run.rangeEnd, y=years.find(v=>v.start_date<=date&&v.end_date>=date);
+  if(!y){ toast("لا توجد سنة مالية تغطي "+date,true); return; }
+  const gp=periods.find(v=>v.fiscal_year_id===y.id&&v.start_date<=date&&v.end_date>=date&&v.status!=="closed");
+  if(!gp){ toast("لا توجد فترة محاسبية مفتوحة تغطي "+date,true); return; }
+  if(!journals.length){ toast("لا توجد يوميات متاحة",true); return; }
+  const accName=id=>{ const a=(typeof glState!=="undefined"?(glState.accounts||[]):[]).find(x=>String(x.id)===String(id)); return a?((a.account_code||a.code)+" — "+(a.account_name||a.name||"")):String(id); };
+  window._hrPayPostCtx={runId:run.id,y,gp,journals,plan,date};
+  openModal("ترحيل رواتب "+(run.periodName||run.month),`
+  <label class="fld"><span>اليومية</span><select class="inp" id="hppJournal">${journals.map(j=>`<option value="${escapeAttr(String(j.journal_code))}">${escapeHtml(String(j.journal_code)+" — "+(j.journal_name||""))}</option>`).join("")}</select></label>
+  <div class="card" style="margin-top:8px;overflow:auto"><table style="font-size:12px"><thead><tr><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
+  ${plan.lines.map(l=>`<tr><td>${escapeHtml(accName(l.acc))}</td><td>${escapeHtml(l.desc)}</td><td>${l.dr?fmt(l.dr/100):""}</td><td>${l.cr?fmt(l.cr/100):""}</td></tr>`).join("")}
+  </tbody><tfoot><tr><td colspan="2"><strong>الإجمالي</strong></td><td><strong>${fmt(plan.td/100)}</strong></td><td><strong>${fmt(plan.tc/100)}</strong></td></tr></tfoot></table></div>
+  <div class="chip warn" style="display:block;margin-top:8px">تاريخ القيد: ${escapeHtml(date)}. بعد الترحيل التشغيل يتحوّل «مرحّل» ولا يمكن إلغاء اعتماده من هنا.</div>`,()=>{ hrPayPostDo(); return false; });
+}
+async function hrPayPostDo(){
+  const X=window._hrPayPostCtx; if(!X||hrPayBusy) return;
+  const run=(state.hrPayrollRuns||[]).find(r=>r.id===X.runId); if(!run||run.status!=="approved") return;
+  if(!can("hrPayroll","post")){ toast("لا تملك صلاحية الترحيل",true); return; }
+  const j=X.journals.find(x=>String(x.journal_code)===String(document.querySelector("#hppJournal").value)); if(!j){ toast("اختر اليومية",true); return; }
+  const plan=hrPayEntryPlan(run); if(plan.miss.length||plan.td!==plan.tc||!plan.td){ toast("القيد غير جاهز — راجع الحسابات",true); return; }
+  hrPayBusy=true; let entry=null;
+  try{
+    const ref="payroll:"+run.id;
+    const ex=await sb.from("gl_posting_sources").select("entry_id").eq("source_system","الرواتب").eq("source_ref",ref).limit(1);
+    if(ex.error) throw ex.error;
+    if((ex.data||[]).length) throw new Error("التشغيل ده اتعمله قيد قبل كده (مرجع "+ref+") — راجع القيود قبل أي محاولة تانية");
+    const date=X.date, prefix=String(parseInt(date.slice(5,7),10));
+    const ne=await sb.from("gl_entries").select("entry_no").like("entry_no",prefix+"%"); if(ne.error) throw ne.error;
+    const seqs=(ne.data||[]).map(r=>String(r.entry_no||"")).filter(n=>/^\d+$/.test(n)&&n.length===prefix.length+4).map(n=>parseInt(n.slice(prefix.length),10));
+    const entryNo=prefix+String((seqs.length?Math.max(...seqs):0)+1).padStart(4,"0");
+    entry=await glInsert("gl_entries",{entry_no:entryNo,journal_id:j.id,fiscal_year_id:X.y.id,period_id:X.gp.id,entry_date:date,document_date:date,description:"قيد رواتب "+(run.periodName||run.month)+" — [مستند: "+ref+"]",status:"draft",currency_code:"EGP",exchange_rate:1,total_debit:plan.td/100,total_credit:plan.tc/100});
+    const lr=await sb.from("gl_entry_lines").insert(plan.lines.map((x,i)=>({entry_id:entry.id,line_no:i+1,account_id:x.acc,description:x.desc,debit:x.dr/100,credit:x.cr/100}))); if(lr.error) throw lr.error;
+    const pr=await sb.rpc("gl_post_entry_authorized",{p_entry_id:entry.id}); if(pr.error) throw pr.error;
+    try{ await sb.from("gl_posting_sources").insert({entry_id:entry.id,source_system:"الرواتب",source_ref:ref}); }catch(_){ }
+    run.status="posted"; run.entryId=entry.id; run.entryNo=entryNo; run.postedAt=new Date().toISOString(); run.postedBy=((typeof curU==="function"&&curU())||{}).no||null; run.postedJournal=String(j.journal_code);
+    hrHist(run,"post",{entryNo,net:run.totals.net});
+    saveState(); igSyncPushBg("hrPayrollRuns",run);
+    try{ audit("hr_payroll_post","ترحيل رواتب "+(run.periodName||run.month)+" بقيد "+entryNo+" — صافي "+fmt(run.totals.net)); }catch(_){ }
+    toast("✓ تم ترحيل الرواتب بقيد رقم "+entryNo); closeModal(); go("hrPayroll");
+  }catch(e){
+    /* لو القيد اتعمل مسودة ومترحّلش: نشيله عشان ما يفضلش قيد يتيم */
+    if(entry&&entry.id){ try{ const pc=await sb.from("gl_entries").select("status").eq("id",entry.id).limit(1); const st=pc.data&&pc.data[0]&&pc.data[0].status; if(st==="draft"){ await sb.from("gl_entry_lines").delete().eq("entry_id",entry.id); await sb.from("gl_entries").delete().eq("id",entry.id); } }catch(_){ } }
+    toast("ما اترحّلتش: "+((e&&e.message)||e),true);
+  }finally{ hrPayBusy=false; }
+}
+/* ---- سجل المراجعة ---- */
+function hrPayAuditOpen(){
+  const per=hrPaySelPeriod(), run=hrPayRunFor(per,hrPayMonth);
+  const AL={save:"حفظ مسودة",approve:"اعتماد",revoke:"إلغاء اعتماد",post:"ترحيل قيد",close:"إقفال فترة",reopen:"فتح فترة بعد الإقفال",cfg:"تعديل إعدادات"};
+  const ev=[].concat((run&&run.history||[]).map(h=>Object.assign({src:"التشغيل"},h)),(per&&per.history||[]).map(h=>Object.assign({src:"الفترة"},h))).sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  openModal("سجل المراجعة — "+(per?(per.no+" / "+per.year):hrPayMonth),`
+  <div class="card" style="overflow:auto"><table style="font-size:12px"><thead><tr><th>الوقت</th><th>المصدر</th><th>الإجراء</th><th>المستخدم</th><th>التفاصيل</th></tr></thead><tbody>
+  ${ev.map(h=>`<tr><td dir="ltr">${escapeHtml(String(h.at||"").slice(0,16).replace("T"," "))}</td><td>${h.src}</td><td>${AL[h.action]||escapeHtml(h.action||"")}</td><td>${escapeHtml(h.byName||String(h.by||""))}</td><td>${[h.reason?("السبب: "+escapeHtml(h.reason)):"",h.net!=null?("صافي "+fmt(h.net)):"",h.count!=null?(h.count+" موظف"):"",h.entryNo?("قيد "+escapeHtml(String(h.entryNo))):""].filter(Boolean).join(" — ")}</td></tr>`).join("")||'<tr><td colspan="5">لا توجد أحداث مسجّلة</td></tr>'}
+  </tbody></table></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px">السجل ده محفوظ مع السجل نفسه. السجل غير القابل للتعديل (بتوقيت السيرفر واسم المستخدم الحقيقي) بيتكتب على السيرفر تلقائيًا بعد تشغيل ملف ERP-HR-PAYROLL-0089.sql.</div>`,()=>true);
+  const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(okb) okb.style.display="none";
+  const cb=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cb) cb.textContent="إغلاق";
+}
+/* ---- إقفال/فتح الفترة: الإقفال بعد اعتماد، والفتح بسبب موثّق ---- */
+async function hrPayPeriodToggle(id){
+  if(!can("hrPayPeriods","close")){ toast("لا تملك صلاحية الإقفال/الفتح",true); return; }
+  const p=(state.hrPayPeriods||[]).find(x=>x.id===id); if(!p) return;
+  const run=(state.hrPayrollRuns||[]).find(r=>r.periodId===p.id);
+  if(p.status!=="closed"){
+    const hasEmp=(state.hrEmployees||[]).some(e=>e.workPeriodId===p.id);
+    if(hasEmp&&!(run&&(run.status==="approved"||run.status==="posted"))){ toast("لا يمكن إقفال الفترة قبل اعتماد تشغيل الرواتب لها",true); return; }
+    p.status="closed"; hrHist(p,"close");
+    try{ audit("hr_period_close","إقفال فترة رواتب "+p.no+" / "+p.year); }catch(_){ }
+  }else{
+    if(run&&run.status==="posted"){ toast("رواتب الفترة مرحّلة بقيد رقم "+(run.entryNo||"")+" — لا يمكن فتحها قبل معالجة القيد محاسبيًا",true); return; }
+    const reason=await askPrompt("سبب فتح الفترة بعد الإقفال (مطلوب ويُسجَّل في سجل المراجعة)","");
+    if(!reason||!String(reason).trim()){ toast("السبب مطلوب لفتح فترة مقفولة",true); return; }
+    const rs=String(reason).trim();
+    if(run&&run.status==="approved") hrPayRevokeRun(run,"فتح الفترة: "+rs);
+    else if(run&&run.status==="legacy"){ run.status="draft"; hrHist(run,"revoke",{reason:"فتح الفترة: "+rs}); igSyncPushBg("hrPayrollRuns",run); }
+    p.status="open"; hrHist(p,"reopen",{reason:rs});
+    try{ audit("hr_period_reopen","فتح فترة رواتب "+p.no+" / "+p.year+" — السبب: "+rs); }catch(_){ }
+  }
+  saveState(); igSyncPushBg("hrPayPeriods",p);
+  toast(p.status==="closed"?"تم إقفال الفترة":"تم فتح الفترة — التشغيل رجع مسودة"); go("hrPayPeriods");
+}
+function hrPayPeriodAudit(id){
+  const p=(state.hrPayPeriods||[]).find(x=>x.id===id); if(!p) return;
+  const AL={close:"إقفال",reopen:"فتح بعد الإقفال"};
+  openModal("سجل الفترة "+p.no+" / "+p.year,`<div class="card" style="overflow:auto"><table style="font-size:12px"><thead><tr><th>الوقت</th><th>الإجراء</th><th>المستخدم</th><th>السبب</th></tr></thead><tbody>${(p.history||[]).map(h=>`<tr><td dir="ltr">${escapeHtml(String(h.at||"").slice(0,16).replace("T"," "))}</td><td>${AL[h.action]||escapeHtml(h.action||"")}</td><td>${escapeHtml(h.byName||String(h.by||""))}</td><td>${escapeHtml(h.reason||"")}</td></tr>`).join("")||'<tr><td colspan="4">لا توجد أحداث</td></tr>'}</tbody></table></div>`,()=>true);
+  const okb=document.querySelector("#modalBackdrop .mfoot .btn:not(.ghost)"); if(okb) okb.style.display="none";
+  const cb=document.querySelector("#modalBackdrop .mfoot .btn.ghost"); if(cb) cb.textContent="إغلاق";
+}
+/* ---- جدولة أقساط السلف ---- */
+function hrAdvSchedInfo(a){
+  const s=a.installments; if(!Array.isArray(s)||!s.length) return "";
+  const d=s.filter(i=>i.deductedRun).length;
+  return `<div style="font-size:11px;color:var(--muted)">أقساط: ${d}/${s.length} مخصومة — ${fmt(s[0].amount)} شهريًا من ${escapeHtml(s[0].month)}${hrAdvBase(a)>0?"":" (لا تُخصم قبل الصرف)"}</div>`;
+}
+function hrAdvSchedBtn(a){
+  if(!(a.status==="approved"||a.status==="disbursed"||(!a.status&&a.postedEntryNo))) return "";
+  return ` <button type="button" class="btn ghost sm" onclick="hrAdvSchedForm('${escapeAttr(a.id)}')">أقساط</button>`;
+}
+function hrAdvSchedForm(id){
+  if(!can("hrAdvances","edit")){ toast("لا تملك صلاحية التعديل",true); return; }
+  const a=(state.hrAdvances||[]).find(x=>x.id===id); if(!a) return;
+  if((a.installments||[]).some(i=>i.deductedRun)){ toast("بدأ خصم الأقساط — لا يمكن إعادة الجدولة",true); return; }
+  const cur=a.installments&&a.installments.length?a.installments:null;
+  const d=new Date(); const nm=new Date(d.getFullYear(),d.getMonth()+1,1), def=nm.getFullYear()+"-"+String(nm.getMonth()+1).padStart(2,"0");
+  openModal("جدولة أقساط سلفة — "+hrEmpName(a.empId),`
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+    <label class="fld"><span>المبلغ</span><input class="inp" value="${fmt(a.amount)}" disabled></label>
+    <label class="fld"><span>عدد الأقساط</span><input class="inp" id="hsN" type="number" min="1" max="60" step="1" value="${cur?cur.length:3}"></label>
+    <label class="fld"><span>أول شهر خصم</span><input class="inp" id="hsM" type="month" value="${cur?cur[0].month:def}"></label>
+  </div>
+  <div class="chip warn" style="display:block;margin-top:8px">القسط بيتخصم من الراتب بس بعد صرف السلفة فعليًا. الأقساط متساوية والأخير بيشيل فرق القرش.</div>`,()=>{
+    const n=Math.round(+document.querySelector("#hsN").value), m=document.querySelector("#hsM").value;
+    if(!(n>=1&&n<=60)){ toast("عدد الأقساط من 1 لـ 60",true); return false; }
+    if(!/^\d{4}-\d{2}$/.test(m)){ toast("اختر أول شهر خصم",true); return false; }
+    const total=Math.round((+a.amount||0)*100), base=Math.floor(total/n), list=[]; let y=+m.slice(0,4), mo=+m.slice(5,7);
+    for(let i=0;i<n;i++){ list.push({no:i+1,month:y+"-"+String(mo).padStart(2,"0"),amount:(i===n-1?total-base*(n-1):base)/100}); mo++; if(mo>12){ mo=1; y++; } }
+    a.installments=list; saveState(); igSyncPushBg("hrAdvances",a); toast("تم حفظ جدول الأقساط"); go("hrAdvances"); return true; });
+}
+
 function viewBotCaller(){
   return '<style>'+_bcCss()+'</style>'+
   '<div class="bc-wrap">'+
@@ -53547,6 +54232,9 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  /* قاعدة صارمة: لا جمع لكميات/أوزان عبر وحدات مختلفة. كل إجمالي كمية يُجمّع لكل وحدة على حدة ويُعرض بوحدته، كل وحدة في سطر لتفادي تجاوز الخلايا في PDF */
  const q3c=v=>{const n=Number(Number(v||0).toFixed(3));return n.toLocaleString('en-US',{maximumFractionDigits:3});};
  const uSum=(m,fn)=>[...m.entries()].map(([u,o])=>q3c(fn(o))+' '+uLabel(u)).join(' · ');
+ /* الوزن والوحدة في عمودين منفصلين: لو العميل له أكتر من وحدة، كل وحدة في سطر ويتطابق سطر الوزن مع سطر الوحدة */
+ const uNums=m=>[...m.entries()].map(([u,w])=>q3c(w)).join('<br>');
+ const uNames=m=>[...m.keys()].map(u=>uLabel(u)).join('<br>');
  /* تجميع بنود البوالص مع بُعد الشهر والتصنيف والوحدة والعميل */
  function srAgg(){
   const f=tradeReportFilters.salesReport||{},mode=f.unitMode||"used",q=(f.q||"").trim().toLowerCase(),map=new Map(),cust=new Map(),mon=new Map(),months=new Set();
@@ -53578,32 +54266,32 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  }
  const tbl=(heads,body,foot)=>`<div class="card"><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" data-ruled style="width:100%"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body||`<tr><td colspan="${heads.length}"><div class="empty" style="padding:26px">لا توجد بيانات مطابقة للفلاتر</div></td></tr>`}</tbody>${foot||''}</table></div></div></div>`;
  /* متوسط السعر: فقط عندما تكون كل الكميات بوحدة واحدة — غير ذلك «—» حتى لا يظهر متوسط بلا معنى عبر وحدات */
- const avgCell=(wMap,net)=>{if(wMap.size!==1)return '—';const [u,w]=[...wMap.entries()][0];if(!w)return '—';return u?money(net/w)+' / '+uLabel(u):money(net/w)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>';};
+ const avgCell=(wMap,net)=>{if(wMap.size!==1)return '—';const [u,w]=[...wMap.entries()][0];if(!w)return '—';return u?money(net/w):money(net/w)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>';};
  function srCustomerHtml(){
   const {cust}=srAgg(),list=[...cust.entries()].sort((a,b)=>b[1].net-a[1].net);
-  const body=list.map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td class="num">${x.docs.size}</td><td class="num">${uSum(x.w,o=>o)}</td><td class="num">${money(x.sub)}</td><td class="num">${money(x.tax)}</td><td class="num">${money(x.disc)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td></tr>`).join('');
+  const body=list.map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td class="num">${x.docs.size}</td><td class="num">${uNums(x.w)}</td><td>${uNames(x.w)}</td><td class="num">${money(x.sub)}</td><td class="num">${money(x.tax)}</td><td class="num">${money(x.disc)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td></tr>`).join('');
   const t=list.reduce((a,[,x])=>{x.w.forEach((w,u)=>a.w.set(u,(a.w.get(u)||0)+w));x.docs.forEach(d=>a.docs.add(d));return {w:a.w,docs:a.docs,sub:a.sub+x.sub,tax:a.tax+x.tax,disc:a.disc+x.disc,net:a.net+x.net};},{w:new Map(),docs:new Set(),sub:0,tax:0,disc:0,net:0});
-  const unitRows=[...t.w.entries()].map(([u,w])=>`<tr><td>إجمالي الوزن بوحدة «${uFooterLabel(u)}»</td><td></td><td class="num"><b>${q3(w)} ${uLabel(u)}</b></td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
-  const foot=list.length?`<tfoot>${unitRows}<tr><td>الإجمالي</td><td class="num">${t.docs.size}</td><td class="num">—</td><td class="num">${money(t.sub)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.disc)}</td><td class="num"><b>${money(t.net)}</b></td><td class="num">${avgCell(t.w,t.net)}</td></tr></tfoot>`:'';
-  return `<div class="card"><div class="head"><h3>إجمالي المبيعات لكل عميل</h3><span class="count">${list.length} عميل · الوزن لكل وحدة على حدة · المتوسط عند وحدة واحدة فقط · بـ${escapeHtml(cur())}</span></div>`+tbl(['العميل','عدد البوالص','الوزن المورد','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','متوسط سعر الوحدة'],body,foot)+'</div>';
+  const unitRows=[...t.w.entries()].map(([u,w])=>`<tr><td>إجمالي الكمية بوحدة «${uFooterLabel(u)}»</td><td></td><td class="num"><b>${q3(w)}</b></td><td>${uLabel(u)}</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
+  const foot=list.length?`<tfoot>${unitRows}<tr><td>الإجمالي</td><td class="num">${t.docs.size}</td><td class="num">—</td><td></td><td class="num">${money(t.sub)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.disc)}</td><td class="num"><b>${money(t.net)}</b></td><td class="num">${avgCell(t.w,t.net)}</td></tr></tfoot>`:'';
+  return `<div class="card"><div class="head"><h3>إجمالي المبيعات لكل عميل</h3><span class="count">${list.length} عميل · الكمية لكل وحدة على حدة · المتوسط عند وحدة واحدة فقط · بـ${escapeHtml(cur())}</span></div>`+tbl(['العميل','عدد البوالص','الكمية','الوحدة','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','متوسط سعر الوحدة'],body,foot)+'</div>';
  }
  function srMonthlyHtml(){
   const {mon}=srAgg(),list=[...mon.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
-  const body=list.map(([k,x],i)=>{const prev=i?list[i-1][1].net:0,ch=i?(prev?((x.net-prev)/Math.abs(prev)*100).toFixed(1)+'%':(x.net?'جديد':'—')):'—';return `<tr><td>${escapeHtml(k)}</td><td class="num">${x.docs.size}</td><td class="num">${uSum(x.w,o=>o)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td><td class="num">${ch}</td></tr>`}).join('');
-  return `<div class="card"><div class="head"><h3>مقارنة المبيعات الشهرية</h3><span class="count">${list.length} شهر · الوزن لكل وحدة على حدة · التغير مقابل الشهر السابق · بـ${escapeHtml(cur())}</span></div>`+tbl(['الشهر','عدد البوالص','الوزن المورد','صافي المبيعات','متوسط سعر الوحدة','التغير %'],body)+'</div>';
+  const body=list.map(([k,x],i)=>{const prev=i?list[i-1][1].net:0,ch=i?(prev?((x.net-prev)/Math.abs(prev)*100).toFixed(1)+'%':(x.net?'جديد':'—')):'—';return `<tr><td>${escapeHtml(k)}</td><td class="num">${x.docs.size}</td><td class="num">${uNums(x.w)}</td><td>${uNames(x.w)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td><td class="num">${ch}</td></tr>`}).join('');
+  return `<div class="card"><div class="head"><h3>مقارنة المبيعات الشهرية</h3><span class="count">${list.length} شهر · الكمية لكل وحدة على حدة · التغير مقابل الشهر السابق · بـ${escapeHtml(cur())}</span></div>`+tbl(['الشهر','عدد البوالص','الكمية','الوحدة','صافي المبيعات','متوسط سعر الوحدة','التغير %'],body)+'</div>';
  }
  function srItemsHtml(){
   const {rows}=srAgg();
   let lastCls=null,body='';
-  rows.forEach(x=>{if(x.cls!==lastCls){lastCls=x.cls;body+=`<tr class="tr-cls" style="background:#f8f3e2;font-weight:800"><td colspan="6">${escapeHtml(x.cls)}</td></tr>`;}
-   body+=`<tr><td>${escapeHtml(x.name)}</td><td class="num">${q3(x.qty)} ${uLabel(x.unit)}</td><td class="num">${q3(x.weight)} ${uLabel(x.unit)}</td><td class="num">${money(x.value)}</td><td class="num">${x.weight?(x.unit?money(x.avg)+' / '+uLabel(x.unit):money(x.avg)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>'):'—'}</td><td class="num">${x.docs}</td></tr>`;});
+  rows.forEach(x=>{if(x.cls!==lastCls){lastCls=x.cls;body+=`<tr class="tr-cls" style="background:#f8f3e2;font-weight:800"><td colspan="7">${escapeHtml(x.cls)}</td></tr>`;}
+   body+=`<tr><td>${escapeHtml(x.name)}</td><td>${uLabel(x.unit)}</td><td class="num">${q3(x.qty)}</td><td class="num">${q3(x.weight)}</td><td class="num">${money(x.value)}</td><td class="num">${x.weight?(x.unit?money(x.avg):money(x.avg)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>'):'—'}</td><td class="num">${x.docs}</td></tr>`;});
   /* إجمالي الصف: لا جمع عبر وحدات مختلفة ولا متوسط عبر وحدات — الكمية والوزن لكل وحدة على حدة، والقيمة فقط تجمع */
   const wU=new Map(),qU=new Map(),docsAll=new Set();
   rows.forEach(x=>{wU.set(x.unit,(wU.get(x.unit)||0)+x.weight);qU.set(x.unit,(qU.get(x.unit)||0)+x.qty);x.docsSet.forEach(d=>docsAll.add(d));});
   const totV=rows.reduce((a,x)=>a+x.value,0);
-  const unitRows=[...wU.entries()].map(([u,w])=>`<tr><td>إجمالي بوحدة «${uFooterLabel(u)}»</td><td class="num">${q3(qU.get(u)||0)} ${uLabel(u)}</td><td class="num"><b>${q3(w)} ${uLabel(u)}</b></td><td></td><td></td><td></td></tr>`).join('');
-  const foot=rows.length?`<tfoot>${unitRows}<tr><td>الإجمالي (${rows.length} صنف)</td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(totV)} ${escapeHtml(cur())}</b></td><td class="num">—</td><td class="num">${docsAll.size}</td></tr></tfoot>`:'';
-  return `<div class="card"><div class="head"><h3>تحليل مبيعات الأصناف — قبل الضريبة</h3><span class="count">الكميات بوحدة العرض المختارة · الإجماليات لكل وحدة على حدة ولا متوسط عبر وحدات مختلفة</span></div>`+tbl(['الصنف / المقاس','الكمية','الوزن المورد (بوحدة الصنف)','قيمة البيع','متوسط سعر الوحدة','عدد المستندات'],body,foot)+'</div>';
+  const unitRows=[...wU.entries()].map(([u,w])=>`<tr><td>إجمالي بوحدة «${uFooterLabel(u)}»</td><td>${uLabel(u)}</td><td class="num">${q3(qU.get(u)||0)}</td><td class="num"><b>${q3(w)}</b></td><td></td><td></td><td></td></tr>`).join('');
+  const foot=rows.length?`<tfoot>${unitRows}<tr><td>الإجمالي (${rows.length} صنف)</td><td></td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(totV)} ${escapeHtml(cur())}</b></td><td class="num">—</td><td class="num">${docsAll.size}</td></tr></tfoot>`:'';
+  return `<div class="card"><div class="head"><h3>تحليل مبيعات الأصناف — قبل الضريبة</h3><span class="count">الكميات بوحدة العرض المختارة · الإجماليات لكل وحدة على حدة ولا متوسط عبر وحدات مختلفة</span></div>`+tbl(['الصنف / المقاس','الوحدة','الكمية','الوزن المورد','قيمة البيع','متوسط سعر الوحدة','عدد المستندات'],body,foot)+'</div>';
  }
  /* بناء مصفوفة الأصناف بالشهور: صف لكل صنف/وحدة، عمودان لكل شهر (الكمية/القيمة)، إجماليات لكل وحدة فقط + قيمة بالعملة — بنفس نمط مصفوفة المشتريات */
  function srMatrixBuild(exp){
@@ -53612,7 +54300,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
   if(ms.length){const out=[];let[y,m]=ms[0].split('-').map(Number);const[ey,em]=ms[ms.length-1].split('-').map(Number);while(y<ey||(y===ey&&m<=em)){out.push(y+'-'+String(m).padStart(2,'0'));m++;if(m>12){m=1;y++}}ms=out;}
   const sumM=(x,mm)=>mm.reduce((t,m)=>{const b=x.byMonth[m];return b?{w:t.w+b.weight,v:t.v+b.value}:t},{w:0,v:0});
   const block=(mb,wt)=>{
-   const theadHtml='<tr><th rowspan="2">التصنيف</th><th rowspan="2">الصنف / المقاس</th><th rowspan="2">الوحدة</th>'+mb.map(m=>`<th colspan="2">${m}</th>`).join('')+(wt?'<th colspan="2">الإجمالي</th>':'')+'</tr><tr>'+mb.concat(wt?['t']:[]).map(()=>'<th>الوزن المورد</th><th>القيمة</th>').join('')+'</tr>';
+   const theadHtml='<tr><th rowspan="2">التصنيف</th><th rowspan="2">الصنف / المقاس</th><th rowspan="2">الوحدة</th>'+mb.map(m=>`<th colspan="2">${m}</th>`).join('')+(wt?'<th colspan="2">الإجمالي</th>':'')+'</tr><tr>'+mb.concat(wt?['t']:[]).map(()=>'<th>الكمية</th><th>القيمة</th>').join('')+'</tr>';
    const mv=new Map(),U=new Map();let body='';
    const clsMap=new Map();rows.forEach(x=>{const a=clsMap.get(x.cls)||[];a.push(x);clsMap.set(x.cls,a);});
    if(!rows.length)body=`<tr><td colspan="${3+mb.length*2+(wt?2:0)}"><div class="empty" style="padding:26px">لا توجد بيانات مطابقة للفلاتر</div></td></tr>`;
@@ -53632,7 +54320,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  }
  function srMatrixHtml(){
   const b=srMatrixBuild(false),k=b.blocks[0];
-  return `<div class="card"><div class="head"><h3>مقارنة الأصناف بالشهور</h3><span class="count">لكل شهر: الوزن المورد بوحدة الصف + قيمة البيع قبل الضريبة · الإجماليات لكل وحدة على حدة</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" data-ruled style="width:100%"><thead>${k.theadHtml}</thead><tbody>${k.body}</tbody>${k.foot?`<tfoot>${k.foot}</tfoot>`:''}</table></div></div></div>`;
+  return `<div class="card"><div class="head"><h3>مقارنة الأصناف بالشهور</h3><span class="count">لكل شهر: الكمية بوحدة الصف + قيمة البيع قبل الضريبة · الإجماليات لكل وحدة على حدة</span></div><div class="body" style="padding:0"><div class="tbl-wrap"><table class="trade-report-table" data-ruled style="width:100%"><thead>${k.theadHtml}</thead><tbody>${k.body}</tbody>${k.foot?`<tfoot>${k.foot}</tfoot>`:''}</table></div></div></div>`;
  }
  const SR_RENDER={customer:srCustomerHtml,monthly:srMonthlyHtml,items:srItemsHtml,matrix:srMatrixHtml};
  const _rt=renderTradeReport;
@@ -53666,7 +54354,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
   let inner,title;
   if(mode==='matrix'){
    const b=srMatrixBuild(true),blocks=b.blocks||[];
-   inner=blocks.map((k,i)=>{const ctx=`جزء ${i+1} من ${blocks.length} · الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · الوزن المورد بوحدة كل صنف · القيمة قبل الضريبة بـ${escapeHtml(cur())}`;return `${blocks.length>1?(i?`<h4>${ctx}</h4>`:`<p>${ctx}</p>`):''}<table data-ruled><thead>${k.theadHtml}</thead><tbody>${k.body}</tbody>${k.foot?`<tfoot>${k.foot}</tfoot>`:''}</table>`;}).join('');
+   inner=blocks.map((k,i)=>{const ctx=`جزء ${i+1} من ${blocks.length} · الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · الكمية بوحدة كل صنف · القيمة قبل الضريبة بـ${escapeHtml(cur())}`;return `${blocks.length>1?(i?`<h4>${ctx}</h4>`:`<p>${ctx}</p>`):''}<table data-ruled><thead>${k.theadHtml}</thead><tbody>${k.body}</tbody>${k.foot?`<tfoot>${k.foot}</tfoot>`:''}</table>`;}).join('');
    title='مقارنة المبيعات — الأصناف بالشهور';
   }else{
    inner=SR_RENDER[mode]?SR_RENDER[mode]():'';
@@ -53674,7 +54362,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
    /* رأس الكارت يتحول لفقرة ملاحظة حتى لا يُقص سطره في مُحوّل PDF */
    inner=inner.replace(/<div class="head"><h3>[\s\S]*?<\/h3><span class="count">([\s\S]*?)<\/span><\/div>/g,'<p>$1</p>');
   }
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#e9edf3;font-weight:700}.tr-cls td{background:#f8f3e2!important;font-weight:800;text-align:right}.card .head,.count{display:none}.card{border:none}.tbl-wrap{overflow:visible}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}}</style></head><body data-cell-wrap="1" data-report-currency="${escapeHtml(cur())}"><h1>${title} — IRON GATE SUPPLIES</h1><p>الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · العملة: ${escapeHtml(cur())} · تاريخ الاستخراج: ${new Date().toLocaleDateString('en-GB')}</p>${inner}</body></html>`;
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#e9edf3;font-weight:700}.tr-cls td{background:#f8f3e2!important;font-weight:800;text-align:right}.card .head,.count{display:none}.card{border:none}.tbl-wrap{overflow:visible}td.num{white-space:nowrap;direction:ltr}thead{display:table-header-group}tfoot{display:table-footer-group}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}table{page-break-inside:auto}}</style></head><body data-cell-wrap="1" data-report-currency="${escapeHtml(cur())}"><h1>${title} — IRON GATE SUPPLIES</h1><p>الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · العملة: ${escapeHtml(cur())} · تاريخ الاستخراج: ${new Date().toLocaleDateString('en-GB')}</p>${inner}</body></html>`;
  };
  const _exp=tradeReportExport;
  tradeReportExport=function(kind,format){
@@ -54105,9 +54793,13 @@ try{ if(typeof currentPage!=="undefined"&&currentPage==="purchaseInvoices"&&type
 </script>
 
 <style id="sup-grouped-foot-style">
-/* بيانات التوريد (مجمع): الإجماليات غير مثبّتة — كل إجمالي تحت عموده ويتحرك معه، وشريط التمرير الأفقي ظاهر */
-#content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tfoot td{position:static!important;bottom:auto!important;box-shadow:none!important}
-#content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tfoot td:first-child{position:sticky!important;right:0;z-index:4}
+/* بيانات التوريد (مجمع): صف الإجماليات ثابت دائمًا أسفل الجدول، وكل إجمالي تحت عموده ويتحرك أفقيًا معه، وشريط التمرير الأفقي ظاهر */
+#content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tfoot td{position:sticky!important;bottom:0!important;z-index:4;box-shadow:0 -3px 8px -5px rgba(15,23,42,.35)!important}
+#content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tfoot td:first-child{position:sticky!important;right:0;z-index:6}
+/* عمود الإجراء متثبت أفقيًا في الشاشات العريضة، فخليّت خليته في صف الإجماليات متثبتة معاه (فاضية) عشان باقي الإجماليات تفضل تحت أعمدتها */
+@media(min-width:1300px){
+ #content .supply-page .sup-grouped-wrap table[data-rs-key="supply-grouped"] tfoot td.sup-act-tf{position:sticky!important;left:0;z-index:8;box-shadow:6px -3px 8px -6px rgba(15,23,42,.35)!important}
+}
 #content .supply-page .sup-grouped-wrap{overflow-x:scroll!important;scrollbar-width:auto;scrollbar-color:#c99724 #e7ebf1}
 #content .supply-page .sup-grouped-wrap::-webkit-scrollbar{height:16px;width:12px}
 #content .supply-page .sup-grouped-wrap::-webkit-scrollbar-track{background:#e7ebf1}
@@ -54183,7 +54875,7 @@ window.supGroupedFootHtml=function(total,groups,SB,SS,ms){
  h+=td(f(total.sq,3),'num')+td(f(total.w,3),'num')+td('');   /* كمية، وزن، وحدة */
  if(SB)h+=td(f(total.buy),'num');
  if(SS)h+=td(f(total.sub),'num')+td(f(total.tax),'num')+td(f(total.dis),'num')+td('<strong>'+f(total.grand)+'</strong>','num')+td(f(total.paid),'num')+td('<strong>'+f(total.rem)+'</strong>','num')+td('');
- h+=td('')+td('');                                   /* الحالة، الإجراء */
+ h+=td('')+td('','sup-act-tf');                     /* الحالة، الإجراء */
  h+=td('','pay-terms-col pay-cash')+td(f(vals.reduce((a,g)=>a+(+g.payment.cashValue||0),0)),'pay-terms-col num pay-cash')+td(f(vals.reduce((a,g)=>a+(+g.payment.creditValue||0),0)),'pay-terms-col num')+td('','pay-terms-col')+td('','pay-terms-col');
  for(let i=0;i<ms;i++)h+=td(f(vals.reduce((a,g)=>a+(+(g.payment.schedule[i]||{}).amount||0),0)),'pay-terms-col num')+td('','pay-terms-col');
  return '<tfoot><tr>'+h+'</tr></tfoot>';
