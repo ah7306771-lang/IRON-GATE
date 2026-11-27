@@ -46644,7 +46644,7 @@ async function igSyncRefresh(key,rec){
   const r=await sb.from(t).select("*").eq("id",rec.serverId).limit(1);
   if(r.error) throw new Error(r.error.message);
   const row=(r.data||[])[0]; if(!row) return false;
-  Object.assign(rec,row.data||{},{serverId:row.id,_srvUpdatedAt:row.updated_at||null}); delete rec._dirty; hrPendDrop(key,rec.id); return true;
+  Object.assign(rec,row.data||{},{serverId:row.id}); delete rec._dirty; return true;
 }
 function igSyncPushBg(key,rec){
   if(!rec) return;
@@ -47151,14 +47151,6 @@ function hrSaveEmp(id){
         d.nationalId=c.digits;
         if(d.birthDate&&d.birthDate!==c.birth){ toast("تاريخ الميلاد ("+d.birthDate+") لا يطابق الرقم القومي ("+c.birth+")",true); return false; }
         if(d.gender&&((d.gender==="ذكر")!==c.male)){ toast("النوع لا يطابق الرقم القومي (الرقم الثالث عشر ده "+(c.male?"ذكر":"أنثى")+")",true); return false; }
-        /* لو الحقول فاضية نستخرج تاريخ الميلاد والنوع والمحافظة من الرقم القومي بدل الاكتفاء بالتحقق. */
-        if(!d.birthDate) d.birthDate=c.birth;
-        if(!d.gender) d.gender=c.male?"ذكر":"أنثى";
-        if(!d.govId){
-          const _govCode=c.digits.slice(7,9);
-          const _gov=(state.hrGovs||[]).find(x=>String(x.no||"").trim().padStart(2,"0")===_govCode);
-          if(_gov){ d.govId=_gov.id; d.gov=_gov.name||""; }
-        }
       }
       if(_chg("nationalId")&&_others.some(x=>hrDigits(x.nationalId)&&hrDigits(x.nationalId)===hrDigits(d.nationalId))){ toast("الرقم القومي ده مسجّل لموظف آخر",true); return false; }
     }
@@ -47184,33 +47176,6 @@ function viewHrSalaryItems(){
   <td class="no-print"><button class="btn ghost sm" onclick="hrDelItem(${i})">حذف</button></td></tr>`).join("")||'<tr><td colspan="5">لا توجد بنود — تُضاف من قرار التعيين أو يدويًا</td></tr>'}
   </tbody></table></div>`:'<div class="card" style="padding:16px">أضف موظفًا أولًا من شاشة بيانات الموظفين</div>'}`;
 }
-/* حفظ بنود الراتب بمسار مستقل: لا نرسل سجل الموظف كاملًا ولا نستخدم صلاحية hrEmployees.edit.
-   يعتمد على RPC ig_hr_update_salary_items مع updated_at المتوقع لمنع الكتابة فوق تعديل مستخدم آخر. */
-async function hrSalaryItemsRpc(e,action,item,itemIndex){
-  if(!e||!e.serverId) throw new Error("بيانات الموظف لم تُزامَن مع السيرفر بعد. افتح شاشة الموظفين وانتظر اكتمال المزامنة ثم أعد المحاولة.");
-  if(!e._srvUpdatedAt) throw new Error("لا توجد نسخة سيرفر مؤكدة للموظف. حدّث بيانات الموظفين أولًا ثم أعد المحاولة.");
-  const r=await sb.rpc("ig_hr_update_salary_items",{
-    p_employee_id:e.serverId,
-    p_action:action,
-    p_item:item||null,
-    p_item_index:Number.isInteger(itemIndex)?itemIndex:null,
-    p_expected_updated_at:e._srvUpdatedAt
-  });
-  if(r.error){
-    const msg=String(r.error.message||r.error.details||"تعذر حفظ بنود الراتب");
-    if(/ig_hr_update_salary_items|function .* does not exist|schema cache/i.test(msg)) throw new Error("مسار حفظ بنود الراتب غير مثبت في Supabase بعد. لا توجد تغييرات محفوظة؛ ثبّت سكريبت بنود الراتب النهائي أولًا.");
-    if(r.error.code==="P0001"&&/IG_CONFLICT/.test(msg)) throw new Error("بيانات الموظف اتعدّلت من مستخدم آخر. حدّث الشاشة وراجع البنود قبل إعادة المحاولة.");
-    throw new Error(msg);
-  }
-  const d=r.data||{};
-  if(!Array.isArray(d.salaryItems)||!d.updated_at) throw new Error("السيرفر لم يرجع نسخة بنود الراتب المحدثة؛ لم يتم اعتماد التغيير محليًا.");
-  e.salaryItems=d.salaryItems;
-  e._srvUpdatedAt=d.updated_at;
-  delete e._dirty;
-  hrPendDrop("hrEmployees",e.id);
-  saveState();
-  return d.salaryItems;
-}
 function hrItemForm(){
   const e=hrEmp(hrSalaryEmp); if(!e) return;
   openModal("بند راتب — "+e.name,`
@@ -47224,30 +47189,15 @@ function hrItemForm(){
     const name=document.querySelector("#hiName").value.trim(),val=+document.querySelector("#hiVal").value||0;
     if(!name){ toast("اسم البند مطلوب",true); return false; }
     if(!(val>=0)){ toast("القيمة لا تكون سالبة",true); return false; }
-    const item={id:"si_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,9),name,kind:document.querySelector("#hiKind").value,value:val,fixed:document.querySelector("#hiFixed").value==="1"};
-    const okBtn=document.querySelector("#modalBackdrop .mfoot .btn"); if(okBtn){okBtn.disabled=true;okBtn.textContent="جارٍ الحفظ…";}
-    hrSalaryItemsRpc(e,"add",item,null).then(()=>{
-      hrAudit("salary_item_add","إضافة بند راتب «"+name+"» للموظف "+(e.code||"")+" — "+e.name);
-      toast("تم حفظ بند الراتب على السيرفر"); closeModal(); go("hrSalaryItems");
-    }).catch(err=>{ if(okBtn){okBtn.disabled=false;okBtn.textContent="حفظ";} toast("لم يتم حفظ بند الراتب — "+(err.message||err),true); });
-    return false;
-  });
+    e.salaryItems=e.salaryItems||[]; e.salaryItems.push({name,kind:document.querySelector("#hiKind").value,value:val,fixed:document.querySelector("#hiFixed").value==="1"});
+    saveState(); igSyncPushBg("hrEmployees",e); hrAudit("salary_item_add","إضافة بند راتب «"+name+"» للموظف "+(e.code||"")+" — "+e.name); toast("تم حفظ البند"); go("hrSalaryItems"); return true; });
 }
-async function hrDelItem(i){
-  const e=hrEmp(hrSalaryEmp); if(!e||!can("hrSalaryItems","delete")){ toast("لا تملك صلاحية الحذف",true); return; }
-  const it=(e.salaryItems||[])[i]; if(!it) return;
-  if(!await askConfirm("حذف بند الراتب «"+(it.name||"")+"» من الموظف «"+e.name+"»؟",{ok:"حذف",danger:true})) return;
-  try{
-    await hrSalaryItemsRpc(e,"delete",null,i);
-    hrAudit("salary_item_del","حذف بند راتب «"+(it.name||"")+"» من الموظف "+(e.code||"")+" — "+e.name);
-    toast("تم حذف بند الراتب من السيرفر"); go("hrSalaryItems");
-  }catch(err){ toast("لم يتم حذف بند الراتب — "+(err.message||err),true); }
-}
+function hrDelItem(i){ const e=hrEmp(hrSalaryEmp); if(!e||!can("hrSalaryItems","delete")){ toast("لا تملك صلاحية الحذف",true); return; } const _nm=(e.salaryItems[i]||{}).name||""; e.salaryItems.splice(i,1); saveState(); igSyncPushBg("hrEmployees",e); hrAudit("salary_item_del","حذف بند راتب «"+_nm+"» من الموظف "+(e.code||"")+" — "+e.name); go("hrSalaryItems"); }
 const HR_MOVE_TYPES={hrAppointments:"قرار تعيين",hrTransfers:"تنقل",hrPenalties:"جزاء",hrRewards:"مكافأة",hrLeaves:"إجازة",hrErrands:"إذن / مأمورية",hrTerminations:"إنهاء خدمة",hrSuspensions:"إيقاف موظف"};
 const HR_MOVE_PAGES=Object.keys(HR_MOVE_TYPES);
 /* ===== حركات شؤون الموظفين =====
    كل الحقول الجديدة (طالب الحركة / المعتمد / وقت القرار / سبب الرفض / تفاصيل التعيين والتنقل والإجازة…) بتتخزن جوّه عمود data (jsonb) في hr_moves
-   زي باقي الحقول. صلاحيات إنهاء الخدمة والإيقاف تحتاج تفعيلًا متوافقًا في دوال الحماية وسياسات RLS. بنود الراتب اليدوية تحفظ عبر RPC مستقل ولا تعدّل سجل الموظف بالكامل. */
+   زي باقي الحقول، فمفيش أعمدة جديدة مطلوبة في سكربتات Supabase، وسياسات RLS الحالية (select/insert/update/delete) هي اللي بتحكم. */
 function hrUserNo(){ const u=curU(); return u&&u.no!=null?u.no:null; }
 function hrUserName(){ const u=curU()||{}; return u.name||u.fullName||u.username||(u.no!=null?String(u.no):""); }
 function hrDayUtc(s){ const x=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||"")); return x?Date.UTC(+x[1],+x[2]-1,+x[3]):NaN; }
@@ -47546,7 +47496,7 @@ function saAdvItems(){
   return (state.hrAdvances||[]).filter(a=>a&&a.status==="approved"&&!a.postedEntryNo&&!a.disbursedAt&&hrAdvRemaining(a)>0&&a.source!=="custody"&&hrAdvSourceChoices("cash").some(x=>x.code===String(a.sourceCode)));
 }
 /* شاشة صرف سلفة (مُجهّزة ببيانات السلفة المعتمدة). التأكيد مقفول لحد تركيب دالة السيرفر الذرية: لا قيد ولا صرف من هنا. */
-const HR_ADV_DISBURSE_RPC=true;   // دالة السيرفر ig_hr_disburse_advance موجودة ومراجَعة؛ الاستدعاء ذري على السيرفر
+const HR_ADV_DISBURSE_RPC=false;   // true بس بعد اعتماد وتركيب ig_hr_disburse_advance
 let hrAdvDisbBusy=false;
 /* تابة «سلف» داخل شاشة الصرف النقدي (جنب سداد مورد/تسويات): الموظف بدل المورد، والمستخدم بيدخل المبلغ. */
 function hrAdvRemaining(a){ return Math.max(0,Math.round(((+a.amount||0)-(+a.disbursedTotal||0))*100)/100); }
@@ -47614,7 +47564,7 @@ async function txAdvTabSave(){
   { const sig=[id,amt,acc,jr,srcAcc,a.disbursedTotal||0].join('|'); if(!a._opKey||a._opSig!==sig){ a._opSig=sig; a._opKey='op-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10); } }
   hrAdvDisbBusy=true;
   try{
-    const rr=await sb.rpc("ig_hr_disburse_advance",{p_advance_id:a.serverId,p_amount:amt,p_journal_id:jr,p_advance_account:acc,p_source_account:srcAcc,p_op_key:a._opKey,p_date:today()});
+    const rr=await sb.rpc("ig_hr_disburse_advance",{p_advance_id:a.serverId,p_amount:amt,p_journal_id:jr,p_advance_account:acc,p_source_account:srcAcc,p_op_key:a._opKey});
     if(rr.error) throw rr.error;
     const r=rr.data||{}; if(!r.entry_id) throw new Error("لم يرجع السيرفر رقم قيد");
     /* السيرفر هو اللي كتب disbursements/disbursedTotal/status/postedEntry*: نقرأ السجل منه ولا نكتب فوقه أبدًا */
@@ -47754,10 +47704,9 @@ async function hrAdvPostDo(){
     if(rr.error) throw rr.error;
     const r=rr.data||{};
     if(!r.entry_id) throw new Error("لم يرجع السيرفر رقم قيد");
-    /* بيانات الترحيل يملكها السيرفر؛ نقرأ النسخة الجديدة بدل إرسال نسخة متصفح قديمة فوقها. */
-    let refreshed=false; try{ refreshed=await igSyncRefresh("hrAdvances",a); }catch(_){ }
-    if(!refreshed){ a.postedEntryId=r.entry_id; a.postedEntryNo=String(r.entry_no||""); a.postedAt=a.postedAt||new Date().toISOString(); }
-    saveState();
+    const u=(typeof curU==="function"&&curU())||{};
+    a.postedEntryId=r.entry_id; a.postedEntryNo=String(r.entry_no||""); a.postedAt=a.postedAt||new Date().toISOString(); a.postedBy=a.postedBy||u.name||u.username||"";
+    saveState(); igSyncPushBg("hrAdvances",a);
     toast(r.already_posted?("✓ السلفة مُرحّلة بالفعل — تم ربطها بقيد رقم "+r.entry_no):("✓ تم ترحيل السلفة بقيد رقم "+r.entry_no)); closeModal(); go("hrAdvances");
   }catch(e){
     const m=String((e&&e.message)||e); 
@@ -55044,204 +54993,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
    /* رأس الكارت يتحول لفقرة ملاحظة حتى لا يُقص سطره في مُحوّل PDF */
    inner=inner.replace(/<div class="head"><h3>[\s\S]*?<\/h3><span class="count">([\s\S]*?)<\/span><\/div>/g,'<p>$1</p>');
   }
-  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#e9edf3;font-weight:700}.tr-cls td{background:#f8f3e2!important;font-weight:800;text-align:right}.card .head,.count{display:none}.card{border:none}.tbl-wrap{overflow:visible}td.num{white-space:nowrap;direction:ltr}thead{display:table-header-group}tfoot{display:table-footer-group}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}table{page-break-inside:auto}}</style></head><body data-cell-wrap="1" data-report-currency="${escapeHtml(cur())}"><h1>${title} — IRON GATE SUPPLIES</h1><p>الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · العملة: ${escapeHtml(cur())} · تاريخ الاستخراج: ${new Date().toLocaleDateString('en-GB')}</p>${inner}
-<!-- ===== IRON GATE dashboard finance KPIs + utility dock safety ===== -->
-<style id="ig-dash-gl-kpis-css">
-#igDashGLKpis{margin-top:8px}
-#igDashGLKpis .dx-kpi{cursor:default}
-#igDashGLKpis .dx-kpi:hover{transform:none}
-#igDashGLKpis .dx-kpi strong{font-variant-numeric:tabular-nums}
-#igDashGLKpis .dx-kpi small{line-height:1.5}
-#igDevBar{min-height:34px}
-#igDevTools{gap:7px}
-@media(max-width:900px){
-  #igDevBar{padding-left:76px;padding-right:76px}
-  #igDevTools{left:8px;gap:6px}
-  html body #igDevTools #igCalcFab,html body #igDevTools #saFab{width:25px!important;height:25px!important}
-}
-</style>
-<script id="ig-dash-gl-kpis">
-(function(){
-  "use strict";
-  if(window.__igDashGLKpisInstalled) return;
-  window.__igDashGLKpisInstalled=true;
-
-  // Keep the existing calculator/notification handlers; only relocate their existing buttons.
-  function dockUtilities(){
-    var bar=document.getElementById("igDevBar");
-    if(!bar) return;
-    var box=document.getElementById("igDevTools");
-    if(!box){
-      box=document.createElement("div");
-      box.id="igDevTools";
-      box.setAttribute("aria-label","أدوات سريعة");
-      bar.insertBefore(box,bar.firstChild);
-    }
-    ["igCalcFab","saFab"].forEach(function(id){
-      var el=document.getElementById(id);
-      if(el && el.parentNode!==box){
-        if(id==="igCalcFab") box.insertBefore(el,box.firstChild);
-        else box.appendChild(el);
-      }
-    });
-  }
-  try{
-    dockUtilities();
-    var dockObserver=new MutationObserver(function(){dockUtilities();});
-    dockObserver.observe(document.documentElement,{childList:true,subtree:true});
-    window.addEventListener("resize",dockUtilities,{passive:true});
-  }catch(_){}
-
-  function dashRange(){
-    var periods=window.DASH_PERIODS;
-    var key=(typeof dashPeriod!=="undefined"&&dashPeriod)||"month";
-    var P=(typeof DASH_PERIODS!=="undefined"?DASH_PERIODS:periods||[]).find(function(x){return x.k===key;});
-    if(!P) P={n:1,end:0};
-    var now=new Date(), pad=function(n){return String(n).padStart(2,"0");};
-    var mk=function(off){var d=new Date(now.getFullYear(),now.getMonth()-off,1);return d.getFullYear()+"-"+pad(d.getMonth()+1);};
-    var keys=[];for(var i=0;i<P.n;i++) keys.push(mk(P.end+i));
-    keys.sort();
-    var last=keys[keys.length-1]||mk(0), y=+last.slice(0,4), m=+last.slice(5,7);
-    return {from:(keys[0]||mk(0))+"-01",to:y+"-"+pad(m)+"-"+pad(new Date(y,m,0).getDate())};
-  }
-  function descendants(accounts,rootId){
-    if(!rootId) return null;
-    var ids=new Set([String(rootId)]), changed=true;
-    while(changed){
-      changed=false;
-      accounts.forEach(function(a){
-        if(a.parent_id!=null && ids.has(String(a.parent_id)) && !ids.has(String(a.id))){
-          ids.add(String(a.id)); changed=true;
-        }
-      });
-    }
-    return ids;
-  }
-  async function fetchGLTotals(from,to){
-    if(typeof sb==="undefined" || !sb) throw new Error("قاعدة البيانات غير متاحة");
-    var pair=await Promise.all([
-      sb.from("gl_accounts").select("id,parent_id,account_type,is_active"),
-      sb.from("gl_indicators").select("ind_key,account_id").in("ind_key",["revenue_root","expense_root","cogs_root"])
-    ]);
-    if(pair[0].error) throw pair[0].error;
-    if(pair[1].error) throw pair[1].error;
-    var accounts=pair[0].data||[], indicators={};
-    (pair[1].data||[]).forEach(function(x){indicators[x.ind_key]=x.account_id;});
-    var revIds=descendants(accounts,indicators.revenue_root);
-    var expIds=descendants(accounts,indicators.expense_root);
-    var cogsIds=descendants(accounts,indicators.cogs_root);
-    var entries=[],offset=0;
-    while(true){
-      var er=await sb.from("gl_entries").select("id,entry_date").eq("status","posted")
-        .gte("entry_date",from).lte("entry_date",to).order("entry_date").range(offset,offset+999);
-      if(er.error) throw er.error;
-      var batch=er.data||[]; entries=entries.concat(batch);
-      if(batch.length<1000) break;
-      offset+=1000;
-    }
-    var ids=entries.map(function(e){return e.id;});
-    var revenue=0,expenses=0;
-    for(var i=0;i<ids.length;i+=200){
-      var lineOffset=0;
-      while(true){
-        var lr=await sb.from("gl_entry_lines").select("entry_id,account_id,debit,credit")
-          .in("entry_id",ids.slice(i,i+200)).order("entry_id").order("line_no")
-          .range(lineOffset,lineOffset+999);
-        if(lr.error) throw lr.error;
-        var lineBatch=lr.data||[];
-        lineBatch.forEach(function(line){
-          var aid=String(line.account_id), dr=Number(line.debit)||0, cr=Number(line.credit)||0;
-          if(revIds && revIds.has(aid)) revenue+=cr-dr;
-          if(expIds && expIds.has(aid) && !(cogsIds && cogsIds.has(aid))) expenses+=dr-cr;
-        });
-        if(lineBatch.length<1000) break;
-        lineOffset+=1000;
-      }
-    }
-    return {
-      revenue:revenue, expenses:expenses,
-      hasRevenue:!!revIds, hasExpenses:!!expIds,
-      from:from,to:to
-    };
-  }
-  function moneyText(n){
-    return (Number(n)||0).toLocaleString("en-US",{maximumFractionDigits:2});
-  }
-  function card(icon,label,value,sub,cls){
-    return '<div class="dx-kpi '+cls+'" aria-label="'+label+'">'+
-      '<span class="dx-kpi-ic">'+(typeof igIco==="function"?igIco(icon):icon)+'</span>'+
-      '<span class="dx-kpi-body"><span class="dx-kpi-lbl">'+label+'</span>'+
-      '<strong>'+value+'</strong><small>'+sub+'</small></span></div>';
-  }
-  var runNo=0, cacheKey="", cacheData=null, busy=false;
-  async function renderGLCards(){
-    var host=document.getElementById("igDashGLKpis");
-    if(!host || currentPage!=="dashboard") return;
-    var range=dashRange(), key=range.from+"|"+range.to, thisRun=++runNo;
-    if(cacheKey===key && cacheData){
-      paint(cacheData,host); return;
-    }
-    if(busy){host.innerHTML='<div class="dx-note">جاري تحميل مؤشرات الحسابات العامة…</div>';return;}
-    busy=true;
-    host.innerHTML='<div class="dx-note">جاري تحميل إجمالي الإيرادات والمصروفات من القيود المُرحّلة…</div>';
-    try{
-      var d=await fetchGLTotals(range.from,range.to);
-      if(thisRun!==runNo || currentPage!=="dashboard") return;
-      cacheKey=key;cacheData=d;paint(d,host);
-    }catch(e){
-      if(thisRun===runNo) host.innerHTML='<div class="dx-note">تعذر تحميل مؤشرات الحسابات العامة. حدّث الداشبورد أو راجع اتصال قاعدة البيانات.</div>';
-    }finally{busy=false;}
-  }
-  function paint(d,host){
-    if(!host || currentPage!=="dashboard") return;
-    var cur=(state.settings&&state.settings.currency)||"ج.م";
-    var grossCard=Array.from(document.querySelectorAll(".dx-kpi")).find(function(el){
-      var l=el.querySelector(".dx-kpi-lbl");return l && /مجمل الربح/.test(l.textContent||"");
-    });
-    var gross=null;
-    if(grossCard){
-      var strong=grossCard.querySelector("strong");
-      if(strong){var raw=(strong.textContent||"").replace(/[,\u200e\u200f\s]/g,"");var m=raw.match(/-?\d+(?:\.\d+)?/);if(m)gross=Number(m[0]);}
-    }
-    var net=(gross==null)?null:gross-d.expenses;
-    var subRange="من "+d.from+" إلى "+d.to+" · القيود المُرحّلة";
-    host.innerHTML=
-      card("💸","إجمالي مصروفات الفترة",moneyText(d.expenses)+" <em>"+cur+"</em>",
-        d.hasExpenses?"حسب مؤشر حساب المصروفات الرئيسي":"مؤشر المصروفات غير محدد","k-red")+
-      card("💰","إجمالي الإيرادات",moneyText(d.revenue)+" <em>"+cur+"</em>",
-        d.hasRevenue?"حسب مؤشر حساب الإيرادات الرئيسي":"مؤشر الإيرادات غير محدد","k-green")+
-      card(net==null?"—":(net>=0?"★":"!"),"صافي ربح الفترة",
-        (net==null?"—":moneyText(net)+" <em>"+cur+"</em>"),
-        gross==null?"مجمل الربح غير ظاهر في الداشبورد": "مجمل الربح ("+moneyText(gross)+") − مصروفات الفترة ("+moneyText(d.expenses)+")",
-        net==null?"k-slate":(net>=0?"k-green":"k-red"));
-    host.setAttribute("data-period",subRange);
-  }
-
-  if(typeof window.viewDashboard==="function"){
-    var original=window.viewDashboard;
-    window.viewDashboard=function(){
-      var html=original.apply(this,arguments);
-      try{
-        if(typeof html==="string" && html.indexOf('id="igDashGLKpis"')<0 &&
-           html.indexOf('class="dx-kpis dx-two-row-grid"')>=0){
-          html=html.replace(/(<div class="dx-kpis dx-two-row-grid">[\s\S]*?<\/div>)/,
-            '$1<div class="dx-kpis dx-two-row-grid" id="igDashGLKpis"><div class="dx-note">جاري تجهيز المؤشرات المالية…</div></div>');
-          setTimeout(renderGLCards,80);
-        }
-      }catch(e){try{console.warn("igDashGLKpis",e);}catch(_){}}
-      return html;
-    };
-  }
-  window.igDashGLKpisRefresh=function(){cacheKey="";cacheData=null;renderGLCards();};
-  // Dashboard can be re-rendered without a full page reload when changing its period.
-  document.addEventListener("click",function(e){
-    if(e.target && e.target.closest && e.target.closest(".dx-periods button")){
-      cacheKey="";cacheData=null;setTimeout(renderGLCards,120);
-    }
-  },true);
-})();
-</script>
-</body></html>`;
+  return `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>${title}</title><style>body{font-family:Tahoma,Arial,sans-serif;color:#1f2937;padding:18px}h1{text-align:center;color:#9a7410;font-size:22px}p{text-align:center;color:#64748b}table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:18px}th{background:#263449;color:#fff}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}tbody tr:nth-child(even){background:#f1f5f9}tfoot td{background:#e9edf3;font-weight:700}.tr-cls td{background:#f8f3e2!important;font-weight:800;text-align:right}.card .head,.count{display:none}.card{border:none}.tbl-wrap{overflow:visible}td.num{white-space:nowrap;direction:ltr}thead{display:table-header-group}tfoot{display:table-footer-group}@media print{@page{size:A4 landscape;margin:8mm}body{padding:0}tr{break-inside:avoid}table{page-break-inside:auto}}</style></head><body data-cell-wrap="1" data-report-currency="${escapeHtml(cur())}"><h1>${title} — IRON GATE SUPPLIES</h1><p>الفترة: ${f.from||'البداية'} إلى ${f.to||'النهاية'} · العملة: ${escapeHtml(cur())} · تاريخ الاستخراج: ${new Date().toLocaleDateString('en-GB')}</p>${inner}</body></html>`;
  };
  const _exp=tradeReportExport;
  tradeReportExport=function(kind,format){
