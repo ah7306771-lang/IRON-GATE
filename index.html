@@ -54232,9 +54232,8 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  /* قاعدة صارمة: لا جمع لكميات/أوزان عبر وحدات مختلفة. كل إجمالي كمية يُجمّع لكل وحدة على حدة ويُعرض بوحدته، كل وحدة في سطر لتفادي تجاوز الخلايا في PDF */
  const q3c=v=>{const n=Number(Number(v||0).toFixed(3));return n.toLocaleString('en-US',{maximumFractionDigits:3});};
  const uSum=(m,fn)=>[...m.entries()].map(([u,o])=>q3c(fn(o))+' '+uLabel(u)).join(' · ');
- /* الوزن والوحدة في عمودين منفصلين: لو العميل له أكتر من وحدة، كل وحدة في سطر ويتطابق سطر الوزن مع سطر الوحدة */
- const uNums=m=>[...m.entries()].map(([u,w])=>q3c(w)).join('<br>');
- const uNames=m=>[...m.keys()].map(u=>uLabel(u)).join('<br>');
+ /* الوحدة بتظهر جنب الرقم نفسه (حسب فلتر وحدة العرض) من غير عمود منفصل؛ لو أكتر من وحدة، كل وحدة في سطر */
+ const uQty=m=>[...m.entries()].map(([u,w])=>q3c(w)+' '+uLabel(u)).join('<br>');
  /* تجميع بنود البوالص مع بُعد الشهر والتصنيف والوحدة والعميل */
  function srAgg(){
   const f=tradeReportFilters.salesReport||{},mode=f.unitMode||"used",q=(f.q||"").trim().toLowerCase(),map=new Map(),cust=new Map(),mon=new Map(),months=new Set();
@@ -54269,29 +54268,29 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
  const avgCell=(wMap,net)=>{if(wMap.size!==1)return '—';const [u,w]=[...wMap.entries()][0];if(!w)return '—';return u?money(net/w):money(net/w)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>';};
  function srCustomerHtml(){
   const {cust}=srAgg(),list=[...cust.entries()].sort((a,b)=>b[1].net-a[1].net);
-  const body=list.map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td class="num">${x.docs.size}</td><td class="num">${uNums(x.w)}</td><td>${uNames(x.w)}</td><td class="num">${money(x.sub)}</td><td class="num">${money(x.tax)}</td><td class="num">${money(x.disc)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td></tr>`).join('');
+  const body=list.map(([n,x])=>`<tr><td>${escapeHtml(n)}</td><td class="num">${x.docs.size}</td><td class="num">${uQty(x.w)}</td><td class="num">${money(x.sub)}</td><td class="num">${money(x.tax)}</td><td class="num">${money(x.disc)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td></tr>`).join('');
   const t=list.reduce((a,[,x])=>{x.w.forEach((w,u)=>a.w.set(u,(a.w.get(u)||0)+w));x.docs.forEach(d=>a.docs.add(d));return {w:a.w,docs:a.docs,sub:a.sub+x.sub,tax:a.tax+x.tax,disc:a.disc+x.disc,net:a.net+x.net};},{w:new Map(),docs:new Set(),sub:0,tax:0,disc:0,net:0});
-  const unitRows=[...t.w.entries()].map(([u,w])=>`<tr><td>إجمالي الكمية بوحدة «${uFooterLabel(u)}»</td><td></td><td class="num"><b>${q3(w)}</b></td><td>${uLabel(u)}</td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
-  const foot=list.length?`<tfoot>${unitRows}<tr><td>الإجمالي</td><td class="num">${t.docs.size}</td><td class="num">—</td><td></td><td class="num">${money(t.sub)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.disc)}</td><td class="num"><b>${money(t.net)}</b></td><td class="num">${avgCell(t.w,t.net)}</td></tr></tfoot>`:'';
-  return `<div class="card"><div class="head"><h3>إجمالي المبيعات لكل عميل</h3><span class="count">${list.length} عميل · الكمية لكل وحدة على حدة · المتوسط عند وحدة واحدة فقط · بـ${escapeHtml(cur())}</span></div>`+tbl(['العميل','عدد البوالص','الكمية','الوحدة','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','متوسط سعر الوحدة'],body,foot)+'</div>';
+  const unitRows=[...t.w.entries()].map(([u,w])=>`<tr><td>إجمالي الكمية بوحدة «${uFooterLabel(u)}»</td><td></td><td class="num"><b>${q3(w)} ${uLabel(u)}</b></td><td></td><td></td><td></td><td></td><td></td></tr>`).join('');
+  const foot=list.length?`<tfoot>${unitRows}<tr><td>الإجمالي</td><td class="num">${t.docs.size}</td><td class="num">—</td><td class="num">${money(t.sub)}</td><td class="num">${money(t.tax)}</td><td class="num">${money(t.disc)}</td><td class="num"><b>${money(t.net)}</b></td><td class="num">${avgCell(t.w,t.net)}</td></tr></tfoot>`:'';
+  return `<div class="card"><div class="head"><h3>إجمالي المبيعات لكل عميل</h3><span class="count">${list.length} عميل · الكمية لكل وحدة على حدة · المتوسط عند وحدة واحدة فقط · بـ${escapeHtml(cur())}</span></div>`+tbl(['العميل','عدد البوالص','الكمية','قبل الضريبة','الضريبة','الخصم','صافي المبيعات','متوسط سعر الوحدة'],body,foot)+'</div>';
  }
  function srMonthlyHtml(){
   const {mon}=srAgg(),list=[...mon.entries()].sort((a,b)=>a[0].localeCompare(b[0]));
-  const body=list.map(([k,x],i)=>{const prev=i?list[i-1][1].net:0,ch=i?(prev?((x.net-prev)/Math.abs(prev)*100).toFixed(1)+'%':(x.net?'جديد':'—')):'—';return `<tr><td>${escapeHtml(k)}</td><td class="num">${x.docs.size}</td><td class="num">${uNums(x.w)}</td><td>${uNames(x.w)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td><td class="num">${ch}</td></tr>`}).join('');
-  return `<div class="card"><div class="head"><h3>مقارنة المبيعات الشهرية</h3><span class="count">${list.length} شهر · الكمية لكل وحدة على حدة · التغير مقابل الشهر السابق · بـ${escapeHtml(cur())}</span></div>`+tbl(['الشهر','عدد البوالص','الكمية','الوحدة','صافي المبيعات','متوسط سعر الوحدة','التغير %'],body)+'</div>';
+  const body=list.map(([k,x],i)=>{const prev=i?list[i-1][1].net:0,ch=i?(prev?((x.net-prev)/Math.abs(prev)*100).toFixed(1)+'%':(x.net?'جديد':'—')):'—';return `<tr><td>${escapeHtml(k)}</td><td class="num">${x.docs.size}</td><td class="num">${uQty(x.w)}</td><td class="num"><b>${money(x.net)}</b></td><td class="num">${avgCell(x.w,x.net)}</td><td class="num">${ch}</td></tr>`}).join('');
+  return `<div class="card"><div class="head"><h3>مقارنة المبيعات الشهرية</h3><span class="count">${list.length} شهر · الكمية لكل وحدة على حدة · التغير مقابل الشهر السابق · بـ${escapeHtml(cur())}</span></div>`+tbl(['الشهر','عدد البوالص','الكمية','صافي المبيعات','متوسط سعر الوحدة','التغير %'],body)+'</div>';
  }
  function srItemsHtml(){
   const {rows}=srAgg();
   let lastCls=null,body='';
-  rows.forEach(x=>{if(x.cls!==lastCls){lastCls=x.cls;body+=`<tr class="tr-cls" style="background:#f8f3e2;font-weight:800"><td colspan="7">${escapeHtml(x.cls)}</td></tr>`;}
-   body+=`<tr><td>${escapeHtml(x.name)}</td><td>${uLabel(x.unit)}</td><td class="num">${q3(x.qty)}</td><td class="num">${q3(x.weight)}</td><td class="num">${money(x.value)}</td><td class="num">${x.weight?(x.unit?money(x.avg):money(x.avg)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>'):'—'}</td><td class="num">${x.docs}</td></tr>`;});
+  rows.forEach(x=>{if(x.cls!==lastCls){lastCls=x.cls;body+=`<tr class="tr-cls" style="background:#f8f3e2;font-weight:800"><td colspan="6">${escapeHtml(x.cls)}</td></tr>`;}
+   body+=`<tr><td>${escapeHtml(x.name)}</td><td class="num">${q3(x.qty)} ${uLabel(x.unit)}</td><td class="num">${q3(x.weight)} ${uLabel(x.unit)}</td><td class="num">${money(x.value)}</td><td class="num">${x.weight?(x.unit?money(x.avg):money(x.avg)+' <small>كما هي مخزنة — غير قابلة للمقارنة</small>'):'—'}</td><td class="num">${x.docs}</td></tr>`;});
   /* إجمالي الصف: لا جمع عبر وحدات مختلفة ولا متوسط عبر وحدات — الكمية والوزن لكل وحدة على حدة، والقيمة فقط تجمع */
   const wU=new Map(),qU=new Map(),docsAll=new Set();
   rows.forEach(x=>{wU.set(x.unit,(wU.get(x.unit)||0)+x.weight);qU.set(x.unit,(qU.get(x.unit)||0)+x.qty);x.docsSet.forEach(d=>docsAll.add(d));});
   const totV=rows.reduce((a,x)=>a+x.value,0);
-  const unitRows=[...wU.entries()].map(([u,w])=>`<tr><td>إجمالي بوحدة «${uFooterLabel(u)}»</td><td>${uLabel(u)}</td><td class="num">${q3(qU.get(u)||0)}</td><td class="num"><b>${q3(w)}</b></td><td></td><td></td><td></td></tr>`).join('');
-  const foot=rows.length?`<tfoot>${unitRows}<tr><td>الإجمالي (${rows.length} صنف)</td><td></td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(totV)} ${escapeHtml(cur())}</b></td><td class="num">—</td><td class="num">${docsAll.size}</td></tr></tfoot>`:'';
-  return `<div class="card"><div class="head"><h3>تحليل مبيعات الأصناف — قبل الضريبة</h3><span class="count">الكميات بوحدة العرض المختارة · الإجماليات لكل وحدة على حدة ولا متوسط عبر وحدات مختلفة</span></div>`+tbl(['الصنف / المقاس','الوحدة','الكمية','الوزن المورد','قيمة البيع','متوسط سعر الوحدة','عدد المستندات'],body,foot)+'</div>';
+  const unitRows=[...wU.entries()].map(([u,w])=>`<tr><td>إجمالي بوحدة «${uFooterLabel(u)}»</td><td class="num">${q3(qU.get(u)||0)} ${uLabel(u)}</td><td class="num"><b>${q3(w)} ${uLabel(u)}</b></td><td></td><td></td><td></td></tr>`).join('');
+  const foot=rows.length?`<tfoot>${unitRows}<tr><td>الإجمالي (${rows.length} صنف)</td><td class="num">—</td><td class="num">—</td><td class="num"><b>${money(totV)} ${escapeHtml(cur())}</b></td><td class="num">—</td><td class="num">${docsAll.size}</td></tr></tfoot>`:'';
+  return `<div class="card"><div class="head"><h3>تحليل مبيعات الأصناف — قبل الضريبة</h3><span class="count">الكميات بوحدة العرض المختارة · الإجماليات لكل وحدة على حدة ولا متوسط عبر وحدات مختلفة</span></div>`+tbl(['الصنف / المقاس','الكمية','الوزن المورد','قيمة البيع','متوسط سعر الوحدة','عدد المستندات'],body,foot)+'</div>';
  }
  /* بناء مصفوفة الأصناف بالشهور: صف لكل صنف/وحدة، عمودان لكل شهر (الكمية/القيمة)، إجماليات لكل وحدة فقط + قيمة بالعملة — بنفس نمط مصفوفة المشتريات */
  function srMatrixBuild(exp){
@@ -54300,19 +54299,19 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
   if(ms.length){const out=[];let[y,m]=ms[0].split('-').map(Number);const[ey,em]=ms[ms.length-1].split('-').map(Number);while(y<ey||(y===ey&&m<=em)){out.push(y+'-'+String(m).padStart(2,'0'));m++;if(m>12){m=1;y++}}ms=out;}
   const sumM=(x,mm)=>mm.reduce((t,m)=>{const b=x.byMonth[m];return b?{w:t.w+b.weight,v:t.v+b.value}:t},{w:0,v:0});
   const block=(mb,wt)=>{
-   const theadHtml='<tr><th rowspan="2">التصنيف</th><th rowspan="2">الصنف / المقاس</th><th rowspan="2">الوحدة</th>'+mb.map(m=>`<th colspan="2">${m}</th>`).join('')+(wt?'<th colspan="2">الإجمالي</th>':'')+'</tr><tr>'+mb.concat(wt?['t']:[]).map(()=>'<th>الكمية</th><th>القيمة</th>').join('')+'</tr>';
+   const theadHtml='<tr><th rowspan="2">التصنيف</th><th rowspan="2">الصنف / المقاس</th>'+mb.map(m=>`<th colspan="2">${m}</th>`).join('')+(wt?'<th colspan="2">الإجمالي</th>':'')+'</tr><tr>'+mb.concat(wt?['t']:[]).map(()=>'<th>الكمية</th><th>القيمة</th>').join('')+'</tr>';
    const mv=new Map(),U=new Map();let body='';
    const clsMap=new Map();rows.forEach(x=>{const a=clsMap.get(x.cls)||[];a.push(x);clsMap.set(x.cls,a);});
-   if(!rows.length)body=`<tr><td colspan="${3+mb.length*2+(wt?2:0)}"><div class="empty" style="padding:26px">لا توجد بيانات مطابقة للفلاتر</div></td></tr>`;
+   if(!rows.length)body=`<tr><td colspan="${2+mb.length*2+(wt?2:0)}"><div class="empty" style="padding:26px">لا توجد بيانات مطابقة للفلاتر</div></td></tr>`;
    clsMap.forEach((items,cl)=>{
     const sub=new Map(mb.map(m=>[m,0]));let st=0,ib='';
-    items.forEach(x=>{let cells='';mb.forEach(m=>{const b=x.byMonth[m];if(b){cells+=`<td class="num">${q3(b.weight)}</td><td class="num">${money(b.value)}</td>`;sub.set(m,sub.get(m)+b.value);mv.set(m,(mv.get(m)||0)+b.value);const u=U.get(x.unit)||{t:new Map(),w:0};u.t.set(m,(u.t.get(m)||0)+b.weight);U.set(x.unit,u);}else cells+='<td class="num">—</td><td class="num">—</td>';});
+    items.forEach(x=>{let cells='';mb.forEach(m=>{const b=x.byMonth[m];if(b){cells+=`<td class="num">${q3(b.weight)} ${uLabel(x.unit)}</td><td class="num">${money(b.value)}</td>`;sub.set(m,sub.get(m)+b.value);mv.set(m,(mv.get(m)||0)+b.value);const u=U.get(x.unit)||{t:new Map(),w:0};u.t.set(m,(u.t.get(m)||0)+b.weight);U.set(x.unit,u);}else cells+='<td class="num">—</td><td class="num">—</td>';});
      const T=sumM(x,ms);if(wt){const u=U.get(x.unit)||{t:new Map(),w:0};u.w+=T.w;U.set(x.unit,u);}st+=T.v;
-     ib+=`<tr><td></td><td style="text-align:right!important;padding-right:18px!important"><b>${escapeHtml(x.name)}</b></td><td>${uLabel(x.unit)}</td>${cells}${wt?`<td class="num"><b>${q3(T.w)}</b></td><td class="num"><b>${money(T.v)}</b></td>`:''}</tr>`;});
-    body+=`<tr style="background:#e8edf5;font-weight:800"><td style="text-align:right!important">${escapeHtml(cl)}</td><td></td><td></td>${mb.map(m=>`<td class="num"></td><td class="num">${sub.get(m)?money(sub.get(m)):'—'}</td>`).join('')}${wt?`<td class="num"></td><td class="num">${money(st)}</td>`:''}</tr>`+ib;
+     ib+=`<tr><td></td><td style="text-align:right!important;padding-right:18px!important"><b>${escapeHtml(x.name)}</b></td>${cells}${wt?`<td class="num"><b>${q3(T.w)} ${uLabel(x.unit)}</b></td><td class="num"><b>${money(T.v)}</b></td>`:''}</tr>`;});
+    body+=`<tr style="background:#e8edf5;font-weight:800"><td style="text-align:right!important">${escapeHtml(cl)}</td><td></td>${mb.map(m=>`<td class="num"></td><td class="num">${sub.get(m)?money(sub.get(m)):'—'}</td>`).join('')}${wt?`<td class="num"></td><td class="num">${money(st)}</td>`:''}</tr>`+ib;
    });
    const grand=rows.reduce((t,x)=>t+sumM(x,ms).v,0);
-   const foot=[...U.entries()].map(([u,o])=>`<tr><td colspan="3">إجمالي بوحدة «${uFooterLabel(u)}»</td>${mb.map(m=>`<td class="num">${o.t.get(m)?q3(o.t.get(m)):'—'}</td><td class="num"></td>`).join('')}${wt?`<td class="num">${q3(o.w)}</td><td class="num"></td>`:''}</tr>`).join('')+(mb.length?`<tr><td colspan="3">إجمالي قيمة المبيعات · ${escapeHtml(currency)}</td>${mb.map(m=>`<td class="num"></td><td class="num">${money(mv.get(m)||0)}</td>`).join('')}${wt?`<td class="num"></td><td class="num">${money(grand)}</td>`:''}</tr>`:'');
+   const foot=[...U.entries()].map(([u,o])=>`<tr><td colspan="2">إجمالي بوحدة «${uFooterLabel(u)}»</td>${mb.map(m=>`<td class="num">${o.t.get(m)?q3(o.t.get(m))+' '+uLabel(u):'—'}</td><td class="num"></td>`).join('')}${wt?`<td class="num">${q3(o.w)} ${uLabel(u)}</td><td class="num"></td>`:''}</tr>`).join('')+(mb.length?`<tr><td colspan="2">إجمالي قيمة المبيعات · ${escapeHtml(currency)}</td>${mb.map(m=>`<td class="num"></td><td class="num">${money(mv.get(m)||0)}</td>`).join('')}${wt?`<td class="num"></td><td class="num">${money(grand)}</td>`:''}</tr>`:'');
    return {theadHtml,body,foot};
   };
   let blocks;if(exp&&ms.length>6){const nb=Math.ceil(ms.length/5),sz=Math.ceil(ms.length/nb);blocks=[];for(let k=0;k<ms.length;k+=sz)blocks.push(block(ms.slice(k,k+sz),k+sz>=ms.length));}else blocks=[block(ms,true)];
