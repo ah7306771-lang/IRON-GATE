@@ -7702,8 +7702,8 @@ function glFinPickByName(T,type,re,maxDepth){
   const ids=new Set(cand.map(a=>String(a.id)));
   return cand.filter(a=>{let p=a.parent_id!=null?T.byId.get(String(a.parent_id)):null,g=0;while(p&&g++<30){if(ids.has(String(p.id)))return false;p=p.parent_id!=null?T.byId.get(String(p.parent_id)):null;}return true;});
 }
-function glFinCogs(T){const ind=glFinInd('cogs_root');if(ind)return {nodes:[ind],src:'ind'};const top=glFinPickByName(T,'expense',/تكلف[ةه]\s*(ال)?(مبيعات|بضاع)/,3);return {nodes:top,src:top.length?'auto':'none'};}
-function glFinCurrentAssets(T){const ind=glFinInd('current_assets_root');if(ind)return {nodes:[ind],src:'ind'};const top=glFinPickByName(T,'asset',/المتداول/,3);return {nodes:top,src:top.length?'auto':'none'};}
+function glFinCogs(T){const ind=glFinInd('cogs_root');return ind?{nodes:[ind],src:'ind'}:{nodes:[],src:'none'};}
+function glFinCurrentAssets(T){const ind=glFinInd('current_assets_root');return ind?{nodes:[ind],src:'ind'}:{nodes:[],src:'none'};}
 
 /* ---------- جلب القيود المُرحّلة (كل السنوات) ---------- */
 let glFinLedger={key:'',lines:null,busy:'',err:'',errKey:''};
@@ -57468,19 +57468,12 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
     if(pair[1].error) throw pair[1].error;
     var accounts=pair[0].data||[], indicators={};
     (pair[1].data||[]).forEach(function(x){indicators[x.ind_key]=x.account_id;});
-    // نفس منطق «قائمة الدخل»: التصنيف بنوع الحساب (إيراد/مصروف) مش بمؤشر الأب، وتكلفة المبيعات بالمؤشر أو بالاسم
+    // نفس منطق «قائمة الدخل»: التصنيف بنوع الحساب (إيراد/مصروف) من شجرة الحسابات، وتكلفة المبيعات بمؤشر النظام فقط (بدون أي أسماء أو أكواد ثابتة)
     var revIds=new Set(), expIds=new Set();
     accounts.forEach(function(a){ var id=String(a.id); if(a.account_type==="revenue") revIds.add(id); else if(a.account_type==="expense") expIds.add(id); });
     if(!revIds.size) revIds=null; if(!expIds.size) expIds=null;
     var cogsIds=descendants(accounts,indicators.cogs_root);
-    if(!cogsIds){
-      var byId={}; accounts.forEach(function(a){byId[String(a.id)]=a;});
-      var depthOf=function(a){var d=1,p=a.parent_id!=null?byId[String(a.parent_id)]:null,g=0;while(p&&g++<30){d++;p=p.parent_id!=null?byId[String(p.parent_id)]:null;}return d;};
-      var cand=accounts.filter(function(a){return a.account_type==="expense"&&depthOf(a)<=3&&/تكلف[ةه]\s*(ال)?(مبيعات|بضاع)/.test(String(a.account_name||""));});
-      var roots=cand.filter(function(a){var p=a.parent_id!=null?byId[String(a.parent_id)]:null,g=0;while(p&&g++<30){if(cand.indexOf(p)>=0)return false;p=p.parent_id!=null?byId[String(p.parent_id)]:null;}return true;});
-      var acc=new Set(); roots.forEach(function(r){var d=descendants(accounts,r.id); if(d) d.forEach(function(x){acc.add(x);});});
-      cogsIds=acc.size?acc:null;
-    }
+
     var revenue=0,expenses=0,cogs=0;
     var addLine=function(line){
       var aid=String(line.account_id), dr=Number(line.debit)||0, cr=Number(line.credit)||0;
@@ -57489,9 +57482,26 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
       if(isCogs) cogs+=dr-cr;
       else if(expIds && expIds.has(aid)) expenses+=dr-cr;
     };
-    // المسار السريع: سطور الحسابات المعنيّة فقط + ربط القيد في طلب واحد، ومجموعات حسابات بالتوازي
-    var done=false;
+    // أسرع مسار: دالة تجميع في قاعدة البيانات (ig_dash_pnl) لو متركّبة — طلب واحد بدل آلاف
+    var rpcDone=false;
     try{
+      if(sessionStorage.getItem("ig_no_dash_rpc")!=="1"){
+        var rr=await sb.rpc("ig_dash_pnl",{p_from:from,p_to:to});
+        if(rr.error){ sessionStorage.setItem("ig_no_dash_rpc","1"); }
+        else{
+          var ar=0,ae=0,ac=0;
+          (rr.data||[]).forEach(function(x){
+            var aid=String(x.account_id), dr=Number(x.debit)||0, cr=Number(x.credit)||0;
+            if(revIds && revIds.has(aid)) ar+=cr-dr;
+            if(cogsIds && cogsIds.has(aid)) ac+=dr-cr; else if(expIds && expIds.has(aid)) ae+=dr-cr;
+          });
+          revenue=ar; expenses=ae; cogs=ac; rpcDone=true;
+        }
+      }
+    }catch(rpcErr){ rpcDone=false; }
+    // المسار السريع: سطور الحسابات المعنيّة فقط + ربط القيد في طلب واحد، ومجموعات حسابات بالتوازي
+    var done=rpcDone;
+    if(!done) try{
       var rel=[]; [revIds,expIds,cogsIds].forEach(function(st){ if(st) st.forEach(function(x){ if(rel.indexOf(x)<0) rel.push(x); }); });
       var groups=[]; for(var g=0;g<rel.length;g+=60) groups.push(rel.slice(g,g+60));
       var tr=0,te=0,tc=0;
@@ -57540,7 +57550,7 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
       for(var c=0;c<chunks.length;c+=6) await Promise.all(chunks.slice(c,c+6).map(one));
     }
     return {
-      revenue:revenue, expenses:expenses, cogs:cogs,
+      revenue:revenue, expenses:expenses, cogs:cogs, hasCogs:!!cogsIds,
       hasRevenue:!!revIds, hasExpenses:!!expIds,
       from:from,to:to
     };
@@ -57595,13 +57605,15 @@ const _pv=window.igPurchaseView;if(typeof _pv==='function'){window.igPurchaseVie
     var net=(d.hasRevenue||d.hasExpenses)?(d.revenue-d.expenses-(d.cogs||0)):null;
     var subRange="من "+d.from+" إلى "+d.to+" · القيود المُرحّلة";
     host.innerHTML=
+      card("📦","تكلفة البضاعة المباعة",d.hasCogs?moneyText(d.cogs)+" <em>"+cur+"</em>":"—",
+        d.hasCogs?"حسب مؤشر «حساب تكلفة المبيعات»":"حدّد مؤشر «حساب تكلفة المبيعات» من مؤشرات النظام لتظهر هنا","k-gold")+
       card("💸","إجمالي مصروفات الفترة",moneyText(d.expenses)+" <em>"+cur+"</em>",
-        d.hasExpenses?"كل حسابات المصروفات (بدون تكلفة المبيعات)":"مؤشر المصروفات غير محدد","k-red")+
+        d.hasExpenses?(d.hasCogs?"المصروفات التشغيلية (بدون تكلفة البضاعة المباعة)":"كل حسابات المصروفات (تكلفة المبيعات غير مفصولة)"):"لا توجد حسابات مصروفات","k-red")+
       card("💰","إجمالي الإيرادات",moneyText(d.revenue)+" <em>"+cur+"</em>",
         d.hasRevenue?"كل حسابات الإيرادات — نفس قائمة الدخل":"مؤشر الإيرادات غير محدد","k-green")+
       card(net==null?"—":(net>=0?"★":"!"),"صافي ربح الفترة",
         (net==null?"—":moneyText(net)+" <em>"+cur+"</em>"),
-        net==null?"مؤشرات الحسابات غير محددة":"الإيرادات ("+moneyText(d.revenue)+") − المصروفات ("+moneyText(d.expenses)+")"+(d.cogs?" − تكلفة المبيعات ("+moneyText(d.cogs)+")":""),
+        net==null?"مؤشرات الحسابات غير محددة":"الإيرادات ("+moneyText(d.revenue)+") − المصروفات ("+moneyText(d.expenses)+")"+(d.hasCogs?" − تكلفة البضاعة ("+moneyText(d.cogs)+")":""),
         net==null?"k-slate":(net>=0?"k-green":"k-red"));
     host.setAttribute("data-period",subRange);
   }
