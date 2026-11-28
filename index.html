@@ -5069,7 +5069,7 @@ function scopeSaveBlock(o){ const m=scopeSaveViolation(o); if(m){ try{ audit("sc
    اليومية المخفية: كل قيودها بتتخفي. الحساب المخفي (وأبناؤه) ومركز التكلفة المخفي: أي قيد فيه سطر عليهم بيتخفي كله
    (مش بنقص أسطر منه عشان القيد ما يظهرش ناقص أو يتمسح منه سطر عند التعديل).
    التقارير المجمّعة مقفولة لأي مستخدم عنده إخفاء لأن أرقامها هتطلع ناقصة. مش مربوط بنطاق الموردين/العملاء/البنوك/الخزائن. */
-const GL_SCOPE_BLOCKED_TABS=["dashboard","rpt_income","rpt_balance","rpt_exp","rpt_cc","rpt_ccs","rpt_ccx"];
+const GL_SCOPE_BLOCKED_TABS=["dashboard","rpt_income","rpt_balance","rpt_exp","rpt_cc","rpt_ccs","rpt_ccx","stm"];
 function glHideCfg(){
   const u=curU(); if(!u||u.role==="admin") return null; const h=u.perms&&u.perms.glHide; if(!h||typeof h!=="object") return null;
   const s=k=>new Set((Array.isArray(h[k])?h[k]:[]).map(String)); const c={j:s("journals"),a:s("accounts"),c:s("centers")};
@@ -5810,7 +5810,8 @@ const navGroups = [
     { id:"gl", tab:"rpt_ccx", icon:"📆", label:"تحليل المصروفات على مراكز التكلفة" },
     { sep:"القوائم المالية" },
     { id:"gl", tab:"rpt_income", icon:"📈", label:"قائمة الدخل التفصيلية" },
-    { id:"gl", tab:"rpt_balance", icon:"🏛", label:"قائمة المركز المالي" }
+    { id:"gl", tab:"rpt_balance", icon:"🏛", label:"قائمة المركز المالي" },
+    { id:"gl", tab:"stm", icon:"🧱", label:"منشئ القوائم المالية" }
   ]},
 ];
 
@@ -7271,7 +7272,7 @@ const glCan=a=>can("gl",a);
 function glCacheKey(){const u=(typeof curU==="function")?curU():null;const gp=u&&u.perms&&u.perms.screens?u.perms.screens.gl:null;const gj=gp?JSON.stringify(gp):"-";return [String(currentUser&&currentUser.no||""),String(CUR_CO),String(glActiveYearId||""),(u&&u.role)||"",gj.length+":"+gj.slice(0,80)].join("|");}
 function glClearCache(){glState.entries=[];glState.lines=[];glState.sources=[];glState.loadedAt=0;glState.loadedKey="";glState.loadedYear=null;glState.error="";glState.staleError="";}
 function glStaleBannerHtml(){const t=glState.loadedAt?new Date(glState.loadedAt).toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"}):"";return `<div style="margin:0 0 10px;padding:10px 14px;background:#fef2f2;border:2px solid #dc2626;border-radius:9px;color:#991b1b;font-size:12.5px;font-weight:700;display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span>⚠ تعذر تحديث بيانات المحاسبة الآن${glState.staleError?` (${glEsc(String(glState.staleError).slice(0,180))})`:""} — المعروض بيانات قديمة${t?` من آخر تحديث ناجح ${t}`:""}.</span><button type="button" class="btn sm" onclick="glLoad(true)">إعادة المحاولة</button></div>`;}
-const glTabs=[ ["dashboard","لوحة التحليلات المالية"],["entries","قيود يومية"],["import_entries","استيراد قيود من Excel"],["bulk_post","⚡ ترحيل/إلغاء مجمع"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"],["rpt_posted","تقرير القيود المرحّلة"],["rpt_acct","كشف حساب لكل الحسابات"],["rpt_tb","ميزان المراجعة"],["rpt_exp","تحليل المصروفات الشهري"],["rpt_cc","موقف مركز تكلفة"],["rpt_ccs","ملخص مراكز التكلفة"],["rpt_ccx","تحليل المصروفات على مراكز التكلفة"],["rpt_income","قائمة الدخل التفصيلية"],["rpt_balance","قائمة المركز المالي"] ];
+const glTabs=[ ["dashboard","لوحة التحليلات المالية"],["entries","قيود يومية"],["import_entries","استيراد قيود من Excel"],["bulk_post","⚡ ترحيل/إلغاء مجمع"],["posted","القيود المُرحّلة"],["accounts","دليل الحسابات"],["centers","مراكز التكلفة"],["years","السنوات والفترات"],["journals","اليوميات"],["indicators","مؤشرات النظام"],["rpt_posted","تقرير القيود المرحّلة"],["rpt_acct","كشف حساب لكل الحسابات"],["rpt_tb","ميزان المراجعة"],["rpt_exp","تحليل المصروفات الشهري"],["rpt_cc","موقف مركز تكلفة"],["rpt_ccs","ملخص مراكز التكلفة"],["rpt_ccx","تحليل المصروفات على مراكز التكلفة"],["rpt_income","قائمة الدخل التفصيلية"],["rpt_balance","قائمة المركز المالي"],["stm","منشئ القوائم المالية"] ];
 // مؤشرات النظام (System Indicators) — تحدد الأب الرئيسي لكل مجموعة حسابات حتى يتعرف النظام تلقائيًا
 const GL_IND_KEY = "ig_gl_indicators_v1";
 const GL_INDICATORS_DEF = [
@@ -7329,9 +7330,9 @@ function glIndicatorAccount(key){
 }
 function viewGL(){
   const title=glTabs.find(([k])=>k===glState.tab)?.[1]||"المحاسبة العامة";
-  const descs = {dashboard:"مؤشرات وتحليلات مالية: إيرادات، مصروفات، صافي الربح ومقارنات شهرية",entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية",indicators:"تحديد أب الإيرادات/المصروفات والحسابات الرئيسية",import_entries:"استيراد القيود من ملف Excel",bulk_post:"ترحيل أو إلغاء ترحيل القيود دفعة واحدة",rpt_posted:"تقرير تفصيلي بالقيود المُرحّلة (عرض / طباعة / Excel)",rpt_acct:"كشف حساب تفصيلي أو إجمالي لكل الحسابات بأرصدة أول المدة",rpt_tb:"ميزان مراجعة على مستوى الحسابات بأرصدة أول المدة والحركة وآخر المدة",rpt_exp:"مصروفات كل شهر لكل حساب من مؤشر المصروفات — مع الإجمالي والتغير ونسبته (عرض / طباعة / Excel)",rpt_ccx:"تحليل المصروفات والإيرادات على مراكز التكلفة: مدين ودائن لكل حساب شهريًا أو سنويًا مع المجموع والفرق (عرض / طباعة / Excel)",rpt_ccs:"ملخص مراكز التكلفة: رصيد أول المدة والحركة والرصيد والفرق لكل مركز بفلاتر الميزان (عرض / طباعة / Excel)",rpt_cc:"مصروفات مركز تكلفة: إجمالي على مستوى الحساب وتفصيل ببيانات القيود (عرض / طباعة / Excel)",rpt_income:"قائمة دخل تفصيلية بحركة الفترة، مجمل الربح، المصروفات التشغيلية وصافي النتيجة مع فحوص التغطية",rpt_balance:"قائمة المركز المالي كما في تاريخ محدد، الأصول وحقوق الملكية والالتزامات وفحوص التوازن"};
-  const icons = {dashboard:"📊",entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚",import_entries:"📥",bulk_post:"⚡",rpt_posted:"📑",rpt_acct:"📋",rpt_tb:"⚖️",rpt_exp:"💸",rpt_cc:"🎯",rpt_ccs:"🧮",rpt_ccx:"📆",rpt_income:"📈",rpt_balance:"🏛"};
-  const tabColors = {dashboard:"#16a34a",entries:"#d4a017",posted:"#059669",accounts:"#1e40af",centers:"#8b5cf6",years:"#d97706",journals:"#dc2626",indicators:"#92400e",import_entries:"#0e7490",bulk_post:"#d97706",rpt_posted:"#059669",rpt_acct:"#1e40af",rpt_tb:"#17606f",rpt_exp:"#dc2626",rpt_cc:"#8b5cf6",rpt_ccs:"#7c3aed",rpt_ccx:"#0e7490",rpt_income:"#0f766e",rpt_balance:"#475569"};
+  const descs = {dashboard:"مؤشرات وتحليلات مالية: إيرادات، مصروفات، صافي الربح ومقارنات شهرية",entries:"إنشاء القيود اليومية ومراجعتها",posted:"متابعة القيود المُرحّلة من جميع الأنظمة",accounts:"إدارة دليل الحسابات في شكل شجري",centers:"تعريف مراكز وأبعاد التكلفة",years:"إدارة السنوات المالية والفترات",journals:"تعريف اليوميات المحاسبية",indicators:"تحديد أب الإيرادات/المصروفات والحسابات الرئيسية",import_entries:"استيراد القيود من ملف Excel",bulk_post:"ترحيل أو إلغاء ترحيل القيود دفعة واحدة",rpt_posted:"تقرير تفصيلي بالقيود المُرحّلة (عرض / طباعة / Excel)",rpt_acct:"كشف حساب تفصيلي أو إجمالي لكل الحسابات بأرصدة أول المدة",rpt_tb:"ميزان مراجعة على مستوى الحسابات بأرصدة أول المدة والحركة وآخر المدة",rpt_exp:"مصروفات كل شهر لكل حساب من مؤشر المصروفات — مع الإجمالي والتغير ونسبته (عرض / طباعة / Excel)",rpt_ccx:"تحليل المصروفات والإيرادات على مراكز التكلفة: مدين ودائن لكل حساب شهريًا أو سنويًا مع المجموع والفرق (عرض / طباعة / Excel)",rpt_ccs:"ملخص مراكز التكلفة: رصيد أول المدة والحركة والرصيد والفرق لكل مركز بفلاتر الميزان (عرض / طباعة / Excel)",rpt_cc:"مصروفات مركز تكلفة: إجمالي على مستوى الحساب وتفصيل ببيانات القيود (عرض / طباعة / Excel)",rpt_income:"قائمة دخل تفصيلية بحركة الفترة، مجمل الربح، المصروفات التشغيلية وصافي النتيجة مع فحوص التغطية",rpt_balance:"قائمة المركز المالي كما في تاريخ محدد، الأصول وحقوق الملكية والالتزامات وفحوص التوازن",stm:"عرّف قوائمك المالية كسطور تختار حساباتها من الشجرة (مدين / دائن) مع إجماليات ومعادلات — زي Financial Manager"};
+  const icons = {dashboard:"📊",entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚",import_entries:"📥",bulk_post:"⚡",rpt_posted:"📑",rpt_acct:"📋",rpt_tb:"⚖️",rpt_exp:"💸",rpt_cc:"🎯",rpt_ccs:"🧮",rpt_ccx:"📆",rpt_income:"📈",rpt_balance:"🏛",stm:"🧱"};
+  const tabColors = {dashboard:"#16a34a",entries:"#d4a017",posted:"#059669",accounts:"#1e40af",centers:"#8b5cf6",years:"#d97706",journals:"#dc2626",indicators:"#92400e",import_entries:"#0e7490",bulk_post:"#d97706",rpt_posted:"#059669",rpt_acct:"#1e40af",rpt_tb:"#17606f",rpt_exp:"#dc2626",rpt_cc:"#8b5cf6",rpt_ccs:"#7c3aed",rpt_ccx:"#0e7490",rpt_income:"#0f766e",rpt_balance:"#475569",stm:"#0f766e"};
   const cards = glTabs.map(([k,n])=>{
     const c = tabColors[k] || "#64748b";
     return `<button type="button" class="gl-home-card" onclick="glSetTab('${k}')" style="--c:${c}">
@@ -7402,7 +7403,7 @@ function viewGL(){
 }
 function glGroupedTabs(){
   const g=navGroups.find(x=>x.id==="gl"); if(!g) return "";
-  const ic={dashboard:"📊",entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚",import_entries:"📥",bulk_post:"⚡",rpt_posted:"📑",rpt_acct:"📋",rpt_tb:"⚖️",rpt_exp:"💸",rpt_cc:"🎯",rpt_ccs:"🧮",rpt_ccx:"📆",rpt_income:"📈",rpt_balance:"🏛"};
+  const ic={dashboard:"📊",entries:"📒",posted:"📑",accounts:"🌳",centers:"🎯",years:"📅",journals:"📚",indicators:"🎚",import_entries:"📥",bulk_post:"⚡",rpt_posted:"📑",rpt_acct:"📋",rpt_tb:"⚖️",rpt_exp:"💸",rpt_cc:"🎯",rpt_ccs:"🧮",rpt_ccx:"📆",rpt_income:"📈",rpt_balance:"🏛",stm:"🧱"};
   const nm=Object.fromEntries(glTabs);
   return `<style>
     .gl-grp-bar{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
@@ -7942,6 +7943,277 @@ function glRenderBalanceSheet(){
   return glFinPage('balance',f,b.rows,title,sub,notes);
 }
 
+/* ================= منشئ القوائم المالية =================
+   القائمة = سطور مرتبة بمسلسل يحدده المستخدم (زي شاشة Financial Manager في Oracle):
+   عنوان / حساب (مدين أو دائن + إشارة + يشمل الفروع + استثناءات) / إجمالي (من مسلسل إلى مسلسل) / معادلة (L10 - L20) / فاصل.
+   الحساب بيتحسب من نفس القيود المُرحّلة ونفس دالة glFinCalc بتاعة قائمة الدخل، فالأرقام بتطلع مطابقة. */
+let glStm={list:[],loaded:false,busy:false,err:'',cur:null,ledger:{key:'',lines:null,busy:false,err:''},from:'',to:'',asOf:'',showReport:false,uid:0};
+const STM_TYPES=[['title','عنوان'],['account','حساب'],['total','إجمالي'],['formula','معادلة'],['gap','فاصل']];
+const STM_KINDS=[['income','قائمة دخل (حركة الفترة)'],['balance','مركز مالي (رصيد تراكمي)'],['custom','مخصّصة (حركة الفترة)']];
+function stmUid(){return 'k'+(++glStm.uid);}
+function stmDates(){if(!glStm.from){const f=glFinState();glStm.from=f.from;glStm.to=f.to;glStm.asOf=f.asOf;}}
+function stmCan(){return glCan('edit')||glCan('manage');}
+function stmErrText(e){const m=(e&&e.message)||String(e);return /gl_statement|relation|does not exist|schema cache/i.test(m)?'جداول القوائم المالية مش متركّبة في قاعدة البيانات — شغّل ملف financial_statements_setup.sql من Supabase SQL Editor ثم حدّث الصفحة.':m;}
+function stmFromRow(x){return {k:stmUid(),line_no:Number(x.line_no),line_type:x.line_type,label:x.label||'',account_id:x.account_id!=null?String(x.account_id):'',include_children:x.include_children!==false,nature:x.nature==='credit'?'credit':'debit',sign:Number(x.sign)===-1?-1:1,range_from:x.range_from==null?null:Number(x.range_from),range_to:x.range_to==null?null:Number(x.range_to),formula:x.formula||'',exclude_ids:Array.isArray(x.exclude_ids)?x.exclude_ids.map(String):[]};}
+function stmNewLine(type,no){return {k:stmUid(),line_no:no,line_type:type,label:'',account_id:'',include_children:true,nature:'debit',sign:1,range_from:null,range_to:null,formula:'',exclude_ids:[]};}
+function stmNextNo(st){return (st.lines.reduce((m,l)=>Math.max(m,Number(l.line_no)||0),0))+10;}
+
+/* ---------- تحميل / فتح / حذف ---------- */
+async function stmLoadList(force){
+  if(glStm.busy||(glStm.loaded&&!force))return;
+  glStm.busy=true;
+  try{const r=await sb.from('gl_statements').select('*').order('no',{ascending:true});if(r.error)throw r.error;glStm.list=r.data||[];glStm.err='';}
+  catch(e){glStm.err=stmErrText(e);}
+  glStm.loaded=true;glStm.busy=false;if(glState.tab==='stm')glRender();
+}
+async function stmOpen(id){
+  try{
+    const s=glStm.list.find(x=>String(x.id)===String(id));if(!s)return;
+    const r=await sb.from('gl_statement_lines').select('*').eq('statement_id',id).order('line_no',{ascending:true});if(r.error)throw r.error;
+    glStm.cur={id:s.id,no:s.no,name:s.name,kind:s.kind||'income',lines:(r.data||[]).map(stmFromRow)};glStm.showReport=false;glRender();
+  }catch(e){toast(stmErrText(e),'err');}
+}
+function stmNew(){const n=(glStm.list.reduce((m,x)=>Math.max(m,Number(x.no)||0),0))+1;glStm.cur={id:null,no:n,name:'',kind:'income',lines:[]};glStm.showReport=false;glRender();}
+function stmBack(){glStm.cur=null;glStm.showReport=false;glRender();}
+async function stmDelStatement(id){
+  if(!stmCan())return;const s=glStm.list.find(x=>String(x.id)===String(id));
+  if(!confirm('حذف القائمة «'+(s&&s.name||'')+'» نهائيًا؟'))return;
+  try{const a=await sb.from('gl_statement_lines').delete().eq('statement_id',id);if(a.error)throw a.error;const b=await sb.from('gl_statements').delete().eq('id',id);if(b.error)throw b.error;toast('تم حذف القائمة','ok');await stmLoadList(true);}
+  catch(e){toast(stmErrText(e),'err');}
+}
+async function stmCopyFrom(id){
+  if(!id||!glStm.cur)return;
+  try{const r=await sb.from('gl_statement_lines').select('*').eq('statement_id',id).order('line_no',{ascending:true});if(r.error)throw r.error;
+    if(glStm.cur.lines.length&&!confirm('هيتم استبدال سطور القائمة الحالية بسطور القائمة المنسوخة. متأكد؟'))return;
+    glStm.cur.lines=(r.data||[]).map(stmFromRow);const s=glStm.list.find(x=>String(x.id)===String(id));if(s&&!glStm.cur.kind)glStm.cur.kind=s.kind;glRender();toast('تم نسخ السطور — راجع الحسابات ثم احفظ','ok');}
+  catch(e){toast(stmErrText(e),'err');}
+}
+
+/* ---------- تعديل السطور ---------- */
+function stmLine(k){return glStm.cur&&glStm.cur.lines.find(l=>l.k===k);}
+function stmSetHead(f,v){if(!glStm.cur)return;glStm.cur[f]=f==='no'?(v===''?'':Number(v)):v;if(f==='kind')glStm.ledger={key:'',lines:null,busy:false,err:''};glRender();}
+function stmSet(k,f,v){
+  const l=stmLine(k);if(!l)return;
+  if(f==='line_no'){const n=Math.round(Number(v));if(!(n>0)){toast('المسلسل لازم يكون رقم موجب','err');return glRender();}if(glStm.cur.lines.some(x=>x!==l&&x.line_no===n)){toast('المسلسل '+n+' مستخدم في سطر تاني','err');return glRender();}l.line_no=n;}
+  else if(f==='range_from'||f==='range_to')l[f]=v===''?null:Math.round(Number(v));
+  else if(f==='sign')l.sign=Number(v)===-1?-1:1;
+  else if(f==='include_children')l.include_children=!!v;
+  else l[f]=v;
+  glRender();
+}
+function stmPickAcc(k,txt){const l=stmLine(k);if(!l)return;const id=(window._stmAccMap||{})[String(txt).trim()];if(id){l.account_id=id;const a=glState.accounts.find(x=>String(x.id)===id);if(a){if(!l.label)l.label=a.account_name;l.nature=(a.account_type==='asset'||a.account_type==='expense')?'debit':'credit';}}else if(String(txt).trim()===''){l.account_id='';}else toast('اختار الحساب من القائمة المنسدلة','err');glRender();}
+function stmAddExcl(k,txt){const l=stmLine(k);if(!l)return;const id=(window._stmAccMap||{})[String(txt).trim()];if(!id){if(String(txt).trim())toast('اختار الحساب من القائمة المنسدلة','err');return glRender();}if(!l.exclude_ids.includes(id))l.exclude_ids.push(id);glRender();}
+function stmDelExcl(k,id){const l=stmLine(k);if(!l)return;l.exclude_ids=l.exclude_ids.filter(x=>x!==id);glRender();}
+function stmAdd(type){if(!glStm.cur)return;const l=stmNewLine(type,stmNextNo(glStm.cur));if(type==='title')l.label='';if(type==='total'){l.nature='debit';}glStm.cur.lines.push(l);glRender();}
+function stmDel(k){if(!glStm.cur)return;glStm.cur.lines=glStm.cur.lines.filter(l=>l.k!==k);glRender();}
+
+/* ---------- الحفظ ---------- */
+async function stmSave(){
+  const st=glStm.cur;if(!st||!stmCan())return;
+  if(!String(st.name||'').trim())return toast('اكتب اسم القائمة','err');
+  const nos=st.lines.map(l=>l.line_no);if(new Set(nos).size!==nos.length)return toast('فيه مسلسل مكرر','err');
+  const res=glStm.ledger.lines?stmCompute(st,glStm.ledger.lines,stmFilters(st)):null;
+  const bad=res&&res.errs.size?[...res.errs.entries()][0]:null;if(bad)return toast('سطر '+bad[0]+': '+bad[1],'err');
+  try{
+    const head={no:st.no===''?null:Number(st.no),name:String(st.name).trim(),kind:st.kind||'income'};
+    if(!st.id){const r=await sb.from('gl_statements').insert(head).select('id').single();if(r.error)throw r.error;st.id=r.data.id;}
+    else{const r=await sb.from('gl_statements').update(head).eq('id',st.id);if(r.error)throw r.error;}
+    const d=await sb.from('gl_statement_lines').delete().eq('statement_id',st.id);if(d.error)throw d.error;
+    const rows=[...st.lines].sort((a,b)=>a.line_no-b.line_no).map(l=>({statement_id:st.id,line_no:l.line_no,line_type:l.line_type,label:l.label||null,account_id:l.line_type==='account'&&l.account_id?l.account_id:null,include_children:!!l.include_children,nature:l.nature,sign:l.sign,range_from:l.line_type==='total'?l.range_from:null,range_to:l.line_type==='total'?l.range_to:null,formula:l.line_type==='formula'?(l.formula||null):null,exclude_ids:l.exclude_ids||[]}));
+    if(rows.length){const i=await sb.from('gl_statement_lines').insert(rows);if(i.error)throw i.error;}
+    toast('✓ تم حفظ القائمة','ok');await stmLoadList(true);
+  }catch(e){toast(stmErrText(e),'err');}
+}
+
+/* ---------- الحساب ---------- */
+function stmDescSet(T,ids){const s=new Set(),w=id=>{const k=String(id);if(s.has(k))return;s.add(k);(T.kids.get(k)||[]).forEach(c=>w(c.id));};(ids||[]).forEach(w);return s;}
+function stmEval(src,get){
+  const s=String(src||'').toUpperCase().replace(/\s+/g,''),t=s.match(/L\d+|\d+(?:\.\d+)?|[-+*\/()]/g);
+  if(!s)throw new Error('اكتب المعادلة');if(!t||t.join('')!==s)throw new Error('صيغة غير صالحة');
+  let i=0;const peek=()=>t[i];
+  const expr=()=>{let v=term();while(peek()==='+'||peek()==='-'){const o=t[i++],r=term();v=o==='+'?v+r:v-r;}return v;};
+  const term=()=>{let v=factor();while(peek()==='*'||peek()==='/'){const o=t[i++],r=factor();v=o==='*'?v*r:(r===0?0:v/r);}return v;};
+  const factor=()=>{const x=t[i++];if(x===undefined)throw new Error('صيغة ناقصة');if(x==='-')return -factor();if(x==='+')return factor();if(x==='('){const v=expr();if(t[i++]!==')')throw new Error('قوس ناقص');return v;}if(x[0]==='L')return get(Number(x.slice(1)));const n=Number(x);if(isNaN(n))throw new Error('صيغة غير صالحة');return n;};
+  const v=expr();if(i<t.length)throw new Error('صيغة غير صالحة');return v;
+}
+function stmFilters(st){stmDates();return {from:glStm.from,to:glStm.to,asOf:glStm.asOf};}
+function stmLedgerKey(st){return st.kind==='balance'?'b|'+glStm.asOf:'p|'+glStm.from+'|'+glStm.to;}
+function stmCompute(st,L,f){
+  const C=glFinCalc(L,st.kind==='balance'?'c':'p',f),T=C.T;
+  const lines=[...st.lines].sort((a,b)=>a.line_no-b.line_no),vals=new Map(),errs=new Map(),cover=new Set(),cnt=new Map(),byNo=new Map();
+  lines.forEach(l=>byNo.set(l.line_no,l));
+  for(const l of lines){
+    let v=null;
+    try{
+      if(l.line_type==='account'){
+        const a=T.byId.get(String(l.account_id));if(!a)throw new Error('اختار حساب من الشجرة');
+        const ex=stmDescSet(T,l.exclude_ids);let dr=0,cr=0;
+        const walk=n=>{const k=String(n.id);if(ex.has(k))return;const o=C.own.get(k)||{dr:0,cr:0};dr+=o.dr;cr+=o.cr;cover.add(k);cnt.set(k,(cnt.get(k)||0)+1);if(l.include_children)(T.kids.get(k)||[]).forEach(walk);};
+        walk(a);v=(l.nature==='credit'?cr-dr:dr-cr)*(l.sign===-1?-1:1);
+      }else if(l.line_type==='total'){
+        const a=Number(l.range_from),b=Number(l.range_to);
+        if(!(a>0&&b>0&&a<=b))throw new Error('حدد نطاق الإجمالي (من مسلسل إلى مسلسل)');
+        if(b>=l.line_no)throw new Error('نطاق الإجمالي لازم يكون قبل السطر نفسه');
+        v=0;lines.forEach(x=>{if(x.line_type==='account'&&x.line_no>=a&&x.line_no<=b)v+=vals.get(x.line_no)||0;});v*=(l.sign===-1?-1:1);
+      }else if(l.line_type==='formula'){
+        v=stmEval(l.formula,n=>{if(!byNo.has(n))throw new Error('السطر '+n+' غير موجود');if(n>=l.line_no)throw new Error('المعادلة بتشير لسطر '+n+' وهو مش قبل السطر الحالي');const x=vals.get(n);return x==null?0:x;});
+      }
+    }catch(e){errs.set(l.line_no,(e&&e.message)||String(e));v=null;}
+    if(v!=null)vals.set(l.line_no,v);
+  }
+  const dups=[];cnt.forEach((n,id)=>{if(n>1){const a=T.byId.get(id);dups.push((a?a.account_code+' — '+a.account_name:id)+' (×'+n+')');}});
+  const types=st.kind==='balance'?['asset','liability','equity']:st.kind==='income'?['revenue','expense']:[],unc=[];
+  C.own.forEach((o,id)=>{const a=T.byId.get(id);if(!a||!types.includes(a.account_type)||cover.has(id))return;const v=o.dr-o.cr;if(Math.abs(v)>=0.005)unc.push({id,code:a.account_code,name:a.account_name,v});});
+  unc.sort((x,y)=>String(x.code).localeCompare(String(y.code),'en',{numeric:true}));
+  return {lines,vals,errs,C,dups,unc};
+}
+function stmRows(st,res){
+  const T=res.C.T,rows=[],lastF=[...res.lines].reverse().find(l=>l.line_type==='formula');
+  res.lines.forEach(l=>{
+    const v=res.vals.has(l.line_no)?res.vals.get(l.line_no):null,lab=l.label||'';
+    if(l.line_type==='gap')rows.push({cls:'gap',label:'',code:'',d:null,e:null,chk:'',ind:0});
+    else if(l.line_type==='title')rows.push({cls:'sec',label:lab,code:'',d:null,e:null,chk:'',ind:0});
+    else if(l.line_type==='account'){const a=T.byId.get(String(l.account_id));rows.push({cls:'line',label:lab||(a?a.account_name:''),code:a?glFinShort(a,(T.kids.get(String(a.id))||[]).length>0):'',d:v,e:null,chk:'',ind:0});}
+    else if(l.line_type==='total')rows.push({cls:'tot',label:lab,code:'',d:null,e:v,chk:'',ind:0});
+    else rows.push({cls:l===lastF?'net':'res',label:lab,code:'',d:null,e:v,chk:'',ind:0});
+  });
+  return rows;
+}
+
+/* ---------- الدفتر (القيود المُرحّلة) ---------- */
+function stmEnsureLedger(st){
+  const key=stmLedgerKey(st),lg=glStm.ledger;
+  if(lg.key===key&&lg.lines)return lg.lines;
+  if(lg.err&&lg.errKey===key)return null;
+  if(!lg.busy||lg.busyKey!==key){
+    glStm.ledger=Object.assign({},lg,{busy:true,busyKey:key});
+    const from=st.kind==='balance'?'':glStm.from,to=st.kind==='balance'?glStm.asOf:glStm.to;
+    glFinFetchLines(from,to).then(lines=>{glStm.ledger={key,lines,busy:false,err:''};if(glState.tab==='stm')glRender();}).catch(e=>{glStm.ledger={key:'',lines:null,busy:false,err:(e&&e.message)||String(e),errKey:key};if(glState.tab==='stm')glRender();});
+  }
+  return null;
+}
+function stmRun(){const st=glStm.cur;if(!st)return;glStm.showReport=true;glStm.ledger={key:'',lines:null,busy:false,err:''};glRender();}
+
+/* ---------- بناء «قائمة الدخل الحالية» كسطور من الشجرة (بنفس قواعد glFinBuildIncome) ---------- */
+async function stmSeedIncome(){
+  if(!stmCan())return;
+  const T=glFinTree(),f=glFinState(),level=f.level||4,cg=glFinCogs(T);
+  if(!(glState.accounts||[]).length)return toast('مفيش حسابات في الدليل','err');
+  if(!cg.nodes.length&&!confirm('مؤشر «حساب تكلفة المبيعات» غير محدد — القائمة هتتبني بدون تكلفة مبيعات (زي قائمة الدخل الحالية بالظبط). نكمل؟'))return;
+  const cogsSet=new Set(),mark=a=>{cogsSet.add(String(a.id));(T.kids.get(String(a.id))||[]).forEach(mark);};cg.nodes.forEach(mark);
+  const collect=(nodes,ex)=>{const out=[],walk=a=>{const k=String(a.id);if(ex&&ex.has(k))return;const kids=(T.kids.get(k)||[]).filter(x=>!(ex&&ex.has(String(x.id))));if(!kids.length||T.depth.get(k)>=level){out.push(a);return;}kids.forEach(walk);};nodes.forEach(walk);return out;};
+  const topOf=type=>{const arr=(glState.accounts||[]).filter(a=>a.account_type===type),ids=new Set(arr.map(a=>String(a.id)));return arr.filter(a=>{let q=a.parent_id!=null&&a.parent_id!==''?T.byId.get(String(a.parent_id)):null,g=0;while(q&&g++<30){if(ids.has(String(q.id)))return false;q=q.parent_id!=null&&q.parent_id!==''?T.byId.get(String(q.parent_id)):null;}return true;}).sort((x,y)=>String(x.account_code).localeCompare(String(y.account_code),'en',{numeric:true}));};
+  const isAnc=(a,n)=>{let p=n.parent_id!=null&&n.parent_id!==''?T.byId.get(String(n.parent_id)):null,g=0;while(p&&g++<30){if(String(p.id)===String(a.id))return true;p=p.parent_id!=null&&p.parent_id!==''?T.byId.get(String(p.parent_id)):null;}return false;};
+  const revLines=collect(topOf('revenue')),cogsLines=collect(cg.nodes),opLines=collect(topOf('expense'),cogsSet);
+  const out=[];let no=0;const add=(type,o)=>{no+=10;const l=Object.assign(stmNewLine(type,no),o||{});out.push(l);return l;};
+  const acc=(a,nature,sign,ex)=>add('account',{label:a.account_name,account_id:String(a.id),nature,sign,include_children:true,exclude_ids:ex||[]});
+  add('title',{label:'الإيرادات'});
+  const r1=revLines.length?no+10:no;revLines.forEach(a=>acc(a,'credit',1));const r2=no;
+  const revTot=add('total',{label:'إجمالي الإيرادات',range_from:r1,range_to:Math.max(r1,r2),sign:1});
+  let cogsTot=null;
+  if(cg.nodes.length){const c1=no+10;cogsLines.forEach(a=>acc(a,'debit',-1));cogsTot=add('total',{label:'إجمالي تكلفة المبيعات',range_from:c1,range_to:Math.max(c1,no),sign:1});}
+  const gross=add('formula',{label:'مجمل الربح',formula:'L'+revTot.line_no+(cogsTot?' + L'+cogsTot.line_no:'')});
+  add('gap');
+  add('title',{label:'المصروفات التشغيلية (عمومية وإدارية وبيعية)'});
+  const o1=no+10;opLines.forEach(a=>acc(a,'debit',-1,cg.nodes.filter(n=>isAnc(a,n)).map(n=>String(n.id))));
+  const opTot=add('total',{label:'إجمالي المصروفات',range_from:o1,range_to:Math.max(o1,no),sign:-1});
+  add('gap');
+  const op=add('formula',{label:'الربح (الخسارة) التشغيلي',formula:'L'+gross.line_no+' - L'+opTot.line_no});
+  add('gap');
+  add('formula',{label:'صافي ربح (خسارة) الفترة',formula:'L'+op.line_no});
+  try{
+    const n=(glStm.list.reduce((m,x)=>Math.max(m,Number(x.no)||0),0))+1;
+    const r=await sb.from('gl_statements').insert({no:n,name:'قائمة الدخل (الحالية)',kind:'income'}).select('id').single();if(r.error)throw r.error;
+    const rows=out.map(l=>({statement_id:r.data.id,line_no:l.line_no,line_type:l.line_type,label:l.label||null,account_id:l.line_type==='account'?l.account_id:null,include_children:!!l.include_children,nature:l.nature,sign:l.sign,range_from:l.line_type==='total'?l.range_from:null,range_to:l.line_type==='total'?l.range_to:null,formula:l.line_type==='formula'?l.formula:null,exclude_ids:l.exclude_ids||[]}));
+    const i=await sb.from('gl_statement_lines').insert(rows);if(i.error)throw i.error;
+    toast('✓ تمت إضافة قائمة الدخل الحالية ('+out.length+' سطر)','ok');await stmLoadList(true);await stmOpen(r.data.id);glStm.showReport=true;glStm.ledger={key:'',lines:null,busy:false,err:''};glRender();
+  }catch(e){toast(stmErrText(e),'err');}
+}
+
+/* ---------- الشاشات ---------- */
+function stmCss(){return `<style>
+.stm{max-width:1280px;margin:0 auto 16px;background:#dcecec;border:1.5px solid #D9B957;border-radius:14px;padding:12px 14px;box-shadow:0 6px 20px rgba(10,25,49,.08)}
+.stm-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:#3f8a8a;border-radius:8px;padding:8px 10px;margin-bottom:12px}
+.stm-bar button,.stm-btn{height:34px;padding:0 14px;border-radius:8px;border:1px solid #1F3864;background:#fff;color:#1F3864;font:inherit;font-size:13px;font-weight:800;cursor:pointer}
+.stm-bar button:hover,.stm-btn:hover{background:#eef2fa}.stm-bar button.p,.stm-btn.p{background:#1F3864;color:#fff}.stm-bar button.x{border-color:#b91c1c;color:#b91c1c}.stm-bar .sp{flex:1}
+.stm-head{display:grid;grid-template-columns:120px 1fr 220px;gap:10px 14px;align-items:end;margin-bottom:12px}
+.stm-head label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:800;color:#1F3864}
+.stm input,.stm select{height:34px;padding:0 8px;border:1px solid #9fb0d0;border-radius:6px;background:#fff;font:inherit;font-size:13px;color:#14213d;box-sizing:border-box;min-width:0}
+.stm-wrap{overflow:auto;background:#f4fafa;border:1px solid #b9d0d0;border-radius:8px}
+.stm table{width:100%;border-collapse:collapse;min-width:980px}
+.stm th{background:#1F3864;color:#fff;font-size:12px;padding:8px 6px;font-weight:800;white-space:nowrap}
+.stm td{padding:4px 5px;border-bottom:1px solid #d3e3e3;vertical-align:middle}
+.stm td input,.stm td select{width:100%}.stm td.c{text-align:center}.stm td.n{font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;font-weight:800;direction:ltr}
+.stm tr.t-title td{background:#e8eef9}.stm tr.t-total td,.stm tr.t-formula td{background:#fff7dc}.stm tr.t-gap td{background:#eef3f3}
+.stm tr.err td{background:#fde8e8}.stm .em{color:#b91c1c;font-size:11px;font-weight:700}
+.stm-chip{display:inline-flex;align-items:center;gap:4px;background:#fee2e2;color:#991b1b;border-radius:999px;padding:1px 8px;font-size:11px;margin:1px}.stm-chip b{cursor:pointer}
+.stm-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.stm-warn{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:12.5px}
+.stm-ok{background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:12.5px;font-weight:700}
+.stm-list td,.stm-list th{padding:9px 10px}.stm-list td{background:#fff}
+</style>`;}
+function glRenderStm(){
+  stmDates();
+  if(!glStm.loaded){stmLoadList();return stmCss()+'<div class="empty"><div class="ic">⏳</div><h3>جاري تحميل القوائم…</h3></div>';}
+  if(glStm.err)return stmCss()+`<div class="stm"><div class="stm-warn">${glEsc(glStm.err)}</div><div class="stm-add"><button class="stm-btn" onclick="glStm.loaded=false;glStm.err='';glRender()">إعادة المحاولة</button></div></div>`;
+  return stmCss()+(glStm.cur?stmEditor():stmListView());
+}
+function stmListView(){
+  const can=stmCan(),kn=Object.fromEntries(STM_KINDS.map(k=>[k[0],k[1]]));
+  const rows=glStm.list.map(s=>`<tr><td class="c">${glEsc(s.no==null?'':s.no)}</td><td>${glEsc(s.name)}</td><td class="c">${glEsc(kn[s.kind]||s.kind||'')}</td><td class="c"><button class="stm-btn p" onclick="stmOpen('${glEsc(s.id)}')">فتح</button> ${can?`<button class="stm-btn" style="border-color:#b91c1c;color:#b91c1c" onclick="stmDelStatement('${glEsc(s.id)}')">حذف</button>`:''}</td></tr>`).join('');
+  const hasInc=glStm.list.some(s=>s.name==='قائمة الدخل (الحالية)');
+  return `<div class="stm"><div class="stm-bar"><b style="color:#fff;font-size:15px">منشئ القوائم المالية</b><span class="sp"></span>${can?`<button class="p" onclick="stmNew()">＋ قائمة جديدة</button>${hasInc?'':`<button onclick="stmSeedIncome()">📈 إضافة قائمة الدخل الحالية</button>`}`:''}</div>
+  ${glStm.list.length?`<div class="stm-wrap"><table class="stm-list"><thead><tr><th style="width:90px">رقم القائمة</th><th>اسم القائمة</th><th style="width:220px">النوع</th><th style="width:170px"></th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty"><div class="ic">📑</div><h3>لا توجد قوائم بعد</h3><p>اضغط «إضافة قائمة الدخل الحالية» لتتبني من شجرة الحسابات بنفس طريقة حسابها الحالية، وبعدها تعدّل عليها أو تعمل قوائمك.</p></div>`}</div>`;
+}
+function stmAccMap(){const m={},opts=[];(glState.accounts||[]).slice().sort((a,b)=>String(a.account_code).localeCompare(String(b.account_code),'en',{numeric:true})).forEach(a=>{const t=a.account_code+' — '+a.account_name;m[t]=String(a.id);opts.push(`<option value="${glEsc(t)}">`);});window._stmAccMap=m;return `<datalist id="stmAccList">${opts.join('')}</datalist>`;}
+function stmAccTxt(id){const a=(glState.accounts||[]).find(x=>String(x.id)===String(id));return a?a.account_code+' — '+a.account_name:'';}
+function stmEditor(){
+  const st=glStm.cur,can=stmCan(),ro=can?'':'disabled',inc=st.kind!=='balance';
+  const key=stmLedgerKey(st);let res=null,ledMsg='';
+  if(glStm.showReport||glStm.ledger.lines){const L=stmEnsureLedger(st);if(L)res=stmCompute(st,L,stmFilters(st));else ledMsg=glStm.ledger.err?`<div class="stm-warn">تعذر تحميل القيود: ${glEsc(glStm.ledger.err)}</div>`:'<div class="stm-warn">⏳ جاري تحميل القيود المُرحّلة…</div>';}
+  const lines=[...st.lines].sort((a,b)=>a.line_no-b.line_no);
+  const tsel=l=>`<select ${ro} onchange="stmSet('${l.k}','line_type',this.value)">${STM_TYPES.map(t=>`<option value="${t[0]}" ${l.line_type===t[0]?'selected':''}>${t[1]}</option>`).join('')}</select>`;
+  const body=lines.map(l=>{
+    const e=res&&res.errs.get(l.line_no),v=res&&res.vals.has(l.line_no)?res.vals.get(l.line_no):null,isA=l.line_type==='account',isT=l.line_type==='total',isF=l.line_type==='formula',isTi=l.line_type==='title',isG=l.line_type==='gap';
+    const mid=isA?`<input ${ro} list="stmAccList" value="${glEsc(stmAccTxt(l.account_id))}" placeholder="اكتب كود أو اسم الحساب" onchange="stmPickAcc('${l.k}',this.value)">`
+      :isT?`<span style="display:flex;gap:6px;align-items:center">من <input ${ro} type="number" style="width:80px" value="${l.range_from==null?'':l.range_from}" onchange="stmSet('${l.k}','range_from',this.value)"> إلى <input ${ro} type="number" style="width:80px" value="${l.range_to==null?'':l.range_to}" onchange="stmSet('${l.k}','range_to',this.value)"></span>`
+      :isF?`<input ${ro} dir="ltr" value="${glEsc(l.formula)}" placeholder="مثال: L10 - L40" onchange="stmSet('${l.k}','formula',this.value)">`:'';
+    const nat=isA?`<select ${ro} onchange="stmSet('${l.k}','nature',this.value)"><option value="debit" ${l.nature==='debit'?'selected':''}>مدين</option><option value="credit" ${l.nature==='credit'?'selected':''}>دائن</option></select>`:'';
+    const sg=(isA||isT)?`<select ${ro} onchange="stmSet('${l.k}','sign',this.value)"><option value="1" ${l.sign===1?'selected':''}>موجب +</option><option value="-1" ${l.sign===-1?'selected':''}>سالب −</option></select>`:'';
+    const ch=isA?`<input ${ro} type="checkbox" style="width:17px;height:17px" ${l.include_children?'checked':''} onchange="stmSet('${l.k}','include_children',this.checked)">`:'';
+    const ex=isA&&l.include_children?`${(l.exclude_ids||[]).map(id=>`<span class="stm-chip" title="${glEsc(stmAccTxt(id))}">${glEsc((stmAccTxt(id).split(' — ')[0])||id)}${can?` <b onclick="stmDelExcl('${l.k}','${glEsc(id)}')">✕</b>`:''}</span>`).join('')}${can?`<input list="stmAccList" style="width:100%;margin-top:2px" placeholder="＋ استثناء" onchange="stmAddExcl('${l.k}',this.value);this.value=''">`:''}`:'';
+    return `<tr class="t-${l.line_type}${e?' err':''}"><td class="c"><input ${ro} type="number" style="width:64px;text-align:center" value="${l.line_no}" onchange="stmSet('${l.k}','line_no',this.value)"></td><td>${tsel(l)}</td><td>${isG?'':`<input ${ro} value="${glEsc(l.label)}" placeholder="${isTi?'نص العنوان':'البيان'}" onchange="stmSet('${l.k}','label',this.value)">`}</td><td>${mid}${e?`<div class="em">⚠ ${glEsc(e)}</div>`:''}</td><td>${nat}</td><td>${sg}</td><td class="c">${ch}</td><td style="min-width:130px">${ex}</td><td class="n">${v==null?'':glFinNum(v)}</td><td class="c">${can?`<button class="stm-btn x" style="height:28px;padding:0 8px;border-color:#b91c1c;color:#b91c1c" title="حذف السطر" onclick="stmDel('${l.k}')">✕</button>`:''}</td></tr>`;
+  }).join('');
+  const others=glStm.list.filter(s=>String(s.id)!==String(st.id));
+  const dateBox=inc?`<label style="flex-direction:row;align-items:center;gap:6px;color:#fff;font-size:12px">من <input type="date" value="${glEsc(glStm.from)}" onchange="glStm.from=this.value"></label><label style="flex-direction:row;align-items:center;gap:6px;color:#fff;font-size:12px">إلى <input type="date" value="${glEsc(glStm.to)}" onchange="glStm.to=this.value"></label>`:`<label style="flex-direction:row;align-items:center;gap:6px;color:#fff;font-size:12px">كما في <input type="date" value="${glEsc(glStm.asOf)}" onchange="glStm.asOf=this.value"></label>`;
+  let warn='';
+  if(res){
+    if(res.dups.length)warn+=`<div class="stm-warn">⚠ حسابات اتحسبت أكتر من مرة (تكرار أو أب وفرع معًا): ${res.dups.map(glEsc).join(' · ')}</div>`;
+    if(res.unc.length)warn+=`<div class="stm-warn">⚠ حسابات عليها حركة ومش ظاهرة في القائمة:<br>${res.unc.map(u=>`${glEsc(u.code)} — ${glEsc(u.name)}: <b dir="ltr">${glFinNum(u.v)}</b>`).join('<br>')}</div>`;
+    if(!res.dups.length&&!res.unc.length&&!res.errs.size)warn+='<div class="stm-ok">✓ كل الحسابات اللي عليها حركة داخلة في القائمة بدون تكرار</div>';
+  }
+  let rep='';
+  if(res&&glStm.showReport){
+    const rows=stmRows(st,res),title=(st.name||'القائمة')+(inc?' عن الفترة من '+glFinDmy(glStm.from)+' إلى '+glFinDmy(glStm.to):' كما في '+glFinDmy(glStm.asOf)),sub=inc?'(صافي حركة الفترة فقط — بدون أرصدة أول المدة)':'(رصيد تراكمي حتى التاريخ)';
+    window._glFinCurrent={kind:'income',title:st.name||'القائمة',head:title,subtitle:sub,rows,from:glStm.from,to:glStm.to};
+    let logo='';try{logo=(typeof window.coLogoCur==='function'&&window.coLogoCur())||'';}catch(e){}
+    let recon='';
+    if(st.kind==='income'){try{const f=glFinState(),b=glFinBuildIncome(glStm.ledger.lines,Object.assign({},f,{from:glStm.from,to:glStm.to})),lf=[...res.lines].reverse().find(l=>l.line_type==='formula'),mine=lf?res.vals.get(lf.line_no):null,cur=b.net+Math.max(0,Number(f.incomeTax)||0);
+      if(mine!=null)recon=Math.abs(mine-cur)<0.005?`<div class="stm-ok">✓ مطابقة: آخر نتيجة في القائمة = نتيجة شاشة «قائمة الدخل التفصيلية» الحالية (قبل ضريبة الدخل اليدوية): <span dir="ltr">${glFinNum(cur)}</span></div>`:`<div class="stm-warn">Δ فرق عن قائمة الدخل الحالية: القائمة هنا <span dir="ltr">${glFinNum(mine)}</span> — الحالية <span dir="ltr">${glFinNum(cur)}</span> (قبل ضريبة الدخل اليدوية) — راجع الحسابات غير الظاهرة أعلاه.</div>`;}catch(e){}}
+    rep=`${recon}<section class="fx-card fx-k-income" id="glFinOutput" style="margin-top:12px">${glFinCss()}<div class="fx-banner">${logo?`<img class="fx-logo" src="${glEsc(logo)}" alt="">`:''}<div class="fx-co">${glEsc(glFinCompany())}</div><div class="fx-ttl">${glEsc(title)}</div></div><div class="fx-scroll"><table class="fx-tbl"><colgroup><col style="width:44%"><col style="width:14%"><col style="width:19%"><col style="width:23%"></colgroup><thead><tr><th>البيــــان</th><th>كود الحساب</th><th>جزئـــي</th><th>إجمــالي</th></tr></thead><tbody>${glFinRowsHtml(rows,'income',false)}</tbody></table></div></section>`;
+  }
+  return `<div class="stm">${stmAccMap()}<div class="stm-bar">
+    <button onclick="stmBack()">➜ القوائم</button><span class="sp"></span>${dateBox}
+    <button onclick="stmRun()">👁 معاينة التقرير</button>${res&&glStm.showReport?`<button onclick="glFinPrint('income')">🖨 طباعة</button><button onclick="glFinExport('income')">⬇ Excel</button>`:''}
+    ${can?`<button class="p" onclick="stmSave()">💾 حفظ</button>`:''}</div>
+    <div class="stm-head"><label>رقم القائمة<input ${ro} type="number" value="${glEsc(st.no)}" onchange="stmSetHead('no',this.value)"></label><label>اسم القائمة<input ${ro} value="${glEsc(st.name)}" onchange="stmSetHead('name',this.value)"></label><label>النوع<select ${ro} onchange="stmSetHead('kind',this.value)">${STM_KINDS.map(k=>`<option value="${k[0]}" ${st.kind===k[0]?'selected':''}>${k[1]}</option>`).join('')}</select></label></div>
+    ${can&&others.length?`<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:800;color:#1F3864">نسخ من قائمة: <select onchange="stmCopyFrom(this.value);this.value=''"><option value="">— اختر —</option>${others.map(s=>`<option value="${glEsc(s.id)}">${glEsc(s.no==null?'':s.no)} — ${glEsc(s.name)}</option>`).join('')}</select></label></div>`:''}
+    <div class="stm-wrap"><table><thead><tr><th style="width:80px">مسلسل</th><th style="width:110px">النوع</th><th style="min-width:200px">البيان</th><th style="min-width:260px">الحساب / النطاق / المعادلة</th><th style="width:90px">الطبيعة</th><th style="width:105px">الإشارة</th><th style="width:70px">يشمل الفروع</th><th>يستثني</th><th style="width:130px">القيمة</th><th style="width:44px"></th></tr></thead><tbody>${body||'<tr><td colspan="10" class="c" style="padding:22px;color:#64748b">لا توجد سطور — أضف سطرًا من الأزرار تحت</td></tr>'}</tbody></table></div>
+    ${can?`<div class="stm-add"><button class="stm-btn" onclick="stmAdd('account')">＋ حساب</button><button class="stm-btn" onclick="stmAdd('title')">＋ عنوان</button><button class="stm-btn" onclick="stmAdd('total')">＋ إجمالي</button><button class="stm-btn" onclick="stmAdd('formula')">＋ معادلة</button><button class="stm-btn" onclick="stmAdd('gap')">＋ فاصل</button></div>`:''}
+    <div style="font-size:12px;color:#475569;margin-top:8px">المسلسل بيحدد الترتيب ويتعدّل بحرية (10، 20، 25…). الإجمالي بيجمع سطور الحسابات بين مسلسلين، والمعادلة بتستخدم L + المسلسل مثل <span dir="ltr">L30 - L90</span>. الحساب بالطبيعة «مدين» = مدين − دائن، و«دائن» = دائن − مدين، والإشارة بتحدد يُضاف أم يُطرح في الإجمالي.</div>
+    ${ledMsg}${warn}${rep}</div>`;
+}
+
 /* ---------- تصدير / طباعة / مشاركة ---------- */
 function glFinPlain(){const d=window._glFinCurrent;if(!d)return '';const inc=d.kind==='income';return [d.head||d.title,d.subtitle||'',inc?'البيان,كود الحساب,جزئي,إجمالي':'كود الحساب,البيان,جزئي,كلي',...d.rows.filter(r=>r.cls!=='gap').map(r=>{const lab=String(r.label||'').replace(/,/g,' '),a=r.d==null?'':Number(r.d).toFixed(2),b=r.e==null?'':Number(r.e).toFixed(2);return (inc?[lab,r.code||'',a,b]:[r.code||'',lab,a,b]).join(',');})].join('\n');}
 function glFinExport(kind){if(typeof XLSX==='undefined')return toast('مكتبة Excel غير محمّلة','err');const d=window._glFinCurrent;if(!d||d.kind!==kind)return toast('اضغط «عرض التقرير» أولاً ثم صدّر','err');const f=glFinState(),inc=kind==='income';const aoa=[[glFinCompany()],[d.head||d.title],[d.subtitle||''],[],inc?['البيان','كود الحساب','جزئي','إجمالي','فحص']:['كود الحساب','البيان','جزئي','كلي','فحص']];d.rows.forEach(r=>{if(r.cls==='gap'){aoa.push([]);return;}const lab=String(r.label||''),a=r.d==null?'':Number(r.d),b=r.e==null?'':Number(r.e);aoa.push(inc?[lab,r.code||'',a,b,r.chk||'']:[r.code||'',lab,a,b,r.chk||'']);});const ws=XLSX.utils.aoa_to_sheet(aoa);ws['!cols']=inc?[{wch:56},{wch:18},{wch:22},{wch:24},{wch:12}]:[{wch:18},{wch:56},{wch:22},{wch:24},{wch:12}];const wb=XLSX.utils.book_new();wb.Workbook={Views:[{RTL:true}]};XLSX.utils.book_append_sheet(wb,ws,inc?'قائمة الدخل':'المركز المالي');XLSX.writeFile(wb,(inc?'قائمة_الدخل_':'قائمة_المركز_المالي_')+(inc?f.from+'_'+f.to:f.asOf)+'.xlsx');}
@@ -7951,7 +8223,7 @@ async function glFinShare(kind){
   if(_o&&typeof igVectorPdfDeliver==='function'){ const _t=window._glFinCurrent?.title||'القوائم المالية';
     return igVectorPdfDeliver('<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>'+glEsc(_t)+'</title>'+glFinCss()+'</head><body style="margin:0;font-family:Tahoma,Arial,sans-serif">'+_o.outerHTML+'</body></html>','Financial_Statement_'+new Date().toISOString().slice(0,10),_t,'share'); }
   const csv=glFinPlain();try{if(navigator.share)await navigator.share({title:window._glFinCurrent?.title||'القوائم المالية',text:csv});else if(navigator.clipboard){await navigator.clipboard.writeText(csv);toast('تم نسخ التقرير للمشاركة','ok');}else toast('المشاركة غير مدعومة في هذا المتصفح','err');}catch(e){if(e.name!=='AbortError')toast('تعذر مشاركة التقرير','err');}}
-function glRender(){let el=document.getElementById("glBody");if(!el&&currentPage==="gl"){const _c=document.getElementById("content");if(_c){_c.innerHTML=viewGL();el=document.getElementById("glBody");}}if(!el)return;const _glTree=document.getElementById("glAccountsTree"),_glSt=_glTree?_glTree.scrollTop:null;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad(true)">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;if(GL_SCOPE_BLOCKED_TABS.includes(t)&&glScopeActive()){el.innerHTML=glScopeBlockedHtml();return;}el.innerHTML=(glState.staleError?glStaleBannerHtml():"")+(t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderSysTabs():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():t==="rpt_ccs"?glRenderRptCcs():t==="rpt_ccx"?glRenderRptCcx():t==="rpt_income"?glRenderIncomeStatement():t==="rpt_balance"?glRenderBalanceSheet():glRenderEntries());if(_glSt!=null){const _n=document.getElementById("glAccountsTree");if(_n)_n.scrollTop=_glSt;}}
+function glRender(){let el=document.getElementById("glBody");if(!el&&currentPage==="gl"){const _c=document.getElementById("content");if(_c){_c.innerHTML=viewGL();el=document.getElementById("glBody");}}if(!el)return;const _glTree=document.getElementById("glAccountsTree"),_glSt=_glTree?_glTree.scrollTop:null;if(glState.error){el.innerHTML=`<div class="empty"><h3>تعذر تحميل بيانات GL</h3><p>${glEsc(glState.error)}</p><button class="btn" onclick="glLoad(true)">إعادة المحاولة</button></div>`;return;}if(glState.loading){el.textContent="جاري التحميل…";return;}const t=glState.tab;if(GL_SCOPE_BLOCKED_TABS.includes(t)&&glScopeActive()){el.innerHTML=glScopeBlockedHtml();return;}el.innerHTML=(glState.staleError?glStaleBannerHtml():"")+(t==="dashboard"?glRenderDash():t==="accounts"?glRenderAccounts():t==="centers"?glRenderCenters():t==="years"?glRenderYears():t==="journals"?glRenderJournals():t==="posted"?glRenderPostedEntries():t==="indicators"?glRenderSysTabs():t==="import_entries"?glRenderImportEntries():t==="bulk_post"?glRenderBulkPost():t==="rpt_posted"?glRenderRptPosted():t==="rpt_acct"?glRenderRptAcct():t==="rpt_tb"?glRenderRptTb():t==="rpt_exp"?glRenderRptExp():t==="rpt_cc"?glRenderRptCc():t==="rpt_ccs"?glRenderRptCcs():t==="rpt_ccx"?glRenderRptCcx():t==="rpt_income"?glRenderIncomeStatement():t==="rpt_balance"?glRenderBalanceSheet():t==="stm"?glRenderStm():glRenderEntries());if(_glSt!=null){const _n=document.getElementById("glAccountsTree");if(_n)_n.scrollTop=_glSt;}}
 
 // ============== موقف مركز تكلفة (Cost Center Position) ==============
 // المصدر: القيود المُرحّلة فقط — الحسابات من مؤشر «حساب المصروفات الرئيسي» (expense_root) وكل فروعه
@@ -16168,10 +16440,12 @@ function viewCustomerSalesPos(){
   const dFrom=fld("من تاريخ",`<input class="input" type="date" value="${v(f.from)}" onchange="csPosSet('from',this.value)">`);
   const dTo=fld("إلى تاريخ",`<input class="input" type="date" value="${v(f.to)}" onchange="csPosSet('to',this.value)">`);
   // نفس الفلاتر الموجودة بالظبط — بس مترتبة في صفوف زي ميزان المراجعة
-  const fields=[dFrom,dTo,rptSel,(isW||isI)?whSel:modeSel,
-    selF("من عميل","custFrom",cu,"من أول عميل"),selF("إلى عميل","custTo",cu,"إلى آخر عميل"),
+  // سطرين: (من/إلى تاريخ + من/إلى صنف) ثم (من/إلى تصنيف + من/إلى عميل) — وبعدهم نوع التقرير والعرض وباقي الفلاتر
+  const fields=[dFrom,dTo,
     selF("من صنف","itemFrom",it,"من أول صنف"),selF("إلى صنف","itemTo",it,"إلى آخر صنف"),
     ...(isW?[]:[selF("من تصنيف","clsFrom",cl,"من أول تصنيف"),selF("إلى تصنيف","clsTo",cl,"إلى آخر تصنيف")]),
+    selF("من عميل","custFrom",cu,"من أول عميل"),selF("إلى عميل","custTo",cu,"إلى آخر عميل"),
+    rptSel,(isW||isI)?whSel:modeSel,
     repSel,kindSel,unitSel];
   const dest=canP?(f.dest||"preview"):"preview";
   const destBtns=canP?`<div class="gltb-seg" role="radiogroup" aria-label="جهة التقرير" title="جهة التقرير">
